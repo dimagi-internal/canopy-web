@@ -53,6 +53,14 @@ function roleLabel(role: string | null, kind: string): string {
   }
 }
 
+/** The display form of an artifact URL: its path, without the query string —
+ *  which carries the ?t=<share_token>. The full URL stays the link's href, so
+ *  the token is never rendered as visible text (nor shoulder-surfed from a demo). */
+function displayUrl(url: string): string {
+  const q = url.indexOf('?')
+  return q === -1 ? url : url.slice(0, q)
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return ''
   try {
@@ -108,9 +116,10 @@ function OpenLink({ href, label = 'Open' }: { href: string; label?: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      title={href}
       className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground-secondary transition-colors hover:border-input hover:text-primary"
     >
-      <span className="truncate font-mono">{href}</span>
+      <span className="truncate font-mono">{displayUrl(href)}</span>
       <span aria-hidden>↗</span>
       <span className="sr-only">{label}</span>
     </a>
@@ -478,6 +487,7 @@ export function RunPackage({ runId }: { runId: string }) {
               href={a.viewer_url}
               target="_blank"
               rel="noopener noreferrer"
+              title={a.viewer_url}
               className="group flex items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs transition-colors hover:border-input hover:bg-background/70"
             >
               <span className="w-28 shrink-0 text-[10px] font-medium text-foreground-secondary">
@@ -487,9 +497,9 @@ export function RunPackage({ runId }: { runId: string }) {
               <span className="shrink-0 text-muted-foreground">{fmtDate(a.created_at)}</span>
               <span
                 aria-hidden
-                className="shrink-0 font-mono text-[11px] text-muted-foreground transition-colors group-hover:text-primary"
+                className="shrink-0 truncate max-w-[16rem] font-mono text-[11px] text-muted-foreground transition-colors group-hover:text-primary"
               >
-                {a.viewer_url} ↗
+                {displayUrl(a.viewer_url)} ↗
               </span>
             </a>
           ))}

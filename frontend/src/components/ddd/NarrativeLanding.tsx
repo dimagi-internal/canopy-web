@@ -12,6 +12,7 @@ import {
 } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
 import { NarrativeDiff } from './NarrativeDiff'
+import { pairNarrationScenes } from './narrativeScenePairing'
 
 function fmtDate(iso: string | null): string {
   if (!iso) return ''
@@ -149,6 +150,14 @@ function VersionBlock({
   const [open, setOpen] = useState(isCurrent)
   const [busy, setBusy] = useState(false)
   const label = version.version != null ? `v${version.version}` : 'no narrative'
+  // How many scenes this version changed vs the one before it — the thing that
+  // actually distinguishes two versions whose story line (the title) is identical.
+  const changedScenes =
+    previous && previous.narration.length > 0 && version.narration.length > 0
+      ? pairNarrationScenes(previous.narration, version.narration).filter(
+          (p) => p.status !== 'unchanged',
+        ).length
+      : null
 
   async function onDelete(e: React.MouseEvent) {
     e.stopPropagation()
@@ -188,6 +197,11 @@ function VersionBlock({
             </span>
           )}
           <span className="truncate text-sm text-foreground-secondary">{version.title || ''}</span>
+          {changedScenes != null && changedScenes > 0 && (
+            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-500">
+              {changedScenes} scene{changedScenes === 1 ? '' : 's'} changed
+            </span>
+          )}
           <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
             {version.runs.length} run{version.runs.length === 1 ? '' : 's'} ·{' '}
             {fmtDate(version.created_at)}
