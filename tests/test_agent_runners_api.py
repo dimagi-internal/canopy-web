@@ -132,6 +132,17 @@ def test_put_agent_runners_empty_list_clears_assignments(client, agent, runner_a
     assert RunnerAssignment.objects.filter(agent=agent).count() == 0
 
 
+def test_put_agent_runners_rejects_duplicate_runner_id(client, agent, runner_a, runner_b):
+    RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
+
+    r = _put(client, agent.slug, [runner_b.id, runner_b.id])
+    assert r.status_code == 422, r.content
+    assert "duplicate runner id" in r.json()["detail"]
+    # assignments unchanged
+    assert RunnerAssignment.objects.filter(agent=agent).count() == 1
+    assert RunnerAssignment.objects.filter(agent=agent).first().runner_id == runner_a.id
+
+
 def test_agent_runners_is_tenant_gated(client, workspace):
     other_owner = User.objects.create_user("other", "other@dimagi.com", "pw")
     other_ws = Workspace.objects.create(slug="other", display_name="Other", created_by=other_owner)

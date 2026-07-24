@@ -190,6 +190,9 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     from apps.harness.models import Runner, RunnerAssignment
 
     agent = _get_agent_or_404(request, slug)
+    # Reject duplicate runner IDs early
+    if len(payload.runner_ids) != len(set(payload.runner_ids)):
+        raise HttpError(422, "duplicate runner id in list")
     runners = list(Runner.objects.filter(id__in=payload.runner_ids).exclude(status=Runner.RETIRED))
     by_id = {r.id: r for r in runners}
     missing = [str(rid) for rid in payload.runner_ids if rid not in by_id]
