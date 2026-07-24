@@ -47,6 +47,7 @@ def enqueue_turn(
     origin_ref: dict | None = None,
     routing: str = Turn.PREFER_LOCAL,
     enqueued_by=None,
+    pinned_runner=None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -79,6 +80,7 @@ def enqueue_turn(
                 origin_ref=origin_ref or {},
                 routing=routing,
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
+                pinned_runner=pinned_runner,
             )
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
@@ -185,7 +187,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # Scoped to agents by name and by nature — pausing an agent says nothing
         # about a repo, so project turns keep flowing.
         slugs = [s for s in slugs if s not in set(exclude_slugs)]
-    if not slugs and not projects and not session_capable:
+    has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()
+    if not slugs and not projects and not session_capable and not has_pins:
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
@@ -266,22 +269,28 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     target_q = Q(agent__slug__in=slugs) | Q(project__in=projects)
     if session_capable:
         target_q = target_q | Q(chat_session__isnull=False)
+    # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
+    # this runner is claimable even with empty capabilities — that is what lets a
+    # warm standby be drilled. A turn pinned elsewhere is invisible.
+    match_q = Q(pinned_runner=runner) | (target_q & routing_q)
     candidates = (
         Turn.objects.filter(status=Turn.QUEUED)
-        .filter(target_q)
+        .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
+        .filter(match_q)
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
-        .filter(routing_q)
         .filter(tenant_q)
         .select_related("agent")  # _preference_allows reads turn.agent.runner_preference
         .order_by("created_at")
     )
     now = timezone.now()
     for turn in candidates:
-        if not _kind_allows(runner, turn.routing):
-            continue
-        if not _preference_allows(runner, turn, now):
-            continue  # a higher-preference runner kind still has first dibs (head-start)
+        pinned_here = turn.pinned_runner_id == runner.id
+        if not pinned_here:
+            if not _kind_allows(runner, turn.routing):
+                continue
+            if not _preference_allows(runner, turn, now):
+                continue  # a higher-preference runner kind still has first dibs (head-start)
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
