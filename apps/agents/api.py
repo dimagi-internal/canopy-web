@@ -2,6 +2,7 @@
 workspace (agents, their Google-Doc syncs, work products, and skill catalog)."""
 from __future__ import annotations
 
+from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -16,6 +17,8 @@ from .schemas import (
     AgentDetailOut,
     AgentIn,
     AgentOut,
+    AgentRunnerOut,
+    AgentRunnersIn,
     AgentRuntimeOut,
     AgentSkillCatalogIn,
     AgentSkillOut,
@@ -158,6 +161,47 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
         secret_refs=list(agent.runtime_secrets or []),
         workspace=agent.workspace_id,
     )
+
+
+# ---- runner assignments (the routing-matrix UI's read/write surface) ----
+@router.get("/{slug}/runners", response=list[AgentRunnerOut],
+            summary="List the agent's ordered runner assignments")
+def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
+    agent = _get_agent_or_404(request, slug)
+    return [
+        AgentRunnerOut(
+            runner_id=a.runner_id,
+            runner_name=a.runner.name,
+            kind=a.runner.kind,
+            rank=a.rank,
+            online=a.runner.live_status == a.runner.ONLINE,
+            ready=a.runner.ready,
+        )
+        for a in agent.runner_assignments.select_related("runner")
+    ]
+
+
+@router.put("/{slug}/runners", response=list[AgentRunnerOut],
+            summary="Replace the agent's ordered runner list (index = rank)")
+def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
+    """Replace the agent's ORDERED runner list (index = rank) — the single
+    routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+    a full row, so there is no partial-update ambiguity."""
+    from apps.harness.models import Runner, RunnerAssignment
+
+    agent = _get_agent_or_404(request, slug)
+    runners = list(Runner.objects.filter(id__in=payload.runner_ids).exclude(status=Runner.RETIRED))
+    by_id = {r.id: r for r in runners}
+    missing = [str(rid) for rid in payload.runner_ids if rid not in by_id]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    with transaction.atomic():
+        RunnerAssignment.objects.filter(agent=agent).delete()
+        RunnerAssignment.objects.bulk_create([
+            RunnerAssignment(agent=agent, runner=by_id[rid], rank=i)
+            for i, rid in enumerate(payload.runner_ids)
+        ])
+    return list_agent_runners(request, slug)
 
 
 # ---- syncs (Google-Doc backed) ----

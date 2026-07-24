@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Literal
 
 from pydantic import Field
@@ -38,6 +39,25 @@ class RunnerPreferenceIn(StrictModel):
     """Set an agent's ordered runner-kind preference (the runner-order UI)."""
 
     runner_preference: list[str] = Field(default_factory=list)
+
+
+class AgentRunnerOut(StrictModel):
+    """One row of an agent's ordered runner list (the routing-matrix UI's read
+    model). `online`/`ready` are computed per row from `Runner.live_status` /
+    `Runner.ready` — not queryable columns, so the list stays tiny by design."""
+
+    runner_id: uuid.UUID
+    runner_name: str
+    kind: str
+    rank: int
+    online: bool
+    ready: bool
+
+
+class AgentRunnersIn(StrictModel):
+    """Wholesale replace of an agent's ordered runner list — index = rank."""
+
+    runner_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class AgentRuntimeOut(StrictModel):

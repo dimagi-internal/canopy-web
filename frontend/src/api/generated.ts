@@ -1018,6 +1018,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/runners": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List the agent's ordered runner assignments */
+        readonly get: operations["apps_agents_api_list_agent_runners"];
+        /**
+         * Replace the agent's ordered runner list (index = rank)
+         * @description Replace the agent's ORDERED runner list (index = rank) — the single
+         *     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+         *     a full row, so there is no partial-update ambiguity.
+         */
+        readonly put: operations["apps_agents_api_replace_agent_runners"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/syncs/": {
         readonly parameters: {
             readonly query?: never;
@@ -4338,6 +4361,37 @@ export interface components {
             readonly secret_refs: readonly string[];
             /** Workspace */
             readonly workspace: string | null;
+        };
+        /**
+         * AgentRunnerOut
+         * @description One row of an agent's ordered runner list (the routing-matrix UI's read
+         *     model). `online`/`ready` are computed per row from `Runner.live_status` /
+         *     `Runner.ready` — not queryable columns, so the list stays tiny by design.
+         */
+        readonly AgentRunnerOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Rank */
+            readonly rank: number;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+        };
+        /**
+         * AgentRunnersIn
+         * @description Wholesale replace of an agent's ordered runner list — index = rank.
+         */
+        readonly AgentRunnersIn: {
+            /** Runner Ids */
+            readonly runner_ids?: readonly string[];
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -8330,6 +8384,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentRuntimeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_agent_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_replace_agent_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRunnersIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
         };
