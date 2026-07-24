@@ -52,8 +52,8 @@ def _runner(name, pairer, **kw):
 _online_runner = _runner
 
 
-def _agent(slug="echo"):
-    return Agent.objects.create(slug=slug, name=slug.title())
+def _agent(slug="echo", workspace=None):
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=workspace)
 
 
 def _assign(agent, runner, rank):
@@ -155,3 +155,52 @@ def test_unassigned_runner_never_claims_even_with_capabilities():
     a = _agent("echo")  # no assignments at all → unroutable
     services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
     assert services.claim_next_turn(r) is None
+
+
+# --- session-binding stickiness (Task 5) ------------------------------------
+
+
+def _session(agent=None, workspace=None, project=""):
+    from apps.canopy_sessions.models import Session
+    return Session.objects.create(agent=agent, workspace=workspace, project=project)
+
+
+def _bind(session, runner):
+    from apps.canopy_sessions.models import RunnerBinding
+    return RunnerBinding.objects.create(session=session, runner=runner, thread_key=str(session.id))
+
+
+def test_bound_session_claims_only_on_binding_holder():
+    u = _user()
+    ws = _ws("w1", u)
+    holder = _online_runner("holder", u, capabilities={"sessions": True})
+    other = _online_runner("other", u, capabilities={"sessions": True})
+    s = _session(workspace=ws, project="canopy-web")
+    _bind(s, holder)
+    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s1")
+    assert services.claim_next_turn(other) is None
+    assert services.claim_next_turn(holder) is not None
+
+
+def test_bound_session_with_offline_holder_waits_for_placement():
+    u = _user()
+    ws = _ws("w1", u)
+    holder = Runner.objects.create(name="gone", kind=Runner.EMDASH,
+                                   capabilities={"sessions": True}, paired_by=u)
+    other = _online_runner("other", u, capabilities={"sessions": True})
+    s = _session(workspace=ws, project="canopy-web")
+    _bind(s, holder)
+    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s2")
+    assert services.claim_next_turn(other) is None  # nobody claims until user places
+
+
+def test_unbound_agent_session_follows_assignment_order():
+    u = _user()
+    ws = _ws("w1", u)
+    a = _agent("echo", workspace=ws)
+    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=u)
+    r1 = _online_runner("r1", u, capabilities={"sessions": True})
+    _assign(a, r0, 0); _assign(a, r1, 1)
+    s = _session(agent=a, workspace=ws)
+    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s3")
+    assert services.claim_next_turn(r1) is not None  # r0 offline → r1 (rank 1) takes it

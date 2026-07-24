@@ -148,17 +148,21 @@ def _kind_allows(runner: Runner, routing: str) -> bool:
 CASCADE_GRACE_SECONDS = 60
 
 
-def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) -> bool:
+def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn, assignment_map: dict, now) -> bool:
     """assignment_map: {agent_id: [(rank, Runner), ...] ordered by rank}. False when
     this runner is not in the agent's list; True when it is and either every
     better-ranked runner is unavailable or the turn has aged past the grace."""
-    rows = assignment_map.get(turn.agent_id) or []
+    rows = assignment_map.get(agent_id) or []
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
         return False
     if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
         return True
     return not any(r.is_available for rank, r in rows if rank < mine)
+
+
+def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) -> bool:
+    return _assignment_allows_for_agent(runner, turn.agent_id, turn, assignment_map, now)
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
@@ -267,7 +271,17 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         agent_leg &= ~Q(agent__slug__in=list(exclude_slugs))
     target_q = agent_leg | Q(project__in=projects)
     if session_capable:
-        target_q = target_q | Q(chat_session__isnull=False)
+        # Stickiness: a bound session's turns go to the binding holder ONLY. A
+        # bound session whose holder is gone claims NOWHERE until the user places
+        # it (chat offers wait/continue). Unbound sessions are open here and
+        # refined per-candidate below (agent sessions follow the assignment
+        # cascade; project sessions stay any-sessions-capable).
+        session_leg = Q(chat_session__isnull=False) & (
+            Q(chat_session__runner_binding__isnull=True)
+            | Q(chat_session__runner_binding__runner__isnull=True)
+            | Q(chat_session__runner_binding__runner=runner)
+        )
+        target_q = target_q | session_leg
     # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
     # this runner is claimable even with empty capabilities — that is what lets a
     # warm standby be drilled. A turn pinned elsewhere is invisible.
@@ -279,12 +293,17 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
         .filter(tenant_q)
-        .select_related("agent")  # _assignment_allows reads turn.agent_id
+        # _assignment_allows reads turn.agent_id; the session leg's stickiness
+        # check reads chat_session.agent_id + chat_session.runner_binding.
+        .select_related("agent", "chat_session", "chat_session__runner_binding")
         .order_by("created_at")
     )
     # Two-pass: materialize candidates above, then batch-load every candidate
-    # agent's ranked assignment list in one query rather than per-turn.
-    agent_ids = {t.agent_id for t in candidates if t.agent_id}
+    # agent's ranked assignment list in one query rather than per-turn. Includes
+    # session agents so the cascade check below can look them up too.
+    agent_ids = {t.agent_id for t in candidates if t.agent_id} | {
+        t.chat_session.agent_id for t in candidates if t.chat_session_id and t.chat_session.agent_id
+    }
     assignment_map: dict = {}
     if agent_ids:
         rows = (
@@ -302,6 +321,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             if turn.agent_id:
                 if not _assignment_allows(runner, turn, assignment_map, now):
                     continue
+            if turn.chat_session_id:
+                sess = turn.chat_session
+                binding = getattr(sess, "runner_binding", None)
+                bound_to_me = binding is not None and binding.runner_id == runner.id
+                if not bound_to_me and sess.agent_id:
+                    if not _assignment_allows_for_agent(runner, sess.agent_id, turn, assignment_map, now):
+                        continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
