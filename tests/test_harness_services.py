@@ -85,11 +85,20 @@ def test_claim_next_turn_happy_path():
     assert claimed.lease_expires_at > timezone.now()
 
 
-def test_claim_respects_capabilities():
+def test_claim_requires_assignment():
+    """Agent turns route by RunnerAssignment (spec 2026-07-24), not capabilities.
+    A runner may declare the agent in capabilities but will claim nothing without
+    an explicit RunnerAssignment row."""
     a = _agent("eva")
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()  # only capable of echo
+    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    # Runner has eva in capabilities but no RunnerAssignment
+    r = _runner(agent=None, capabilities={"agents": ["eva"]})
     assert services.claim_next_turn(r) is None
+
+    # After adding a RunnerAssignment, the claim succeeds
+    RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
+    claimed = services.claim_next_turn(r)
+    assert claimed is not None and claimed.pk == t.pk
 
 
 def test_local_only_never_claimed_by_cloud():
