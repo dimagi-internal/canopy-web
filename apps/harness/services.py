@@ -1034,3 +1034,34 @@ def resolve_schedule_nags(schedule_id: int) -> int:
         dismiss_item(item, by="system:schedule")
         count += 1
     return count
+
+
+def seed_assignments_from_capabilities() -> int:
+    """One-time bridge from the old two-sided routing config (runner
+    capabilities.agents ∩ agent.runner_preference kind order) into explicit
+    RunnerAssignment rows. Idempotent: skips (agent, runner) pairs that already
+    have a row. Returns rows created. Used by the seed data migration."""
+    from apps.agents.models import Agent
+    from apps.harness.models import Runner, RunnerAssignment
+
+    created = 0
+    runners = list(Runner.objects.exclude(status=Runner.RETIRED))
+    for agent in Agent.objects.all():
+        matched = [r for r in runners if agent.slug in (r.capabilities.get("agents") or [])]
+        pref = agent.runner_preference or []
+
+        def sort_key(r):
+            kind_rank = pref.index(r.kind) if r.kind in pref else len(pref)
+            return (kind_rank, r.name)
+
+        existing = set(
+            RunnerAssignment.objects.filter(agent=agent).values_list("runner_id", flat=True)
+        )
+        next_rank = RunnerAssignment.objects.filter(agent=agent).count()
+        for r in sorted(matched, key=sort_key):
+            if r.id in existing:
+                continue
+            RunnerAssignment.objects.create(agent=agent, runner=r, rank=next_rank)
+            next_rank += 1
+            created += 1
+    return created
