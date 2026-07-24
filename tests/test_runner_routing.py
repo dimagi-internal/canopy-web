@@ -21,7 +21,14 @@ pytestmark = pytest.mark.django_db
 User = get_user_model()
 
 
-def _user(name):
+_user_seq = 0
+
+
+def _user(name=None):
+    global _user_seq
+    if name is None:
+        _user_seq += 1
+        name = f"user{_user_seq}"
     return User.objects.create_user(username=name, email=f"{name}@dimagi.com")
 
 
@@ -38,6 +45,19 @@ def _runner(name, pairer, **kw):
     )
     defaults.update(kw)
     return Runner.objects.create(**defaults)
+
+
+# Alias used by the assignment-cascade tests below (Task 4) — same shape as
+# _runner, named for readability at the call site (an "available" runner).
+_online_runner = _runner
+
+
+def _agent(slug="echo"):
+    return Agent.objects.create(slug=slug, name=slug.title())
+
+
+def _assign(agent, runner, rank):
+    return RunnerAssignment.objects.create(agent=agent, runner=runner, rank=rank)
 
 
 def test_pinned_turn_invisible_to_other_runners():
@@ -82,3 +102,56 @@ def test_pin_bypasses_assignments_but_not_tenancy():
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
     assert turn.claimed_by is None
+
+
+# --- assignment cascade (Task 4) --------------------------------------------
+
+
+def test_rank0_available_blocks_rank1():
+    u = _user()
+    r0, r1 = _online_runner("r0", u), _online_runner("r1", u)
+    a = _agent("echo")
+    _assign(a, r0, 0); _assign(a, r1, 1)
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c1")
+    assert services.claim_next_turn(r1) is None      # r0 is available → r1 waits
+    assert services.claim_next_turn(r0) is not None  # r0 claims
+
+
+def test_rank1_takes_over_when_rank0_offline():
+    u = _user()
+    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={}, paired_by=u)  # never heartbeat
+    r1 = _online_runner("r1", u)
+    a = _agent("echo")
+    _assign(a, r0, 0); _assign(a, r1, 1)
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c2")
+    assert services.claim_next_turn(r1) is not None
+
+
+def test_not_ready_counts_as_unavailable():
+    u = _user()
+    r0 = _online_runner("r0", u); r0.ready = False; r0.save()
+    r1 = _online_runner("r1", u)
+    a = _agent("echo")
+    _assign(a, r0, 0); _assign(a, r1, 1)
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c3")
+    assert services.claim_next_turn(r1) is not None
+
+
+def test_grace_opens_next_rank_even_when_rank0_available(monkeypatch):
+    u = _user()
+    r0, r1 = _online_runner("r0", u), _online_runner("r1", u)
+    a = _agent("echo")
+    _assign(a, r0, 0); _assign(a, r1, 1)
+    turn, _ = services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c4")
+    Turn.objects.filter(pk=turn.pk).update(
+        created_at=timezone.now() - timezone.timedelta(seconds=services.CASCADE_GRACE_SECONDS + 1)
+    )
+    assert services.claim_next_turn(r1) is not None  # r0 online-but-stuck can't wedge the queue
+
+
+def test_unassigned_runner_never_claims_even_with_capabilities():
+    u = _user()
+    r = _online_runner("r", u, capabilities={"agents": ["echo"]})
+    a = _agent("echo")  # no assignments at all → unroutable
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
+    assert services.claim_next_turn(r) is None

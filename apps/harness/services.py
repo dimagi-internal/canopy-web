@@ -26,6 +26,7 @@ from .models import (
     AgentSchedule,
     Item,
     Runner,
+    RunnerAssignment,
     Turn,
     TurnEvent,
 )
@@ -139,32 +140,25 @@ def _kind_allows(runner: Runner, routing: str) -> bool:
     return True
 
 
-# Per-agent runner-KIND preference (Agent.runner_preference, e.g. ["cloud","emdash"])
-# is honored with a per-tier TIME head-start rather than a live availability probe,
-# so the delicate claim path stays query-free and deterministic. The first preferred
-# kind may claim immediately; each lower tier waits this much MORE before it may —
-# giving the preferred runner first dibs while a lower kind still falls back if the
-# preferred one never shows. Tuned small so fallback is prompt when a tier is absent.
-PREFERENCE_TIER_GRACE_SECONDS = 20
+# Rank = availability cascade (spec 2026-07-24-directed-runner-routing). A lower
+# rank may claim only while every better rank is unavailable — EXCEPT after the
+# grace: an online-but-wedged runner (heartbeating, never claiming) must not
+# stall an agent's queue forever, so a turn queued past the grace opens to the
+# next assigned rank regardless of upstream availability.
+CASCADE_GRACE_SECONDS = 60
 
 
-def _preference_allows(runner: Runner, turn: Turn, now) -> bool:
-    """May this runner's KIND claim this turn yet, under the agent's ordered
-    runner_preference? True if the agent has no preference (unconstrained), or the
-    runner's kind has waited out its tier's head-start. A kind ABSENT from a
-    non-empty preference never claims that agent. Per-agent only: project/session
-    turns (no agent) are always allowed."""
-    agent = turn.agent
-    if agent is None:
-        return True
-    pref = agent.runner_preference or []
-    if not pref:
-        return True
-    if runner.kind not in pref:
+def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) -> bool:
+    """assignment_map: {agent_id: [(rank, Runner), ...] ordered by rank}. False when
+    this runner is not in the agent's list; True when it is and either every
+    better-ranked runner is unavailable or the turn has aged past the grace."""
+    rows = assignment_map.get(turn.agent_id) or []
+    mine = next((rank for rank, r in rows if r.id == runner.id), None)
+    if mine is None:
         return False
-    rank = pref.index(runner.kind)
-    head_start = dt.timedelta(seconds=rank * PREFERENCE_TIER_GRACE_SECONDS)
-    return (now - turn.created_at) >= head_start
+    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
+        return True
+    return not any(r.is_available for rank, r in rows if rank < mine)
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
@@ -178,17 +172,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
     # its agent for the very claim we are about to make.
     release_stale_occurrence_turns_all()
-    slugs = runner.agent_slugs()
     projects = runner.project_names()
     session_capable = runner.session_capable()
-    if exclude_slugs:
-        # Per-agent pause: the runner locally paused these agents; never claim their
-        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
-        # Scoped to agents by name and by nature — pausing an agent says nothing
-        # about a repo, so project turns keep flowing.
-        slugs = [s for s in slugs if s not in set(exclude_slugs)]
     has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()
-    if not slugs and not projects and not session_capable and not has_pins:
+    has_assignments = RunnerAssignment.objects.filter(runner=runner).exists()
+    if not has_assignments and not projects and not session_capable and not has_pins:
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
@@ -266,31 +254,54 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Target match: this runner's declared agents/projects, plus every session
     # turn when it is session-capable (a chat send targets no specific agent — any
     # session-capable runner in the tenant may take it).
-    target_q = Q(agent__slug__in=slugs) | Q(project__in=projects)
+    # Agent turns route by RunnerAssignment — the one canopy-web source of truth.
+    # capabilities.agents no longer gates agent turns (it remains the runner's
+    # project/session self-declaration). exclude_slugs (per-agent local pause)
+    # still applies on top of assignments.
+    agent_leg = Q(agent__runner_assignments__runner=runner)
+    if exclude_slugs:
+        # Per-agent pause: the runner locally paused these agents; never claim their
+        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
+        # Scoped to agents by name and by nature — pausing an agent says nothing
+        # about a repo, so project turns keep flowing.
+        agent_leg &= ~Q(agent__slug__in=list(exclude_slugs))
+    target_q = agent_leg | Q(project__in=projects)
     if session_capable:
         target_q = target_q | Q(chat_session__isnull=False)
     # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
     # this runner is claimable even with empty capabilities — that is what lets a
     # warm standby be drilled. A turn pinned elsewhere is invisible.
     match_q = Q(pinned_runner=runner) | (target_q & routing_q)
-    candidates = (
+    candidates = list(
         Turn.objects.filter(status=Turn.QUEUED)
         .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
         .filter(match_q)
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
         .filter(tenant_q)
-        .select_related("agent")  # _preference_allows reads turn.agent.runner_preference
+        .select_related("agent")  # _assignment_allows reads turn.agent_id
         .order_by("created_at")
     )
+    # Two-pass: materialize candidates above, then batch-load every candidate
+    # agent's ranked assignment list in one query rather than per-turn.
+    agent_ids = {t.agent_id for t in candidates if t.agent_id}
+    assignment_map: dict = {}
+    if agent_ids:
+        rows = (
+            RunnerAssignment.objects.filter(agent_id__in=agent_ids)
+            .select_related("runner").order_by("rank")
+        )
+        for row in rows:
+            assignment_map.setdefault(row.agent_id, []).append((row.rank, row.runner))
     now = timezone.now()
     for turn in candidates:
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not _kind_allows(runner, turn.routing):
                 continue
-            if not _preference_allows(runner, turn, now):
-                continue  # a higher-preference runner kind still has first dibs (head-start)
+            if turn.agent_id:
+                if not _assignment_allows(runner, turn, assignment_map, now):
+                    continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the

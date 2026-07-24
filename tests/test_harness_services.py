@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn
 
 pytestmark = pytest.mark.django_db
 
@@ -17,11 +17,16 @@ def _agent(slug="echo"):
     return Agent.objects.create(slug=slug, name=slug.title())
 
 
-def _runner(**kw):
+def _runner(agent=None, **kw):
+    """agent: when given, this runner is assigned rank 0 for that agent —
+    agent turns route by RunnerAssignment now (spec 2026-07-24), not
+    capabilities, so tests that need a claim to succeed must assign."""
     defaults = dict(name="jj-mbp", kind=Runner.EMDASH, capabilities={"agents": ["echo"]})
     defaults.update(kw)
     r = Runner.objects.create(**defaults)
     services.heartbeat(r, active_turn_ids=[])
+    if agent is not None:
+        RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
     return r
 
 
@@ -44,7 +49,7 @@ def test_claim_serializes_execution_per_agent():
     a = _agent()
     services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
     services.enqueue_turn(agent=a, origin="slack", idempotency_key="k2")
-    r = _runner()
+    r = _runner(a)
     first = services.claim_next_turn(r)
     assert first is not None
     # second queued turn must NOT be claimed while the first is executing
@@ -59,7 +64,7 @@ def test_claim_excludes_paused_agents():
     (resumable), and other agents are unaffected."""
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     # echo paused → nothing to claim, and the turn is untouched
     assert services.claim_next_turn(r, exclude_slugs=["echo"]) is None
     t.refresh_from_db()
@@ -71,7 +76,7 @@ def test_claim_excludes_paused_agents():
 def test_claim_next_turn_happy_path():
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     claimed = services.claim_next_turn(r)
     assert claimed.pk == t.pk
     claimed.refresh_from_db()
@@ -97,7 +102,7 @@ def test_local_only_never_claimed_by_cloud():
 def test_claim_is_exclusive():
     a = _agent()
     services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r1, r2 = _runner(), _runner(name="jj-mbp-2")
+    r1, r2 = _runner(a), _runner(a, name="jj-mbp-2")
     first = services.claim_next_turn(r1)
     second = services.claim_next_turn(r2)
     assert first is not None and second is None
@@ -106,7 +111,7 @@ def test_claim_is_exclusive():
 def test_expired_lease_goes_lost_and_is_reclaimable():
     a = _agent()
     services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     t = services.claim_next_turn(r)
     Turn.objects.filter(pk=t.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
     assert services.sweep_expired_leases() == 1
@@ -120,7 +125,7 @@ def test_expired_lease_goes_lost_and_is_reclaimable():
 def test_heartbeat_renews_lease_and_status():
     a = _agent()
     services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     t = services.claim_next_turn(r)
     old_expiry = t.lease_expires_at
     services.heartbeat(r, active_turn_ids=[str(t.pk)])
@@ -150,7 +155,7 @@ def test_append_events_assigns_monotonic_seq():
 def test_finish_turn_sets_terminal_state():
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     claimed = services.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="2 commands applied")
     t.refresh_from_db()
@@ -160,7 +165,7 @@ def test_finish_turn_sets_terminal_state():
 def test_finish_turn_does_not_resurrect_lost_turn():
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     claimed = services.claim_next_turn(r)
     # simulate a lease sweep declaring the turn lost while the runner is
     # still (unknowingly) working on it
@@ -180,7 +185,7 @@ def test_finish_turn_does_not_resurrect_lost_turn():
 def test_mark_running_does_not_resurrect_lost_turn():
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     claimed = services.claim_next_turn(r)
     Turn.objects.filter(pk=claimed.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
     services.sweep_expired_leases()
@@ -205,7 +210,7 @@ def test_finish_turn_rejects_bad_status():
 def test_finish_turn_idempotent_on_terminal():
     a = _agent()
     t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    r = _runner()
+    r = _runner(a)
     claimed = services.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="first")
     t.refresh_from_db()
