@@ -121,6 +121,25 @@ def test_put_agent_runners_rejects_unknown_runner_id(client, agent):
     r = _put(client, agent.slug, [bogus])
     assert r.status_code == 422, r.content
     assert str(bogus) in r.json()["detail"]
+    assert RunnerAssignment.objects.filter(agent=agent).count() == 0
+
+
+def test_put_agent_runners_rejects_runner_paired_by_other_user(client, agent, runner_a):
+    """A runner paired by a different human, in a workspace the caller isn't a
+    member of, is invisible to _runner_visibility_q — it must 422 the same as
+    a nonexistent id (no existence leak), and must not get attached."""
+    other_owner = User.objects.create_user("other-runner-owner", "other-runner-owner@dimagi.com", "pw")
+    other_ws = Workspace.objects.create(slug="other-runner-ws", display_name="Other RW", created_by=other_owner)
+    WorkspaceMembership.objects.create(user=other_owner, workspace=other_ws, role=WorkspaceMembership.OWNER)
+    foreign = Runner.objects.create(
+        name="foreign-runner", kind=Runner.EMDASH, paired_by=other_owner, workspace=other_ws,
+    )
+
+    r = _put(client, agent.slug, [runner_a.id, foreign.id])
+    assert r.status_code == 422, r.content
+    assert str(foreign.id) in r.json()["detail"]
+    # nothing was persisted — the bad id rolls back the whole batch
+    assert RunnerAssignment.objects.filter(agent=agent).count() == 0
 
 
 def test_put_agent_runners_empty_list_clears_assignments(client, agent, runner_a):

@@ -187,13 +187,23 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     """Replace the agent's ORDERED runner list (index = rank) — the single
     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
     a full row, so there is no partial-update ambiguity."""
+    from apps.harness.api import _runner_visibility_q
     from apps.harness.models import Runner, RunnerAssignment
 
     agent = _get_agent_or_404(request, slug)
     # Reject duplicate runner IDs early
     if len(payload.runner_ids) != len(set(payload.runner_ids)):
         raise HttpError(422, "duplicate runner id in list")
-    runners = list(Runner.objects.filter(id__in=payload.runner_ids).exclude(status=Runner.RETIRED))
+    # Scoped by the same _runner_visibility_q predicate apps/harness/api.py's
+    # _runner_or_404/list_runners gate on — a runner_id the caller can't see
+    # (paired by someone else, wrong tenant) must 422 as "unknown", never be
+    # attachable/readable just because its UUID was guessed. See that
+    # docstring for the full predicate story.
+    runners = list(
+        Runner.objects.filter(id__in=payload.runner_ids)
+        .exclude(status=Runner.RETIRED)
+        .filter(_runner_visibility_q(request))
+    )
     by_id = {r.id: r for r in runners}
     missing = [str(rid) for rid in payload.runner_ids if rid not in by_id]
     if missing:
