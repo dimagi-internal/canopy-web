@@ -23,6 +23,15 @@ export async function listRunners(): Promise<RunnerOut[]> {
   return Array.from(unwrap(res, 'listRunners'))
 }
 
+// Retire a runner — permanent (re-pairing mints a fresh row). The supervisor's
+// in-place resolve for a decommissioned runner stuck on a non-main branch.
+export async function retireRunner(runnerId: string): Promise<void> {
+  const { error } = await apiV2.POST('/api/harness/runners/{runner_id}/retire', {
+    params: { path: { runner_id: runnerId } },
+  })
+  if (error) throw new Error(`retireRunner failed: ${JSON.stringify(error)}`)
+}
+
 // Dispatch a turn from the phone composer — to an agent OR a repo.
 //
 // An AGENT turn routes through the flat mount: the server derives the agent's

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { listOpenItems, type ItemOut } from '@/api/items'
-import { listRunners, listUnclaimableTurns, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
+import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
+import { BranchAlerts } from '@/components/supervisor/BranchAlerts'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -80,6 +81,24 @@ export default function SupervisorPage(): JSX.Element {
     load()
     const id = window.setInterval(load, 30_000)
     return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
+
+  // The wrong-branch banner's one-click resolve for a dead runner. Confirmed,
+  // because retiring is permanent for the row (re-pairing mints a fresh one).
+  const [retiring, setRetiring] = useState<string | null>(null)
+  const handleRetire = useCallback(async (r: RunnerOut) => {
+    if (!window.confirm(`Retire ${r.name}? This is permanent for this runner row — re-pairing later creates a new one.`)) return
+    setRetiring(r.id)
+    try {
+      await retireRunner(r.id)
+      // Drop it locally so the banner clears immediately; the 30s re-poll would
+      // otherwise leave a confusing beat where the retired runner lingers.
+      setRunners((prev) => prev?.filter((x) => x.id !== r.id) ?? prev)
+    } catch (err) {
+      setErrs((e) => ({ ...e, runners: err instanceof Error ? err.message : 'Retire failed' }))
+    } finally {
+      setRetiring(null)
+    }
   }, [])
 
   // Re-poll runners so the wrong-branch alert (below) appears/clears without a reload
@@ -170,32 +189,7 @@ export default function SupervisorPage(): JSX.Element {
         </div>
       )}
 
-      {/* LOUD alert: a runner on any branch but main is silently running stale/wrong
-          code (usually another process checked out a branch in its shared checkout). */}
-      {(renderRunners ?? [])
-        .filter((r) => r.code_branch && r.code_branch !== 'main')
-        .map((r) => (
-          <div
-            key={`branch-alert-${r.id}`}
-            role="alert"
-            data-testid={`runner-branch-alert-${r.id}`}
-            className="rounded-lg border-2 border-destructive bg-destructive/15 p-3 text-destructive"
-          >
-            <p className="text-[13px] font-bold uppercase tracking-wide">⚠ Runner on wrong branch — stale code</p>
-            <p className="mt-1 text-[13px] leading-snug">
-              <span className="font-semibold">{r.name}</span> is running on branch{' '}
-              <span className="rounded bg-destructive/20 px-1 font-mono font-semibold">{r.code_branch}</span>, not{' '}
-              <span className="font-mono">main</span>. Its turns are executing{' '}
-              <span className="font-semibold">stale / wrong code</span> — another process likely checked out a
-              branch in the runner's checkout.
-            </p>
-            <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
-              Fix on that machine, then restart the runner:
-              <br />
-              <span className="font-mono">git -C ~/emdash-projects/canopy-web checkout main &amp;&amp; git pull</span>
-            </p>
-          </div>
-        ))}
+      <BranchAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
 
       <Tabs value={tab} onValueChange={onTab} className="gap-4">
         <TabsList className="w-full">
