@@ -45,3 +45,19 @@ class InviteOut(StrictModel):
     expires_at: dt.datetime
     accepted_at: dt.datetime | None = None
     revoked_at: dt.datetime | None = None
+
+
+InviteStatus = Literal["pending", "expired", "revoked", "accepted"]
+
+
+class InvitePreviewOut(StrictModel):
+    """Pre-auth invite preview — deliberately minimal disclosure. For any
+    non-pending status, workspace_slug/workspace_display_name/role stay None:
+    someone holding a dead token (forwarded, pasted into Slack, ...) learns
+    only that it's dead, never which tenant it pointed at."""
+
+    status: InviteStatus
+    email_hint: str
+    workspace_slug: str | None = None
+    workspace_display_name: str | None = None
+    role: str | None = None

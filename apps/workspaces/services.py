@@ -262,6 +262,35 @@ def revoke_invite(*, invite: WorkspaceInvite) -> None:
         invite.save(update_fields=["revoked_at"])
 
 
+def invite_status(invite: WorkspaceInvite) -> str:
+    """Classify an invite's current lifecycle state for the pre-auth preview
+    endpoint. One of `pending` | `expired` | `revoked` | `accepted` — checked
+    in the same priority order as `accept_invite`'s guards (accepted wins over
+    revoked, which wins over a lapsed TTL), so the two never disagree."""
+    if invite.accepted_at is not None:
+        return "accepted"
+    if invite.revoked_at is not None:
+        return "revoked"
+    if invite.expires_at <= timezone.now():
+        return "expired"
+    return "pending"
+
+
+def mask_email(email: str) -> str:
+    """Mask an email's local part for pre-auth disclosure: keep the domain (so
+    the right person recognizes their own invite) but never reveal the full
+    local part — not even a 1-2 char one. Keeps only the first character and
+    replaces the rest with a fixed-width mask (never leaks the local part's
+    actual length either)."""
+    email = (email or "").strip()
+    if "@" not in email:
+        return "•••"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"•••@{domain}"
+    return f"{local[0]}•••@{domain}"
+
+
 def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
     """The most recent LIVE (pending) invite addressed to `email`, or None.
 

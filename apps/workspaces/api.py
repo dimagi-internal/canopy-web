@@ -18,6 +18,7 @@ from .models import Workspace, WorkspaceInvite, WorkspaceMembership
 from .schemas import (
     InviteCreateIn,
     InviteOut,
+    InvitePreviewOut,
     MemberOut,
     WorkspaceCreateIn,
     WorkspaceOut,
@@ -165,6 +166,28 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
         raise HttpError(404, "invite not found")
     services.revoke_invite(invite=inv)
     return Status(204, None)
+
+
+@router.get("/invites/{token}/preview", response=InvitePreviewOut, auth=None,
+            summary="Preview an invite before login (pre-auth, minimal disclosure)")
+def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
+    try:
+        inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
+    except WorkspaceInvite.DoesNotExist:
+        raise HttpError(404, "invite not found")
+    status = services.invite_status(inv)
+    hint = services.mask_email(inv.email)
+    if status != "pending":
+        # Minimal disclosure: a dead token (expired/revoked/accepted) reveals
+        # only that it's dead, never which workspace it pointed at.
+        return InvitePreviewOut(status=status, email_hint=hint)
+    return InvitePreviewOut(
+        status=status,
+        email_hint=hint,
+        workspace_slug=inv.workspace.slug,
+        workspace_display_name=inv.workspace.display_name,
+        role=inv.role,
+    )
 
 
 @router.post("/invites/{token}/accept", response=WorkspaceOut,

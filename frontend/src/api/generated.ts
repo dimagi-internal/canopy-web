@@ -1660,6 +1660,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/invites/{token}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Preview an invite before login (pre-auth, minimal disclosure) */
+        readonly get: operations["apps_workspaces_api_preview_invite"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/invites/{token}/accept": {
         readonly parameters: {
             readonly query?: never;
@@ -5976,6 +5993,28 @@ export interface components {
              */
             readonly role: "owner" | "editor" | "viewer";
         };
+        /**
+         * InvitePreviewOut
+         * @description Pre-auth invite preview — deliberately minimal disclosure. For any
+         *     non-pending status, workspace_slug/workspace_display_name/role stay None:
+         *     someone holding a dead token (forwarded, pasted into Slack, ...) learns
+         *     only that it's dead, never which tenant it pointed at.
+         */
+        readonly InvitePreviewOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "expired" | "revoked" | "accepted";
+            /** Email Hint */
+            readonly email_hint: string;
+            /** Workspace Slug */
+            readonly workspace_slug?: string | null;
+            /** Workspace Display Name */
+            readonly workspace_display_name?: string | null;
+            /** Role */
+            readonly role?: string | null;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -9909,6 +9948,28 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_workspaces_api_preview_invite: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InvitePreviewOut"];
+                };
             };
         };
     };
