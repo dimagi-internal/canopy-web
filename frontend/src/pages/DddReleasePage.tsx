@@ -81,6 +81,10 @@ function Centered({ children }: { children: React.ReactNode }) {
 function Release({ data }: { data: DddRunRelease }) {
   const shareUrl = useShareUrl(data)
   const products = data.product_links
+  // Only tag scenes with a persona when the walkthrough actually has more than
+  // one — a single-persona demo repeats the same name on every card for no signal.
+  const showPersona =
+    new Set((data.narrative?.narration ?? []).map((n) => n.persona).filter(Boolean)).size > 1
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -140,7 +144,7 @@ function Release({ data }: { data: DddRunRelease }) {
                       {n.title && (
                         <span className="text-[13px] font-medium text-foreground">{n.title}</span>
                       )}
-                      {persona?.name && (
+                      {showPersona && persona?.name && (
                         <span className="text-[11px] text-primary" title={persona.role || ''}>
                           {persona.name}
                         </span>

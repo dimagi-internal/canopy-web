@@ -190,8 +190,10 @@ _tail_readers: dict[str, "TailReader | None"] = {}
 # Per-session live-stream tailers, keyed by session_id — active only while a viewer
 # is attached (stream_desired on the server). Distinct from _tail_readers (the idle
 # tail read-model that fills RunnerBinding.tail); this is the live push to attached
-# viewers. Each entry: {"reader": TailReader|None, "seq": int, "session_key": str,
-# "project": str}.
+# viewers. Each entry: {"reader": TailReader|None, "count": int (records consumed ==
+# the next record's ordinal), "session_key": str, "project": str, "last_index":
+# int|None (the server's catch-up marker)}. Deliberately holds NO durable resume
+# state — the server's last_index is the checkpoint (spec 2026-07-24).
 _stream_readers: dict[str, dict] = {}
 
 
@@ -238,7 +240,18 @@ def _maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -
     read of emdash's DB (runs even while CDP is down); best-effort — never stops a tick."""
     global _last_session_report
     try:
-        sessions = emdash.list_open_sessions(cfg.emdash_db)
+        sessions = emdash.list_open_sessions(cfg.emdash_db, cfg.session_report_limit)
+    except emdash.EmdashReadError:
+        # WARNING, not debug: this is the silent-degradation class verify-emdash
+        # exists for. Skip the report entirely — an empty one would clear every
+        # RunnerBinding server-side, which is the opposite of what we observed.
+        logger.warning(
+            "emdash session read FAILED — skipping this report so the server keeps the "
+            "sessions it already knows. Run `canopy-runner verify-emdash` to check for "
+            "schema drift.",
+            exc_info=True,
+        )
+        return
     except Exception:  # noqa: BLE001
         logger.debug("session list failed (non-fatal)", exc_info=True)
         return
@@ -247,19 +260,55 @@ def _maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -
     if not changed and not heartbeat:
         return
     _last_session_report = now_fn()
+    # Read the closing signal only on a tick we're actually going to report on.
+    # Fail-soft in the opposite direction to the open-session read: losing the
+    # archived list must not cost us the report, so omit the field and carry on.
+    try:
+        archived = emdash.list_recently_archived_tasks(
+            cfg.emdash_db, cfg.session_report_limit
+        )
+    except emdash.EmdashReadError:
+        logger.debug("archived-task read failed (non-fatal, omitting)", exc_info=True)
+        archived = []
     try:
         transcript.attach_recent_tail(
             sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
         )
-        client.report_sessions(cfg.runner_id, sessions)
+        client.report_sessions(cfg.runner_id, sessions, archived)
     except Exception:  # noqa: BLE001
         logger.debug("session report failed (non-fatal)", exc_info=True)
 
 
+def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
+    """Ship conversational rows as live events. seq == index (the transcript
+    ordinal): monotonic per session forever, so the WS-derived `seq:<n>` message
+    ids can never collide across detaches, restarts, or failovers."""
+    events = [
+        {"kind": r["role"], "seq": r["index"], "index": r["index"],
+         "payload": {"text": r["text"]}}
+        for r in rows
+    ]
+    try:
+        client.post_session_stream(cfg.runner_id, sid, events)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.debug("stream post failed (non-fatal)", exc_info=True)
+        return False
+
+
 def _sync_session_streams(cfg: Config, client: Client) -> None:
-    """Tail each session a viewer is watching and post new assistant text up as live
-    events. Change-driven off TailReader (only newly-appended bytes), so it stays
-    cheap. Best-effort — a client hiccup never breaks a tick."""
+    """Tail each session a viewer is watching and ship every new conversational
+    record (user + assistant) with its transcript ordinal — the server persists
+    them as the session's durable Message rows and fans the assistant frames out
+    live (spec 2026-07-24).
+
+    The resume point is SERVER-side: the descriptor's `last_index` (max persisted
+    turn_index). On attach we read the transcript once and ship everything after
+    it; steady state stays change-driven off TailReader (only newly-appended
+    bytes). There is deliberately NO local offset checkpoint — a failed post just
+    drops the tailer so the next tick re-attaches from the marker, and a runner
+    restart or account failover recovers identically. Best-effort — a client
+    hiccup never breaks a tick."""
     try:
         streams = client.sync_streams(cfg.runner_id)
     except Exception:  # noqa: BLE001
@@ -269,50 +318,58 @@ def _sync_session_streams(cfg: Config, client: Client) -> None:
     home = Path.home()
     claude_home = home / ".claude" / "projects"
 
-    for sid, s in desired.items():
-        if sid in _stream_readers:
-            continue
-        path = transcript.resolve_transcript(
-            s.get("project") or "", s.get("session_key") or "", home=home, claude_home=claude_home
-        )
-        reader = TailReader(str(path)) if path else None
-        if reader is not None:
-            reader.seek_end()  # stream only NEW activity; history is loaded elsewhere
-        _stream_readers[sid] = {
-            "reader": reader, "seq": 0,
-            "session_key": s.get("session_key") or "", "project": s.get("project") or "",
-        }
-
     for sid in list(_stream_readers):  # drop tailers for sessions no longer watched
         if sid not in desired:
             _stream_readers.pop(sid, None)
 
+    for sid, s in desired.items():
+        st = _stream_readers.setdefault(sid, {
+            "reader": None, "count": 0,
+            "session_key": s.get("session_key") or "", "project": s.get("project") or "",
+        })
+        # Refresh every tick: the marker advances as the server persists our posts.
+        st["last_index"] = s.get("last_index")
+
     for sid, st in _stream_readers.items():
         reader = st["reader"]
-        if reader is None:  # transcript wasn't there yet — retry resolving it
+        if reader is None:
+            # (Re-)attach: read the whole file once, atomically w.r.t. this reader,
+            # and catch up from the server marker. No marker yet -> stream forward
+            # only (history stays the backfill's job).
             path = transcript.resolve_transcript(
                 st["project"], st["session_key"], home=home, claude_home=claude_home
             )
-            if path:
-                reader = TailReader(str(path)); reader.seek_end(); st["reader"] = reader
+            if not path:
+                continue  # transcript wasn't there yet — retry resolving next tick
+            reader = TailReader(str(path))
+            records = reader.read_new()
+            last = st["last_index"]
+            since = len(records) - 1 if last is None else int(last)
+            rows = chat_bridge.conversational_messages(records, since)
+            if rows and not _post_stream_rows(cfg, client, sid, rows):
+                continue  # nothing consumed; re-attach next tick
+            st["reader"], st["count"] = reader, len(records)
             continue
-        records = reader.read_new()
-        if not records:
+        new_records = reader.read_new()
+        if not new_records:
             continue
-        events = []
-        for text in chat_bridge.new_assistant_texts(records, 0):
-            events.append({"kind": "assistant", "seq": st["seq"], "payload": {"text": text}})
-            st["seq"] += 1
-        if events:
-            try:
-                client.post_session_stream(cfg.runner_id, sid, events)
-            except Exception:  # noqa: BLE001
-                logger.debug("stream post failed (non-fatal)", exc_info=True)
+        base = st["count"]
+        rows = [
+            {**r, "index": r["index"] + base}
+            for r in chat_bridge.conversational_messages(new_records, -1)
+        ]
+        if rows and not _post_stream_rows(cfg, client, sid, rows):
+            # Don't advance past unshipped records: reset so the next tick
+            # re-attaches and catches up from the server marker.
+            st["reader"], st["count"] = None, 0
+            continue
+        st["count"] = base + len(new_records)
 
 
 def _drain_backfills(cfg: Config, client: Client) -> None:
-    """Ship full transcript history for each session the server asked to backfill.
-    Best-effort — a missing transcript or a client hiccup is skipped, not fatal."""
+    """Ship full transcript history — with ordinals, so the server upsert-fills the
+    older rows around anything the live stream already persisted. Best-effort — a
+    missing transcript or a client hiccup is skipped, not fatal."""
     try:
         backfills = client.sync_backfills(cfg.runner_id)
     except Exception:  # noqa: BLE001
@@ -327,7 +384,7 @@ def _drain_backfills(cfg: Config, client: Client) -> None:
         )
         if not (sid and path):
             continue  # transcript not resolvable -> leave it; server keeps showing the tail
-        messages = chat_bridge.transcript_messages(chat_bridge.read_records(path))
+        messages = chat_bridge.conversational_messages(chat_bridge.read_records(path), -1)
         try:
             client.post_session_backfill(cfg.runner_id, sid, messages)
         except Exception:  # noqa: BLE001

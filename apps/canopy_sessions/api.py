@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import uuid
 
+from django.db.models import Max
+
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
 from ninja import Router
@@ -45,9 +47,14 @@ def _out(session: Session) -> dict:
         "agent_slug": session.agent.slug if session.agent_id else None,
         "project": session.project,
         "workspace": session.workspace_id,
-        "title": session.title,
+        # The name a human recognises for a runner-bound session is the emdash
+        # task (what they see in emdash), not a thread_key hash a fallback title
+        # may have captured. Web chats keep their own title.
+        "title": (binding.session_key if (binding and binding.session_key) else session.title),
         "status": session.status,
         "created_at": session.created_at,
+        # When it last DID something (binding > newest message > created).
+        "last_activity_at": services.last_activity_at(session, binding),
         # --- liveness (Plan 4): one shape, computed from the binding ---
         "origin": session.origin,
         "running": services.is_session_running(binding),
@@ -65,12 +72,21 @@ def _visible_slugs(request: HttpRequest) -> set[str]:
 
 def _session_or_404(request: HttpRequest, session_id: uuid.UUID) -> Session:
     session = get_object_or_404(
-        Session.objects.select_related("agent", "runner_binding", "runner_binding__runner"),
+        Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
+        .annotate(_last_msg_at=Max("messages__created_at")),
         pk=session_id,
     )
     if session.workspace_id not in _visible_slugs(request):
         raise HttpError(404, "session not found")  # wrong tenant / non-member
     return session
+
+
+def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dict:
+    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    if session.status != status:
+        session.status = status
+        session.save(update_fields=["status", "updated_at"])
+    return _out(session)
 
 
 @router.post("/", response=SessionOut, summary="Create a chat session")
@@ -99,24 +115,49 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
 
 
 @router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
-def list_sessions(request: HttpRequest):
+def list_sessions(request: HttpRequest, state: str = "active", limit: int = 200):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
     # RunnerBinding (runner-discovered or live). Deduped, running-first, then
     # newest. Replaces the creator-only list + the harness OpenSessions projection.
-    from django.db.models import Q
+    #
+    # `state` gives that list an END. Two rules combine into "archived":
+    #   - WRITTEN: status == archived (the runner saw the emdash task archived, or
+    #     a human called /archive). Durable.
+    #   - DERIVED: a RUNNER-origin session whose binding has not been seen within
+    #     SESSION_STALE_AFTER. Computed here, never stored, so it reverses itself
+    #     the moment the task is reported again. Web sessions are exempt — they
+    #     have no runner to be seen by, so only an explicit archive ends them.
+    from django.db.models import Max, Q
+
+    if state not in ("active", "archived", "all"):
+        raise HttpError(422, "state must be one of: active, archived, all")
 
     slugs = _visible_slugs(request)
     rows = (
         Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
         .filter(workspace_id__in=slugs)
         .filter(Q(created_by=request.user) | Q(runner_binding__isnull=False))
+        .annotate(_last_msg_at=Max("messages__created_at"))
         .distinct()
         .order_by("-created_at")
     )
+    unseen = services.unseen_q()   # defined once in staleness.py; see Step 3
+    if state == "active":
+        rows = rows.filter(status=Session.ACTIVE).exclude(unseen)
+    elif state == "archived":
+        rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
+
     out = [_out(s) for s in rows]
-    out.sort(key=lambda r: (not r["running"], ))  # stable: running first, created-desc within
-    return out
+    # Running first, then genuinely-most-recent. Sorting by created_at made a
+    # dead repo and a live one interleave arbitrarily (both "created" in the
+    # same report sweep); last_activity_at is the real signal. The client can
+    # re-group by project — this is the default order.
+    out.sort(key=lambda r: (not r["running"], -(r["last_activity_at"].timestamp())))
+    # Clamp AFTER the sort, never as a queryset slice: the queryset is ordered by
+    # -created_at, so slicing it could drop the running session this sort exists to
+    # float. `state=active` already bounds the set; this is a payload backstop.
+    return out[: clamp_limit(limit)]
 
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
@@ -126,10 +167,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     # explicit escape hatch. Scroll-back pages via GET /{id}/messages?before=.
     session = _session_or_404(request, session_id)
     data = _out(session)
-    if full:
-        rows, has_more, oldest = services.all_messages(session)
-    else:
-        rows, has_more, oldest = services.tail_messages(session)
+    rows, has_more, oldest = services.visible_transcript(session, full=full)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
@@ -159,6 +197,22 @@ def list_messages(
         "messages": [MessageOut.from_orm(m) for m in rows],
         "has_more_before": has_more,
     }
+
+
+@router.post("/{session_id}/archive", response=SessionOut, summary="Archive a session")
+def archive_session(request: HttpRequest, session_id: uuid.UUID):
+    """Retire a session by hand. The escape hatch for a web chat — no runner will ever
+    report it archived — and for force-retiring a row without touching emdash.
+    Idempotent, and never destructive: /unarchive brings it straight back."""
+    return _set_status(request, session_id, Session.ARCHIVED)
+
+
+@router.post("/{session_id}/unarchive", response=SessionOut, summary="Unarchive a session")
+def unarchive_session(request: HttpRequest, session_id: uuid.UUID):
+    """Undo an archive. Note this clears only the WRITTEN half: a runner session that
+    is also past SESSION_STALE_AFTER stays out of `state=active` until its runner
+    reports it again, because that half is derived on every read."""
+    return _set_status(request, session_id, Session.ACTIVE)
 
 
 @router.post("/{session_id}/send", response=SendOut, summary="Send a message")

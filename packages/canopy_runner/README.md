@@ -4,9 +4,18 @@ A laptop-side runner (stdlib-only) that watches for claimed turns on the
 canopy-web harness and routes each one to a **visible emdash session**, driving
 emdash's real UI over the Chrome DevTools Protocol (create a new session, or
 reuse the existing session for that thread). It never writes to emdash's DB —
-the only emdash-DB access is two READ-ONLY queries (`emdash.py`: `task_state`,
-`list_open_sessions`) that answer "does this session still exist?" (the DOM
-can't, because emdash virtualizes the sidebar).
+the only emdash-DB access is READ-ONLY (`emdash.py`: `task_state`,
+`list_open_sessions`, `list_recently_archived_tasks`), because the DOM can't
+answer "does this session still exist?" — emdash virtualizes the sidebar, so a
+scrolled-out task is invisible to it. A MISSING db is a legitimate "no emdash
+here" and every read still degrades gracefully to it (`"unknown"`/`[]`). A real
+READ FAILURE (locked/corrupt db, or a renamed column the SQL names) is
+different: `task_state` still degrades to `"unknown"` (a false "gone" there
+would duplicate a live session), but `list_open_sessions` and
+`list_recently_archived_tasks` now raise `EmdashReadError`, and the runner
+skips that session report rather than POSTing an empty list that would clear
+every binding server-side. `verify-emdash` (below) remains the proactive check
+for the schema drift that causes such a failure.
 
 ## One-time laptop setup
 
@@ -108,15 +117,21 @@ TOKEN=$(cat ~/.claude/canopy/workbench-token)
 
 ## After an emdash update
 
-emdash auto-updates. The runner drives emdash over CDP and reads its sqlite DB;
-the reads are deliberately **fail-soft** (any sqlite error degrades to
-`"unknown"`/`[]` so a read failure is never mistaken for "session gone"). The
-cost of that safety is that a *silent* schema drift — emdash renaming a column
-`task_state`/`list_open_sessions` name — wouldn't crash; it would quietly break
-session reuse (duplicate sessions) and blank the phone's session list, with
-nothing in the log.
+emdash auto-updates. The runner drives emdash over CDP and reads its sqlite DB.
+A MISSING db is a legitimate "no emdash here" and every read degrades
+gracefully to it (`"unknown"`/`[]`). But only `task_state` stays fail-soft on a
+genuine READ FAILURE too (any sqlite error degrades to `"unknown"`, because a
+false "gone" there would duplicate a live session) — `list_open_sessions` and
+`list_recently_archived_tasks` now raise `EmdashReadError` on a real failure,
+and the runner skips that session report rather than POSTing an empty list
+that would clear every binding server-side. Either way, a *silent* schema
+drift — emdash renaming a column one of these reads names — is the thing to
+worry about: it surfaces either as a `task_state` false-"unknown" (duplicate
+sessions) or a skipped session report (the phone's list goes stale), with
+nothing else in the log.
 
-`verify-emdash` is the guard against exactly that. Run it after an emdash update:
+`verify-emdash` is the proactive guard against exactly that drift. Run it
+after an emdash update:
 
 ```bash
 python3 -m canopy_runner.main verify-emdash --config ~/.canopy/runner.json
@@ -126,8 +141,8 @@ python3 -m canopy_runner.main verify-emdash --config ~/.canopy/runner.json
   everything else the runner assumes about emdash (it's installed, its CDP port,
   transcripts) fails LOUDLY and is obvious within a tick.
 - a column drifted → exit 1, naming each missing `table.column`. Reconcile
-  `task_state()` / `list_open_sessions()` in `canopy_runner/emdash.py` against
-  emdash's new schema, then update `READ_SCHEMA` (the allowlist those two reads
-  are checked against) to match.
+  `task_state()` / `list_open_sessions()` / `list_recently_archived_tasks()` in
+  `canopy_runner/emdash.py` against emdash's new schema, then update
+  `READ_SCHEMA` (the allowlist these reads are checked against) to match.
 - the DB itself can't be read → exit 2 (bad `emdash_db` path, or emdash not
   installed).

@@ -103,8 +103,17 @@ export function getSession(
   );
 }
 
-export function listSessions(): Promise<ChatSession[]> {
-  return request<ChatSession[]>("/api/canopy-sessions/");
+export type SessionState = "active" | "archived" | "all";
+
+/** The list URL for a state. `active` is the server default, so it sends no param. */
+export function sessionsPath(state: SessionState = "active"): string {
+  return state === "active"
+    ? "/api/canopy-sessions/"
+    : `/api/canopy-sessions/?state=${state}`;
+}
+
+export function listSessions(state: SessionState = "active"): Promise<ChatSession[]> {
+  return request<ChatSession[]>(sessionsPath(state));
 }
 
 /** One backward page of transcript, for "Load earlier" scroll-back. */

@@ -6,15 +6,17 @@ virtualizes the sidebar, so a scrolled-out task is absent from the page — so t
 reuse decision asks sqlite instead (`task_state`), and the phone's session list is
 read the same way (`list_open_sessions`).
 
-Both reads are deliberately **fail-soft**: any sqlite error degrades to "unknown" /
-`[]` rather than raising, because a read failure must never be mistaken for "session
-gone" (that false negative duplicated a live session — see `task_state`). The cost of
-that safety is that a *silent* schema drift — emdash renaming a column these queries
-name — would quietly break the runner (duplicate sessions, a blank supervisor) with
-nothing in the log. `check_read_schema` (surfaced as `canopy_runner verify-emdash`)
-is the one guard against that: run it after an emdash update to confirm the columns
-these two functions depend on still exist. Keep `READ_SCHEMA` in lockstep with the
-SQL below — it IS the list of columns the SQL names.
+`task_state` is deliberately **fail-soft**: any sqlite error degrades to "unknown"
+rather than raising, because a read failure must never be mistaken for "session gone"
+(that false negative duplicated a live session — see its docstring). `list_open_sessions`
+is fail-soft only for a MISSING db ("no emdash here"); a real read failure raises
+`EmdashReadError` instead, because the caller (the phone's session report) must not
+mistake "could not read" for "zero open sessions" — reporting an empty list clears
+every RunnerBinding server-side. The risk both reads share is a *silent* schema drift —
+emdash renaming a column these queries name — which is why `check_read_schema`
+(surfaced as `canopy_runner verify-emdash`) exists: run it after an emdash update to
+confirm the columns these two functions depend on still exist. Keep `READ_SCHEMA` in
+lockstep with the SQL below — it IS the list of columns the SQL names.
 """
 from __future__ import annotations
 
@@ -42,6 +44,17 @@ READ_SCHEMA: dict[str, list[str]] = {
 class SchemaCheckError(Exception):
     """The emdash DB itself couldn't be opened/read — distinct from a column drift,
     so 'the DB isn't there' isn't mistaken for 'the schema changed'."""
+
+
+class EmdashReadError(Exception):
+    """The emdash DB exists but could not be READ (locked, corrupt, or a column the
+    SQL names has been renamed).
+
+    Distinct from a missing file, which is a legitimate "no emdash here" and stays
+    fail-soft. The distinction is load-bearing: the caller must never mistake a read
+    failure for "zero open sessions", because reporting an empty list clears every
+    RunnerBinding server-side (`replace_reported_sessions`). Swallowing the error is
+    what let a schema drift blank the supervisor with nothing in the log."""
 
 
 @contextmanager
@@ -121,11 +134,14 @@ def task_state(db_path: str, name: str) -> str:
 
 def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     """READ-ONLY: the un-archived emdash tasks, newest-first, capped. Returns
-    [{emdash_task, project, status, last_interacted_at}]. Like task_state this is a
-    pure read that must NEVER raise: a missing DB, a renamed column, or an emdash schema
-    change degrades to [] so the runner loop survives. The task NAME is the identity
+    [{emdash_task, project, status, last_interacted_at}]. The task NAME is the identity
     open_and_send targets; project is joined from `projects` for display + the continue
     turn's target.
+
+    A MISSING db degrades to [] so the runner loop survives ("no emdash here"). A real
+    READ failure raises EmdashReadError — the caller must be able to tell "I read zero
+    open tasks" from "I could not read", because the two have opposite server-side
+    consequences (nothing changes vs every binding is cleared).
 
     Only `type='task'` rows — the real sessions emdash shows in its project list.
     `type='automation-run'` rows are un-promoted automation triggers that emdash hides
@@ -152,5 +168,37 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        raise EmdashReadError(f"emdash open-session read failed: {exc}") from exc
+
+
+def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
+    """READ-ONLY: the NAMES of recently-archived emdash tasks, newest-archived first.
+
+    The closing signal. `list_open_sessions` tells the server what IS open; absence
+    from it is ambiguous (archived? runner dead? truncated? DB unreadable?), so the
+    server cannot retire a session on absence alone. This read makes "you archived
+    it" observable, leaving only the genuinely-vanished residue to a staleness rule.
+
+    `type='task'` for the same reason as the open read: an archived automation-run was
+    never a session. Same contract as the reads above — missing file returns [], a
+    real read failure raises EmdashReadError (the caller omits the field rather than
+    asserting "nothing was archived", which would un-archive every closed task).
+    """
+    if not Path(db_path).exists():
         return []
+    try:
+        with _db(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT t.name AS emdash_task
+                FROM tasks t
+                WHERE t.archived_at IS NOT NULL AND t.type = 'task'
+                ORDER BY t.archived_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [r["emdash_task"] for r in rows]
+    except sqlite3.Error as exc:
+        raise EmdashReadError(f"emdash archived-task read failed: {exc}") from exc

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import uuid
+from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -87,6 +88,10 @@ def all_messages(session: Session):
 # tail's freshness, now computed once server-side.
 RUNNING_WINDOW = _dt.timedelta(seconds=120)
 
+# Re-exported so callers keep one import surface; DEFINED in staleness.py, which the
+# backfill migration also imports (see the module docstring there).
+from .staleness import SESSION_STALE_AFTER, stale_cutoff, unseen_q  # noqa: E402,F401
+
 
 def is_session_running(binding) -> bool:
     """True when a live runner is actively working this session right now."""
@@ -103,13 +108,105 @@ def is_session_running(binding) -> bool:
 _BACKFILL_ROLES = {Message.USER, Message.ASSISTANT, Message.TOOL_USE, Message.TOOL_RESULT, Message.SYSTEM}
 
 
+def last_activity_at(session, binding):
+    """When this session last DID something — not when its row was created.
+
+    A runner-discovered session's row is created the moment the report sweep first
+    sees it, so `created_at` is "when canopy first noticed you", identical for every
+    session in that sweep. Rendering it made a long-dead repo and a live one both
+    read "4h ago". The real signal is the binding's `last_interacted_at` (the runner
+    reports it every tick); web sessions fall back to their newest message, then to
+    creation. `_last_msg_at` is annotated by the callers so this stays N+1-free.
+    """
+    if binding is not None and binding.last_interacted_at:
+        return binding.last_interacted_at
+    return getattr(session, "_last_msg_at", None) or session.created_at
+
+
+@dataclass(frozen=True)
+class TailMessage:
+    """A binding-tail entry shaped like a `Message` row.
+
+    Quacks like the real model on purpose: the REST path serializes it with
+    `MessageOut.from_orm` and the WebSocket path with `serializers.message_dto`,
+    so BOTH transports render a local session's tail through their normal code
+    with no special-casing. (ChatPage's transcript actually arrives over the WS
+    snapshot — patching only REST left the panel blank.)
+    """
+
+    pk: str
+    turn_index: int
+    role: str
+    plaintext: str
+    content: dict
+    created_at: object
+
+
+def tail_as_messages(session, binding) -> list[TailMessage]:
+    """A local runner session's reported tail, as Message-like rows.
+
+    Local sessions hold NO `Message` rows until a backfill lands — the recent
+    history lives on `RunnerBinding.tail` (what the retired OpenSessions used to
+    render). Without this the converged ChatPanel opened blank on every discovered
+    session even though the server had the last N messages in hand.
+
+    turn_index is NEGATIVE (-n..-1): it orders the tail before any real row and can
+    never collide with backfilled rows (which start at 0) or with a live stream's
+    `seq:` ids, so a backfill or a live message layers on cleanly.
+    """
+    if binding is None or not binding.tail:
+        return []
+    ts = binding.last_interacted_at or session.created_at
+    n = len(binding.tail)
+    rows = []
+    for i, m in enumerate(binding.tail):
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role") or Message.ASSISTANT
+        if role not in _BACKFILL_ROLES:
+            role = Message.ASSISTANT
+        text = m.get("text") or ""
+        idx = i - n
+        rows.append(TailMessage(
+            pk=f"tail:{idx}", turn_index=idx, role=role,
+            plaintext=text, content={"text": text}, created_at=ts,
+        ))
+    return rows
+
+
+def visible_transcript(session, *, full: bool = False):
+    """THE answer to "what transcript rows should a client see?" — used by every
+    transport, so REST and the WebSocket can never disagree.
+
+    Both transports previously reimplemented this. When the binding-tail fallback
+    was added to the REST detail endpoint only, `GET` correctly returned 8 rows
+    while the panel — which reads the `session.state` WS snapshot — stayed blank.
+    The shared SESSION_TAIL_DEFAULT constant wasn't enough: the POLICY has to be
+    shared too. `tests/test_transcript_parity.py` asserts the two agree.
+
+    Returns (rows, has_more_before, oldest_loaded_turn_index). Rows are `Message`
+    instances or `TailMessage`s, which serialize identically on both paths.
+    """
+    rows, has_more, oldest = (all_messages if full else tail_messages)(session)
+    if not rows:
+        # No server-side rows yet (a local runner session before backfill) — show
+        # the binding's rolling tail rather than an empty panel.
+        rows = tail_as_messages(session, getattr(session, "runner_binding", None))
+    return rows, has_more, oldest
+
+
 def request_backfill(session) -> str:
-    """The client asked for full history. 'ready' if already server-full; 'requested'
-    if a live runner is bound (signal it); 'unavailable' otherwise (tail still shows)."""
+    """The client asked for full history. 'ready' if we already hold the START of
+    the transcript (a row at turn_index 0); 'requested' if a live runner is bound
+    (signal it — streamed ordinal rows alone are not the full history); 'unavailable'
+    otherwise (tail still shows)."""
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.models import Runner
 
-    if session.messages.exists():
+    first = (
+        session.messages.order_by("turn_index").values_list("turn_index", flat=True).first()
+    )
+    if first == 0:
         return "ready"
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
@@ -135,27 +232,48 @@ def request_backfill(session) -> str:
     return "requested"
 
 
-def write_backfill(session, messages) -> int:
-    """Write a runner's shipped transcript as Message rows — ONCE. No-op if the
-    session already has rows (server-full). messages: [{"role","text"}] chronological."""
+def persist_transcript_rows(session, rows) -> int:
+    """THE durable write path for a runner session's transcript. rows:
+    [{"index","role","text"}] chronological.
+
+    `index` is the transcript record ordinal (raw index into the session's
+    .jsonl) — because the stream (forward) and backfill (older) both key on it,
+    they produce the SAME rows by identity and `get_or_create` makes every
+    re-ship (retry, overlap, catch-up) a no-op. index < 0 (an old runner) falls
+    back to sequential server-side assignment. Returns rows actually created."""
+    written = 0
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
-        if Message.objects.filter(session=locked).exists():
-            return 0
-        index = _next_index(locked)
-        written = 0
-        for msg in messages:
-            role = msg.get("role")
+        next_index = None
+        for row in rows:
+            role = row.get("role")
             if role not in _BACKFILL_ROLES:
                 continue
-            Message.objects.create(
-                session=locked, turn_index=index, role=role,
-                content={"text": msg.get("text", ""), "backfill": True},
-                plaintext=str(msg.get("text", "")),
+            text = str(row.get("text", ""))
+            index = row.get("index")
+            index = -1 if index is None else int(index)
+            if index < 0:
+                if next_index is None:
+                    next_index = _next_index(locked)
+                index, next_index = next_index, next_index + 1
+            _, created = Message.objects.get_or_create(
+                session=locked, turn_index=index,
+                defaults={"role": role, "plaintext": text, "content": {"text": text}},
             )
-            index += 1
-            written += 1
+            written += 1 if created else 0
     return written
+
+
+def write_backfill(session, messages) -> int:
+    """Write a runner's shipped full transcript as Message rows. Ordinal-keyed
+    payloads (a current runner) upsert-fill: they add the older rows the live
+    stream never saw and skip anything already persisted. A legacy payload (no
+    ordinals) keeps the old write-once contract — sequential, and only into an
+    empty session. messages: [{"role","text"[,"index"]}] chronological."""
+    ordinal = any(int(m.get("index", -1)) >= 0 for m in messages)
+    if not ordinal and Message.objects.filter(session=session).exists():
+        return 0
+    return persist_transcript_rows(session, messages)
 
 
 def _set_stream_desired(session, desired: bool) -> bool:
@@ -295,7 +413,18 @@ def send_message(
     stickiness in charge (including, for the FIRST send of an unbound directed
     new chat, the `requested_runner_id` stashed at create time). See
     `_resolve_placement`.
+
+    For an origin=runner session the TRANSCRIPT is the sole durable source
+    (spec 2026-07-24): the user's words reach the DB when the runner ships the
+    transcript record they became, keyed on its ordinal. Persisting a second
+    copy here (keyed _next_index) would collide index spaces and duplicate the
+    send, so this path writes no row — the frontend already echoes the message
+    optimistically (draft.committed), and a transient Message keeps the contract.
     """
+    if session.origin == Session.ORIGIN_RUNNER:
+        return _send_runner_message(
+            session=session, text=text, client_id=client_id, placement=placement
+        )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
         if client_id:
@@ -313,18 +442,27 @@ def send_message(
         message = Message.objects.create(
             session=session, turn_index=index, role=Message.USER, plaintext=text, content=content,
         )
+        # Continuity: every send in a chat reuses ONE emdash session (the runner's
+        # _thread_key reads this), so a conversation is one durable thread rather
+        # than a fresh session per message. chat_session_id tells a session-capable
+        # runner to BRIDGE the emdash response back into the ledger (vs the normal
+        # fire-and-continue), so the website streams the reply.
+        #
+        # A RUNNER-DISCOVERED session already has a binding keyed `emdash:<task>` (the
+        # report sweep wrote it). Sending str(session.id) there matched nothing, so
+        # resolve_session answered new_thread and the runner SPAWNED A FRESH emdash
+        # session instead of typing into the live one you were looking at. Prefer the
+        # binding's existing thread_key; web sessions (no binding yet) keep the
+        # session id, which is what record_session then stores.
+        binding = getattr(session, "runner_binding", None)
+        thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
-            # Continuity: every send in a chat reuses ONE emdash session (the runner's
-            # _thread_key reads this), so a conversation is one durable thread rather
-            # than a fresh session per message. chat_session_id tells a session-capable
-            # runner to BRIDGE the emdash response back into the ledger (vs the normal
-            # fire-and-continue), so the website streams the reply.
-            origin_ref={"thread_key": str(session.id), "chat_session_id": str(session.id)},
+            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
             pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
@@ -365,6 +503,42 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
         turn.pinned_runner = runner
     turn.save(update_fields=["pinned_runner"])
     return turn
+
+
+def _send_runner_message(
+    *, session: Session, text: str, client_id: str = "", placement: str | None = None
+) -> tuple[Message, Turn]:
+    """The runner-session send path: enqueue the Turn, author NO durable user row.
+
+    The returned Message is transient (never saved): MessageOut serializes it for
+    the REST response and the WS handler broadcasts str(pk) as user_message_id, so
+    both send contracts hold. A synthetic pk keeps those ids unique per send."""
+    content = {"text": text}
+    if client_id:
+        content["client_id"] = client_id
+    message = Message(
+        session=session, turn_index=_next_index(session), role=Message.USER,
+        plaintext=text, content=content,
+    )
+    message.pk = f"transient:{uuid.uuid4().hex}"
+    message.created_at = timezone.now()
+    binding = getattr(session, "runner_binding", None)
+    thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
+    # Without a durable row, _next_index no longer advances between sends, so the
+    # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
+    # fall back to a fresh nonce instead (same dedupe strength as before: only a
+    # real client_id makes a retry idempotent).
+    pinned = _resolve_placement(session, placement)
+    turn, _created = harness_services.enqueue_turn(
+        session=session,
+        origin=Turn.ORIGIN_API,
+        idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
+        prompt=text,
+        origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+        pinned_runner=pinned,
+    )
+    _maybe_interject(session, message)
+    return message, turn
 
 
 def _maybe_interject(session: Session, message: Message) -> None:
@@ -411,8 +585,15 @@ def maybe_execute_inline(turn: Turn | None) -> None:
 
 def project_events(turn: Turn, rows) -> int:
     """Materialize a turn's newly-appended assistant/tool events into Message rows.
-    Idempotent per source ledger seq, so a re-delivered signal never doubles a row."""
+    Idempotent per source ledger seq, so a re-delivered signal never doubles a row.
+
+    Runner sessions are excluded: their durable rows come from the transcript
+    (ordinal-keyed, via persist_transcript_rows) — the bridged reply lands in the
+    ledger too, and projecting it as well would persist it twice in a second
+    index space. The ledger frames still stream to the live client unchanged."""
     if not turn.chat_session_id:
+        return 0
+    if turn.chat_session.origin == Session.ORIGIN_RUNNER:
         return 0
     created = 0
     with transaction.atomic():

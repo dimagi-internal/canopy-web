@@ -170,6 +170,127 @@ def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) ->
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
 
 
+def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q:
+    """Which queued turns this runner can TARGET under directed routing (spec
+    2026-07-24): agents via RunnerAssignment (the one source of truth —
+    capabilities.agents no longer routes agent turns), repos via
+    capabilities.projects, and sessions (when session-capable) with binding
+    STICKINESS — a bound session matches only its binding holder; a bound
+    session whose holder is gone matches nobody until the user places it.
+
+    Shared by claim_next_turn and unclaimable_queued_turns so the "can anyone run
+    this?" warning can never disagree with what claiming actually does — the same
+    class of drift that made REST and the WebSocket show different transcripts.
+    The claim path layers routing_q, the pin arm, the availability cascade, and
+    the per-candidate refinements on top; this is the coarse target match.
+    """
+    agent_leg = Q(agent__runner_assignments__runner=runner)
+    if exclude_slugs:
+        # Per-agent pause: the runner locally paused these agents; never claim their
+        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
+        # Scoped to agents by name and by nature — pausing an agent says nothing
+        # about a repo, so project turns keep flowing.
+        agent_leg &= ~Q(agent__slug__in=list(exclude_slugs))
+    q = agent_leg | Q(project__in=runner.project_names())
+    if runner.session_capable():
+        # Stickiness: a bound session's turns go to the binding holder ONLY. A
+        # bound session whose holder is gone claims NOWHERE until the user places
+        # it (chat offers wait/continue). Unbound sessions are open here and
+        # refined per-candidate in the claim loop (agent sessions follow the
+        # assignment cascade; project sessions stay any-sessions-capable).
+        q = q | (
+            Q(chat_session__isnull=False)
+            & (
+                Q(chat_session__runner_binding__isnull=True)
+                | Q(chat_session__runner_binding__runner__isnull=True)
+                | Q(chat_session__runner_binding__runner=runner)
+            )
+        )
+    return q
+
+
+# A turn is not "stuck" the instant it is enqueued — it is queued for a few seconds
+# on every normal send while a runner polls (5s) or the WS wake fires. And a runner
+# whose heartbeat lapses (>90s) reads STALE, so a flaky laptop network briefly looks
+# like "no runners at all". Both made the warning fire on healthy traffic: a phone
+# chat send was flagged during a DNS blip, then claimed and answered seconds later.
+# Wait longer than a heartbeat window + a claim poll before calling anything stuck.
+UNCLAIMABLE_GRACE = dt.timedelta(seconds=150)
+
+
+def unclaimable_queued_turns(user) -> list[dict]:
+    """Queued turns that look genuinely stuck — otherwise a silent stall.
+
+    enqueue_turn accepts a turn addressed to an agent/repo nothing declares, and it
+    then sits QUEUED forever with no signal (observed: a project=ace turn sat 12h).
+
+    Two DIFFERENT causes, reported differently because they need different actions:
+      * config    — no runner can target this turn at all (agent unassigned, repo
+                    undeclared, session bound to a runner you don't have). It will
+                    never run until routing is edited.
+      * offline   — a runner can target it, but none are reachable right now.
+                    Usually transient (network blip, deploy, laptop asleep).
+    Returns [{turn_id, target, prompt, created_at, reason, kind}].
+    """
+    ws_slugs = wsvc.user_workspace_slugs(user)
+    if not ws_slugs:
+        return []
+    cutoff = timezone.now() - UNCLAIMABLE_GRACE
+    queued = list(
+        Turn.objects.filter(status=Turn.QUEUED, created_at__lte=cutoff)
+        .filter(
+            (Q(agent__isnull=False) & (Q(agent__workspace_id__in=ws_slugs) | Q(agent__workspace_id__isnull=True)))
+            | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=ws_slugs))
+            | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=ws_slugs))
+        )
+        .select_related("agent")
+        .order_by("created_at")
+    )
+    if not queued:
+        return []
+    runners = list(Runner.objects.filter(paired_by=user).exclude(status=Runner.RETIRED))
+    ids = {t.id for t in queued}
+
+    def _covered_by(rs) -> set:
+        out: set = set()
+        for r in rs:
+            # Same coarse target predicate the claim path uses (assignments +
+            # projects + binding-sticky sessions), plus the pin arm — a turn
+            # pinned to an offline standby must read "offline", not "config".
+            q = runner_target_q(r) | Q(pinned_runner=r)
+            out |= set(Turn.objects.filter(pk__in=ids).filter(q).values_list("pk", flat=True))
+        return out
+
+    reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED)]
+    claimable_now = _covered_by(reachable)
+    # Would ANY paired runner take it if it were up? Separates "misconfigured" from
+    # "temporarily unreachable" — the difference between "fix the routing matrix"
+    # and "wait, or check the runner".
+    claimable_ever = _covered_by(runners)
+
+    out = []
+    for t in queued:
+        if t.pk in claimable_now:
+            continue
+        if t.chat_session_id:
+            target, what = "session", "can take this session (session-capable + its binding)"
+        elif t.agent_id:
+            target, what = f"agent {t.agent.slug}", f"is assigned the agent '{t.agent.slug}'"
+        else:
+            target, what = f"project {t.project}", f"declares the repo '{t.project}'"
+        if t.pk in claimable_ever:
+            kind = "offline"
+            reason = f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)"
+        else:
+            kind = "config"
+            reason = f"no runner {what}"
+        out.append({
+            "turn_id": str(t.pk), "target": target, "prompt": (t.prompt or "")[:120],
+            "created_at": t.created_at, "reason": reason, "kind": kind,
+        })
+    return out
+
+
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
                     exclude_slugs: list[str] | None = None) -> Turn | None:
     if runner.live_status != Runner.ONLINE:
@@ -260,30 +381,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Target match: this runner's declared agents/projects, plus every session
     # turn when it is session-capable (a chat send targets no specific agent — any
     # session-capable runner in the tenant may take it).
-    # Agent turns route by RunnerAssignment — the one canopy-web source of truth.
-    # capabilities.agents no longer gates agent turns (it remains the runner's
-    # project/session self-declaration). exclude_slugs (per-agent local pause)
-    # still applies on top of assignments.
-    agent_leg = Q(agent__runner_assignments__runner=runner)
-    if exclude_slugs:
-        # Per-agent pause: the runner locally paused these agents; never claim their
-        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
-        # Scoped to agents by name and by nature — pausing an agent says nothing
-        # about a repo, so project turns keep flowing.
-        agent_leg &= ~Q(agent__slug__in=list(exclude_slugs))
-    target_q = agent_leg | Q(project__in=projects)
-    if session_capable:
-        # Stickiness: a bound session's turns go to the binding holder ONLY. A
-        # bound session whose holder is gone claims NOWHERE until the user places
-        # it (chat offers wait/continue). Unbound sessions are open here and
-        # refined per-candidate below (agent sessions follow the assignment
-        # cascade; project sessions stay any-sessions-capable).
-        session_leg = Q(chat_session__isnull=False) & (
-            Q(chat_session__runner_binding__isnull=True)
-            | Q(chat_session__runner_binding__runner__isnull=True)
-            | Q(chat_session__runner_binding__runner=runner)
-        )
-        target_q = target_q | session_leg
+    target_q = runner_target_q(runner, exclude_slugs)
     # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
     # this runner is claimable even with empty capabilities — that is what lets a
     # warm standby be drilled. A turn pinned elsewhere is invisible. Note the pin
@@ -726,6 +824,14 @@ def record_session(
         binding.runner = runner
         binding.host = runner.host
         binding.session_key = emdash_task_id
+        # Name the row after the emdash task the human actually sees.
+        # _thread_session titles a BRAND-NEW session with the raw thread_key,
+        # which for an agent turn is an opaque hash (a real one leaked into the
+        # Sessions list as "19f91250349ec91b"). Only retitle when the title is
+        # still that fallback — never clobber a human-set chat title.
+        if emdash_task_id and binding.session.title == thread_key:
+            binding.session.title = emdash_task_id[:200]
+            binding.session.save(update_fields=["title"])
         binding.live_seen_at = timezone.now()
         if agent_task_ext_id is not None:
             binding.agent_task_ext_id = agent_task_ext_id
@@ -736,10 +842,18 @@ def record_session(
 
 
 @transaction.atomic
-def replace_reported_sessions(runner: Runner, workspace, sessions: list) -> int:
+def replace_reported_sessions(
+    runner: Runner, workspace, sessions: list, archived: list[str] | None = None
+) -> int:
     """Upsert a durable Session(origin=runner) + RunnerBinding per reported
     session. Sessions that fell off the report keep their Session row but have
     their live binding cleared.
+
+    `archived` is the CLOSING signal — emdash task names this runner has seen
+    archived. Absence from `sessions` is ambiguous (archived? runner down?
+    truncated?), so it can never retire a row on its own; an explicit name here can.
+    Scoped to THIS runner's bindings, because a task name is not unique across
+    machines and one laptop must never retire another's session.
 
     The SAME binding this writes doubles as the reuse target for a phone-
     dispatched "Continue" turn (`origin_ref.thread_key = "emdash:<task>"`,
@@ -771,9 +885,24 @@ def replace_reported_sessions(runner: Runner, workspace, sessions: list) -> int:
     now_keys = {s.emdash_task for s in deduped}
 
     for s in deduped:
+        # Find this runner's binding for the task WITHOUT depending on the live
+        # `runner` FK — the clear step below nulls it for anything that fell off the
+        # report, and a lookup keyed on it would then miss the row and fork a
+        # DUPLICATE Session when the task reappears. The two branches are
+        # asymmetric on purpose: `runner=runner` preserves today's behaviour
+        # exactly while the FK is set (legacy bindings carry host="" and would stop
+        # matching if we keyed on host alone), and the null branch recovers a row
+        # THIS runner previously released — scoped by host, because emdash task
+        # names collide across machines and one laptop must never claim another's.
+        # The null branch requires a NON-BLANK host: a legacy binding with host=""
+        # would otherwise be recoverable by any runner whose own host is "" (two
+        # un-heartbeated runners would fuse). `runner=runner` still covers a
+        # host="" binding this runner currently owns, so that case is unaffected.
+        host_match = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
         binding = (
             RunnerBinding.objects.select_for_update()
-            .filter(runner=runner, session_key=s.emdash_task)
+            .filter(session_key=s.emdash_task)
+            .filter(Q(runner=runner) | host_match)
             .first()
         )
         if binding is None:
@@ -784,12 +913,21 @@ def replace_reported_sessions(runner: Runner, workspace, sessions: list) -> int:
                 title=s.emdash_task,
             )
             binding = RunnerBinding(session=session, session_key=s.emdash_task)
-            # thread_key/host are the binding's durable IDENTITY — stamp them
-            # only at creation. An existing binding may already be owned by an
-            # agent/phone thread (record_session), and this report loop must
-            # not steal it: see the docstring above.
             binding.thread_key = f"emdash:{s.emdash_task}"
             binding.host = runner.host
+        else:
+            # thread_key/host are the binding's durable IDENTITY. NEVER overwrite a
+            # non-empty one — an existing binding may be owned by an agent/phone
+            # thread (record_session) and this report loop must not steal it (see
+            # the docstring above). But DO fill an EMPTY one: bindings predating the
+            # SessionLink fold have host="" and can never satisfy
+            # RunnerBinding.reusable_by (which requires runner AND host), so a chat
+            # sent to one spawned a fresh emdash session forever instead of reusing
+            # the live one. Fill-if-empty heals those without clobbering anything.
+            if not binding.thread_key:
+                binding.thread_key = f"emdash:{s.emdash_task}"
+            if not binding.host:
+                binding.host = runner.host
         binding.runner = runner
         binding.status = s.status or ""
         binding.last_interacted_at = _aware(s.last_interacted_at)
@@ -797,7 +935,30 @@ def replace_reported_sessions(runner: Runner, workspace, sessions: list) -> int:
         binding.tail = list(s.recent_messages or [])
         binding.save()
 
-    # Clear the live pointer on this runner's bindings that were NOT re-reported.
+    # Un-archive anything re-reported as open. The DERIVED staleness half of
+    # `state=active` recomputes on every read, but this WRITTEN half does not heal
+    # itself — without this, a task you reopened in emdash stays archived forever.
+    if now_keys:
+        Session.objects.filter(
+            runner_binding__runner=runner,
+            runner_binding__session_key__in=now_keys,
+            status=Session.ARCHIVED,
+        ).update(status=Session.ACTIVE)
+
+    # Apply the closing signal. `now_keys` wins over `archived`: emdash task names are
+    # not unique, so an open task must never be retired by an archived namesake.
+    closed = [k for k in (archived or []) if k and k not in now_keys]
+    if closed:
+        Session.objects.filter(
+            runner_binding__runner=runner,
+            runner_binding__session_key__in=closed,
+        ).update(status=Session.ARCHIVED)
+
+    # Clear the live pointer on this runner's bindings that were NOT re-reported —
+    # archived ones included, so `runner=None` keeps meaning exactly "not live on any
+    # runner" (which is what keeps archived rows out of list_visible_sessions). Safe
+    # because the upsert lookup above no longer depends on this FK: it recovers a
+    # released binding by (session_key, host), so nulling it costs nothing.
     RunnerBinding.objects.filter(runner=runner).exclude(session_key__in=now_keys).update(
         runner=None
     )

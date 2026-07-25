@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { listOpenItems, type ItemOut } from '@/api/items'
-import { listRunners, type RunnerOut } from '@/api/harness'
+import { listRunners, listUnclaimableTurns, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -69,6 +69,20 @@ export default function SupervisorPage(): JSX.Element {
     }
   }, [])
 
+  // Queued turns nothing online can claim — polled with the runners, since
+  // declaring a repo on a runner is what clears them.
+  const [stuck, setStuck] = useState<UnclaimableTurn[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const load = () =>
+      listUnclaimableTurns()
+        .then((t) => { if (!cancelled) setStuck(t) })
+        .catch(() => { /* non-fatal: the banner is a warning, not a gate */ })
+    load()
+    const id = window.setInterval(load, 30_000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
+
   // Re-poll runners so the wrong-branch alert (below) appears/clears without a reload
   // — code_branch rides the REST runner, not the live socket overlay.
   useEffect(() => {
@@ -125,6 +139,36 @@ export default function SupervisorPage(): JSX.Element {
         <h1 className="text-lg font-semibold text-foreground">Supervisor</h1>
         <p className="mt-0.5 text-[12px] text-muted-foreground">Your fleet, and what it needs from you.</p>
       </header>
+
+      {/* LOUD alert: a queued turn addressed to an agent/repo NOTHING online declares
+          sits forever with no signal (one sat 12h). Make the stall visible. */}
+      {stuck.length > 0 && (
+        <div
+          role="alert"
+          data-testid="unclaimable-turns-alert"
+          className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
+        >
+          <p className="text-[13px] font-bold uppercase tracking-wide">
+            {stuck.every((t) => t.kind === 'offline')
+              ? `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} waiting on an unreachable runner`
+              : `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} no runner can claim`}
+          </p>
+          <ul className="mt-1 space-y-1">
+            {stuck.slice(0, 5).map((t) => (
+              <li key={t.turn_id} className="text-[13px] leading-snug">
+                <span className="rounded bg-warning/20 px-1 font-mono font-semibold">{t.target}</span>{' '}
+                {t.prompt ? <span className="opacity-90">“{t.prompt}”</span> : null}
+                <span className="block text-[12px] opacity-90">{t.reason}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[12px] leading-snug opacity-90">
+            {stuck.every((t) => t.kind === 'offline')
+              ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
+              : 'Declare it on a runner (Runners tab) or cancel the turn — it will not run otherwise.'}
+          </p>
+        </div>
+      )}
 
       {/* LOUD alert: a runner on any branch but main is silently running stale/wrong
           code (usually another process checked out a branch in its shared checkout). */}

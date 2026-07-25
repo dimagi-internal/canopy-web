@@ -22,6 +22,12 @@ class Config:
     # Kept modest so a message you send (and the reply) show up in the phone's tail
     # within ~10s; the bounded tail-read keeps even ~30 transcripts/10s cheap.
     session_report_seconds: int = 10
+    # How many emdash tasks the report carries. DISTINCT from session_tail_count
+    # below (which bounds the expensive transcript reads): a task truncated off THIS
+    # limit stops being reported at all, and after SESSION_STALE_AFTER the server
+    # auto-archives it. Silent truncation is therefore not cosmetic — keep it well
+    # above any realistic open-task count.
+    session_report_limit: int = 100
     state_path: str = ""
     # The runner drives emdash's real UI over CDP (create/reuse sessions); it needs
     # emdash launched with --remote-debugging-port=<cdp_port> (see "Emdash CDP").

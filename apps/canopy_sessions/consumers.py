@@ -251,7 +251,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # SESSION_TAIL_DEFAULT the REST load uses), never the head. Scroll-back
         # for earlier history is REST (GET /{id}/messages?before=); Plan 4 wires
         # it into the panel. The session.state frame shape is otherwise frozen.
-        messages, _has_more, _oldest = chat_services.tail_messages(self.session)
+        # ONE policy for both transports (services.visible_transcript): tail-first,
+        # falling back to the binding tail for a local session with no Message rows.
+        # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
+        messages, _has_more, _oldest = chat_services.visible_transcript(self.session)
         return {
             "event": "session.state",
             "data": serializers.session_state_dto(

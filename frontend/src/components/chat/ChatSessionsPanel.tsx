@@ -10,12 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
-import { createSession, listSessions, type ChatSession } from '@/api/chat'
+import { createSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { getAgentRunners, listAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
+import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { onlineSessionCapableRunners } from './runnerEligibility'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
@@ -44,6 +45,8 @@ export function ChatSessionsPanel({
   const [agents, setAgents] = useState<AgentOut[]>(agentsProp ?? [])
   const [projects, setProjects] = useState<ProjectSlug[]>([])
   const [loading, setLoading] = useState(true)
+  const [sort, setSort] = useState<SessionSort>('time')
+  const [showArchived, setShowArchived] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -64,7 +67,7 @@ export function ChatSessionsPanel({
     setLoading(true)
     // Sessions + projects always load (projects feed the "+ New chat" dropdown);
     // agents load unless provided by a prop.
-    const jobs: Promise<unknown>[] = [listSessions(), projectsApi.listSlugs()]
+    const jobs: Promise<unknown>[] = [listSessions(showArchived ? 'all' : 'active'), projectsApi.listSlugs()]
     if (!agentsProp) jobs.push(listAgents({ limit: 100 }))
     Promise.allSettled(jobs).then((results) => {
       if (!live) return
@@ -80,18 +83,19 @@ export function ChatSessionsPanel({
     return () => {
       live = false
     }
-  }, [agentsProp])
+  }, [agentsProp, showArchived])
 
   // A slow REST refresh keeps the unified list current (the live push into the
   // list is a deferred follow-up; per-row liveness is live inside ChatPanel).
   useEffect(() => {
+    const state: SessionState = showArchived ? 'all' : 'active'
     const id = window.setInterval(() => {
-      listSessions()
+      listSessions(state)
         .then(setSessions)
         .catch(() => { /* keep last-good; the mount fetch owns first-error surfacing */ })
     }, 20_000)
     return () => window.clearInterval(id)
-  }, [])
+  }, [showArchived])
 
   const agentName = useMemo(() => {
     const by = new Map(agents.map((a) => [a.slug, a.name]))
@@ -279,6 +283,39 @@ export function ChatSessionsPanel({
         </DropdownMenu>
       </div>
 
+      {(sessions.length > 1 || showArchived) && (
+        <div className="flex items-center gap-1 pb-2 text-xs">
+          <span className="mr-1 text-muted-foreground">Sort</span>
+          {(['time', 'project'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setSort(m)}
+              aria-pressed={sort === m}
+              className={
+                sort === m
+                  ? 'rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
+                  : 'rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
+              }
+            >
+              {m === 'time' ? 'Recent' : 'Project'}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            aria-pressed={showArchived}
+            className={
+              showArchived
+                ? 'ml-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
+                : 'ml-2 rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
+            }
+          >
+            Show archived
+          </button>
+        </div>
+      )}
+
       {error && <div className="py-2 text-sm text-destructive">{error}</div>}
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
@@ -289,10 +326,16 @@ export function ChatSessionsPanel({
         </div>
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border">
-          {sessions.map((s) => {
+          {sortSessions(sessions, sort).map((s, i, rows) => {
             const label = sessionTargetLabel(agentName(s.agent_slug), s.project ?? '')
+            const header = projectHeader(rows, i, sort)
             return (
               <li key={s.id}>
+                {header && (
+                  <div className="bg-muted/40 px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {header}
+                  </div>
+                )}
                 <Link
                   to={`/w/${s.workspace}/chat/${s.id}`}
                   className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted"
@@ -314,7 +357,7 @@ export function ChatSessionsPanel({
                         running
                       </span>
                     ) : (
-                      <span className="text-muted-foreground">{relativeTime(s.created_at, now)}</span>
+                      <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
                     )}
                     {s.runner_name && (
                       <span className="text-muted-foreground">

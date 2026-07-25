@@ -34,6 +34,15 @@ export async function listRunners(): Promise<RunnerOut[]> {
 // /api/w/{ws}/harness/turns/ (the server gates membership there). No hidden
 // default: the composer chooses the workspace (defaulting its VALUE to dimagi),
 // so repo→workspace ownership stays explicit and survives into cloud/multiplayer.
+export type UnclaimableTurn = components['schemas']['UnclaimableTurnOut']
+
+/** Queued turns no online runner can claim — a silent stall unless surfaced. */
+export async function listUnclaimableTurns(): Promise<UnclaimableTurn[]> {
+  const res = await apiV2.GET('/api/harness/turns/unclaimable')
+  // Array.from for the same Readable<T> reason as listRunners above.
+  return Array.from(unwrap(res, 'listUnclaimableTurns'))
+}
+
 export async function enqueueTurn(input: {
   agentSlug?: string
   project?: string

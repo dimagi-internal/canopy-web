@@ -78,9 +78,17 @@ class Client:
         )
         return payload or {}
 
-    def report_sessions(self, runner_id: str, sessions: list[dict]) -> None:
-        """Report the open emdash sessions this runner can see (wholesale)."""
-        self._call("POST", f"/runners/{runner_id}/sessions", {"sessions": sessions})
+    def report_sessions(
+        self, runner_id: str, sessions: list[dict], archived: list[str] | None = None
+    ) -> None:
+        """Report the open emdash sessions this runner can see (wholesale), plus the
+        task names it has seen ARCHIVED — the closing signal that lets the server
+        retire a session instead of inferring it from absence."""
+        self._call(
+            "POST",
+            f"/runners/{runner_id}/sessions",
+            {"sessions": sessions, "archived": archived or []},
+        )
 
     def sync_streams(self, runner_id: str) -> list[dict]:
         """The sessions a viewer is watching, which this runner should tail live."""

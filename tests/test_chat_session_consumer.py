@@ -9,6 +9,7 @@ import pytest
 from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import AnonymousUser, User
+from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import attach as attach_registry
@@ -244,4 +245,41 @@ async def test_heartbeat_renews_attach_count(monkeypatch):
     import asyncio
     await asyncio.sleep(0.05)
     assert str(session.id) in [str(s) for s in renewed]
+    await comm.disconnect()
+
+
+async def test_snapshot_falls_back_to_the_binding_tail():
+    """A local runner session has NO Message rows — the panel must still open populated.
+
+    Regression (prod): ChatPage's transcript comes from THIS snapshot, not from
+    getSession, so patching only the REST path left every runner-discovered
+    session rendering "Start the conversation" despite the binding holding a tail.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner
+
+    owner, _t, session = await database_sync_to_async(_seed)()
+
+    @database_sync_to_async
+    def _bind():
+        ws = session.workspace
+        r = Runner.objects.create(
+            name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=owner,
+            host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+        )
+        RunnerBinding.objects.create(
+            session=session, runner=r, session_key="ace-demo", thread_key="emdash:ace-demo",
+            host=r.host, last_interacted_at=timezone.now(),
+            tail=[{"role": "user", "text": "q1"}, {"role": "assistant", "text": "a1"}],
+        )
+
+    await _bind()
+    comm = await _connect(session, owner)
+    connected, _ = await comm.connect()
+    assert connected is True
+    snap = await _recv_match(comm, lambda f: f.get("event") == "session.state")
+    msgs = snap["data"]["messages"]
+    assert [m["plaintext"] for m in msgs] == ["q1", "a1"]
+    assert [m["turn_index"] for m in msgs] == [-2, -1]   # never collides with real rows
+    assert [m["id"] for m in msgs] == ["tail:-2", "tail:-1"]
     await comm.disconnect()

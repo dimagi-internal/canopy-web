@@ -1980,10 +1980,13 @@ export interface paths {
         readonly put?: never;
         /**
          * Post Session Stream
-         * @description The runner ships live assistant events for a session it backs; the server fans
-         *     them to the session group as the same chat.turn_event frames the chat path uses
-         *     (turn-less -> the consumer derives seq:<n> message ids). Live view only — no
-         *     Message rows (that is the on-demand backfill, POST /session-backfill).
+         * @description The runner ships live conversational events for a session it backs. For an
+         *     origin=runner session, events carrying a transcript ordinal are PERSISTED as
+         *     Message rows first (the transcript is the durable source — spec 2026-07-24),
+         *     then the assistant frames fan out to the session group as the same
+         *     chat.turn_event frames the chat path uses (turn-less -> the consumer derives
+         *     seq:<n> message ids). User events are persisted but never live-pushed — the
+         *     sender's client already echoed them optimistically.
          */
         readonly post: operations["apps_harness_api_post_session_stream"];
         readonly delete?: never;
@@ -2027,6 +2030,27 @@ export interface paths {
          *     once and clears the request. Runner-owned-binding gated.
          */
         readonly post: operations["apps_harness_api_post_session_backfill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/turns/unclaimable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Queued turns no online runner can claim
+         * @description A queued turn addressed to an agent/repo nothing declares sits forever with
+         *     no signal (one sat 12h). Surfacing it turns a silent stall into a warning.
+         */
+        readonly get: operations["apps_harness_api_list_unclaimable_turns"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2370,6 +2394,50 @@ export interface paths {
         readonly get: operations["apps_canopy_sessions_api_list_messages"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Archive a session
+         * @description Retire a session by hand. The escape hatch for a web chat — no runner will ever
+         *     report it archived — and for force-retiring a row without touching emdash.
+         *     Idempotent, and never destructive: /unarchive brings it straight back.
+         */
+        readonly post: operations["apps_canopy_sessions_api_archive_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/unarchive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Unarchive a session
+         * @description Undo an archive. Note this clears only the WRITTEN half: a runner session that
+         *     is also past SESSION_STALE_AFTER stays out of `state=active` until its runner
+         *     reports it again, because that half is derived on every read.
+         */
+        readonly post: operations["apps_canopy_sessions_api_unarchive_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4208,6 +4276,11 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            readonly last_activity_at: string;
             /**
              * Origin
              * @default web
@@ -6303,6 +6376,11 @@ export interface components {
              * @default []
              */
             readonly sessions: readonly components["schemas"]["ReportedSessionIn"][];
+            /**
+             * Archived
+             * @default []
+             */
+            readonly archived: readonly string[];
         };
         /** ReportedSessionIn */
         readonly ReportedSessionIn: {
@@ -6334,6 +6412,8 @@ export interface components {
             readonly session_key: string;
             /** Project */
             readonly project: string;
+            /** Last Index */
+            readonly last_index?: number | null;
         };
         /** StreamSyncOut */
         readonly StreamSyncOut: {
@@ -6354,6 +6434,11 @@ export interface components {
             readonly kind: string;
             /** Seq */
             readonly seq: number;
+            /**
+             * Index
+             * @default -1
+             */
+            readonly index: number;
             /**
              * Payload
              * @default {}
@@ -6406,6 +6491,11 @@ export interface components {
              * @default
              */
             readonly text: string;
+            /**
+             * Index
+             * @default -1
+             */
+            readonly index: number;
         };
         /** SessionBackfillIn */
         readonly SessionBackfillIn: {
@@ -6419,6 +6509,30 @@ export interface components {
              * @default []
              */
             readonly messages: readonly components["schemas"]["BackfillMessageIn"][];
+        };
+        /**
+         * UnclaimableTurnOut
+         * @description A queued turn no online runner can claim — surfaced so a stall is loud.
+         */
+        readonly UnclaimableTurnOut: {
+            /** Turn Id */
+            readonly turn_id: string;
+            /** Target */
+            readonly target: string;
+            /** Prompt */
+            readonly prompt: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Kind
+             * @default config
+             */
+            readonly kind: string;
         };
         /** TurnIn */
         readonly TurnIn: {
@@ -6638,6 +6752,11 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            readonly last_activity_at: string;
             /**
              * Origin
              * @default web
@@ -10153,6 +10272,26 @@ export interface operations {
             };
         };
     };
+    readonly apps_harness_api_list_unclaimable_turns: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["UnclaimableTurnOut"][];
+                };
+            };
+        };
+    };
     readonly apps_harness_api_list_turns: {
         readonly parameters: {
             readonly query?: {
@@ -10567,7 +10706,10 @@ export interface operations {
     };
     readonly apps_canopy_sessions_api_list_sessions: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly state?: string;
+                readonly limit?: number;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -10654,6 +10796,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MessagePageOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_archive_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_unarchive_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
                 };
             };
         };

@@ -1,0 +1,312 @@
+"""Persist a runner session's transcript (durable, restart-proof live view).
+
+Spec: docs/superpowers/specs/2026-07-24-persist-runner-session-transcript-design.md.
+For an origin=runner session the laptop transcript is the single source of truth:
+every Message.turn_index is the transcript record ordinal, so the live stream
+(forward) and backfill (older) are the SAME rows by identity — idempotent
+get_or_create, no collision. Web sessions are unchanged.
+"""
+import pytest
+from channels.db import database_sync_to_async
+from django.contrib.auth.models import User
+from django.test import Client
+from django.utils import timezone
+
+from apps.canopy_sessions import services
+from apps.canopy_sessions.models import Message, RunnerBinding, Session
+from apps.harness.models import Runner, Turn
+from apps.workspaces.models import Workspace, WorkspaceMembership
+
+pytestmark = pytest.mark.django_db
+
+
+def _ctx(*, origin=Session.ORIGIN_RUNNER):
+    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    runner = Runner.objects.create(
+        name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    s = Session.objects.create(workspace=ws, origin=origin, created_by=user, title="ace-demo")
+    RunnerBinding.objects.create(
+        session=s, runner=runner, session_key="ace-demo",
+        thread_key="emdash:ace-demo", host=runner.host,
+    )
+    c = Client(); c.force_login(user)
+    return user, ws, runner, s, c
+
+
+def _rows(session):
+    return [(m.turn_index, m.role, m.plaintext) for m in session.messages.order_by("turn_index")]
+
+
+# --- persist_transcript_rows: one idempotent write path -------------------
+
+def test_persist_rows_keys_on_the_transcript_ordinal_idempotently():
+    _u, _w, _r, s, _c = _ctx()
+    rows = [
+        {"index": 5, "role": "user", "text": "q1"},
+        {"index": 7, "role": "assistant", "text": "a1"},
+    ]
+    assert services.persist_transcript_rows(s, rows) == 2
+    # Re-shipping the same records (stream retry, backfill overlap) is a no-op.
+    assert services.persist_transcript_rows(s, rows) == 0
+    assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
+
+
+def test_persist_rows_assigns_sequentially_when_no_ordinal():
+    """index=-1 (an old runner) => server assigns the next free index."""
+    _u, _w, _r, s, _c = _ctx()
+    rows = [
+        {"index": -1, "role": "user", "text": "q1"},
+        {"index": -1, "role": "assistant", "text": "a1"},
+    ]
+    assert services.persist_transcript_rows(s, rows) == 2
+    assert _rows(s) == [(0, "user", "q1"), (1, "assistant", "a1")]
+
+
+def test_persist_rows_skips_unknown_roles():
+    _u, _w, _r, s, _c = _ctx()
+    rows = [
+        {"index": 3, "role": "status", "text": "nope"},
+        {"index": 4, "role": "assistant", "text": "a"},
+    ]
+    assert services.persist_transcript_rows(s, rows) == 1
+    assert _rows(s) == [(4, "assistant", "a")]
+
+
+# --- the live stream persists (runner sessions, ordinals only) ------------
+
+def _post_stream(c, runner, session, events):
+    return c.post(
+        f"/api/harness/runners/{runner.id}/session-stream",
+        data={"session_id": str(session.id), "events": events},
+        content_type="application/json",
+    )
+
+
+def test_stream_post_persists_ordinal_rows_and_fans_out_assistant_only(monkeypatch):
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+    _u, _w, runner, s, c = _ctx()
+    body = _post_stream(c, runner, s, [
+        {"kind": "user", "seq": 5, "index": 5, "payload": {"text": "q1"}},
+        {"kind": "assistant", "seq": 7, "index": 7, "payload": {"text": "a1"}},
+    ]).json()
+    assert body == {"count": 2}
+    assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
+    # The user's own words are NOT live-pushed (the frontend already echoed them
+    # optimistically); only the assistant frame fans out.
+    kinds = [m["event"]["kind"] for _g, m in published]
+    assert kinds == ["assistant"]
+
+
+def test_stream_post_without_ordinal_does_not_persist(monkeypatch):
+    """An OLD runner (no index) keeps the legacy live-view-only contract: persisting
+    assistant-only rows would kill the tail fallback's human side (trap 2)."""
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
+    _u, _w, runner, s, c = _ctx()
+    _post_stream(c, runner, s, [{"kind": "assistant", "seq": 0, "payload": {"text": "a"}}])
+    assert s.messages.count() == 0
+
+
+def test_stream_post_never_persists_for_a_web_session(monkeypatch):
+    """A web session's index space belongs to send_message/projection — the
+    transcript stream must not write into it."""
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
+    _u, _w, runner, s, c = _ctx(origin=Session.ORIGIN_WEB)
+    _post_stream(c, runner, s, [
+        {"kind": "assistant", "seq": 9, "index": 9, "payload": {"text": "a"}},
+    ])
+    assert s.messages.count() == 0
+
+
+# --- catch-up marker: GET /streams carries last_index ----------------------
+
+def test_streams_descriptor_carries_last_index():
+    _u, _w, runner, s, c = _ctx()
+    RunnerBinding.objects.filter(session=s).update(stream_desired=True)
+    body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
+    assert body["streams"][0]["last_index"] is None      # no rows yet
+    Message.objects.create(session=s, turn_index=7, role=Message.ASSISTANT, plaintext="a")
+    body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
+    assert body["streams"][0]["last_index"] == 7
+
+
+# --- backfill: same rows by identity, fills the older gap ------------------
+
+def test_write_backfill_upserts_older_rows_around_streamed_ones():
+    _u, _w, _r, s, _c = _ctx()
+    services.persist_transcript_rows(s, [{"index": 7, "role": "assistant", "text": "a2"}])
+    full = [
+        {"index": 1, "role": "user", "text": "q1"},
+        {"index": 3, "role": "assistant", "text": "a1"},
+        {"index": 5, "role": "user", "text": "q2"},
+        {"index": 7, "role": "assistant", "text": "a2"},
+    ]
+    assert services.write_backfill(s, full) == 3          # 7 already exists
+    assert _rows(s) == [
+        (1, "user", "q1"), (3, "assistant", "a1"), (5, "user", "q2"), (7, "assistant", "a2"),
+    ]
+    assert services.write_backfill(s, full) == 0          # idempotent re-ship
+
+
+def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
+    """An OLD runner ships {role,text} only — sequential, and only into an empty
+    session, exactly as before."""
+    _u, _w, _r, s, _c = _ctx()
+    msgs = [{"role": "user", "text": "q"}, {"role": "assistant", "text": "a"}]
+    assert services.write_backfill(s, msgs) == 2
+    assert services.write_backfill(s, msgs) == 0
+    assert _rows(s) == [(0, "user", "q"), (1, "assistant", "a")]
+
+
+def test_request_backfill_requested_when_rows_lack_the_start(monkeypatch):
+    """Streamed rows alone (ordinals > 0) are not the full history — 'ready' only
+    when the start of the transcript (turn_index 0) is present."""
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
+    _u, _w, _r, s, c = _ctx()
+    Message.objects.create(session=s, turn_index=3, role=Message.ASSISTANT, plaintext="a")
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
+    Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="q")
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "ready"}
+
+
+# --- send_message: the transcript is the sole durable source ---------------
+
+def test_runner_session_send_writes_no_durable_user_row():
+    user, _w, _r, s, _c = _ctx()
+    msg, turn = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    assert s.messages.count() == 0                        # durable copy = transcript
+    assert turn is not None and turn.status == Turn.QUEUED
+    # The send contract still returns a message the client can render.
+    assert msg.role == Message.USER and msg.plaintext == "hello"
+    assert msg.pk and str(msg.pk) != "None"
+    assert msg.created_at is not None
+
+
+def test_runner_session_send_is_idempotent_per_client_id():
+    user, _w, _r, s, _c = _ctx()
+    _m1, turn1 = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    _m2, turn2 = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    assert turn1.id == turn2.id
+    assert Turn.objects.filter(chat_session=s).count() == 1
+
+
+def test_runner_session_sends_without_client_id_stay_distinct():
+    """The WS path sends no client_id. Without a durable row, _next_index no longer
+    advances between sends — the fallback key must still differ per send."""
+    user, _w, _r, s, _c = _ctx()
+    _m1, turn1 = services.send_message(session=s, text="one", user=user)
+    _m2, turn2 = services.send_message(session=s, text="two", user=user)
+    assert turn1.id != turn2.id
+    assert Turn.objects.filter(chat_session=s).count() == 2
+
+
+def test_web_session_send_still_writes_the_user_row():
+    user, ws, _r, _s, _c = _ctx()
+    s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="w")
+    msg, _turn = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    assert s.messages.count() == 1
+    assert msg.pk == s.messages.get().pk
+
+
+def test_rest_send_returns_a_transient_message_for_runner_sessions():
+    _u, _w, _r, s, c = _ctx()
+    body = c.post(
+        f"/api/canopy-sessions/{s.id}/send",
+        data={"text": "hello", "client_id": "n1"},
+        content_type="application/json",
+    ).json()
+    assert body["message"]["plaintext"] == "hello"
+    assert body["message"]["role"] == "user"
+    assert body["turn_id"]
+    assert s.messages.count() == 0
+
+
+# --- the ledger projection stays out of the transcript's index space -------
+
+def test_project_events_skips_runner_sessions():
+    """A bridged chat reply reaches the DB via the transcript stream (ordinal-keyed);
+    projecting it AGAIN from the TurnEvent ledger would double-persist it."""
+    from apps.harness import services as harness
+
+    user, _w, _r, s, _c = _ctx()
+    turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
+                                   idempotency_key="t1", prompt="hi")
+    harness.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
+    assert services.project_events(turn, list(turn.events.all())) == 0
+    assert s.messages.count() == 0
+
+
+def test_project_events_still_materializes_web_sessions():
+    from apps.harness import services as harness
+
+    user, ws, _r, _s, _c = _ctx()
+    s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="w")
+    turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
+                                   idempotency_key="t2", prompt="hi")
+    harness.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
+    assert services.project_events(turn, list(turn.events.all())) == 1
+    assert s.messages.count() == 1
+
+
+# --- the DoD flow: attach → persist → detach → catch-up → parity -----------
+
+async def _ws_messages(session, user):
+    from channels.testing import WebsocketCommunicator
+
+    from apps.canopy_sessions.consumers import SessionConsumer
+
+    comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
+    comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
+    comm.scope["user"] = user
+    connected, _ = await comm.connect()
+    assert connected is True
+    for _ in range(14):
+        frame = await comm.receive_json_from(timeout=5)
+        if frame.get("event") == "session.state":
+            await comm.disconnect()
+            return frame["data"]["messages"]
+    await comm.disconnect()
+    raise AssertionError("no session.state frame")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_catch_up_fills_the_gap_and_both_transports_agree(monkeypatch):
+    """Attach → stream persists → detach → the agent keeps writing → re-attach →
+    catch-up ships everything after last_index → REST and the WS snapshot show the
+    same complete, ordered conversation with no dup of the user's own send."""
+    def _flow():
+        user, _w, runner, s, c = _ctx()
+        # Viewer attaches; the runner streams the live exchange with ordinals.
+        assert c.post(f"/api/canopy-sessions/{s.id}/attach").json()["streaming"] is True
+        # The human sends from the phone: optimistic echo only, no durable row.
+        services.send_message(session=s, text="q1", user=user, client_id="n1")
+        _post_stream(c, runner, s, [
+            {"kind": "user", "seq": 5, "index": 5, "payload": {"text": "q1"}},
+            {"kind": "assistant", "seq": 7, "index": 7, "payload": {"text": "a1"}},
+        ])
+        # The runner's catch-up marker is now server-side.
+        RunnerBinding.objects.filter(session=s).update(stream_desired=True)
+        body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
+        assert body["streams"][0]["last_index"] == 7
+        # Viewer detaches; the agent keeps working while nobody watches.
+        c.post(f"/api/canopy-sessions/{s.id}/detach")
+        # Re-attach: the runner ships everything after last_index.
+        c.post(f"/api/canopy-sessions/{s.id}/attach")
+        _post_stream(c, runner, s, [
+            {"kind": "user", "seq": 8, "index": 8, "payload": {"text": "q2"}},
+            {"kind": "assistant", "seq": 9, "index": 9, "payload": {"text": "a2"}},
+        ])
+        rest = c.get(f"/api/canopy-sessions/{s.id}").json()["messages"]
+        return user, s, rest
+
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
+    user, session, rest = await database_sync_to_async(_flow)()
+    expected = [(5, "q1"), (7, "a1"), (8, "q2"), (9, "a2")]
+    assert [(m["turn_index"], m["plaintext"]) for m in rest] == expected
+    ws_rows = await _ws_messages(session, user)
+    assert [(m["turn_index"], m["plaintext"]) for m in ws_rows] == expected

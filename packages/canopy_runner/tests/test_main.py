@@ -62,6 +62,7 @@ def db(tmp_path: Path) -> str:
 class FakeClient:
     def __init__(self):
         self.heartbeats = []
+        self.reported_sessions = []
 
     def heartbeat(self, runner_id, active_turn_ids, degraded=False, note="", **kw):
         self.heartbeats.append((runner_id, list(active_turn_ids), degraded, note))
@@ -69,6 +70,9 @@ class FakeClient:
 
     def claim(self, runner_id, paused_agents=None):
         return None
+
+    def report_sessions(self, runner_id, sessions, archived=None):
+        self.reported_sessions.append((runner_id, sessions, archived))
 
 
 def _cfg(db, tmp_path):
@@ -315,7 +319,7 @@ class _CdpLoopClient:
         self.heartbeats.append({"degraded": degraded, "note": note,
                                 "ready": ready, "ready_note": ready_note})
 
-    def report_sessions(self, runner_id, sessions):
+    def report_sessions(self, runner_id, sessions, archived=None):
         pass
 
     def sync_schedules(self, runner_id):
@@ -456,7 +460,7 @@ def test_maybe_report_sessions_throttled(db, tmp_path, monkeypatch):
     from canopy_runner import transcript
     cfg = _cfg(db, tmp_path)  # session_report_seconds defaults to 10
     calls = []
-    monkeypatch.setattr(emdash, "list_open_sessions", lambda p: [])  # no sessions -> no change
+    monkeypatch.setattr(emdash, "list_open_sessions", lambda p, limit=30: [])  # no sessions -> no change
     monkeypatch.setattr(transcript, "attach_recent_tail", lambda *a, **k: calls.append(1))
     m._last_session_report = 0.0
     clock = [1000.0]

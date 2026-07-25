@@ -67,6 +67,10 @@ class SessionOut(Schema):
     title: str
     status: str
     created_at: dt.datetime
+    # When the session last DID something (binding.last_interacted_at > newest
+    # message > created_at). created_at is when canopy first NOTICED a discovered
+    # session, which is identical across a report sweep — useless as an age.
+    last_activity_at: dt.datetime
     # Liveness (Plan 4) — computed from the RunnerBinding; a web session with no
     # binding is origin="web", running=False, runner_name=None.
     origin: str = "web"

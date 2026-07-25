@@ -1,6 +1,7 @@
 import { useParams } from 'react-router-dom'
 import { DddShell } from '@/components/ddd/DddShell'
 import { NarrativeLanding } from '@/components/ddd/NarrativeLanding'
+import { NarrativeGallery } from '@/components/ddd/NarrativeGallery'
 import { RunPackage } from '@/components/ddd/RunPackage'
 
 /**
@@ -21,9 +22,7 @@ export function DddPage() {
       ) : narrative ? (
         <NarrativeLanding key={narrative} slug={narrative} />
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-          Select a narrative to see its runs.
-        </div>
+        <NarrativeGallery />
       )}
     </DddShell>
   )

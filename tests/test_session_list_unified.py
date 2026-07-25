@@ -27,7 +27,7 @@ def test_list_unions_web_and_runner_sessions():
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
     ids = {row["id"] for row in body}
     assert ids == {str(web.id), str(disc.id)}   # BOTH origins, one row each
@@ -39,7 +39,7 @@ def test_list_row_carries_liveness():
     runner = Runner.objects.create(name="jj-air", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
     assert row["origin"] == "runner"
     assert row["running"] is True                # runner online + fresh interaction
@@ -55,7 +55,7 @@ def test_idle_when_runner_offline_or_stale():
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.DISCONNECTED, paired_by=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
     assert row["running"] is False
     assert row["runner_name"] == "laptop"        # still shown, just not "running"
@@ -78,7 +78,7 @@ def test_running_sorts_first():
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
     RunnerBinding.objects.create(session=live, runner=runner, session_key="echo-1",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
     ids = [r["id"] for r in body]
     assert body[0]["id"] == str(live.id)         # running row floats to the top
@@ -98,7 +98,7 @@ def test_dedup_web_session_with_live_binding_appears_once():
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
     RunnerBinding.objects.create(session=mine_and_live, runner=runner, session_key="echo-1",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
     matches = [row for row in body if row["id"] == str(mine_and_live.id)]
     assert len(matches) == 1                    # would be 2 if .distinct() were dropped
@@ -131,7 +131,7 @@ def test_list_does_not_leak_other_users_or_workspaces():
                                          status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                          paired_by=stranger)
     RunnerBinding.objects.create(session=stranger_other_ws, runner=other_runner, session_key="echo-2",
-                                 last_interacted_at=timezone.now())
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
 
     body = c.get("/api/canopy-sessions/").json()
     ids = {row["id"] for row in body}
@@ -150,7 +150,7 @@ def test_running_false_when_runner_online_but_interaction_stale():
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
     stale_ts = timezone.now() - dt.timedelta(seconds=150)  # RUNNING_WINDOW (120s) + 30
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
-                                 last_interacted_at=stale_ts)
+                                 last_interacted_at=stale_ts, live_seen_at=timezone.now())
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
     assert row["running"] is False
     assert row["runner_name"] == "laptop"        # still shown, just not "running"
