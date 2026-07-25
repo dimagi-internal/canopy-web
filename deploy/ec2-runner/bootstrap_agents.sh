@@ -10,9 +10,9 @@
 # deliberately NOT from cloud-init's ExecStartPre, which fires on every service
 # start before those credentials exist (a fresh pairing has none yet; the operator
 # stages them via wire.sh after the runner first appears in the fleet). Cloning the
-# PRIVATE per-agent repos (github.com/dimagi-internal/<slug>) and running `canopy
-# provision` (1Password reads) both need that credential bundle — see the ordering
-# note in cloud_runner.py where this is invoked.
+# PRIVATE per-agent repos (github.com/dimagi-internal/<slug>) and provisioning
+# their env via `op inject` (1Password reads) both need that credential bundle —
+# see the ordering note in cloud_runner.py where this is invoked.
 #
 # Steps below mirror docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md
 # §1. Each step is OK-skipped when already satisfied. Deliberately NOT `set -e`:
@@ -208,30 +208,42 @@ bootstrap_one_agent() {
   fi
   ok "$slug: repo at $dest"
 
-  if command -v canopy >/dev/null 2>&1; then
-    if canopy provision --repo "$dest"; then
-      ok "$slug: canopy provision"
+  # Provision the agent's env the 1Password-NATIVE way: `op inject` resolves the
+  # tracked `.env.tpl` (KEY=op://... lines) into the worktree-clean global home
+  # ~/.<slug>/.env. This is the fleet standard — one injector (op inject), no
+  # bespoke manifest tool. `bin/_env.py` in each agent reads ~/.<slug>/.env.
+  local env_tpl="$dest/.env.tpl"
+  local env_out="$HOME/.${slug}/.env"
+  if [[ -f "$env_tpl" ]]; then
+    mkdir -p "$(dirname "$env_out")"
+    # --account isn't needed with a service-account token (OP_SERVICE_ACCOUNT_TOKEN);
+    # op inject writes the resolved file, or errors and writes nothing.
+    if op inject -i "$env_tpl" -o "$env_out" -f >/dev/null 2>&1; then
+      chmod 0600 "$env_out"
+      ok "$slug: op inject .env.tpl -> $env_out"
     else
-      warn "$slug: canopy provision reported errors (see above) — continuing, agent may be partially ready"
+      warn "$slug: op inject failed (unresolved op:// ref, or .env.tpl not migrated to a per-agent vault?) — agent may be partially ready"
     fi
   else
-    warn "$slug: canopy CLI unavailable — skipped provisioning"
+    warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
   fi
 
-  # A pre-tenancy-migration secrets.yaml may still target the macOS path
-  # (~/Library/Application Support/gogcli/credentials-<client>.json) literally —
-  # `canopy provision` writes wherever the manifest says, verbatim, and the
-  # per-repo migration to the Linux-correct path is tracked separately (spec §5,
-  # out of scope here). Bridge the gap so THIS box still ends up with the
-  # credentials where gog actually looks for them, without waiting on that
-  # migration to land in five other repos first.
+  # The gog OAuth-client credential FILE (not an env var): a single 1Password
+  # field materialized with native `op read` (no second injector). The shared
+  # `canopy` client's item lives in Canopy-Shared; an agent with its OWN client
+  # (echo, ace) keeps it in that agent's vault.
   local gog_dir; gog_dir="$(gog_config_dir)"
-  local want="$gog_dir/credentials-${client}.json"
-  local mac_shaped="$HOME/Library/Application Support/gogcli/credentials-${client}.json"
-  if [[ ! -f "$want" && -f "$mac_shaped" ]]; then
+  local client_file="$gog_dir/credentials-${client}.json"
+  local client_vault; [[ "$client" == "canopy" ]] && client_vault="Canopy-Shared" || client_vault="$vault"
+  if command -v op >/dev/null 2>&1 && [[ ! -f "$client_file" ]]; then
     mkdir -p "$gog_dir"
-    cp "$mac_shaped" "$want" && chmod 0600 "$want"
-    ok "$slug: bridged un-migrated mac-shaped credentials path -> $want"
+    if op read "op://${client_vault}/gog-oauth-client/credential" >"$client_file" 2>/dev/null && [[ -s "$client_file" ]]; then
+      chmod 0600 "$client_file"
+      ok "$slug: gog client creds -> $client_file"
+    else
+      rm -f "$client_file"
+      warn "$slug: op read op://${client_vault}/gog-oauth-client/credential failed — gmail may not authorize"
+    fi
   fi
 
   if ! command -v gog >/dev/null 2>&1; then
