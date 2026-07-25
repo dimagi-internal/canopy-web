@@ -236,6 +236,28 @@ def test_stop_cancels_queued_turn(client):
     assert turn.status == Turn.CANCELLED
 
 
+def test_stop_cancels_every_non_terminal_turn_not_just_the_newest(client):
+    # I1: a mid-reply send queues turn B behind still-running turn A. Stop must
+    # reach BOTH — B (queued) finishes CANCELLED, A (running) gets a
+    # cancel_requested ledger event so its runner is signalled to interrupt.
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    turn_a = Turn.objects.create(
+        chat_session_id=sid, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING,
+    )
+    turn_b = Turn.objects.create(
+        chat_session_id=sid, origin=Turn.ORIGIN_API, idempotency_key="b1", status=Turn.QUEUED,
+    )
+    r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json() == {"cancelled": True}
+
+    turn_a.refresh_from_db()
+    turn_b.refresh_from_db()
+    assert turn_a.status == Turn.RUNNING  # untouched — runner owns the lease
+    assert turn_a.events.filter(kind="cancel_requested").exists()
+    assert turn_b.status == Turn.CANCELLED
+
+
 def test_stop_with_nothing_to_cancel_returns_false(client):
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")

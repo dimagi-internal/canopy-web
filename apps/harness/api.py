@@ -603,8 +603,8 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
     turn = _turn_or_404(request, turn_id)
-    if payload.status not in (Turn.DONE, Turn.FAILED):
-        raise HttpError(422, "finish status must be done|failed")
+    if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
+        raise HttpError(422, "finish status must be done|failed|cancelled")
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)

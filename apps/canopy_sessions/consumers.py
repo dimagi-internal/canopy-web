@@ -147,10 +147,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # turn events fan out to the session group automatically (realtime signal).
 
     async def _chat_stop(self, data):
-        # Un-queue a queued turn, or signal the runner to interrupt an executing one
-        # (harness_services.cancel_turn). Broadcast to the WHOLE group so every
-        # participant's Stop UI resets, not just the sender's.
-        await database_sync_to_async(self._cancel_session_turn)()
+        # Un-queue every queued turn, or signal the runner to interrupt an
+        # executing one (harness_services.cancel_turn). Broadcast to the WHOLE
+        # group so every participant's Stop UI resets, not just the sender's —
+        # but only when something was actually cancelled/cancel-requested, so a
+        # stray Stop with nothing to cancel doesn't flip everyone's UI to
+        # "cancelled" for no reason.
+        cancelled = await database_sync_to_async(self._cancel_session_turn)()
+        if not cancelled:
+            return
         await self._broadcast({
             "type": "chat.stream_cancelled",
             "message_id": data.get("message_id"), "partial_len": 0,
@@ -173,13 +178,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             draft.save(update_fields=["body", "version", "updated_at"])
         return draft
 
-    def _cancel_session_turn(self):
-        turn = (
-            Turn.objects.filter(chat_session=self.session, status__in=list(Turn.NON_TERMINAL))
-            .order_by("-created_at").first()
-        )
-        if turn is not None:
-            harness_services.cancel_turn(turn)
+    def _cancel_session_turn(self) -> bool:
+        # ALL non-terminal turns, not just the newest: a mid-reply send queues a
+        # second turn behind the one still running, so Stop must reach both.
+        # NOTE: not a bare `any(... for turn in turns)` — any() short-circuits
+        # on the first truthy result, which would skip cancelling every turn
+        # after the first non-None one.
+        turns = Turn.objects.filter(chat_session=self.session, status__in=list(Turn.NON_TERMINAL))
+        cancelled = False
+        for turn in turns:
+            if harness_services.cancel_turn(turn) is not None:
+                cancelled = True
+        return cancelled
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:

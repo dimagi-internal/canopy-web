@@ -251,14 +251,20 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     return turn
 
 
-@router.post("/{session_id}/stop", response=dict, summary="Cancel the session's active turn")
+@router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")
 def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    turn = (
-        Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
-        .order_by("-created_at").first()
-    )
-    cancelled = turn is not None and harness_services.cancel_turn(turn) is not None
+    # ALL non-terminal turns, not just the newest: a mid-reply send queues a
+    # second turn behind the one still running, so Stop must reach both — the
+    # running one gets cancel_requested, the queued one is finished CANCELLED.
+    # NOTE: this must not be a bare `any(... for turn in turns)` — any() short-
+    # circuits on the first truthy result, which would skip cancelling every
+    # turn after the first non-None one.
+    turns = Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+    cancelled = False
+    for turn in turns:
+        if harness_services.cancel_turn(turn) is not None:
+            cancelled = True
     return {"cancelled": cancelled}
 
 

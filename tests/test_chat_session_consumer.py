@@ -275,6 +275,51 @@ async def test_stop_broadcasts_to_whole_group_and_cancels_queued_turn():
     await b.disconnect()
 
 
+async def test_stop_cancels_running_and_queued_turns_both():
+    # I1: a mid-reply send queues turn B behind still-running turn A — chat.stop
+    # must reach BOTH, not just the newest. B (queued) finishes CANCELLED, A
+    # (running) gets a cancel_requested ledger event.
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+    turn_a, turn_b = await database_sync_to_async(lambda: (
+        Turn.objects.create(
+            chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING,
+        ),
+        Turn.objects.create(
+            chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="b1", status=Turn.QUEUED,
+        ),
+    ))()
+
+    a = await _connect(session, owner)
+    assert (await a.connect())[0]
+    await a.send_json_to({"action": "chat.stop", "data": {"message_id": "m1"}})
+    await _recv_match(a, lambda f: f.get("event") == "chat.stream_cancelled")
+
+    await database_sync_to_async(turn_a.refresh_from_db)()
+    await database_sync_to_async(turn_b.refresh_from_db)()
+    assert turn_a.status == Turn.RUNNING  # untouched — runner owns the lease
+    has_cancel_requested = await database_sync_to_async(
+        lambda: turn_a.events.filter(kind="cancel_requested").exists()
+    )()
+    assert has_cancel_requested
+    assert turn_b.status == Turn.CANCELLED
+    await a.disconnect()
+
+
+async def test_stop_with_nothing_to_cancel_does_not_broadcast():
+    # M4: _chat_stop must not fan out chat.stream_cancelled when there was
+    # nothing non-terminal to cancel — otherwise every participant's Stop UI
+    # flips to "cancelled" for no reason.
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+    a = await _connect(session, owner)
+    assert (await a.connect())[0]
+    await a.receive_json_from()  # drain the session.state snapshot
+    await a.receive_json_from()  # drain connect's own presence.joined broadcast
+
+    await a.send_json_to({"action": "chat.stop", "data": {"message_id": "m1"}})
+    assert await a.receive_nothing(timeout=1)
+    await a.disconnect()
+
+
 async def test_snapshot_falls_back_to_the_binding_tail():
     """A local runner session has NO Message rows — the panel must still open populated.
 
