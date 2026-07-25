@@ -50,14 +50,21 @@ def test_report_is_idempotent_and_updates_tail():
     assert b.tail == [{"role": "assistant", "text": "b"}]
 
 
-def test_dropped_session_clears_live_but_keeps_session():
+def test_dropped_session_keeps_both_its_session_and_its_runner():
+    """Falling off a report is the NORMAL end of life (emdash deletes a closed task),
+    not a reason to forget which box the session lived on. Liveness is live_seen_at
+    going stale, not the FK going null."""
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL)
     replace_reported_sessions(runner, ws, [_reported("feat-x", [])])
+    seen_when_live = RunnerBinding.objects.get(session_key="feat-x").live_seen_at
+
     replace_reported_sessions(runner, ws, [])  # feat-x no longer open
+
     b = RunnerBinding.objects.get(session_key="feat-x")
-    assert b.runner_id is None       # live pointer cleared
+    assert b.runner_id == runner.id  # identity survives
+    assert b.live_seen_at == seen_when_live, "liveness clock stops; it is not bumped"
     assert Session.objects.filter(runner_binding=b).exists()  # session kept
 
 
@@ -97,7 +104,8 @@ def test_recovery_of_a_released_binding_is_host_scoped():
 
     assert Session.objects.count() == 2
     assert RunnerBinding.objects.get(runner=mini, session_key="feat-x").host == "jj@mini"
-    assert RunnerBinding.objects.get(host="jj@air", session_key="feat-x").runner_id is None
+    # air's row keeps ITS identity — the point is that mini did not take it over.
+    assert RunnerBinding.objects.get(host="jj@air", session_key="feat-x").runner_id == air.id
 
 
 def test_recovery_does_not_fuse_two_runners_with_blank_host():
@@ -114,14 +122,14 @@ def test_recovery_does_not_fuse_two_runners_with_blank_host():
     binding_a = RunnerBinding.objects.get(runner=a, session_key="feat-x")
     session_a = binding_a.session_id
 
-    replace_reported_sessions(a, ws, [])  # a releases it (runner FK nulled)
+    replace_reported_sessions(a, ws, [])  # a stops reporting it
 
     replace_reported_sessions(b, ws, [_reported("feat-x", [])])
 
     assert Session.objects.count() == 2  # no fusion: b got its own session
 
     binding_a.refresh_from_db()
-    assert binding_a.runner_id is None
+    assert binding_a.runner_id == a.id
     assert binding_a.session_id == session_a  # a's binding/session untouched
 
     binding_b = RunnerBinding.objects.get(runner=b, session_key="feat-x")

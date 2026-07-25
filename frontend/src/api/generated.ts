@@ -1868,12 +1868,45 @@ export interface paths {
         readonly put?: never;
         /**
          * Retire Runner
-         * @description Retire a runner — permanent, not a liveness state (see Runner.live_status).
-         *     Idempotent by construction: _runner_or_404 already excludes retired runners,
-         *     so retiring an already-retired runner 404s at lookup rather than no-opping
-         *     here.
+         * @description Retire a runner — a decommission, not a liveness state (see
+         *     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
+         *     retired runners, so retiring an already-retired runner 404s at lookup rather than
+         *     no-opping here. Reversible via /unretire.
          */
         readonly post: operations["apps_harness_api_retire_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/unretire": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Unretire Runner
+         * @description Bring a retired runner back, keeping its identity — and therefore every
+         *     RunnerBinding, assignment and session that points at it.
+         *
+         *     Retirement used to be a ONE-WAY DOOR, which made it a trap rather than a
+         *     decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
+         *     claim and session-report calls all fail forever once retired; and `pair_runner`
+         *     unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
+         *     id and orphaned the old one's bindings. Retiring a laptop you were logged out of
+         *     therefore silently destroyed its sessions' identity the moment you brought it
+         *     back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+         *
+         *     Restores DISCONNECTED, not ONLINE: liveness is observed, never asserted — the
+         *     next heartbeat is what makes it online (Runner.live_status). Idempotent for an
+         *     already-live runner.
+         */
+        readonly post: operations["apps_harness_api_unretire_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10220,6 +10253,28 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_harness_api_unretire_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
             };
         };
     };

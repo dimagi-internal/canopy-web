@@ -123,7 +123,9 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     return wq & (Q(paired_by=request.user) | Q(paired_by__isnull=True))
 
 
-def _runner_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
+def _runner_or_404(
+    request: HttpRequest, runner_id: uuid.UUID, *, include_retired: bool = False
+) -> Runner:
     """Resolve a live runner via _runner_visibility_q — the same predicate
     list_runners filters on, so a runner that is listed is always one you can
     act on. Binding to runner.paired_by (not to a specific token) is
@@ -132,13 +134,13 @@ def _runner_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     (canopy:canopy-web-pat-mint is documented "re-run to rotate"), so
     token-binding would break the runner on every rotation. Accepted residual:
     another token of the SAME user still works.
+
+    `include_retired` is for the ONE operation that must reach a retired runner:
+    un-retiring it. Everything else keeps 404ing, so retirement still means
+    "invisible and inert" everywhere it matters.
     """
-    runner = (
-        Runner.objects.exclude(status=Runner.RETIRED)
-        .filter(_runner_visibility_q(request))
-        .filter(pk=runner_id)
-        .first()
-    )
+    qs = Runner.objects.all() if include_retired else Runner.objects.exclude(status=Runner.RETIRED)
+    runner = qs.filter(_runner_visibility_q(request)).filter(pk=runner_id).first()
     if runner is None:
         raise HttpError(404, "runner not found")
     return runner
@@ -290,14 +292,38 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
 
 @router.post("/runners/{runner_id}/retire", response={204: None})
 def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
-    """Retire a runner — permanent, not a liveness state (see Runner.live_status).
-    Idempotent by construction: _runner_or_404 already excludes retired runners,
-    so retiring an already-retired runner 404s at lookup rather than no-opping
-    here."""
+    """Retire a runner — a decommission, not a liveness state (see
+    Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
+    retired runners, so retiring an already-retired runner 404s at lookup rather than
+    no-opping here. Reversible via /unretire."""
     runner = _runner_or_404(request, runner_id)
     runner.status = Runner.RETIRED
     runner.save(update_fields=["status"])
     return Status(204, None)
+
+
+@router.post("/runners/{runner_id}/unretire", response=RunnerOut)
+def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
+    """Bring a retired runner back, keeping its identity — and therefore every
+    RunnerBinding, assignment and session that points at it.
+
+    Retirement used to be a ONE-WAY DOOR, which made it a trap rather than a
+    decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
+    claim and session-report calls all fail forever once retired; and `pair_runner`
+    unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
+    id and orphaned the old one's bindings. Retiring a laptop you were logged out of
+    therefore silently destroyed its sessions' identity the moment you brought it
+    back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+
+    Restores DISCONNECTED, not ONLINE: liveness is observed, never asserted — the
+    next heartbeat is what makes it online (Runner.live_status). Idempotent for an
+    already-live runner.
+    """
+    runner = _runner_or_404(request, runner_id, include_retired=True)
+    if runner.status == Runner.RETIRED:
+        runner.status = Runner.DISCONNECTED
+        runner.save(update_fields=["status"])
+    return runner
 
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)

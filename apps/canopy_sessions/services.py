@@ -90,7 +90,7 @@ RUNNING_WINDOW = _dt.timedelta(seconds=120)
 
 # Re-exported so callers keep one import surface; DEFINED in staleness.py, which the
 # backfill migration also imports (see the module docstring there).
-from .staleness import SESSION_STALE_AFTER, stale_cutoff, unseen_q  # noqa: E402,F401
+from .staleness import SESSION_LIVE_WINDOW, stale_cutoff, unseen_q  # noqa: E402,F401
 
 
 def is_session_running(binding) -> bool:

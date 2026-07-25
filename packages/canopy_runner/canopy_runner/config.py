@@ -24,9 +24,10 @@ class Config:
     session_report_seconds: int = 10
     # How many emdash tasks the report carries. DISTINCT from session_tail_count
     # below (which bounds the expensive transcript reads): a task truncated off THIS
-    # limit stops being reported at all, and after SESSION_STALE_AFTER the server
-    # auto-archives it. Silent truncation is therefore not cosmetic — keep it well
-    # above any realistic open-task count.
+    # limit stops being reported at all, and after SESSION_LIVE_WINDOW (3 MINUTES —
+    # the server treats the report as the liveness signal) it drops out of the
+    # supervisor's session list. Silent truncation is therefore not cosmetic — keep
+    # it well above any realistic open-task count.
     session_report_limit: int = 100
     state_path: str = ""
     # The runner drives emdash's real UI over CDP (create/reuse sessions); it needs
