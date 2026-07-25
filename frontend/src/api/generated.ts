@@ -5945,8 +5945,6 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
-            /** Auto Join Domains */
-            readonly auto_join_domains?: readonly string[];
         };
         /** MemberOut */
         readonly MemberOut: {
@@ -5984,7 +5982,10 @@ export interface components {
         };
         /** InviteCreateIn */
         readonly InviteCreateIn: {
-            /** Email */
+            /**
+             * Email
+             * Format: email
+             */
             readonly email: string;
             /**
              * Role
