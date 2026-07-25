@@ -219,3 +219,27 @@ def test_place_with_no_queued_turn_is_404(client):
         f"/api/canopy-sessions/{sid}/place", data={"placement": "wait"}, content_type="application/json",
     )
     assert r.status_code == 404, r.content
+
+
+# --- Task 9 (chat-embed-polish): session list filters for embedders --------
+
+
+def test_list_sessions_filters_by_metadata(client, ctx):
+    user, ws, _agent = ctx
+    Session.objects.create(
+        workspace=ws, created_by=user, metadata={"source": "ace-web", "opp_slug": "field-hep"},
+    )
+    Session.objects.create(workspace=ws, created_by=user, metadata={"source": "ace-web"})
+    Session.objects.create(workspace=ws, created_by=user, metadata={})
+
+    r = client.get("/api/canopy-sessions/?source=ace-web")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 2
+
+    r = client.get("/api/canopy-sessions/?source=ace-web&opp_slug=field-hep")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 1
+
+    r = client.get("/api/canopy-sessions/")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 3

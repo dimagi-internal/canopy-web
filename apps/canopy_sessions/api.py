@@ -115,7 +115,10 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
 
 
 @router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
-def list_sessions(request: HttpRequest, state: str = "active", limit: int = 200):
+def list_sessions(
+    request: HttpRequest, state: str = "active", limit: int = 200,
+    source: str = "", opp_slug: str = "", opp_run_id: str = "",
+):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
     # RunnerBinding (runner-discovered or live). Deduped, running-first, then
@@ -138,10 +141,18 @@ def list_sessions(request: HttpRequest, state: str = "active", limit: int = 200)
         Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
         .filter(workspace_id__in=slugs)
         .filter(Q(created_by=request.user) | Q(runner_binding__isnull=False))
-        .annotate(_last_msg_at=Max("messages__created_at"))
-        .distinct()
-        .order_by("-created_at")
     )
+    # Embedder filters (Task 9): an embedder (e.g. ace-web) narrows the shared
+    # session list to the sessions it cares about, keyed on the opaque
+    # `metadata` bag a session carries (never interpreted elsewhere in this
+    # app). Empty string = no filter, so the default call is unaffected.
+    if source:
+        rows = rows.filter(metadata__source=source)
+    if opp_slug:
+        rows = rows.filter(metadata__opp_slug=opp_slug)
+    if opp_run_id:
+        rows = rows.filter(metadata__opp_run_id=opp_run_id)
+    rows = rows.annotate(_last_msg_at=Max("messages__created_at")).distinct().order_by("-created_at")
     unseen = services.unseen_q()   # defined once in staleness.py; see Step 3
     if state == "active":
         rows = rows.filter(status=Session.ACTIVE).exclude(unseen)
