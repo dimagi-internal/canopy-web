@@ -105,6 +105,15 @@ Resources:
       Tags:
         - { Key: Name, Value: !Ref AWS::StackName }
         - { Key: purpose, Value: canopy-cloud-runner }
+      # DEPLOY GAP: CFN applies a UserData change as a stop/start of the SAME
+      # instance, which does NOT re-run cloud-init (cloud-init only runs its
+      # write_files/runcmd modules on first boot of a given instance id). So
+      # editing cloud_runner.py (or anything else baked in here) and just
+      # redeploying the stack does NOT ship the new code to a running box —
+      # the old bytes stay on disk and the service keeps running them. Until
+      # there's a real re-provisioning mechanism, you MUST recycle the stack
+      # to pick up runner-code changes: `./down.sh && ./up.sh` (see README.md
+      # "Updating the runner code").
       UserData:
         Fn::Base64: !Sub |
           #cloud-config

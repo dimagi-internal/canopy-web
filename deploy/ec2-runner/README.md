@@ -63,6 +63,22 @@ Override with `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,
 `RunnerWorkspace` (dimagi), `RunnerName`. `SshCidr` is set to your IP automatically.
 
+## Updating the runner code
+`up.sh` splices `cloud_runner.py` into the template's UserData as base64, but
+**CloudFormation applies a UserData change to an existing instance as a
+stop/start — it does NOT re-run cloud-init.** cloud-init's `write_files` (and
+everything else in the `#cloud-config` block) only runs on an instance's
+*first* boot. So editing `cloud_runner.py` and running `./up.sh` again updates
+the *template*, but a box that's already up keeps running the old bytes on
+disk until it's replaced — a silent deploy gap, not a redeploy.
+
+Until there's a real re-provisioning mechanism, ship a runner-code change by
+recycling the stack:
+```bash
+./down.sh   # keeps the secrets (no --purge-secrets)
+./up.sh     # fresh instance, fresh cloud-init, new code
+```
+
 ## Notes
 - **Ephemeral by design.** The claude token lives only in Secrets Manager + in
   `/opt/canopy-runner/runner.env` (chmod 600) on the box; `down.sh` removes the box.

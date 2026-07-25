@@ -130,13 +130,17 @@ def test_stranger_cannot_claim_victim_turn_via_own_untenanted_runner(
     only precondition claim_next_turn enforces), then claims. This must return 204
     (no work for them) and must NOT mutate the victim's turn — non-mutation is the
     point: a claim that both leaks the prompt/origin_ref AND flips the turn to
-    CLAIMED is a repeatable denial of service against the victim's real runner."""
+    CLAIMED is a repeatable denial of service against the victim's real runner.
+
+    Pairing an untenanted runner via the API now 422s (a workspace is required
+    since the 2026-07-25 incident), but LEGACY null-workspace rows still exist
+    in prod — so mint the row directly and prove the claim path still holds."""
     turn_id = _enqueue(owner_client).json()["id"]
-    rid = stranger_client.post(
-        "/api/harness/runners/",
-        {"name": "attacker-mbp", "kind": "emdash", "capabilities": {"agents": ["echo"]}},
-        content_type="application/json",
-    ).json()["id"]
+    stranger = User.objects.get(username="stranger")
+    rid = Runner.objects.create(
+        name="attacker-mbp", kind="emdash", capabilities={"agents": ["echo"]},
+        paired_by=stranger, workspace=None,
+    ).id
     hb = stranger_client.post(
         f"/api/harness/runners/{rid}/heartbeat",
         {"active_turn_ids": [], "degraded": False, "note": ""},
