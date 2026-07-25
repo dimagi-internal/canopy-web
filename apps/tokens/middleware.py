@@ -63,6 +63,6 @@ class BearerTokenAuthMiddleware:
         from apps.tokens.models import DelegatedToken
 
         dtok = DelegatedToken.lookup(raw)
-        if dtok is not None:
+        if dtok is not None and dtok.user.is_active:
             request.user = dtok.user
             request._dont_enforce_csrf_checks = True

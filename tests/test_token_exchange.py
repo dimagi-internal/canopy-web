@@ -1,6 +1,6 @@
 import pytest
 from django.contrib.auth.models import User
-from django.test import Client
+from django.test import Client, override_settings
 
 from apps.tokens.models import AppCredential, DelegatedToken
 
@@ -57,3 +57,59 @@ def test_ttl_clamped(cred):
     tok = DelegatedToken.objects.latest("created_at")
     delta = (tok.expires_at - tok.created_at).total_seconds()
     assert delta <= 86400 + 5
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F1: exchange must not resurrect a deactivated (offboarded) user
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_exchange_rejects_inactive_user(cred):
+    raw, _ = cred
+    user = User.objects.create_user("offboarded", "offboarded@dimagi.com", "pw")
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    resp = _post(raw, "offboarded@dimagi.com")
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "delegation not allowed for this account"
+    # no fresh delegated token was minted for the inactive user
+    assert not DelegatedToken.objects.filter(user=user).exists()
+
+
+def test_delegated_token_stops_authenticating_once_user_deactivated(cred):
+    raw, _ = cred
+    resp = _post(raw, "active@dimagi.com")
+    assert resp.status_code == 200, resp.content
+    dtoken = resp.json()["token"]
+
+    # Works while active.
+    ok = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {dtoken}")
+    assert ok.status_code == 200
+
+    # Deactivate the user the token was minted for.
+    user = User.objects.get(email="active@dimagi.com")
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    # The previously-minted delegated token must stop authenticating REST.
+    denied = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {dtoken}")
+    assert denied.status_code == 401
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F4: the AppCredential allowlist and AUTH_ALLOWED_EMAIL_DOMAIN are two
+# separate gates — a domain present in one but absent from the other must 403
+# ──────────────────────────────────────────────────────────────────────
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_exchange_rejects_domain_absent_from_oauth_allowlist():
+    admin = User.objects.create_user("admin2", "admin2@dimagi.com", "pw")
+    # The AppCredential is scoped to "partner.org" — but AUTH_ALLOWED_EMAIL_DOMAIN
+    # (the org-wide OAuth login policy) never includes it. Both gates must pass.
+    raw, _ = AppCredential.create_credential(
+        name="partner-app", domains=["partner.org"], created_by=admin)
+    resp = _post(raw, "someone@partner.org")
+    assert resp.status_code == 403

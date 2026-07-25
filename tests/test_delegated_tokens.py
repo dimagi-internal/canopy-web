@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth.models import User
+from django.test import Client
 from django.utils import timezone
 
 from apps.tokens.models import AppCredential, DelegatedToken
@@ -29,3 +30,19 @@ def test_delegated_token_expires(user):
     DelegatedToken.objects.filter(pk=tok.pk).update(
         expires_at=timezone.now() - timezone.timedelta(seconds=1))
     assert DelegatedToken.lookup(raw) is None
+
+
+def test_middleware_rejects_delegated_token_for_deactivated_user(user):
+    """F1: a delegated token minted before deactivation must stop authenticating
+    REST once the user is deactivated (BearerTokenAuthMiddleware guard)."""
+    _, cred = AppCredential.create_credential(name="a", domains=[], created_by=user)
+    raw, _ = DelegatedToken.issue(app=cred, user=user, ttl_seconds=600)
+
+    ok = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert ok.status_code == 200
+
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    denied = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert denied.status_code == 401

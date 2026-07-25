@@ -77,7 +77,9 @@ def _user_from_bearer(scope):
     if token is not None:
         return token.user
     delegated = DelegatedToken.lookup(token_value)
-    return delegated.user if delegated is not None else None
+    if delegated is not None and delegated.user.is_active:
+        return delegated.user
+    return None
 
 
 @database_sync_to_async
@@ -95,7 +97,9 @@ def _user_from_query_token(scope):
     from apps.tokens.models import DelegatedToken
 
     token = DelegatedToken.lookup(values[0])
-    return token.user if token is not None else None
+    if token is not None and token.user.is_active:
+        return token.user
+    return None
 
 
 class RealtimeAuthMiddleware:

@@ -44,3 +44,21 @@ def test_query_token_resolves_delegated_only(delegated):
     raw_pat, _ = PersonalToken.create_for_user(user=user, label="x")
     assert async_to_sync(channels_auth._user_from_query_token)(
         _scope(query=f"token={raw_pat}".encode())) is None
+
+
+def test_bearer_rejects_delegated_token_for_deactivated_user(delegated):
+    """F1: a delegated token minted before deactivation must stop authenticating
+    over WS once the user is deactivated."""
+    user, raw = delegated
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    scope = _scope(headers=[(b"authorization", f"Bearer {raw}".encode())])
+    assert async_to_sync(channels_auth._user_from_bearer)(scope) is None
+
+
+def test_query_token_rejects_delegated_token_for_deactivated_user(delegated):
+    user, raw = delegated
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    assert async_to_sync(channels_auth._user_from_query_token)(
+        _scope(query=f"token={raw}".encode())) is None

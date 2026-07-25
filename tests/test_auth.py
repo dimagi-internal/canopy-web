@@ -193,6 +193,84 @@ def test_adapter_case_insensitive(rf):
     adapter.pre_social_login(request, sociallogin)
 
 
+def _make_jit_social_login(email: str, *, verified: bool = True, is_existing: bool = False) -> Mock:
+    """A sociallogin for a real (not-yet-connected) Google login attempt, as
+    seen by `pre_social_login` after allauth's own `sociallogin.lookup()` has
+    already run (see apps/common/auth_adapter.py's F2 discussion)."""
+    sociallogin = _make_social_login(email)
+    sociallogin.is_existing = is_existing
+    email_address = Mock()
+    email_address.email = email
+    email_address.verified = verified
+    sociallogin.email_addresses = [email_address]
+    sociallogin.connect = Mock()
+    return sociallogin
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_connects_jit_user_on_later_google_login(db):
+    """F2: a JIT-provisioned delegated-identity user (bare User + verified
+    allauth EmailAddress, minted by apps/tokens/exchange_api.py, no
+    SocialAccount) must CONNECT to the SAME user on a later real Google login
+    for that email — not fork or block on allauth's duplicate-email path."""
+    from allauth.account.models import EmailAddress
+
+    User = get_user_model()
+    jit_user = User.objects.create_user(username="jit@dimagi.com", email="jit@dimagi.com")
+    EmailAddress.objects.create(user=jit_user, email="jit@dimagi.com", verified=True, primary=True)
+
+    adapter = CustomSocialAccountAdapter()
+    request = Mock()
+    sociallogin = _make_jit_social_login("jit@dimagi.com")
+
+    adapter.pre_social_login(request, sociallogin)
+
+    sociallogin.connect.assert_called_once_with(request, jit_user)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_does_not_connect_already_existing_sociallogin(db):
+    """is_existing=True means this SocialAccount is already linked — must not
+    re-connect (that would be allauth's own job, not ours)."""
+    User = get_user_model()
+    User.objects.create_user(username="jit@dimagi.com", email="jit@dimagi.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("jit@dimagi.com", is_existing=True)
+
+    adapter.pre_social_login(Mock(), sociallogin)
+
+    sociallogin.connect.assert_not_called()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_does_not_connect_unverified_provider_email(db):
+    """Only a PROVIDER-verified email may trigger auto-connect — a bare claim
+    on sociallogin.account.extra_data is not sufficient."""
+    User = get_user_model()
+    jit_user = User.objects.create_user(username="jit@dimagi.com", email="jit@dimagi.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("jit@dimagi.com", verified=False)
+
+    adapter.pre_social_login(Mock(), sociallogin)
+
+    sociallogin.connect.assert_not_called()
+    assert User.objects.get(pk=jit_user.pk).email == "jit@dimagi.com"
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_skips_connect_on_no_matching_user(db):
+    """No local user with that email yet — nothing to connect to; allauth's
+    normal signup flow proceeds untouched."""
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("nobody-yet@dimagi.com")
+
+    adapter.pre_social_login(Mock(), sociallogin)
+
+    sociallogin.connect.assert_not_called()
+
+
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
 def test_rejection_page_shows_email_domain_and_contact(rf):
     """The rejection response must tell the user their email, the allowed
