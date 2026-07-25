@@ -114,14 +114,14 @@ def test_the_route_applies_the_archive_signal():
 
 
 def test_an_archived_session_drops_out_of_the_live_list():
-    """The archive signal must also retire the LIVE pointer: list_visible_sessions
-    filters on runner__isnull=False, so an archived binding that kept its runner FK
-    would keep showing up in the supervisor's open-sessions list forever (the runner
-    re-sends its whole recently-archived list on every report, so it never ages out)."""
+    """An archive is a DECISION, so it takes effect immediately — it must not wait out
+    SESSION_LIVE_WINDOW like a staleness observation does. list_visible_sessions
+    enforces that by filtering on session status, not on the binding's runner FK
+    (which is now durable identity and stays set)."""
     user, ws, runner = _ctx()
     services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
     assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"ddd", "live"}
 
     services.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
     assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"live"}
-    assert RunnerBinding.objects.get(session_key="ddd").runner_id is None
+    assert RunnerBinding.objects.get(session_key="ddd").runner_id == runner.id

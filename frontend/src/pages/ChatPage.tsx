@@ -101,7 +101,11 @@ export function ChatPage() {
     }
   }, [])
 
-  const boundOffline = isBoundRunnerOffline(meta?.runner_name, fleetRunners)
+  const boundOffline = isBoundRunnerOffline(
+    meta?.runner_name,
+    fleetRunners,
+    meta?.runner_online,
+  )
   const continueOptions = useMemo(
     () => onlineSessionCapableRunners(fleetRunners),
     [fleetRunners],

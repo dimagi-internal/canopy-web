@@ -25,18 +25,31 @@ export function onlineSessionCapableRunners(
 }
 
 /**
- * Whether the session's bound runner (by name — the session payload carries
- * no runner id, only `runner_name`) is offline, per the fleet runners list.
- * A name with no fleet match is NOT treated as offline — that's an unknown,
- * not evidence, and the banner should fail quiet rather than alarm on stale
- * or not-yet-loaded fleet data.
+ * Whether the session's bound runner is offline — i.e. whether to raise the
+ * placement banner and let the user choose wait-vs-continue.
+ *
+ * `runnerOnline` (SessionOut.runner_online) is AUTHORITATIVE when present: the
+ * server computed it from the actual binding, so it needs no name matching and
+ * no fleet fetch. The fleet list is only a fallback for payloads without it.
+ *
+ * The fallback distinguishes two things the old "no match ⇒ false" conflated:
+ *   * an EMPTY fleet is genuinely unknown (not loaded, or the request failed) —
+ *     still fail quiet, since alarming on missing data is worse than silence;
+ *   * a LOADED fleet that does not contain the runner is evidence, not absence.
+ *     `GET /runners/` omits retired runners, so a bound-but-unlisted runner is
+ *     one that can never claim again. Failing quiet there is what left a send
+ *     queued forever with no banner and no way to place it (labs 2026-07-25:
+ *     10 sessions bound to a retired jj-mbp-cdp).
  */
 export function isBoundRunnerOffline(
   runnerName: string | null | undefined,
   fleet: readonly Pick<RunnerOut, "name" | "status">[],
+  runnerOnline?: boolean | null,
 ): boolean {
   if (!runnerName) return false;
+  if (runnerOnline === false) return true;
+  if (runnerOnline === true) return false;
   const match = fleet.find((r) => r.name === runnerName);
-  if (!match) return false;
+  if (!match) return fleet.length > 0;
   return match.status !== "online";
 }

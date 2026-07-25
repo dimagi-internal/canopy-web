@@ -9,7 +9,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.canopy_sessions.services import SESSION_STALE_AFTER
+from apps.canopy_sessions.services import SESSION_LIVE_WINDOW
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -51,8 +51,8 @@ def test_active_hides_an_explicitly_archived_session():
 
 def test_active_hides_a_runner_session_unseen_past_the_cutoff():
     user, ws, c, runner = _ctx()
-    fresh = _runner_session(ws, runner, "live", SESSION_STALE_AFTER - dt.timedelta(hours=1))
-    stale = _runner_session(ws, runner, "vanished", SESSION_STALE_AFTER + dt.timedelta(hours=1))
+    fresh = _runner_session(ws, runner, "live", SESSION_LIVE_WINDOW - dt.timedelta(seconds=30))
+    stale = _runner_session(ws, runner, "vanished", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
 
     ids = {r["id"] for r in c.get("/api/canopy-sessions/").json()}
     assert ids == {str(fresh.id)}, "the just-inside-cutoff session must survive"
@@ -65,7 +65,7 @@ def test_a_web_session_never_goes_stale():
     user, ws, c, _runner = _ctx()
     old = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="web")
     Session.objects.filter(pk=old.pk).update(
-        created_at=timezone.now() - SESSION_STALE_AFTER - dt.timedelta(days=30)
+        created_at=timezone.now() - SESSION_LIVE_WINDOW - dt.timedelta(days=30)
     )
     ids = {r["id"] for r in c.get("/api/canopy-sessions/").json()}
     assert str(old.id) in ids
@@ -74,7 +74,7 @@ def test_a_web_session_never_goes_stale():
 def test_archived_and_all_return_the_complements():
     user, ws, c, runner = _ctx()
     fresh = _runner_session(ws, runner, "live", dt.timedelta(minutes=1))
-    stale = _runner_session(ws, runner, "vanished", SESSION_STALE_AFTER + dt.timedelta(hours=1))
+    stale = _runner_session(ws, runner, "vanished", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
 
     archived = {r["id"] for r in c.get("/api/canopy-sessions/?state=archived").json()}
     assert archived == {str(stale.id)}

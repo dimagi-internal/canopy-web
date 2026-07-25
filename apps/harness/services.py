@@ -16,6 +16,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Max, Q
 from django.utils import timezone
 
+from apps.canopy_sessions.staleness import stale_cutoff
 from apps.workspaces import services as wsvc
 
 # HEARTBEAT_ONLINE_WINDOW lives on models.py (Runner.live_status uses it too;
@@ -222,6 +223,14 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
         # it (chat offers wait/continue). Unbound sessions are open here and
         # refined per-candidate in the claim loop (agent sessions follow the
         # assignment cascade; project sessions stay any-sessions-capable).
+        #
+        # Deliberately NOT relaxed to "stale bindings fail over automatically"
+        # (spec 2026-07-24): continuing elsewhere means a FRESH emdash session with
+        # none of the conversation's warm context, so it is the user's call, not a
+        # timeout's. The stuck-forever case that motivated revisiting this was never
+        # really routing — it was the chat banner failing open for a bound runner
+        # missing from the fleet list, so the user was never offered the choice.
+        # See frontend/src/components/chat/runnerEligibility.ts.
         q = q | (
             Q(chat_session__isnull=False)
             & (
@@ -1045,14 +1054,15 @@ def replace_reported_sessions(
             runner_binding__session_key__in=closed,
         ).update(status=Session.ARCHIVED)
 
-    # Clear the live pointer on this runner's bindings that were NOT re-reported —
-    # archived ones included, so `runner=None` keeps meaning exactly "not live on any
-    # runner" (which is what keeps archived rows out of list_visible_sessions). Safe
-    # because the upsert lookup above no longer depends on this FK: it recovers a
-    # released binding by (session_key, host), so nulling it costs nothing.
-    RunnerBinding.objects.filter(runner=runner).exclude(session_key__in=now_keys).update(
-        runner=None
-    )
+    # NOTHING is cleared here. `RunnerBinding.runner` is durable IDENTITY — which box
+    # this session lives on — and a session must never forget that just because its
+    # task stopped being reported (emdash DELETES a closed task, so falling off the
+    # report is the NORMAL end of life, not an anomaly). Liveness is `live_seen_at`,
+    # stamped above on everything in this report and read against
+    # SESSION_LIVE_WINDOW; see apps/canopy_sessions/staleness.py.
+    #
+    # Nulling the FK here is what left labs with 47 sessions that were listed as
+    # active, could not say which runner they came from, and had no way back.
 
     # Fire AFTER commit so apps/realtime fans the durable rows (never racing the DB)
     # to the runner-owner's supervisor group — the WS push that makes live emdash
@@ -1082,9 +1092,14 @@ class SessionView:
 
 
 def list_visible_sessions(user) -> list[SessionView]:
-    """Open sessions in the caller's workspaces whose runner is LIVE. Runner liveness
-    (not deletion) is what suppresses a briefly-offline runner's stale rows — see
-    Runner.live_status. Newest-first.
+    """Open sessions in the caller's workspaces whose runner is LIVE. Newest-first.
+
+    Three conditions, all polled or explicit — none of them "the FK went null":
+      * the session is not explicitly ARCHIVED (a decision, effective immediately),
+      * its binding was in a report within SESSION_LIVE_WINDOW (the polled clock),
+      * and its runner is still heartbeating (Runner.live_status).
+    The last two overlap by design: a runner that stops heartbeating also stops
+    reporting, so the strictest of the two wins and a dead box's rows go quiet fast.
 
     auto_join_workspaces runs first, mirroring list_turns: this is a flat-path
     handler (GET /api/harness/sessions), so WorkspaceResolveMiddleware's
@@ -1093,13 +1108,16 @@ def list_visible_sessions(user) -> list[SessionView]:
     WorkspaceMembership row and user_workspace_slugs(user) returns empty,
     silently hiding their workspace's sessions instead of listing them.
     """
-    from apps.canopy_sessions.models import RunnerBinding
+    from apps.canopy_sessions.models import RunnerBinding, Session
 
     wsvc.auto_join_workspaces(user)
     ws_slugs = wsvc.user_workspace_slugs(user)
     bindings = (
         RunnerBinding.objects.filter(
-            runner__isnull=False, session__workspace_id__in=ws_slugs
+            runner__isnull=False,
+            session__workspace_id__in=ws_slugs,
+            session__status=Session.ACTIVE,
+            live_seen_at__gte=stale_cutoff(),
         )
         .select_related("runner", "session")
         .order_by("-last_interacted_at")
