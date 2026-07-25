@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from pydantic import Field
+from pydantic import EmailStr, Field
 
 from apps.common.schemas import StrictModel
 
@@ -14,7 +14,17 @@ Role = Literal["owner", "editor", "viewer"]
 class WorkspaceCreateIn(StrictModel):
     slug: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=200)
-    auto_join_domains: list[str] = Field(default_factory=list)
+    # Deliberately no `auto_join_domains` here: it is never client input.
+    # `auto_join_domains` grants standing DOMAIN-WIDE (every user of that
+    # domain auto-joins as editor via `auto_join_workspaces`), so letting a
+    # caller set it on their own workspace would let an attacker declare an
+    # arbitrary allowlisted domain (e.g. "dimagi.com") and silently recruit
+    # every teammate of that domain into their workspace. Only
+    # `ensure_default_workspace()` may set it, straight from
+    # `AUTH_ALLOWED_EMAIL_DOMAIN` server-side. `StrictModel`'s `extra="forbid"`
+    # means a request that still sends this field is rejected (422), not
+    # silently ignored — see the F1 security finding on the invite-aware
+    # login gate.
 
 
 class WorkspaceOut(StrictModel):
@@ -33,7 +43,11 @@ class MemberOut(StrictModel):
 
 
 class InviteCreateIn(StrictModel):
-    email: str = Field(min_length=3, max_length=200)
+    # EmailStr rejects a non-email string at the schema boundary, before it
+    # ever becomes a matchable admission key for `pending_invite_for_email` /
+    # `email_admitted_outside_domain` — an owner shouldn't be able to store
+    # e.g. a garbage or wildcard-shaped value there.
+    email: EmailStr = Field(max_length=200)
     role: Role = "editor"
 
 

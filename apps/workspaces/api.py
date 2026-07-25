@@ -73,13 +73,21 @@ def _invite_out(inv: WorkspaceInvite) -> InviteOut:
 @router.post("/", response={201: WorkspaceOut}, summary="Create a workspace",
              openapi_extra={"x-mcp-expose": True})
 def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status:
+    # An invite-admitted user (cleared the OAuth gate via a live invite or an
+    # existing membership, not the domain allowlist) must not be able to
+    # bootstrap their own workspace and mint invites of their own — that
+    # would make invite-admission transitively delegable to an attacker. See
+    # `services.can_create_workspace` + the F1 security finding.
+    if not services.can_create_workspace(request.user):
+        raise HttpError(403, "not eligible to create a workspace")
     if Workspace.objects.filter(slug=payload.slug).exists():
         raise HttpError(409, f"workspace '{payload.slug}' already exists")
     ws = Workspace.objects.create(
         slug=payload.slug,
         display_name=payload.display_name,
         created_by=request.user,
-        auto_join_domains=payload.auto_join_domains,
+        # auto_join_domains is deliberately NOT settable from the request —
+        # see WorkspaceCreateIn. Only `ensure_default_workspace()` sets it.
     )
     WorkspaceMembership.objects.create(
         workspace=ws, user=request.user, role=WorkspaceMembership.OWNER

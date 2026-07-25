@@ -295,8 +295,12 @@ def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
     """The most recent LIVE (pending) invite addressed to `email`, or None.
 
     Case-insensitive; ignores expired/revoked/accepted rows. Used by the OAuth
-    login adapter (Task 2) to auto-join a fresh signup to the workspace that
-    invited them.
+    login adapter to help decide whether an otherwise-non-allowlisted email
+    may clear the login gate (see `email_admitted_outside_domain`). This
+    function does NOT itself join anyone to anything — it does not auto-join
+    a fresh signup, and never will: the ONLY path that creates a
+    WorkspaceMembership from an invite is `accept_invite`, called explicitly
+    by the user after they sign in. Do not "restore" auto-join behavior here.
     """
     email = (email or "").strip().lower()
     if not email:
@@ -311,3 +315,52 @@ def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
     if candidate is not None and candidate.is_pending():
         return candidate
     return None
+
+
+def email_admitted_outside_domain(email: str) -> bool:
+    """Whether `email` may clear the OAuth login gate despite failing the
+    global domain allowlist — the right question is NOT just "is there a
+    pending invite", it's "does this email have any legitimate workspace
+    standing right now": either it already belongs to a user holding at
+    least one `WorkspaceMembership` (e.g. a previously-accepted invitee), OR
+    there is a currently-live invite for it.
+
+    Treating "pending invite only" as the whole answer 403s an accepted
+    invitee on their very next login (accepting clears `pending`), which
+    just pushes operators toward leaving invites open indefinitely — a
+    strictly worse security posture than checking membership too. The
+    trade-off this accepts: removing a user's last `WorkspaceMembership`
+    does not revoke an already-open browser session, only their NEXT login.
+
+    This is a LOGIN-GATE check only — it never creates, and must never be
+    made to create, a `WorkspaceMembership`; only `accept_invite` does that.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    if WorkspaceMembership.objects.filter(user__email__iexact=email).exists():
+        return True
+    return pending_invite_for_email(email) is not None
+
+
+def can_create_workspace(user) -> bool:
+    """Gate on workspace CREATION (not on membership/access itself): an
+    invite-admitted user who is not yet a member of anything must not be
+    able to bootstrap their own workspace and mint invites of their own —
+    otherwise invite-admission is transitively delegable to an attacker
+    (create a workspace, invite arbitrary addresses, each newly-invited
+    address then clears the login gate too) — see the F1 security finding
+    on the invite-aware login gate.
+
+    Allowed iff EITHER the caller's own email domain is on the global
+    allowlist (an ordinary Dimagi/partner account, not merely
+    invite-admitted), OR the caller already holds at least one
+    `WorkspaceMembership` (so an accepted invitee has the same ordinary
+    standing as anyone else once they've actually joined something).
+    """
+    from apps.common.auth_domains import email_in_allowlist
+
+    email = getattr(user, "email", "") or ""
+    if email_in_allowlist(email):
+        return True
+    return WorkspaceMembership.objects.filter(user=user).exists()
