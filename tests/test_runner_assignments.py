@@ -56,7 +56,7 @@ def test_seed_assignments_from_capabilities():
     ada = _agent("ada")
     laptop = _runner("laptop", capabilities={"agents": ["echo", "ada"]})
     cloud = Runner.objects.create(name="cloudy", kind=Runner.CLOUD, capabilities={"agents": ["echo"]})
-    retired = Runner.objects.create(
+    Runner.objects.create(  # retired — must be skipped by the seed
         name="old", kind=Runner.EMDASH, status=Runner.RETIRED, capabilities={"agents": ["echo"]}
     )
     assert seed_assignments_from_capabilities() == 3
