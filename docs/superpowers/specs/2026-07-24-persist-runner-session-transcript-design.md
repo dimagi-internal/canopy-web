@@ -1,9 +1,12 @@
 # Persist a runner session's transcript (durable, restart-proof live view)
 
-**Status:** designed, not built. Fully worked out; deliberately not crammed into a
-closeout (see "Why this is staged"). Builds on the unified-runner-sessions work
-([[project_unified_runner_sessions]]) and supersedes the in-memory offset fix #368
-as the *durable* answer.
+**Status:** built (issue #373, 2026-07-24). Builds on the unified-runner-sessions
+work ([[project_unified_runner_sessions]]) and supersedes the in-memory offset fix
+#368 as the *durable* answer. Two implementation additions beyond the checklist
+below, both forced by trap 1's "one index space" rule: `project_events` skips
+origin=runner sessions (the bridged reply's durable copy comes from the transcript,
+not the ledger), and migration `canopy_sessions.0010` resets runner sessions'
+pre-ordinal Message rows so legacy sequential keys can't swallow incoming ordinals.
 
 ## Problem
 

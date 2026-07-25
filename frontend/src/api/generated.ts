@@ -1955,10 +1955,13 @@ export interface paths {
         readonly put?: never;
         /**
          * Post Session Stream
-         * @description The runner ships live assistant events for a session it backs; the server fans
-         *     them to the session group as the same chat.turn_event frames the chat path uses
-         *     (turn-less -> the consumer derives seq:<n> message ids). Live view only — no
-         *     Message rows (that is the on-demand backfill, POST /session-backfill).
+         * @description The runner ships live conversational events for a session it backs. For an
+         *     origin=runner session, events carrying a transcript ordinal are PERSISTED as
+         *     Message rows first (the transcript is the durable source — spec 2026-07-24),
+         *     then the assistant frames fan out to the session group as the same
+         *     chat.turn_event frames the chat path uses (turn-less -> the consumer derives
+         *     seq:<n> message ids). User events are persisted but never live-pushed — the
+         *     sender's client already echoed them optimistically.
          */
         readonly post: operations["apps_harness_api_post_session_stream"];
         readonly delete?: never;
@@ -6259,6 +6262,8 @@ export interface components {
             readonly session_key: string;
             /** Project */
             readonly project: string;
+            /** Last Index */
+            readonly last_index?: number | null;
         };
         /** StreamSyncOut */
         readonly StreamSyncOut: {
@@ -6279,6 +6284,11 @@ export interface components {
             readonly kind: string;
             /** Seq */
             readonly seq: number;
+            /**
+             * Index
+             * @default -1
+             */
+            readonly index: number;
             /**
              * Payload
              * @default {}
@@ -6331,6 +6341,11 @@ export interface components {
              * @default
              */
             readonly text: string;
+            /**
+             * Index
+             * @default -1
+             */
+            readonly index: number;
         };
         /** SessionBackfillIn */
         readonly SessionBackfillIn: {

@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import uuid
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -195,12 +196,17 @@ def visible_transcript(session, *, full: bool = False):
 
 
 def request_backfill(session) -> str:
-    """The client asked for full history. 'ready' if already server-full; 'requested'
-    if a live runner is bound (signal it); 'unavailable' otherwise (tail still shows)."""
+    """The client asked for full history. 'ready' if we already hold the START of
+    the transcript (a row at turn_index 0); 'requested' if a live runner is bound
+    (signal it — streamed ordinal rows alone are not the full history); 'unavailable'
+    otherwise (tail still shows)."""
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.models import Runner
 
-    if session.messages.exists():
+    first = (
+        session.messages.order_by("turn_index").values_list("turn_index", flat=True).first()
+    )
+    if first == 0:
         return "ready"
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
@@ -226,27 +232,48 @@ def request_backfill(session) -> str:
     return "requested"
 
 
-def write_backfill(session, messages) -> int:
-    """Write a runner's shipped transcript as Message rows — ONCE. No-op if the
-    session already has rows (server-full). messages: [{"role","text"}] chronological."""
+def persist_transcript_rows(session, rows) -> int:
+    """THE durable write path for a runner session's transcript. rows:
+    [{"index","role","text"}] chronological.
+
+    `index` is the transcript record ordinal (raw index into the session's
+    .jsonl) — because the stream (forward) and backfill (older) both key on it,
+    they produce the SAME rows by identity and `get_or_create` makes every
+    re-ship (retry, overlap, catch-up) a no-op. index < 0 (an old runner) falls
+    back to sequential server-side assignment. Returns rows actually created."""
+    written = 0
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
-        if Message.objects.filter(session=locked).exists():
-            return 0
-        index = _next_index(locked)
-        written = 0
-        for msg in messages:
-            role = msg.get("role")
+        next_index = None
+        for row in rows:
+            role = row.get("role")
             if role not in _BACKFILL_ROLES:
                 continue
-            Message.objects.create(
-                session=locked, turn_index=index, role=role,
-                content={"text": msg.get("text", ""), "backfill": True},
-                plaintext=str(msg.get("text", "")),
+            text = str(row.get("text", ""))
+            index = row.get("index")
+            index = -1 if index is None else int(index)
+            if index < 0:
+                if next_index is None:
+                    next_index = _next_index(locked)
+                index, next_index = next_index, next_index + 1
+            _, created = Message.objects.get_or_create(
+                session=locked, turn_index=index,
+                defaults={"role": role, "plaintext": text, "content": {"text": text}},
             )
-            index += 1
-            written += 1
+            written += 1 if created else 0
     return written
+
+
+def write_backfill(session, messages) -> int:
+    """Write a runner's shipped full transcript as Message rows. Ordinal-keyed
+    payloads (a current runner) upsert-fill: they add the older rows the live
+    stream never saw and skip anything already persisted. A legacy payload (no
+    ordinals) keeps the old write-once contract — sequential, and only into an
+    empty session. messages: [{"role","text"[,"index"]}] chronological."""
+    ordinal = any(int(m.get("index", -1)) >= 0 for m in messages)
+    if not ordinal and Message.objects.filter(session=session).exists():
+        return 0
+    return persist_transcript_rows(session, messages)
 
 
 def _set_stream_desired(session, desired: bool) -> bool:
@@ -320,7 +347,16 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     Without one, the key falls back to the message's session index — best-effort
     only (a genuine retry after the first commit would compute a new index), so a
     nonce is required for true double-submit safety.
+
+    For an origin=runner session the TRANSCRIPT is the sole durable source
+    (spec 2026-07-24): the user's words reach the DB when the runner ships the
+    transcript record they became, keyed on its ordinal. Persisting a second
+    copy here (keyed _next_index) would collide index spaces and duplicate the
+    send, so this path writes no row — the frontend already echoes the message
+    optimistically (draft.committed), and a transient Message keeps the contract.
     """
+    if session.origin == Session.ORIGIN_RUNNER:
+        return _send_runner_message(session=session, text=text, client_id=client_id)
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
         if client_id:
@@ -364,6 +400,38 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     # that turn (over its control channel) so the live agent sees it, on top of the
     # new turn that queues behind it. Post-commit + null-safe (a realtime hiccup
     # never breaks the send).
+    _maybe_interject(session, message)
+    return message, turn
+
+
+def _send_runner_message(*, session: Session, text: str, client_id: str = "") -> tuple[Message, Turn]:
+    """The runner-session send path: enqueue the Turn, author NO durable user row.
+
+    The returned Message is transient (never saved): MessageOut serializes it for
+    the REST response and the WS handler broadcasts str(pk) as user_message_id, so
+    both send contracts hold. A synthetic pk keeps those ids unique per send."""
+    content = {"text": text}
+    if client_id:
+        content["client_id"] = client_id
+    message = Message(
+        session=session, turn_index=_next_index(session), role=Message.USER,
+        plaintext=text, content=content,
+    )
+    message.pk = f"transient:{uuid.uuid4().hex}"
+    message.created_at = timezone.now()
+    binding = getattr(session, "runner_binding", None)
+    thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
+    # Without a durable row, _next_index no longer advances between sends, so the
+    # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
+    # fall back to a fresh nonce instead (same dedupe strength as before: only a
+    # real client_id makes a retry idempotent).
+    turn, _created = harness_services.enqueue_turn(
+        session=session,
+        origin=Turn.ORIGIN_API,
+        idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
+        prompt=text,
+        origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+    )
     _maybe_interject(session, message)
     return message, turn
 
@@ -412,8 +480,15 @@ def maybe_execute_inline(turn: Turn | None) -> None:
 
 def project_events(turn: Turn, rows) -> int:
     """Materialize a turn's newly-appended assistant/tool events into Message rows.
-    Idempotent per source ledger seq, so a re-delivered signal never doubles a row."""
+    Idempotent per source ledger seq, so a re-delivered signal never doubles a row.
+
+    Runner sessions are excluded: their durable rows come from the transcript
+    (ordinal-keyed, via persist_transcript_rows) — the bridged reply lands in the
+    ledger too, and projecting it as well would persist it twice in a second
+    index space. The ledger frames still stream to the live client unchanged."""
     if not turn.chat_session_id:
+        return 0
+    if turn.chat_session.origin == Session.ORIGIN_RUNNER:
         return 0
     created = 0
     with transaction.atomic():

@@ -1,5 +1,9 @@
 """The emdash-response bridge: tail assistant text + idle-based completion."""
-from canopy_runner.chat_bridge import bridge_response, new_assistant_texts, transcript_messages
+from canopy_runner.chat_bridge import (
+    bridge_response,
+    conversational_messages,
+    new_assistant_texts,
+)
 
 
 def _asst(text):
@@ -59,10 +63,22 @@ def test_bridge_times_out_without_assistant():
     assert result == ""
 
 
-def test_transcript_messages_maps_user_and_assistant():
-    recs = [_user("q1"), _asst("a1"), _tool(), _asst("a2")]
-    assert transcript_messages(recs) == [
-        {"role": "user", "text": "q1"},
-        {"role": "assistant", "text": "a1"},
-        {"role": "assistant", "text": "a2"},  # tool_use block skipped (no text)
+def test_conversational_messages_carry_the_raw_record_ordinal():
+    """The index is the RAW position in the .jsonl — non-conversational records
+    (summaries, tool-only turns) advance it without producing a row, so the
+    ordinal is stable no matter how the transcript is filtered."""
+    recs = [{"type": "summary"}, _user("q1"), _asst("a1"), _tool(), _asst("a2")]
+    assert conversational_messages(recs, -1) == [
+        {"index": 1, "role": "user", "text": "q1"},
+        {"index": 2, "role": "assistant", "text": "a1"},
+        {"index": 4, "role": "assistant", "text": "a2"},  # tool_use record skipped (no text)
     ]
+
+
+def test_conversational_messages_only_after_since():
+    recs = [_user("q1"), _asst("a1"), _user("q2"), _asst("a2")]
+    assert conversational_messages(recs, 1) == [
+        {"index": 2, "role": "user", "text": "q2"},
+        {"index": 3, "role": "assistant", "text": "a2"},
+    ]
+    assert conversational_messages(recs, 3) == []

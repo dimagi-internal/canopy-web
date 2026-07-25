@@ -407,6 +407,10 @@ class StreamDescriptorOut(Schema):
     session_id: str
     session_key: str
     project: str
+    # The server-side catch-up marker: max persisted turn_index for the session
+    # (None = no rows yet). The runner ships transcript records AFTER this on
+    # attach, so a restart/failover never loses the resume point.
+    last_index: int | None = None
 
 
 class StreamSyncOut(Schema):
@@ -416,6 +420,10 @@ class StreamSyncOut(Schema):
 class LiveEventIn(Schema):
     kind: str
     seq: int
+    # Transcript record ordinal (raw index into the session's .jsonl). -1 = an
+    # old runner that doesn't send ordinals; such events stay live-view-only
+    # (persisting assistant-only rows would kill the tail fallback's user side).
+    index: int = -1
     payload: dict = {}
 
 
@@ -446,6 +454,9 @@ class BackfillSyncOut(Schema):
 class BackfillMessageIn(Schema):
     role: str
     text: str = ""
+    # Transcript record ordinal. -1 = an old runner; the server then keeps the
+    # legacy write-once contract (sequential, only into an empty session).
+    index: int = -1
 
 
 class SessionBackfillIn(Schema):
