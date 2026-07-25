@@ -1,5 +1,8 @@
 import type { JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
+import type { components } from '@/api/generated'
+
+type DrillRollup = components['schemas']['DrillRollup']
 
 // Mirrors menubar.py's four derived states (_runner_state, menubar.py:224) so
 // the two surfaces read identically — until Phase 5, when the panel loads this
@@ -17,6 +20,14 @@ function relative(iso: string | null): string {
   if (secs < 60) return `${secs}s ago`
   if (secs < 3600) return `${Math.round(secs / 60)}m ago`
   return `${Math.round(secs / 3600)}h ago`
+}
+
+// Worst-signal-wins: a single failed drill outranks any number of pending
+// ones for the at-a-glance color, which in turn outranks an all-clear.
+function drillBadgeClass(rollup: DrillRollup): string {
+  if (rollup.failed > 0) return 'text-destructive'
+  if (rollup.pending > 0) return 'text-warning'
+  return 'text-success'
 }
 
 export function RunnerStatus({
@@ -51,6 +62,15 @@ export function RunnerStatus({
             </span>
           )}
           {r.host && <span className="hidden truncate text-[11px] text-foreground-subtle sm:inline">{r.host}</span>}
+          {r.drill_rollup && (
+            <span
+              data-testid={`runner-drill-badge-${r.name}`}
+              className={`hidden shrink-0 text-[11px] sm:inline ${drillBadgeClass(r.drill_rollup)}`}
+            >
+              drilled {relative(r.drill_rollup.last_finished_at)} —{' '}
+              {r.drill_rollup.passed}/{r.drill_rollup.passed + r.drill_rollup.failed + r.drill_rollup.pending}
+            </span>
+          )}
           <span className="shrink-0 text-[11px] text-muted-foreground">{relative(r.last_heartbeat_at)}</span>
         </button>
       ))}

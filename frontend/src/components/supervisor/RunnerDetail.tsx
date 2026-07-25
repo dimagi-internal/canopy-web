@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -94,6 +95,8 @@ export function RunnerDetail({
         {runner.host && row('host', runner.host)}
         {row('status', runner.status ?? 'unknown')}
       </div>
+
+      <RunnerDrills runnerId={runner.id} />
 
       {/* The fleet-wide routing matrix, expandable per agent — no cheap query for
           "agents that route to just this runner" now that assignments are
