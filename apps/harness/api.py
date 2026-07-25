@@ -148,20 +148,34 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
     An AGENT turn derives its tenant one hop away, via agent.workspace (spec
     section 8) — it has no workspace FK of its own, because denormalized tenancy
-    drifts. A PROJECT turn has no agent to derive from, so it carries its own
+    drifts. A SESSION turn similarly derives its tenant via chat_session.workspace.
+    A PROJECT turn has no agent/session to derive from, so it carries its own
     workspace FK and is gated on that instead. Same 404-not-403 rule either way:
     non-membership must not leak existence.
     """
-    turn = Turn.objects.select_related("agent", "claimed_by").filter(pk=turn_id).first()
+    turn = (
+        Turn.objects.select_related("agent", "claimed_by", "chat_session")
+        .filter(pk=turn_id)
+        .first()
+    )
     if turn is None:
         raise HttpError(404, "turn not found")
     if turn.agent_id:
         _agent_or_404(request, turn.agent.slug)  # raises 404 on wrong tenant
         return turn
 
-    # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
+    # Session turn: tenancy derives from the chat session's workspace (a session
+    # turn has agent_id=None AND workspace_id=None, so without this branch both
+    # guards below fall through — any authenticated user could read the transcript).
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
+    if turn.chat_session_id:
+        slug = turn.chat_session.workspace_id
+        if (ws and slug != ws) or not wsvc.is_member(request.user, slug):
+            raise HttpError(404, "turn not found")
+        return turn
+
+    # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
     if turn.workspace_id and not wsvc.is_member(request.user, turn.workspace_id):
