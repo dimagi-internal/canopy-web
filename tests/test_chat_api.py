@@ -221,6 +221,70 @@ def test_place_with_no_queued_turn_is_404(client):
     assert r.status_code == 404, r.content
 
 
+# --- Task 9 (chat-embed-polish): session list filters for embedders --------
+
+
+def test_list_sessions_filters_by_metadata(client, ctx):
+    user, ws, _agent = ctx
+    Session.objects.create(
+        workspace=ws, created_by=user, metadata={"source": "ace-web", "opp_slug": "field-hep"},
+    )
+    Session.objects.create(workspace=ws, created_by=user, metadata={"source": "ace-web"})
+    Session.objects.create(workspace=ws, created_by=user, metadata={})
+
+    r = client.get("/api/canopy-sessions/?source=ace-web")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 2
+
+    r = client.get("/api/canopy-sessions/?source=ace-web&opp_slug=field-hep")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 1
+
+    r = client.get("/api/canopy-sessions/")
+    assert r.status_code == 200, r.content
+    assert len(r.json()) == 3
+
+
+# --- Task 11 fix wave: title vs bound session_key in _out --------------------
+
+
+def test_web_origin_session_with_title_reports_own_title(client, ctx):
+    # A web-origin session that has been auto-titled (Task 10) must show that
+    # title in the chat index — even once a runner binding forms underneath it
+    # to execute the turn — not the bound emdash task name.
+    user, _ws, _agent = ctx
+    sid = client.post(
+        "/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json"
+    ).json()["id"]
+    session = Session.objects.get(pk=sid)
+    session.title = "Help me plan the Q3 field visit schedule"
+    session.save(update_fields=["title"])
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    RunnerBinding.objects.create(session_id=sid, runner=runner, thread_key=sid, session_key="ace-api-1a2b-cdef")
+
+    detail = client.get(f"/api/canopy-sessions/{sid}").json()
+    assert detail["title"] == "Help me plan the Q3 field visit schedule"
+
+    listed = client.get("/api/canopy-sessions/").json()
+    assert next(s for s in listed if s["id"] == sid)["title"] == "Help me plan the Q3 field visit schedule"
+
+
+def test_runner_origin_session_still_reports_task_name(client, ctx):
+    # Runner-DISCOVERED sessions never get a human-authored title — showing the
+    # emdash task name (not a raw thread-key hash) is still correct here.
+    user, ws, _agent = ctx
+    session = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="")
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    RunnerBinding.objects.create(
+        session_id=session.id, runner=runner, thread_key=str(session.id), session_key="ace-api-1a2b-cdef",
+    )
+
+    detail = client.get(f"/api/canopy-sessions/{session.id}").json()
+    assert detail["title"] == "ace-api-1a2b-cdef"
 # --- Task 6: chat.stop's REST twin ------------------------------------------
 
 

@@ -10825,6 +10825,9 @@ export interface operations {
             readonly query?: {
                 readonly state?: string;
                 readonly limit?: number;
+                readonly source?: string;
+                readonly opp_slug?: string;
+                readonly opp_run_id?: string;
             };
             readonly header?: never;
             readonly path?: never;

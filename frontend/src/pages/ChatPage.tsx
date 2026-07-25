@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChatPanel, useSessionSocket } from 'canopy-ui/chat'
+import { ChatPanel, PlacementBanner, useSessionSocket, type PlacementRunner } from 'canopy-ui/chat'
 import { Markdown } from '@/components/Markdown'
 import { wsUrl } from '@/lib/wsUrl'
 import {
@@ -54,7 +54,6 @@ export function ChatPage() {
   const [placing, setPlacing] = useState(false)
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
-  const [showContinuePicker, setShowContinuePicker] = useState(false)
 
   const socket = useSessionSocket({ sessionId: id, wsUrl })
 
@@ -76,12 +75,13 @@ export function ChatPage() {
   }, [id])
 
   // Reset the placement-banner UI state on session switch, so a stale info/
-  // error message or open "Continue on…" picker doesn't leak across sessions.
+  // error message doesn't leak across sessions. The "Continue on…" picker's
+  // open/closed state is now local to <PlacementBanner> (a fresh mount per
+  // session key anyway, per router.tsx's `key={id}`), so it needs no reset here.
   useEffect(() => {
     setPlacing(false)
     setPlaceInfo(null)
     setPlaceError(null)
-    setShowContinuePicker(false)
   }, [id])
 
   // Fleet runner list, for deriving the bound runner's liveness + the
@@ -105,6 +105,12 @@ export function ChatPage() {
   const continueOptions = useMemo(
     () => onlineSessionCapableRunners(fleetRunners),
     [fleetRunners],
+  )
+  // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
+  // (already online + session-capable) options above.
+  const placementRunners: PlacementRunner[] = useMemo(
+    () => continueOptions.map((r) => ({ id: r.id, name: r.name, online: r.status === 'online' })),
+    [continueOptions],
   )
 
   // Best-effort fleet resync, used both by the recovery poll below and after
@@ -181,7 +187,6 @@ export function ChatPage() {
       placeTurn(id, runnerId)
         .then(() => {
           setPlaceInfo('Placed — the new runner will pick it up shortly.')
-          setShowContinuePicker(false)
           refreshFleet()
         })
         .catch(placementFail)
@@ -342,46 +347,6 @@ export function ChatPage() {
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
       </div>
-      {boundOffline && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning">
-          <span className="font-medium">{meta?.runner_name} is unavailable</span>
-          <button
-            type="button"
-            onClick={waitForIt}
-            disabled={placing}
-            className="rounded-md border border-warning/40 px-2 py-0.5 text-warning hover:bg-warning/20 disabled:opacity-50"
-          >
-            Wait for it
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowContinuePicker((v) => !v)}
-            className="rounded-md border border-warning/40 px-2 py-0.5 text-warning hover:bg-warning/20"
-          >
-            Continue on…
-          </button>
-          {showContinuePicker && (
-            <select
-              defaultValue=""
-              disabled={placing}
-              onChange={(e) => continueOn(e.target.value)}
-              className="rounded-md border border-warning/40 bg-card px-1.5 py-0.5 text-[12px] text-foreground"
-              aria-label="Continue on"
-            >
-              <option value="" disabled>
-                Choose a runner…
-              </option>
-              {continueOptions.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {placeInfo && <span className="text-muted-foreground">{placeInfo}</span>}
-          {placeError && <span className="text-destructive">{placeError}</span>}
-        </div>
-      )}
       <div className="min-h-0 flex-1">
         <ChatPanel
           state={socket.state}
@@ -395,6 +360,19 @@ export function ChatPage() {
           renderMarkdown={renderMarkdown}
           emptyState={emptyState}
           historySlot={historySlot}
+          banner={
+            boundOffline ? (
+              <PlacementBanner
+                runnerName={meta?.runner_name ?? ''}
+                eligibleRunners={placementRunners}
+                busy={placing}
+                error={placeError}
+                info={placeInfo}
+                onWait={waitForIt}
+                onPlace={continueOn}
+              />
+            ) : undefined
+          }
         />
       </div>
     </div>

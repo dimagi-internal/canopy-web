@@ -49,3 +49,8 @@ export { ToolCallPair } from "./ToolCallPair";
 export { SendBox } from "./SendBox";
 export { PresenceChips } from "./PresenceChips";
 export { ConnectionStatus } from "./ConnectionStatus";
+export {
+  PlacementBanner,
+  type PlacementBannerProps,
+  type PlacementRunner,
+} from "./PlacementBanner";

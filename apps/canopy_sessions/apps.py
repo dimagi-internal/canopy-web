@@ -8,3 +8,4 @@ class CanopySessionsConfig(AppConfig):
 
     def ready(self) -> None:
         from . import signals  # noqa: F401  (Message projection receiver)
+        from . import autotitle  # noqa: F401  (auto-title receiver)
