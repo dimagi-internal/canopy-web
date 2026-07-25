@@ -2494,7 +2494,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Cancel the session's active turn */
+        /** Cancel every non-terminal turn on this session */
         readonly post: operations["apps_canopy_sessions_api_stop_session_turn"];
         readonly delete?: never;
         readonly options?: never;
