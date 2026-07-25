@@ -32,6 +32,10 @@ ALLOWED_HOSTS = ["*"]
 # Served under /canopy on the shared ALB.
 FORCE_SCRIPT_NAME = env("FORCE_SCRIPT_NAME", default="/canopy")
 
+# The labs public URL, path-prefixed — readiness-drill report callbacks are built
+# from this (apps/harness/services.py::start_drill).
+CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="https://labs.connect.dimagi.com/canopy")
+
 # `@login_required`/allauth build redirects from LOGIN_URL via resolve_url,
 # which does NOT prepend FORCE_SCRIPT_NAME — so it must already carry /canopy,
 # else an anonymous hit redirects to a path owned by a sibling labs tenant.

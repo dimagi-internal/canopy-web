@@ -2,6 +2,7 @@
 workspace (agents, their Google-Doc syncs, work products, and skill catalog)."""
 from __future__ import annotations
 
+from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -16,6 +17,8 @@ from .schemas import (
     AgentDetailOut,
     AgentIn,
     AgentOut,
+    AgentRunnerOut,
+    AgentRunnersIn,
     AgentRuntimeOut,
     AgentSkillCatalogIn,
     AgentSkillOut,
@@ -127,7 +130,9 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 @router.patch("/{slug}/runner-preference", response=AgentDetailOut,
               summary="Set an agent's ordered runner-kind preference")
 def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPreferenceIn) -> AgentDetailOut:
-    """Update just the ordered runner-kind preference (cloud/emdash/remote), no
+    """DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
+
+    Update just the ordered runner-kind preference (cloud/emdash/remote), no
     clobber of the agent's other fields. Honored at claim time — see
     harness.services.claim_next_turn."""
     from apps.harness.models import Runner
@@ -158,6 +163,60 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
         secret_refs=list(agent.runtime_secrets or []),
         workspace=agent.workspace_id,
     )
+
+
+# ---- runner assignments (the routing-matrix UI's read/write surface) ----
+@router.get("/{slug}/runners", response=list[AgentRunnerOut],
+            summary="List the agent's ordered runner assignments")
+def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
+    agent = _get_agent_or_404(request, slug)
+    return [
+        AgentRunnerOut(
+            runner_id=a.runner_id,
+            runner_name=a.runner.name,
+            kind=a.runner.kind,
+            rank=a.rank,
+            online=a.runner.live_status == a.runner.ONLINE,
+            ready=a.runner.ready,
+        )
+        for a in agent.runner_assignments.select_related("runner")
+    ]
+
+
+@router.put("/{slug}/runners", response=list[AgentRunnerOut],
+            summary="Replace the agent's ordered runner list (index = rank)")
+def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
+    """Replace the agent's ORDERED runner list (index = rank) — the single
+    routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+    a full row, so there is no partial-update ambiguity."""
+    from apps.harness.api import _runner_visibility_q
+    from apps.harness.models import Runner, RunnerAssignment
+
+    agent = _get_agent_or_404(request, slug)
+    # Reject duplicate runner IDs early
+    if len(payload.runner_ids) != len(set(payload.runner_ids)):
+        raise HttpError(422, "duplicate runner id in list")
+    # Scoped by the same _runner_visibility_q predicate apps/harness/api.py's
+    # _runner_or_404/list_runners gate on — a runner_id the caller can't see
+    # (paired by someone else, wrong tenant) must 422 as "unknown", never be
+    # attachable/readable just because its UUID was guessed. See that
+    # docstring for the full predicate story.
+    runners = list(
+        Runner.objects.filter(id__in=payload.runner_ids)
+        .exclude(status=Runner.RETIRED)
+        .filter(_runner_visibility_q(request))
+    )
+    by_id = {r.id: r for r in runners}
+    missing = [str(rid) for rid in payload.runner_ids if rid not in by_id]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    with transaction.atomic():
+        RunnerAssignment.objects.filter(agent=agent).delete()
+        RunnerAssignment.objects.bulk_create([
+            RunnerAssignment(agent=agent, runner=by_id[rid], rank=i)
+            for i, rid in enumerate(payload.runner_ids)
+        ])
+    return list_agent_runners(request, slug)
 
 
 # ---- syncs (Google-Doc backed) ----

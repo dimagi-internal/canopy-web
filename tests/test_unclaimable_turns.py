@@ -142,3 +142,35 @@ def test_a_genuinely_undeclared_target_still_reports_CONFIG():
     rows = services.unclaimable_queued_turns(user)
     assert rows[0]["kind"] == "config"
     assert rows[0]["reason"] == "no runner declares the repo 'ace'"
+
+
+# ── Directed routing (RunnerAssignment) coverage — spec 2026-07-24 ─────────────
+# The detector shares runner_target_q with claim_next_turn, which now routes
+# agent turns by RunnerAssignment, NOT capabilities.agents. These pin the two
+# sides of that: declared-but-unassigned is a CONFIG problem (claiming would
+# never happen), and assigned-but-offline is an OFFLINE problem.
+
+
+def test_capabilities_without_assignment_reports_CONFIG():
+    """A runner that merely DECLARES the agent in capabilities no longer covers
+    it — assignment is the routing authority, and the warning must agree."""
+    from apps.agents.models import Agent as _Agent
+
+    user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
+    ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
+    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka1", prompt="hi")[0])
+    rows = services.unclaimable_queued_turns(user)
+    assert [r["kind"] for r in rows] == ["config"]
+    assert "is assigned the agent 'ace'" in rows[0]["reason"]
+
+
+def test_assignment_with_offline_runner_reports_OFFLINE():
+    from apps.agents.models import Agent as _Agent
+    from apps.harness.models import RunnerAssignment
+
+    user, ws = _ctx(agents=[], projects=[], online=False)
+    ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
+    RunnerAssignment.objects.create(agent=ace, runner=Runner.objects.get(), rank=0)
+    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka2", prompt="hi")[0])
+    rows = services.unclaimable_queued_turns(user)
+    assert [r["kind"] for r in rows] == ["offline"]

@@ -9,8 +9,12 @@ import {
   attachSession,
   detachSession,
   requestBackfill,
+  placeTurn,
+  ChatApiError,
   type ChatSessionDetail,
 } from '@/api/chat'
+import { listRunners, type RunnerOut } from '@/api/harness'
+import { isBoundRunnerOffline, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
 import { backfillAction, restToKitMessage, shouldShowLoadFull } from './chatPageLogic'
 
 /** Render assistant/system message text through canopy's shared Markdown (the
@@ -43,6 +47,15 @@ export function ChatPage() {
   const [loadingFull, setLoadingFull] = useState(false)
   const [historyUnavailable, setHistoryUnavailable] = useState(false)
 
+  // Offline-runner placement banner state. The session payload only carries
+  // `runner_name` (no runner id/liveness), so offline-ness is DERIVED by
+  // matching that name against the fleet-wide runner list.
+  const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>([])
+  const [placing, setPlacing] = useState(false)
+  const [placeInfo, setPlaceInfo] = useState<string | null>(null)
+  const [placeError, setPlaceError] = useState<string | null>(null)
+  const [showContinuePicker, setShowContinuePicker] = useState(false)
+
   const socket = useSessionSocket({ sessionId: id, wsUrl })
 
   // Session meta + scroll-back cursor seed.
@@ -61,6 +74,121 @@ export function ChatPage() {
         setMetaError(err instanceof Error ? err.message : 'session not found')
       })
   }, [id])
+
+  // Reset the placement-banner UI state on session switch, so a stale info/
+  // error message or open "Continue on…" picker doesn't leak across sessions.
+  useEffect(() => {
+    setPlacing(false)
+    setPlaceInfo(null)
+    setPlaceError(null)
+    setShowContinuePicker(false)
+  }, [id])
+
+  // Fleet runner list, for deriving the bound runner's liveness + the
+  // "Continue on…" eligible set. Fetched once on mount; re-polled below
+  // while the offline banner is showing (see the recovery-poll effect).
+  useEffect(() => {
+    let live = true
+    listRunners()
+      .then((r) => {
+        if (live) setFleetRunners(r)
+      })
+      .catch(() => {
+        /* non-fatal: the offline banner just won't have evidence to show */
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const boundOffline = isBoundRunnerOffline(meta?.runner_name, fleetRunners)
+  const continueOptions = useMemo(
+    () => onlineSessionCapableRunners(fleetRunners),
+    [fleetRunners],
+  )
+
+  // Best-effort fleet resync, used both by the recovery poll below and after
+  // a successful placement — non-fatal on failure (the banner just keeps
+  // showing the last-known snapshot).
+  const refreshFleet = useCallback(() => {
+    listRunners()
+      .then((r) => setFleetRunners(r))
+      .catch(() => {
+        /* non-fatal: keep the last-known fleet snapshot */
+      })
+  }, [])
+
+  // While the offline banner is up, a bound runner that recovers later in
+  // the same page-load would otherwise leave a stale-offline false positive
+  // forever — the fleet list is only fetched once on mount. Poll on a modest
+  // interval for as long as the condition holds, so recovery hides the
+  // banner; stop the instant it flips false (recovered, or session switch).
+  useEffect(() => {
+    if (!boundOffline) return
+    let cancelled = false
+    const POLL_MS = 30_000
+    let timer: ReturnType<typeof setTimeout>
+    const tick = () => {
+      listRunners()
+        .then((r) => {
+          if (!cancelled) setFleetRunners(r)
+        })
+        .catch(() => {
+          /* non-fatal: retry next tick */
+        })
+        .finally(() => {
+          if (!cancelled) timer = setTimeout(tick, POLL_MS)
+        })
+    }
+    timer = setTimeout(tick, POLL_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [boundOffline])
+
+  const placementFail = useCallback((err: unknown) => {
+    if (err instanceof ChatApiError && err.status === 404) {
+      setPlaceInfo('No pending message to place.')
+      return
+    }
+    if (err instanceof ChatApiError && err.status === 422) {
+      setPlaceError(err.message)
+      return
+    }
+    setPlaceError(err instanceof Error ? err.message : 'Could not place the turn.')
+  }, [])
+
+  const waitForIt = useCallback(() => {
+    setPlacing(true)
+    setPlaceInfo(null)
+    setPlaceError(null)
+    placeTurn(id, 'wait')
+      .then(() => {
+        setPlaceInfo('Waiting for the bound runner.')
+        refreshFleet()
+      })
+      .catch(placementFail)
+      .finally(() => setPlacing(false))
+  }, [id, placementFail, refreshFleet])
+
+  const continueOn = useCallback(
+    (runnerId: string) => {
+      if (!runnerId) return
+      setPlacing(true)
+      setPlaceInfo(null)
+      setPlaceError(null)
+      placeTurn(id, runnerId)
+        .then(() => {
+          setPlaceInfo('Placed — the new runner will pick it up shortly.')
+          setShowContinuePicker(false)
+          refreshFleet()
+        })
+        .catch(placementFail)
+        .finally(() => setPlacing(false))
+    },
+    [id, placementFail, refreshFleet],
+  )
 
   // Attach-on-open / detach-on-unmount. The server's attach counter floors at
   // 0 rather than going negative, so a detach that lands BEFORE its paired
@@ -214,6 +342,46 @@ export function ChatPage() {
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
       </div>
+      {boundOffline && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning">
+          <span className="font-medium">{meta?.runner_name} is unavailable</span>
+          <button
+            type="button"
+            onClick={waitForIt}
+            disabled={placing}
+            className="rounded-md border border-warning/40 px-2 py-0.5 text-warning hover:bg-warning/20 disabled:opacity-50"
+          >
+            Wait for it
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowContinuePicker((v) => !v)}
+            className="rounded-md border border-warning/40 px-2 py-0.5 text-warning hover:bg-warning/20"
+          >
+            Continue on…
+          </button>
+          {showContinuePicker && (
+            <select
+              defaultValue=""
+              disabled={placing}
+              onChange={(e) => continueOn(e.target.value)}
+              className="rounded-md border border-warning/40 bg-card px-1.5 py-0.5 text-[12px] text-foreground"
+              aria-label="Continue on"
+            >
+              <option value="" disabled>
+                Choose a runner…
+              </option>
+              {continueOptions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {placeInfo && <span className="text-muted-foreground">{placeInfo}</span>}
+          {placeError && <span className="text-destructive">{placeError}</span>}
+        </div>
+      )}
       <div className="min-h-0 flex-1">
         <ChatPanel
           state={socket.state}

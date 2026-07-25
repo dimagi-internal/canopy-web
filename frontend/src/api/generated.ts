@@ -988,7 +988,9 @@ export interface paths {
         readonly head?: never;
         /**
          * Set an agent's ordered runner-kind preference
-         * @description Update just the ordered runner-kind preference (cloud/emdash/remote), no
+         * @description DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
+         *
+         *     Update just the ordered runner-kind preference (cloud/emdash/remote), no
          *     clobber of the agent's other fields. Honored at claim time — see
          *     harness.services.claim_next_turn.
          */
@@ -1011,6 +1013,29 @@ export interface paths {
          */
         readonly get: operations["apps_agents_api_get_agent_runtime"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/runners": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List the agent's ordered runner assignments */
+        readonly get: operations["apps_agents_api_list_agent_runners"];
+        /**
+         * Replace the agent's ordered runner list (index = rank)
+         * @description Replace the agent's ORDERED runner list (index = rank) — the single
+         *     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+         *     a full row, so there is no partial-update ambiguity.
+         */
+        readonly put: operations["apps_agents_api_replace_agent_runners"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2213,6 +2238,66 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/drill": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start Runner Drill
+         * @description Fan out a readiness drill (owner-gated). Default: every agent assigned to
+         *     this runner; body.agents narrows by slug.
+         */
+        readonly post: operations["apps_harness_api_start_runner_drill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/drills": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Runner Drills */
+        readonly get: operations["apps_harness_api_list_runner_drills"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/drills/{drill_id}/report": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report Drill
+         * @description The drilled agent's callback. Gated like every runner route: the caller
+         *     must be the drilled runner's owner (the agent runs under the owner's
+         *     environment token, so this proves control-plane reachability too).
+         */
+        readonly post: operations["apps_harness_api_report_drill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/vapid-public-key": {
         readonly parameters: {
             readonly query?: never;
@@ -2370,6 +2455,23 @@ export interface paths {
         readonly put?: never;
         /** Send a message */
         readonly post: operations["apps_canopy_sessions_api_send"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/place": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-pin a session's oldest queued turn to a runner */
+        readonly post: operations["apps_canopy_sessions_api_place"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4412,6 +4514,37 @@ export interface components {
             /** Workspace */
             readonly workspace: string | null;
         };
+        /**
+         * AgentRunnerOut
+         * @description One row of an agent's ordered runner list (the routing-matrix UI's read
+         *     model). `online`/`ready` are computed per row from `Runner.live_status` /
+         *     `Runner.ready` — not queryable columns, so the list stays tiny by design.
+         */
+        readonly AgentRunnerOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Rank */
+            readonly rank: number;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+        };
+        /**
+         * AgentRunnersIn
+         * @description Wholesale replace of an agent's ordered runner list — index = rank.
+         */
+        readonly AgentRunnersIn: {
+            /** Runner Ids */
+            readonly runner_ids?: readonly string[];
+        };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
             /** Id */
@@ -5926,6 +6059,22 @@ export interface components {
              */
             readonly sections: readonly components["schemas"]["SharedSectionOut"][];
         };
+        /**
+         * DrillRollup
+         * @description Aggregated readiness-drill outcomes for one runner, across all its
+         *     (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
+         *     a client-side fetch-and-reduce over /runners/{id}/drills.
+         */
+        readonly DrillRollup: {
+            /** Passed */
+            readonly passed: number;
+            /** Failed */
+            readonly failed: number;
+            /** Pending */
+            readonly pending: number;
+            /** Last Finished At */
+            readonly last_finished_at: string | null;
+        };
         /** RunnerOut */
         readonly RunnerOut: {
             /**
@@ -5959,6 +6108,7 @@ export interface components {
             readonly workspace: string | null;
             /** Paired By Email */
             readonly paired_by_email: string | null;
+            readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
         };
         /** RunnerIn */
         readonly RunnerIn: {
@@ -6518,6 +6668,44 @@ export interface components {
              */
             readonly slot: string;
         };
+        /** RunnerDrillOut */
+        readonly RunnerDrillOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Outcome */
+            readonly outcome: string;
+            /** Summary */
+            readonly summary: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /** Turn Id */
+            readonly turn_id: string | null;
+        };
+        /** DrillIn */
+        readonly DrillIn: {
+            /** Agents */
+            readonly agents?: readonly string[] | null;
+        };
+        /** DrillReportIn */
+        readonly DrillReportIn: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            readonly outcome: "pass" | "fail";
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+        };
         /** VapidKeyOut */
         readonly VapidKeyOut: {
             /** Public Key */
@@ -6610,6 +6798,8 @@ export interface components {
             readonly metadata: {
                 readonly [key: string]: unknown;
             };
+            /** Runner Id */
+            readonly runner_id?: string | null;
         };
         /** MessageOut */
         readonly MessageOut: {
@@ -6654,6 +6844,33 @@ export interface components {
              * @default
              */
             readonly client_id: string;
+            /** Placement */
+            readonly placement?: string | null;
+        };
+        /**
+         * TurnOutMinimal
+         * @description Just enough of a Turn for the /place response — the caller only needs to
+         *     confirm the pin took, not the full harness TurnOut shape.
+         */
+        readonly TurnOutMinimal: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Pinned Runner Id */
+            readonly pinned_runner_id?: string | null;
+        };
+        /**
+         * PlaceIn
+         * @description Body for POST /{session_id}/place — the chat banner's after-the-fact
+         *     directed-placement decision on an already-queued turn.
+         */
+        readonly PlaceIn: {
+            /** Placement */
+            readonly placement: string;
         };
         /**
          * StreamStateOut
@@ -8449,6 +8666,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentRuntimeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_agent_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_replace_agent_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRunnersIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
         };
@@ -10301,6 +10566,80 @@ export interface operations {
             };
         };
     };
+    readonly apps_harness_api_start_runner_drill: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DrillIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDrillOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_list_runner_drills: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDrillOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_report_drill: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly drill_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DrillReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDrillOut"];
+                };
+            };
+        };
+    };
     readonly apps_push_api_vapid_public_key: {
         readonly parameters: {
             readonly query?: never;
@@ -10527,6 +10866,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SendOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_place: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PlaceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnOutMinimal"];
                 };
             };
         };

@@ -155,6 +155,12 @@ class Runner(models.Model):
             return self.STALE
         return self.status
 
+    @property
+    def is_available(self) -> bool:
+        """Can this runner take work RIGHT NOW — online (fresh heartbeat) AND
+        self-reported ready. The cascade's availability probe (spec 2026-07-24)."""
+        return self.live_status == Runner.ONLINE and self.ready
+
 
 class Turn(models.Model):
     """One unit of agent work — the execution envelope around board commands."""
@@ -169,12 +175,13 @@ class Turn(models.Model):
     TERMINAL = {DONE, FAILED, LOST, MISSED}
     NON_TERMINAL = {QUEUED, CLAIMED, RUNNING, NEEDS_HUMAN}
 
-    ORIGIN_BOARD, ORIGIN_API, ORIGIN_SLACK, ORIGIN_CRON, ORIGIN_MANUAL, ORIGIN_EMAIL = (
-        "board", "api", "slack", "cron", "manual", "email",
+    ORIGIN_BOARD, ORIGIN_API, ORIGIN_SLACK, ORIGIN_CRON, ORIGIN_MANUAL, ORIGIN_EMAIL, ORIGIN_DRILL = (
+        "board", "api", "slack", "cron", "manual", "email", "drill",
     )
     ORIGIN_CHOICES = [
         (ORIGIN_BOARD, "Board"), (ORIGIN_API, "API"), (ORIGIN_SLACK, "Slack"),
         (ORIGIN_CRON, "Cron"), (ORIGIN_MANUAL, "Manual"), (ORIGIN_EMAIL, "Email"),
+        (ORIGIN_DRILL, "Drill"),
     ]
 
     PREFER_LOCAL, LOCAL_ONLY, ANY = "prefer_local", "local_only", "any"
@@ -234,6 +241,14 @@ class Turn(models.Model):
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=QUEUED)
     claimed_by = models.ForeignKey(
         Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="turns"
+    )
+    # A HARD pin: only this runner may claim (drills, chat "wait for X", directed
+    # placement). Bypasses assignments/capabilities, never the tenant gate or the
+    # one-executing-turn constraints. SET_NULL: a deleted runner degrades the pin
+    # to normal routing instead of stranding the turn.
+    pinned_runner = models.ForeignKey(
+        Runner, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="pinned_turns",
     )
     claimed_at = models.DateTimeField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
@@ -533,3 +548,48 @@ class RunnerCredential(models.Model):
 
     def __str__(self) -> str:
         return f"credential:{self.runner_id}"
+
+
+class RunnerAssignment(models.Model):
+    """One row of an agent's ordered runner list — THE routing authority for agent
+    turns (spec 2026-07-24-directed-runner-routing). An agent with no rows is
+    explicitly unroutable. Replaced routing-by-capabilities + kind preference."""
+
+    agent = models.ForeignKey(
+        "agents.Agent", on_delete=models.CASCADE, related_name="runner_assignments"
+    )
+    runner = models.ForeignKey(
+        Runner, on_delete=models.CASCADE, related_name="agent_assignments"
+    )
+    rank = models.PositiveSmallIntegerField()  # 0 = first choice
+
+    class Meta:
+        ordering = ["agent_id", "rank"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "runner"], name="one_assignment_per_agent_runner"),
+        ]
+
+
+class RunnerDrill(models.Model):
+    """Latest readiness-drill outcome for one (runner, agent) pair. Reset to
+    pending on each fan-out; resolved by the agent's report callback or by the
+    drill turn failing. Freshness = finished_at age (no server TTL)."""
+
+    OUTCOME_PENDING, OUTCOME_PASS, OUTCOME_FAIL = "pending", "pass", "fail"
+    OUTCOME_CHOICES = [(OUTCOME_PENDING, "Pending"), (OUTCOME_PASS, "Pass"), (OUTCOME_FAIL, "Fail")]
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="drills")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="runner_drills")
+    turn = models.ForeignKey(Turn, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    outcome = models.CharField(max_length=8, choices=OUTCOME_CHOICES, default=OUTCOME_PENDING)
+    summary = models.TextField(blank=True, default="")
+    # default=timezone.now (not auto_now_add) so start_drill's update_or_create can
+    # reset it on every re-drill — auto_now_add only stamps on the INITIAL insert.
+    started_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["agent__slug"]
+        constraints = [
+            models.UniqueConstraint(fields=["runner", "agent"], name="one_drill_row_per_runner_agent"),
+        ]

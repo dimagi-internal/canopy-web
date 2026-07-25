@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.realtime.consumers import RunnerConsumer
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -30,6 +30,7 @@ def _setup():
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"agents": ["echo"]},
     )
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     return user, ws, agent, runner
 
 

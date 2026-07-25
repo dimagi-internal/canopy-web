@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -213,8 +213,8 @@ def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, 
     WorkspaceMembership.objects.create(
         user=owner, workspace=sibling, role=WorkspaceMembership.OWNER
     )
-    Agent.objects.create(slug="eva", name="Eva", workspace=workspace)
-    Agent.objects.create(slug="ace", name="Ace", workspace=sibling)
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=workspace)
+    ace = Agent.objects.create(slug="ace", name="Ace", workspace=sibling)
 
     # One runner, homed to `workspace` (as the 0005 backfill homed the live one),
     # declaring the whole fleet in its capabilities.
@@ -229,6 +229,8 @@ def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, 
         content_type="application/json",
     ).json()["id"]
     assert Runner.objects.get(pk=rid).workspace_id == workspace.slug  # sanity: homed to one
+    RunnerAssignment.objects.create(agent=eva, runner_id=rid, rank=0)
+    RunnerAssignment.objects.create(agent=ace, runner_id=rid, rank=0)
 
     hb = owner_client.post(
         f"/api/harness/runners/{rid}/heartbeat",

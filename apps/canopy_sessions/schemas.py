@@ -14,12 +14,35 @@ class SessionCreateIn(Schema):
     project: str = ""
     title: str = ""
     metadata: dict = {}
+    # Directed placement at creation time: the runner this new chat should run
+    # on. Stashed on session.metadata["requested_runner_id"] and consumed by the
+    # session's FIRST send (as long as the session is still unbound) — see
+    # services.send_message.
+    runner_id: uuid.UUID | None = None
 
 
 class SendIn(Schema):
     text: str
     # Optional client-generated nonce for idempotent (double-submit-safe) sends.
     client_id: str = ""
+    # Directed placement for the turn this send enqueues: "wait" pins to the
+    # session's currently bound runner, or a runner UUID string pins to that
+    # runner outright. None leaves normal routing/stickiness in charge.
+    placement: str | None = None
+
+
+class PlaceIn(Schema):
+    """Body for POST /{session_id}/place — the chat banner's after-the-fact
+    directed-placement decision on an already-queued turn."""
+    placement: str
+
+
+class TurnOutMinimal(Schema):
+    """Just enough of a Turn for the /place response — the caller only needs to
+    confirm the pin took, not the full harness TurnOut shape."""
+    id: uuid.UUID
+    status: str
+    pinned_runner_id: uuid.UUID | None = None
 
 
 class MessageOut(Schema):

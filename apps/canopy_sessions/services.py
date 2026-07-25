@@ -339,7 +339,67 @@ def _next_index(session: Session) -> int:
     return 0 if current is None else current + 1
 
 
-def send_message(*, session: Session, text: str, user, client_id: str = "") -> tuple[Message, Turn]:
+def _placeable_runner(session: Session, runner_id):
+    """A runner may be a placement target only if it could actually CLAIM this
+    session's turns — its pairer belongs to the session's workspace (mirrors
+    claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
+    runner would leave the pinned turn permanently unclaimable) AND it is
+    session-capable (capabilities.sessions — the runner-side truth for who
+    may execute a chat turn; a pin can't override that). Invisible ids
+    resolve to None so callers 422 exactly like a nonexistent id (no oracle);
+    a malformed id (not a UUID) resolves to None the same way rather than
+    raising django's ValidationError out of the ORM lookup."""
+    from apps.harness.models import Runner
+    from apps.workspaces import services as wsvc
+
+    if not runner_id:
+        return None
+    try:
+        uuid.UUID(str(runner_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    runner = (
+        Runner.objects.filter(id=runner_id, paired_by__isnull=False)
+        .exclude(status=Runner.RETIRED)
+        .first()
+    )
+    if runner is None:
+        return None
+    if not runner.session_capable():
+        return None
+    if not wsvc.is_member(runner.paired_by, session.workspace_id):
+        return None
+    return runner
+
+
+def _resolve_placement(session: Session, placement: str | None):
+    """Directed-placement pin for a NEW turn about to be enqueued. `placement`
+    wins when given explicitly; otherwise an unbound session's stashed
+    `requested_runner_id` (set at directed-new-chat creation) pins the first
+    turn. A live binding needs no pin here — claim-time stickiness already
+    routes the turn to the binding holder (see claim_next_turn's session leg).
+
+    Returns a Runner|None. Raises ValueError for an explicit but unresolvable
+    placement (unknown/retired/foreign-tenant runner) — the caller surfaces
+    that as a 422."""
+    if placement == "wait":
+        binding = getattr(session, "runner_binding", None)
+        return binding.runner if binding and binding.runner_id else None
+    if placement:
+        pinned = _placeable_runner(session, placement)
+        if pinned is None:
+            raise ValueError("unknown runner for placement")
+        return pinned
+    if not getattr(session, "runner_binding", None):
+        rid = (session.metadata or {}).get("requested_runner_id")
+        if rid:
+            return _placeable_runner(session, rid)
+    return None
+
+
+def send_message(
+    *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
+) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
     Idempotency: pass a stable `client_id` (a client-generated nonce) to make a
@@ -347,6 +407,12 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     Without one, the key falls back to the message's session index — best-effort
     only (a genuine retry after the first commit would compute a new index), so a
     nonce is required for true double-submit safety.
+
+    `placement`: "wait" pins to the session's currently bound runner; a runner
+    UUID string pins to that runner outright; None leaves normal routing/
+    stickiness in charge (including, for the FIRST send of an unbound directed
+    new chat, the `requested_runner_id` stashed at create time). See
+    `_resolve_placement`.
 
     For an origin=runner session the TRANSCRIPT is the sole durable source
     (spec 2026-07-24): the user's words reach the DB when the runner ships the
@@ -356,7 +422,9 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     optimistically (draft.committed), and a transient Message keeps the contract.
     """
     if session.origin == Session.ORIGIN_RUNNER:
-        return _send_runner_message(session=session, text=text, client_id=client_id)
+        return _send_runner_message(
+            session=session, text=text, client_id=client_id, placement=placement
+        )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
         if client_id:
@@ -388,12 +456,14 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
         # session id, which is what record_session then stores.
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
+        pinned = _resolve_placement(session, placement)
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
             origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+            pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
     # the human's message is an interjection. Push it down to the runner executing
@@ -404,7 +474,40 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     return message, turn
 
 
-def _send_runner_message(*, session: Session, text: str, client_id: str = "") -> tuple[Message, Turn]:
+def place_queued_turn(*, session: Session, placement: str) -> Turn:
+    """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
+    directed-placement decision (vs `_resolve_placement`, which only applies to
+    a turn being newly enqueued). `placement` is "wait" (pin to the session's
+    currently bound runner) or a runner UUID string.
+
+    Raises LookupError if there is no queued turn to place (-> 404), or
+    ValueError for an unresolvable placement (-> 422): "wait" with no bound
+    runner, or an unknown/retired runner id.
+    """
+    turn = (
+        Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
+        .order_by("created_at")
+        .first()
+    )
+    if turn is None:
+        raise LookupError("no queued turn to place")
+    if placement == "wait":
+        binding = getattr(session, "runner_binding", None)
+        if not (binding and binding.runner_id):
+            raise ValueError("session has no bound runner to wait for")
+        turn.pinned_runner_id = binding.runner_id
+    else:
+        runner = _placeable_runner(session, placement)
+        if runner is None:
+            raise ValueError("unknown runner")
+        turn.pinned_runner = runner
+    turn.save(update_fields=["pinned_runner"])
+    return turn
+
+
+def _send_runner_message(
+    *, session: Session, text: str, client_id: str = "", placement: str | None = None
+) -> tuple[Message, Turn]:
     """The runner-session send path: enqueue the Turn, author NO durable user row.
 
     The returned Message is transient (never saved): MessageOut serializes it for
@@ -425,12 +528,14 @@ def _send_runner_message(*, session: Session, text: str, client_id: str = "") ->
     # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
+    pinned = _resolve_placement(session, placement)
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=Turn.ORIGIN_API,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
         origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+        pinned_runner=pinned,
     )
     _maybe_interject(session, message)
     return message, turn

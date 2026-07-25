@@ -6,6 +6,7 @@ import uuid
 from django.db import models
 from django.db.models import Q
 from django.http import HttpRequest
+from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
 
@@ -17,11 +18,13 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import services
-from .models import AgentSchedule, Runner, Turn
+from .models import AgentSchedule, Runner, RunnerDrill, Turn
 from .schedule_services import serialize_schedule
 from .schemas import (
     BackfillSyncOut,
     BackfillWriteOut,
+    DrillIn,
+    DrillReportIn,
     EmdashSessionOut,
     UnclaimableTurnOut,
     HeartbeatIn,
@@ -33,6 +36,7 @@ from .schemas import (
     RunnerCredentialIn,
     RunnerCredentialOut,
     RunnerCredentialStatusOut,
+    RunnerDrillOut,
     RunnerIn,
     RunnerOut,
     ScheduleFireIn,
@@ -229,6 +233,7 @@ def list_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(_runner_visibility_q(request))
+        .prefetch_related("drills")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
     return list(qs[:50])
@@ -722,3 +727,42 @@ def fire_schedule_route(
     # Release runs on the CLAIM tick instead — see claim_next_turn.
     turn, _ = services.fire_schedule(schedule, payload.slot)
     return Status(201, turn)
+
+
+# --------------------------------------------------------------------------------------
+# Readiness drills — a hard-pinned, read-only doctor turn per (runner, agent), resolved
+# by the drilled agent's own report callback or by the turn failing (see
+# services.start_drill / finish_turn). Spec 2026-07-24-directed-runner-routing, Task 7.
+# --------------------------------------------------------------------------------------
+
+
+@router.post("/runners/{runner_id}/drill", response=list[RunnerDrillOut])
+def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: DrillIn):
+    """Fan out a readiness drill (owner-gated). Default: every agent assigned to
+    this runner; body.agents narrows by slug."""
+    runner = _runner_or_404(request, runner_id)
+    assigned = Agent.objects.filter(runner_assignments__runner=runner)
+    # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
+    # hits the 422 below, rather than being treated the same as "drill everyone".
+    agents = list(assigned.filter(slug__in=payload.agents) if payload.agents is not None else assigned)
+    if not agents:
+        raise HttpError(422, "no assigned agents to drill — assign this runner to an agent first")
+    return services.start_drill(runner, agents)
+
+
+@router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
+def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
+    runner = _runner_or_404(request, runner_id)
+    return list(runner.drills.select_related("agent"))
+
+
+@router.post("/drills/{drill_id}/report", response=RunnerDrillOut)
+def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn):
+    """The drilled agent's callback. Gated like every runner route: the caller
+    must be the drilled runner's owner (the agent runs under the owner's
+    environment token, so this proves control-plane reachability too)."""
+    drill = get_object_or_404(
+        RunnerDrill.objects.select_related("runner", "agent"), pk=drill_id
+    )
+    _runner_or_404(request, drill.runner_id)  # reuse the owner gate; 404 on non-owner
+    return services.report_drill(drill, outcome=payload.outcome, summary=payload.summary)

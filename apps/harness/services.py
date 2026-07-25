@@ -11,6 +11,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Max, Q
 from django.utils import timezone
@@ -26,6 +27,8 @@ from .models import (
     AgentSchedule,
     Item,
     Runner,
+    RunnerAssignment,
+    RunnerDrill,
     Turn,
     TurnEvent,
 )
@@ -47,6 +50,7 @@ def enqueue_turn(
     origin_ref: dict | None = None,
     routing: str = Turn.PREFER_LOCAL,
     enqueued_by=None,
+    pinned_runner=None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -79,6 +83,7 @@ def enqueue_turn(
                 origin_ref=origin_ref or {},
                 routing=routing,
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
+                pinned_runner=pinned_runner,
             )
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
@@ -137,50 +142,70 @@ def _kind_allows(runner: Runner, routing: str) -> bool:
     return True
 
 
-# Per-agent runner-KIND preference (Agent.runner_preference, e.g. ["cloud","emdash"])
-# is honored with a per-tier TIME head-start rather than a live availability probe,
-# so the delicate claim path stays query-free and deterministic. The first preferred
-# kind may claim immediately; each lower tier waits this much MORE before it may —
-# giving the preferred runner first dibs while a lower kind still falls back if the
-# preferred one never shows. Tuned small so fallback is prompt when a tier is absent.
-PREFERENCE_TIER_GRACE_SECONDS = 20
+# Rank = availability cascade (spec 2026-07-24-directed-runner-routing). A lower
+# rank may claim only while every better rank is unavailable — EXCEPT after the
+# grace: an online-but-wedged runner (heartbeating, never claiming) must not
+# stall an agent's queue forever, so a turn queued past the grace opens to the
+# next assigned rank regardless of upstream availability.
+CASCADE_GRACE_SECONDS = 60
 
 
-def _preference_allows(runner: Runner, turn: Turn, now) -> bool:
-    """May this runner's KIND claim this turn yet, under the agent's ordered
-    runner_preference? True if the agent has no preference (unconstrained), or the
-    runner's kind has waited out its tier's head-start. A kind ABSENT from a
-    non-empty preference never claims that agent. Per-agent only: project/session
-    turns (no agent) are always allowed."""
-    agent = turn.agent
-    if agent is None:
-        return True
-    pref = agent.runner_preference or []
-    if not pref:
-        return True
-    if runner.kind not in pref:
+def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn, assignment_map: dict, now) -> bool:
+    """assignment_map: {agent_id: [(rank, Runner), ...] ordered by rank}. False when
+    this runner is not in the agent's list; True when it is and either every
+    better-ranked runner is unavailable or the turn has aged past the grace."""
+    rows = assignment_map.get(agent_id) or []
+    mine = next((rank for rank, r in rows if r.id == runner.id), None)
+    if mine is None:
         return False
-    rank = pref.index(runner.kind)
-    head_start = dt.timedelta(seconds=rank * PREFERENCE_TIER_GRACE_SECONDS)
-    return (now - turn.created_at) >= head_start
+    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
+        return True
+    return not any(r.is_available for rank, r in rows if rank < mine)
+
+
+def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) -> bool:
+    return _assignment_allows_for_agent(runner, turn.agent_id, turn, assignment_map, now)
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
 
 
-def runner_target_q(slugs, projects, session_capable) -> Q:
-    """Which queued turns a runner's declared capabilities can TARGET.
+def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q:
+    """Which queued turns this runner can TARGET under directed routing (spec
+    2026-07-24): agents via RunnerAssignment (the one source of truth —
+    capabilities.agents no longer routes agent turns), repos via
+    capabilities.projects, and sessions (when session-capable) with binding
+    STICKINESS — a bound session matches only its binding holder; a bound
+    session whose holder is gone matches nobody until the user places it.
 
     Shared by claim_next_turn and unclaimable_queued_turns so the "can anyone run
     this?" warning can never disagree with what claiming actually does — the same
     class of drift that made REST and the WebSocket show different transcripts.
+    The claim path layers routing_q, the pin arm, the availability cascade, and
+    the per-candidate refinements on top; this is the coarse target match.
     """
-    q = Q(agent__slug__in=slugs) | Q(project__in=projects)
-    if session_capable:
-        # A chat send targets no specific agent/repo — any session-capable runner
-        # in the tenant may take it (this is why continuing on your phone works
-        # regardless of the runner's declared `projects`).
-        q = q | Q(chat_session__isnull=False)
+    agent_leg = Q(agent__runner_assignments__runner=runner)
+    if exclude_slugs:
+        # Per-agent pause: the runner locally paused these agents; never claim their
+        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
+        # Scoped to agents by name and by nature — pausing an agent says nothing
+        # about a repo, so project turns keep flowing.
+        agent_leg &= ~Q(agent__slug__in=list(exclude_slugs))
+    q = agent_leg | Q(project__in=runner.project_names())
+    if runner.session_capable():
+        # Stickiness: a bound session's turns go to the binding holder ONLY. A
+        # bound session whose holder is gone claims NOWHERE until the user places
+        # it (chat offers wait/continue). Unbound sessions are open here and
+        # refined per-candidate in the claim loop (agent sessions follow the
+        # assignment cascade; project sessions stay any-sessions-capable).
+        q = q | (
+            Q(chat_session__isnull=False)
+            & (
+                Q(chat_session__runner_binding__isnull=True)
+                | Q(chat_session__runner_binding__runner__isnull=True)
+                | Q(chat_session__runner_binding__runner=runner)
+            )
+        )
     return q
 
 
@@ -200,8 +225,10 @@ def unclaimable_queued_turns(user) -> list[dict]:
     then sits QUEUED forever with no signal (observed: a project=ace turn sat 12h).
 
     Two DIFFERENT causes, reported differently because they need different actions:
-      * config    — no runner declares this target at all. It will never run.
-      * offline   — a runner does declare it, but none are reachable right now.
+      * config    — no runner can target this turn at all (agent unassigned, repo
+                    undeclared, session bound to a runner you don't have). It will
+                    never run until routing is edited.
+      * offline   — a runner can target it, but none are reachable right now.
                     Usually transient (network blip, deploy, laptop asleep).
     Returns [{turn_id, target, prompt, created_at, reason, kind}].
     """
@@ -227,15 +254,18 @@ def unclaimable_queued_turns(user) -> list[dict]:
     def _covered_by(rs) -> set:
         out: set = set()
         for r in rs:
-            q = runner_target_q(r.agent_slugs(), r.project_names(), r.session_capable())
+            # Same coarse target predicate the claim path uses (assignments +
+            # projects + binding-sticky sessions), plus the pin arm — a turn
+            # pinned to an offline standby must read "offline", not "config".
+            q = runner_target_q(r) | Q(pinned_runner=r)
             out |= set(Turn.objects.filter(pk__in=ids).filter(q).values_list("pk", flat=True))
         return out
 
     reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED)]
     claimable_now = _covered_by(reachable)
     # Would ANY paired runner take it if it were up? Separates "misconfigured" from
-    # "temporarily unreachable" — the difference between "fix your capabilities" and
-    # "wait, or check the runner".
+    # "temporarily unreachable" — the difference between "fix the routing matrix"
+    # and "wait, or check the runner".
     claimable_ever = _covered_by(runners)
 
     out = []
@@ -243,9 +273,9 @@ def unclaimable_queued_turns(user) -> list[dict]:
         if t.pk in claimable_now:
             continue
         if t.chat_session_id:
-            target, what = "session", "is session-capable"
+            target, what = "session", "can take this session (session-capable + its binding)"
         elif t.agent_id:
-            target, what = f"agent {t.agent.slug}", f"declares the agent '{t.agent.slug}'"
+            target, what = f"agent {t.agent.slug}", f"is assigned the agent '{t.agent.slug}'"
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
         if t.pk in claimable_ever:
@@ -269,16 +299,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
     # its agent for the very claim we are about to make.
     release_stale_occurrence_turns_all()
-    slugs = runner.agent_slugs()
     projects = runner.project_names()
     session_capable = runner.session_capable()
-    if exclude_slugs:
-        # Per-agent pause: the runner locally paused these agents; never claim their
-        # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
-        # Scoped to agents by name and by nature — pausing an agent says nothing
-        # about a repo, so project turns keep flowing.
-        slugs = [s for s in slugs if s not in set(exclude_slugs)]
-    if not slugs and not projects and not session_capable:
+    has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()
+    has_assignments = RunnerAssignment.objects.filter(runner=runner).exists()
+    if not has_assignments and not projects and not session_capable and not has_pins:
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
@@ -356,23 +381,57 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Target match: this runner's declared agents/projects, plus every session
     # turn when it is session-capable (a chat send targets no specific agent — any
     # session-capable runner in the tenant may take it).
-    target_q = runner_target_q(slugs, projects, session_capable)
-    candidates = (
+    target_q = runner_target_q(runner, exclude_slugs)
+    # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
+    # this runner is claimable even with empty capabilities — that is what lets a
+    # warm standby be drilled. A turn pinned elsewhere is invisible. Note the pin
+    # arm also bypasses exclude_slugs (the per-agent LOCAL pause) — deliberately:
+    # a pin is a drill or an explicit placement, i.e. operator intent, and that
+    # intent should not be silently swallowed by a pause the operator set for
+    # unrelated routed traffic on the same agent.
+    match_q = Q(pinned_runner=runner) | (target_q & routing_q)
+    candidates = list(
         Turn.objects.filter(status=Turn.QUEUED)
-        .filter(target_q)
+        .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
+        .filter(match_q)
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
-        .filter(routing_q)
         .filter(tenant_q)
-        .select_related("agent")  # _preference_allows reads turn.agent.runner_preference
+        # _assignment_allows reads turn.agent_id; the session leg's stickiness
+        # check reads chat_session.agent_id + chat_session.runner_binding.
+        .select_related("agent", "chat_session", "chat_session__runner_binding")
         .order_by("created_at")
     )
+    # Two-pass: materialize candidates above, then batch-load every candidate
+    # agent's ranked assignment list in one query rather than per-turn. Includes
+    # session agents so the cascade check below can look them up too.
+    agent_ids = {t.agent_id for t in candidates if t.agent_id} | {
+        t.chat_session.agent_id for t in candidates if t.chat_session_id and t.chat_session.agent_id
+    }
+    assignment_map: dict = {}
+    if agent_ids:
+        rows = (
+            RunnerAssignment.objects.filter(agent_id__in=agent_ids)
+            .select_related("runner").order_by("rank")
+        )
+        for row in rows:
+            assignment_map.setdefault(row.agent_id, []).append((row.rank, row.runner))
     now = timezone.now()
     for turn in candidates:
-        if not _kind_allows(runner, turn.routing):
-            continue
-        if not _preference_allows(runner, turn, now):
-            continue  # a higher-preference runner kind still has first dibs (head-start)
+        pinned_here = turn.pinned_runner_id == runner.id
+        if not pinned_here:
+            if not _kind_allows(runner, turn.routing):
+                continue
+            if turn.agent_id:
+                if not _assignment_allows(runner, turn, assignment_map, now):
+                    continue
+            if turn.chat_session_id:
+                sess = turn.chat_session
+                binding = getattr(sess, "runner_binding", None)
+                bound_to_me = binding is not None and binding.runner_id == runner.id
+                if not bound_to_me and sess.agent_id:
+                    if not _assignment_allows_for_agent(runner, sess.agent_id, turn, assignment_map, now):
+                        continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
@@ -474,6 +533,15 @@ def finish_turn(
         sid = (turn.origin_ref or {}).get("schedule_id")
         if sid:
             resolve_schedule_nags(sid)
+    # A drill turn that fails outright (auth expired, environment broken) resolves
+    # its RunnerDrill without waiting for the agent's own report callback — the
+    # agent may never get far enough to curl the callback at all. Scoped to
+    # OUTCOME_PENDING so a drill already resolved by a report is not clobbered.
+    if turn.origin == Turn.ORIGIN_DRILL and status == Turn.FAILED:
+        RunnerDrill.objects.filter(
+            turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
+        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=result_note or "drill turn failed",
+                 finished_at=now)
     return turn
 
 
@@ -1188,3 +1256,99 @@ def resolve_schedule_nags(schedule_id: int) -> int:
         dismiss_item(item, by="system:schedule")
         count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# Readiness drills — a hard-pinned, read-only doctor turn per (runner, agent),
+# resolved by the drilled agent's own report callback (proving it can reach
+# the control plane) or by the turn failing outright. See
+# docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md.
+# ---------------------------------------------------------------------------
+
+DRILL_PROMPT = """READINESS DRILL — READ-ONLY. You are the agent "{agent_slug}".
+Verify you can operate end-to-end in THIS environment, then report.
+
+1. Confirm your working environment. If your agent repo is not checked out here,
+   clone it (read-only credentials are staged in this environment).
+2. Run your doctor / preflight / setup-verification checks. READ-ONLY mode:
+   take NO outward action — no emails, no posts, no board writes, no deploys,
+   no state mutations anywhere.
+3. Report the result back to canopy-web (this callback is part of the drill —
+   it proves this environment can reach the control plane):
+
+   curl -s -X POST "{report_url}" \\
+     -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "$CANOPY_PAT")" \\
+     -H "Content-Type: application/json" \\
+     -d '{{"outcome": "pass", "summary": "<one-paragraph findings>"}}'
+
+   Use "outcome": "fail" if ANY check failed, and say which. Keep the summary to
+   one paragraph. Do nothing after reporting."""
+
+
+def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
+    """Fan a readiness drill out over `agents`: reset each (runner, agent)
+    RunnerDrill to pending and enqueue one hard-pinned, read-only doctor turn
+    per agent. Drills queue behind real executing turns (the one-executing-turn
+    constraint) — they never interrupt live work."""
+    drills: list[RunnerDrill] = []
+    for agent in agents:
+        drill, _ = RunnerDrill.objects.update_or_create(
+            runner=runner, agent=agent,
+            defaults={"outcome": RunnerDrill.OUTCOME_PENDING, "summary": "",
+                      "finished_at": None, "started_at": timezone.now()},
+        )
+        report_url = f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
+        turn, _created = enqueue_turn(
+            agent=agent,
+            origin=Turn.ORIGIN_DRILL,
+            idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
+            prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url),
+            pinned_runner=runner,
+        )
+        drill.turn = turn
+        drill.save(update_fields=["turn"])
+        drills.append(drill)
+    return drills
+
+
+def report_drill(drill: RunnerDrill, *, outcome: str, summary: str) -> RunnerDrill:
+    """The drilled agent's own callback — proves this environment can reach the
+    control plane, not just run its checks locally."""
+    if outcome not in (RunnerDrill.OUTCOME_PASS, RunnerDrill.OUTCOME_FAIL):
+        raise ValueError(f"outcome must be pass|fail, got {outcome!r}")
+    drill.outcome = outcome
+    drill.summary = summary
+    drill.finished_at = timezone.now()
+    drill.save(update_fields=["outcome", "summary", "finished_at"])
+    return drill
+
+
+def seed_assignments_from_capabilities() -> int:
+    """One-time bridge from the old two-sided routing config (runner
+    capabilities.agents ∩ agent.runner_preference kind order) into explicit
+    RunnerAssignment rows. Idempotent: skips (agent, runner) pairs that already
+    have a row. Returns rows created. Used by the seed data migration."""
+    from apps.agents.models import Agent
+    from apps.harness.models import Runner, RunnerAssignment
+
+    created = 0
+    runners = list(Runner.objects.exclude(status=Runner.RETIRED))
+    for agent in Agent.objects.all():
+        matched = [r for r in runners if agent.slug in (r.capabilities.get("agents") or [])]
+        pref = agent.runner_preference or []
+
+        def sort_key(r):
+            kind_rank = pref.index(r.kind) if r.kind in pref else len(pref)
+            return (kind_rank, r.name)
+
+        existing = set(
+            RunnerAssignment.objects.filter(agent=agent).values_list("runner_id", flat=True)
+        )
+        next_rank = RunnerAssignment.objects.filter(agent=agent).count()
+        for r in sorted(matched, key=sort_key):
+            if r.id in existing:
+                continue
+            RunnerAssignment.objects.create(agent=agent, runner=r, rank=next_rank)
+            next_rank += 1
+            created += 1
+    return created

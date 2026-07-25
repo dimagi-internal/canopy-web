@@ -8,7 +8,7 @@ import {
   type AgentTaskStatus,
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
-import { RunnerOrder } from '@/components/agents/RunnerOrder'
+import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { CountStat, SyncCard } from '@/components/agents/cards'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
@@ -143,8 +143,16 @@ export function AgentOverviewSection() {
       {/* Dispatch a turn to this agent, inline */}
       <QuickTurn slug={agent.slug} />
 
-      {/* Which runner kinds this agent prefers, and which are online */}
-      <RunnerOrder slug={agent.slug} name={agent.name} preference={agent.runner_preference ?? []} />
+      {/* Ranked runner assignments — which paired runners this agent routes to, in order */}
+      <div className="mb-6 rounded-lg border border-border bg-card p-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
+          Runner assignments
+        </span>
+        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
+          Ranked runners for {agent.name}&apos;s turns. The top online + ready runner claims first.
+        </p>
+        <RunnerAssignments agentSlug={agent.slug} />
+      </div>
 
       {/* Counts row */}
       <div className="flex flex-wrap gap-6 pb-6 mb-6 border-b border-border">

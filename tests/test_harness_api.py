@@ -9,7 +9,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness.models import HEARTBEAT_ONLINE_WINDOW, Runner
+from apps.harness.models import HEARTBEAT_ONLINE_WINDOW, Runner, RunnerAssignment
 
 pytestmark = pytest.mark.django_db
 
@@ -48,6 +48,7 @@ def _hb(client, rid, active=None, degraded=False):
 def test_pair_heartbeat_claim_cycle(client, agent):
     rid = _pair(client)
     assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
 
     enq = client.post(
         "/api/harness/turns/",
@@ -110,6 +111,7 @@ def test_event_append_and_cursor_read(client, agent):
 def test_start_and_finish(client, agent):
     rid = _pair(client)
     assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
     tid = client.post(
         "/api/harness/turns/",
         {"agent_slug": "echo", "origin": "manual", "idempotency_key": "k1"},

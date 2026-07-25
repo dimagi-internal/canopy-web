@@ -55,13 +55,12 @@ class Agent(models.Model):
         help_text="Secret-reference NAMES this agent needs (never values), e.g. "
         '["canopy-pat","echo-gog"]. The reconciler resolves each from the env store.',
     )
-    # Ordered runner-KIND preference for this agent's turns, e.g. ["cloud", "emdash"].
-    # Empty = no preference (any eligible runner, first-poll-wins — today's behavior).
-    # Honored at claim time with a per-tier head-start: the first kind claims
-    # immediately, each next kind only after PREFERENCE_TIER_GRACE_SECONDS more, so
-    # the preferred runner gets first dibs and lower kinds fall back if it never
-    # shows. A kind NOT in a non-empty list never claims this agent. See
-    # harness.services.claim_next_turn.
+    # Ordered runner-KIND preference, e.g. ["cloud", "emdash"]. As of the
+    # directed-runner-routing cascade (spec 2026-07-24), agent-turn claim
+    # eligibility is decided by RunnerAssignment rank instead — this field is no
+    # longer read by harness.services.claim_next_turn. Retained only for the
+    # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
+    # AgentIn during the deprecation window.
     runner_preference = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

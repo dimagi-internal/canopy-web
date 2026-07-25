@@ -45,6 +45,17 @@ class RunnerCapabilitiesIn(Schema):
     capabilities: dict
 
 
+class DrillRollup(Schema):
+    """Aggregated readiness-drill outcomes for one runner, across all its
+    (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
+    a client-side fetch-and-reduce over /runners/{id}/drills."""
+
+    passed: int
+    failed: int
+    pending: int
+    last_finished_at: dt.datetime | None
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -65,6 +76,9 @@ class RunnerOut(Schema):
     # tenant. Surfaced so the supervisor can show the meaningful owner instead of
     # implying a single-workspace serving scope.
     paired_by_email: str | None
+    # None when this runner has never been drilled (not "zero of zero pass") —
+    # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
+    drill_rollup: DrillRollup | None = None
 
     @staticmethod
     def resolve_workspace(obj) -> str | None:
@@ -80,6 +94,18 @@ class RunnerOut(Schema):
         # ONLINE and nothing ever demotes it, so the raw status lies once a
         # runner goes quiet. See Runner.live_status.
         return obj.live_status
+
+    @staticmethod
+    def resolve_drill_rollup(obj) -> DrillRollup | None:
+        rows = list(obj.drills.all())
+        if not rows:
+            return None
+        return DrillRollup(
+            passed=sum(1 for d in rows if d.outcome == "pass"),
+            failed=sum(1 for d in rows if d.outcome == "fail"),
+            pending=sum(1 for d in rows if d.outcome == "pending"),
+            last_finished_at=max((d.finished_at for d in rows if d.finished_at), default=None),
+        )
 
 
 class HeartbeatIn(Schema):
@@ -561,3 +587,31 @@ class RunnerCredentialStatusOut(Schema):
     has_github_token: bool = False
     has_op_sa_token: bool = False
     updated_at: dt.datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Readiness drills (spec 2026-07-24-directed-runner-routing, Task 7)
+# ---------------------------------------------------------------------------
+
+
+class RunnerDrillOut(Schema):
+    id: int
+    agent_slug: str
+    outcome: str
+    summary: str
+    started_at: dt.datetime
+    finished_at: dt.datetime | None
+    turn_id: uuid.UUID | None
+
+    @staticmethod
+    def resolve_agent_slug(obj):
+        return obj.agent.slug
+
+
+class DrillIn(Schema):
+    agents: list[str] | None = None
+
+
+class DrillReportIn(Schema):
+    outcome: Literal["pass", "fail"]
+    summary: str = ""
