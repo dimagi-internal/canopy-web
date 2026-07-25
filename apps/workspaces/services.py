@@ -7,13 +7,18 @@ after scoping turns on.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
-from .models import Workspace, WorkspaceMembership
+from .models import Workspace, WorkspaceInvite, WorkspaceMembership
 
 DEFAULT_WORKSPACE_SLUG = "dimagi"
 DEFAULT_WORKSPACE_NAME = "Dimagi"
+
+INVITE_TTL_DAYS = 14
 
 
 def allowed_domains() -> list[str]:
@@ -150,3 +155,109 @@ def current_workspace(user, explicit: str | None = None) -> Workspace:
     if ws is None:
         raise ValueError("no unambiguous workspace for user; specify one")
     return ws
+
+
+# ---- invites ----
+
+
+class InviteError(Exception):
+    """Raised by `accept_invite` for any reason acceptance can't proceed.
+
+    `.code` is a closed set an HTTP layer (or the OAuth login gate in Task 2)
+    maps to a status/decision: not_found, expired, revoked, already_accepted,
+    email_mismatch.
+    """
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def create_invite(
+    *, workspace: Workspace, email: str, role: str, invited_by
+) -> WorkspaceInvite:
+    """Create (or reuse) an invite for `email` to join `workspace` at `role`.
+
+    A live pending invite for the same (workspace, email) is reused as-is
+    rather than duplicated — the existing row's role/token/expiry stand; the
+    caller's `role` is ignored on reuse. Email is normalized to lowercase.
+    """
+    email = (email or "").strip().lower()
+    existing = (
+        WorkspaceInvite.objects.filter(
+            workspace=workspace, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if existing is not None and existing.is_pending():
+        return existing
+    return WorkspaceInvite.objects.create(
+        workspace=workspace,
+        email=email,
+        role=role,
+        invited_by=invited_by,
+        expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
+    )
+
+
+def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
+    """Accept an invite by token on behalf of `user`.
+
+    Returns (workspace, role) — role is the user's resulting membership role,
+    which is their EXISTING role if they were already a member at a different
+    role (get_or_create semantics: acceptance never changes an existing role).
+    Raises InviteError on any invalid state; never mutates on failure.
+    """
+    try:
+        inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
+    except WorkspaceInvite.DoesNotExist:
+        raise InviteError("not_found")
+    if inv.accepted_at is not None:
+        raise InviteError("already_accepted")
+    if inv.revoked_at is not None:
+        raise InviteError("revoked")
+    if inv.expires_at <= timezone.now():
+        raise InviteError("expired")
+    if inv.email and (getattr(user, "email", "") or "").lower() != inv.email.lower():
+        raise InviteError("email_mismatch")
+    m, _ = WorkspaceMembership.objects.get_or_create(
+        workspace=inv.workspace, user=user,
+        defaults={"role": inv.role, "invited_by": inv.invited_by},
+    )
+    inv.accepted_at = timezone.now()
+    inv.save(update_fields=["accepted_at"])
+    return inv.workspace, m.role
+
+
+def revoke_invite(*, invite: WorkspaceInvite) -> None:
+    """Revoke a pending invite. Idempotent: a no-op on an already-revoked or
+    already-accepted invite (never reopens an accepted one). Refreshes from
+    the DB first so a caller holding a stale in-memory copy (e.g. fetched
+    before a concurrent accept) still gets the correct, current guard."""
+    invite.refresh_from_db(fields=["accepted_at", "revoked_at"])
+    if invite.accepted_at is None and invite.revoked_at is None:
+        invite.revoked_at = timezone.now()
+        invite.save(update_fields=["revoked_at"])
+
+
+def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
+    """The most recent LIVE (pending) invite addressed to `email`, or None.
+
+    Case-insensitive; ignores expired/revoked/accepted rows. Used by the OAuth
+    login adapter (Task 2) to auto-join a fresh signup to the workspace that
+    invited them.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    candidate = (
+        WorkspaceInvite.objects.filter(
+            email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if candidate is not None and candidate.is_pending():
+        return candidate
+    return None

@@ -109,6 +109,13 @@ class WorkspaceInvite(models.Model):
             models.Index(fields=["email", "-created_at"]),
             models.Index(fields=["workspace", "-created_at"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "email"],
+                condition=models.Q(accepted_at__isnull=True, revoked_at__isnull=True),
+                name="uniq_ws_invite_live_per_email",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"Invite {self.email} to {self.workspace.slug} as {self.role}"

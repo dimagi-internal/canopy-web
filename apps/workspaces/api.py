@@ -7,15 +7,13 @@ by token, only by the addressed email.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 from django.http import HttpRequest
-from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 
+from . import services
 from .models import Workspace, WorkspaceInvite, WorkspaceMembership
 from .schemas import (
     InviteCreateIn,
@@ -27,7 +25,15 @@ from .schemas import (
 
 router = Router(auth=session_auth, tags=["workspaces"])
 
-INVITE_TTL_DAYS = 14
+# InviteError.code -> HTTP status. Preserves the status codes the views
+# returned before this logic moved into `services.py`.
+_INVITE_ERROR_STATUS = {
+    "not_found": 404,
+    "expired": 410,
+    "revoked": 410,
+    "already_accepted": 410,
+    "email_mismatch": 403,
+}
 
 
 def _out(ws: Workspace, role: str) -> WorkspaceOut:
@@ -135,11 +141,9 @@ def remove_member(request: HttpRequest, slug: str, user_id: int):
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (owner-only)",
              openapi_extra={"x-mcp-expose": True})
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
-    _require_role(request.user, slug, WorkspaceMembership.OWNER)
-    inv = WorkspaceInvite.objects.create(
-        workspace_id=slug, email=payload.email, role=payload.role,
-        invited_by=request.user,
-        expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
+    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    inv = services.create_invite(
+        workspace=m.workspace, email=payload.email, role=payload.role, invited_by=request.user,
     )
     return Status(201, _invite_out(inv))
 
@@ -159,9 +163,7 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
         inv = WorkspaceInvite.objects.get(workspace_id=slug, id=invite_id)
     except WorkspaceInvite.DoesNotExist:
         raise HttpError(404, "invite not found")
-    if inv.accepted_at is None and inv.revoked_at is None:
-        inv.revoked_at = timezone.now()
-        inv.save(update_fields=["revoked_at"])
+    services.revoke_invite(invite=inv)
     return Status(204, None)
 
 
@@ -169,17 +171,8 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
              summary="Accept an invite by token", openapi_extra={"x-mcp-expose": True})
 def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
     try:
-        inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
-    except WorkspaceInvite.DoesNotExist:
-        raise HttpError(404, "invite not found")
-    if not inv.is_pending():
-        raise HttpError(410, "invite is expired, revoked, or already accepted")
-    if inv.email and (request.user.email or "").lower() != inv.email.lower():
-        raise HttpError(403, "this invite is addressed to a different email")
-    m, _ = WorkspaceMembership.objects.get_or_create(
-        workspace=inv.workspace, user=request.user,
-        defaults={"role": inv.role, "invited_by": inv.invited_by},
-    )
-    inv.accepted_at = timezone.now()
-    inv.save(update_fields=["accepted_at"])
-    return _out(inv.workspace, m.role)
+        ws, role = services.accept_invite(token=token, user=request.user)
+    except services.InviteError as exc:
+        status = _INVITE_ERROR_STATUS[exc.code]
+        raise HttpError(status, exc.code)
+    return _out(ws, role)
