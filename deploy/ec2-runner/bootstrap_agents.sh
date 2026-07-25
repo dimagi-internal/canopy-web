@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+# deploy/ec2-runner/bootstrap_agents.sh — idempotent agent-fleet bootstrap for the
+# canopy cloud runner (EC2, Ubuntu 24.04). Runs as the service user (`ubuntu`), NOT
+# root — cloud-init's runcmd pre-creates $AGENT_ROOT / /opt/canopy-web with ubuntu
+# ownership (see runner.cfn.yaml) so this script never needs sudo for its own state,
+# only (optionally) to drop a fetched binary into /usr/local/bin.
+#
+# Invoked from cloud_runner.py's main(), AFTER fetch_and_stage_credential() has
+# populated CANOPY_TOKEN / OP_SERVICE_ACCOUNT_TOKEN / the git credential store —
+# deliberately NOT from cloud-init's ExecStartPre, which fires on every service
+# start before those credentials exist (a fresh pairing has none yet; the operator
+# stages them via wire.sh after the runner first appears in the fleet). Cloning the
+# PRIVATE per-agent repos (github.com/dimagi-internal/<slug>) and running `canopy
+# provision` (1Password reads) both need that credential bundle — see the ordering
+# note in cloud_runner.py where this is invoked.
+#
+# Steps below mirror docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md
+# §1. Each step is OK-skipped when already satisfied. Deliberately NOT `set -e`:
+# one agent's failure must not take down the other four (step 5) — the runner still
+# comes up and serves whichever agents bootstrapped clean; a readiness drill is the
+# per-agent verdict, not this script's exit code.
+set -uo pipefail
+
+AGENT_SLUGS="${AGENT_SLUGS:-ace,ada,echo,eva,hal}"
+AGENT_ROOT="${AGENT_ROOT:-/opt/agents}"
+AGENT_REPO_ORG="${AGENT_REPO_ORG:-dimagi-internal}"
+CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/jjackson/canopy.git}"
+
+log()  { printf '[bootstrap-agents] %s\n' "$*"; }
+ok()   { printf '[bootstrap-agents] OK: %s\n' "$*"; }
+warn() { printf '[bootstrap-agents] WARN: %s\n' "$*" >&2; }
+fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
+
+# gogcli's own account -> OAuth-client map (verified against a live ~/.config/gogcli
+# aka macOS "Library/Application Support/gogcli" config.json, `account_clients`
+# key): ace and echo keep dedicated clients; ada/eva/hal share the fleet's `canopy`
+# app. See docs/architecture/shared-gog-gdrive.md.
+declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=canopy )
+
+# ── gog's own XDG resolution on Linux (mirrors canopy's agent_email.py
+# _default_gog_config_dir — $GOG_HOME override, else $XDG_CONFIG_HOME/gogcli, else
+# ~/.config/gogcli; there is no macOS branch on this box). ──────────────────────
+gog_config_dir() {
+  if [[ -n "${GOG_HOME:-}" ]]; then
+    printf '%s\n' "${GOG_HOME/#\~/$HOME}"
+  else
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/gogcli"
+  fi
+}
+
+vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
+  local slug="$1"
+  printf 'Agent-%s\n' "${slug^}"
+}
+
+FAILED_AGENTS=()
+READY_AGENTS=()
+
+# ── Step 1: tooling ─────────────────────────────────────────────────────────────
+step1_tooling() {
+  log "step 1: tooling"
+
+  if ! command -v uv >/dev/null 2>&1; then
+    log "installing uv"
+    curl -LsSf https://astral.sh/uv/install.sh | sh || warn "uv install failed"
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+
+  if command -v uv >/dev/null 2>&1; then
+    if ! command -v canopy >/dev/null 2>&1; then
+      log "installing canopy CLI (uv tool, ${CANOPY_PLUGIN_URL})"
+      uv tool install --force "git+${CANOPY_PLUGIN_URL}" || warn "canopy CLI install failed"
+    else
+      ok "canopy CLI already installed ($(canopy --version 2>/dev/null || echo '?'))"
+    fi
+  else
+    warn "uv not on PATH — cannot install/verify the canopy CLI"
+  fi
+
+  if ! command -v gog >/dev/null 2>&1; then
+    log "installing gog (latest steipete/gogcli linux release)"
+    if install_gog; then ok "gog installed"; else warn "gog install failed — per-agent gmail steps below will be skipped"; fi
+  else
+    ok "gog already on PATH ($(gog --version 2>/dev/null | head -1 || echo '?'))"
+  fi
+
+  for bin in op gh claude git; do
+    if command -v "$bin" >/dev/null 2>&1; then
+      ok "$bin on PATH"
+    else
+      warn "$bin NOT on PATH — an earlier cloud-init step likely failed; see /var/log/cloud-init-output.log"
+    fi
+  done
+}
+
+install_gog() {
+  # No version pin — always the latest release; tolerate failure loudly (this is
+  # the one step with no local fallback if it fails, so per-agent gmail work is
+  # simply unavailable this run, not a bootstrap-wide failure).
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+
+  if command -v gh >/dev/null 2>&1; then
+    # `gh release download` with no tag pulls the LATEST release; GH_TOKEN is
+    # optional for a public repo but avoids the unauthenticated 60/hr rate limit
+    # (the runner's staged GITHUB_TOKEN, when present, doubles as this).
+    if ! GH_TOKEN="${GITHUB_TOKEN:-}" gh release download -R steipete/gogcli \
+        --pattern 'gogcli_*_linux_amd64.tar.gz' --dir "$tmp" --clobber 2>&1; then
+      warn "gh release download failed; falling back to the GitHub API + curl"
+    fi
+  fi
+
+  local tarball
+  tarball="$(find "$tmp" -maxdepth 1 -name 'gogcli_*_linux_amd64.tar.gz' | head -1)"
+  if [[ -z "$tarball" ]]; then
+    local url
+    url=$(curl -fsSL https://api.github.com/repos/steipete/gogcli/releases/latest \
+      | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+for a in d.get("assets", []):
+    if a["name"].endswith("_linux_amd64.tar.gz"):
+        print(a["browser_download_url"]); break' 2>/dev/null)
+    [[ -n "$url" ]] || { fail "could not resolve the latest gogcli linux_amd64 asset"; return 1; }
+    curl -fsSL "$url" -o "$tmp/gog.tar.gz" || { fail "curl download of $url failed"; return 1; }
+    tarball="$tmp/gog.tar.gz"
+  fi
+
+  tar -xzf "$tarball" -C "$tmp" gog || { fail "could not extract 'gog' from $tarball"; return 1; }
+  if sudo -n install -m 0755 "$tmp/gog" /usr/local/bin/gog 2>/dev/null; then
+    return 0
+  fi
+  # No passwordless sudo (unexpected on the stock Ubuntu cloud-init AMI, but don't
+  # brick the run over it) — fall back to the user's own bin dir.
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 "$tmp/gog" "$HOME/.local/bin/gog"
+}
+
+# ── Step 2: gog keyring + account->client map ───────────────────────────────────
+step2_gog_config() {
+  log "step 2: gog keyring + account/client map"
+  if ! command -v gog >/dev/null 2>&1; then
+    warn "gog not installed — skipping keyring + config.json setup"
+    return
+  fi
+  # Headless Linux has no OS keychain/Secret Service; `file` stores tokens
+  # encrypted-at-rest under gog's own config dir instead. Idempotent (re-setting
+  # the same backend is a no-op).
+  gog auth keyring file >/dev/null 2>&1 && ok "gog keyring backend = file" \
+    || warn "could not set gog keyring backend to 'file'"
+
+  local dir; dir="$(gog_config_dir)"
+  mkdir -p "$dir"
+  local cfg="$dir/config.json"
+  # Bash associative arrays don't cross into a heredoc's subshell, so resolve
+  # slug->client->email into plain "email=client" pairs here and hand those to
+  # python (below) to merge into config.json's `account_clients` map.
+  local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
+  local pairs=()
+  for slug in "${slugs[@]}"; do
+    local client="${GOG_CLIENT[$slug]:-$slug}"
+    pairs+=("${slug}@dimagi-ai.com=${client}")
+  done
+  python3 - "$cfg" "${pairs[@]}" <<'PY'
+import json, sys
+cfg_path, pairs = sys.argv[1], sys.argv[2:]
+try:
+    data = json.load(open(cfg_path))
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+data.setdefault("account_clients", {})
+for p in pairs:
+    email, client = p.split("=", 1)
+    data["account_clients"][email] = client
+with open(cfg_path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+  ok "wrote $cfg (account_clients for: ${AGENT_SLUGS})"
+}
+
+# ── Step 3: per-agent clone + provision + gmail token ───────────────────────────
+clone_or_pull() {  # url dest
+  local url="$1" dest="$2"
+  if [[ -d "$dest/.git" ]]; then
+    git -C "$dest" pull --ff-only
+  else
+    git clone --depth 1 "$url" "$dest"
+  fi
+}
+
+bootstrap_one_agent() {
+  local slug="$1"
+  local dest="$AGENT_ROOT/$slug"
+  local client="${GOG_CLIENT[$slug]:-$slug}"
+  local account="${slug}@dimagi-ai.com"
+  local vault; vault="$(vault_name "$slug")"
+
+  log "── agent $slug ──"
+
+  if ! clone_or_pull "https://github.com/${AGENT_REPO_ORG}/${slug}.git" "$dest"; then
+    fail "$slug: clone/pull of ${AGENT_REPO_ORG}/${slug} failed (private repo — is the staged GitHub token valid?)"
+    FAILED_AGENTS+=("$slug")
+    return
+  fi
+  ok "$slug: repo at $dest"
+
+  if command -v canopy >/dev/null 2>&1; then
+    if canopy provision --repo "$dest"; then
+      ok "$slug: canopy provision"
+    else
+      warn "$slug: canopy provision reported errors (see above) — continuing, agent may be partially ready"
+    fi
+  else
+    warn "$slug: canopy CLI unavailable — skipped provisioning"
+  fi
+
+  # A pre-tenancy-migration secrets.yaml may still target the macOS path
+  # (~/Library/Application Support/gogcli/credentials-<client>.json) literally —
+  # `canopy provision` writes wherever the manifest says, verbatim, and the
+  # per-repo migration to the Linux-correct path is tracked separately (spec §5,
+  # out of scope here). Bridge the gap so THIS box still ends up with the
+  # credentials where gog actually looks for them, without waiting on that
+  # migration to land in five other repos first.
+  local gog_dir; gog_dir="$(gog_config_dir)"
+  local want="$gog_dir/credentials-${client}.json"
+  local mac_shaped="$HOME/Library/Application Support/gogcli/credentials-${client}.json"
+  if [[ ! -f "$want" && -f "$mac_shaped" ]]; then
+    mkdir -p "$gog_dir"
+    cp "$mac_shaped" "$want" && chmod 0600 "$want"
+    ok "$slug: bridged un-migrated mac-shaped credentials path -> $want"
+  fi
+
+  if ! command -v gog >/dev/null 2>&1; then
+    warn "$slug: gog unavailable — skipping gmail token import"
+  elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
+    ok "$slug: gmail token already live (account=$account client=$client)"
+  else
+    log "$slug: gmail token not live — importing from op://${vault}/gog-token/credential"
+    local tokfile; tokfile="$(mktemp)"
+    if op read "op://${vault}/gog-token/credential" >"$tokfile" 2>/dev/null && [[ -s "$tokfile" ]]; then
+      if gog auth tokens import "$tokfile" >/dev/null 2>&1; then
+        ok "$slug: gmail token imported"
+      else
+        warn "$slug: gog auth tokens import failed"
+      fi
+    else
+      warn "$slug: op read op://${vault}/gog-token/credential failed — is the item staged for this vault?"
+    fi
+    shred -u "$tokfile" 2>/dev/null || rm -f "$tokfile"  # never leave the token on disk, even on failure
+  fi
+
+  READY_AGENTS+=("$slug")
+}
+
+step3_agents() {
+  log "step 3: per-agent clone + provision + gmail token"
+  mkdir -p "$AGENT_ROOT"
+  local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
+  for slug in "${slugs[@]}"; do
+    bootstrap_one_agent "$slug"
+  done
+}
+
+# ── Step 4: claude plugins ───────────────────────────────────────────────────────
+step4_claude_plugins() {
+  log "step 4: claude plugin marketplace + install"
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "claude CLI not on PATH — skipping plugin setup"
+    return
+  fi
+  if claude plugin marketplace list 2>/dev/null | grep -qE '(^|[[:space:]])canopy$'; then
+    ok "canopy marketplace already added"
+  else
+    claude plugin marketplace add "$CANOPY_PLUGIN_URL" \
+      && ok "added canopy marketplace" \
+      || warn "claude plugin marketplace add failed"
+  fi
+  if claude plugin list 2>/dev/null | grep -q 'canopy@canopy'; then
+    ok "canopy@canopy already installed"
+  else
+    claude plugin install canopy@canopy \
+      && ok "installed canopy@canopy" \
+      || warn "claude plugin install canopy@canopy failed"
+  fi
+}
+
+# ── Step 5: readiness summary ────────────────────────────────────────────────────
+step5_summary() {
+  log "step 5: readiness summary"
+  log "agents attempted: ${AGENT_SLUGS}"
+  log "agents with a clone + provision pass: ${READY_AGENTS[*]:-(none)}"
+  if [[ ${#FAILED_AGENTS[@]} -gt 0 ]]; then
+    warn "agents that failed to clone: ${FAILED_AGENTS[*]}"
+  fi
+  # Fail loud only on TOTAL failure — a partial fleet still leaves the runner
+  # serving whichever agents came up clean; readiness drills are the per-agent
+  # verdict, not this exit code.
+  if [[ ${#READY_AGENTS[@]} -eq 0 && -n "$AGENT_SLUGS" ]]; then
+    fail "no agent bootstrapped cleanly out of: ${AGENT_SLUGS}"
+    return 1
+  fi
+  return 0
+}
+
+main() {
+  step1_tooling
+  step2_gog_config
+  step3_agents
+  step4_claude_plugins
+  step5_summary
+}
+
+main "$@"
