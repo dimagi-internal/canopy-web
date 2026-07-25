@@ -219,3 +219,25 @@ def test_place_with_no_queued_turn_is_404(client):
         f"/api/canopy-sessions/{sid}/place", data={"placement": "wait"}, content_type="application/json",
     )
     assert r.status_code == 404, r.content
+
+
+# --- Task 6: chat.stop's REST twin ------------------------------------------
+
+
+def test_stop_cancels_queued_turn(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    turn = Turn.objects.create(
+        chat_session_id=sid, origin=Turn.ORIGIN_API, idempotency_key="q1", status=Turn.QUEUED
+    )
+    r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json() == {"cancelled": True}
+    turn.refresh_from_db()
+    assert turn.status == Turn.CANCELLED
+
+
+def test_stop_with_nothing_to_cancel_returns_false(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json() == {"cancelled": False}

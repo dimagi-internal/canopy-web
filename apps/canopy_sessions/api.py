@@ -18,6 +18,8 @@ from ninja.errors import HttpError
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
+from apps.harness import services as harness_services
+from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -247,6 +249,17 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return turn
+
+
+@router.post("/{session_id}/stop", response=dict, summary="Cancel the session's active turn")
+def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
+    session = _session_or_404(request, session_id)
+    turn = (
+        Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+        .order_by("-created_at").first()
+    )
+    cancelled = turn is not None and harness_services.cancel_turn(turn) is not None
+    return {"cancelled": cancelled}
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")

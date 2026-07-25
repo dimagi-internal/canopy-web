@@ -2183,13 +2183,12 @@ export interface paths {
          * Cancel Turn
          * @description Cancel a QUEUED turn that has not started — the misfire case the phone
          *     composer needs (dispatch the wrong command, take it back before a runner
-         *     claims it). Records it FAILED with a cancelled note; there is no separate
-         *     CANCELLED status because nothing downstream distinguishes the two, and adding
-         *     one would touch the TERMINAL set every sweep and projection depends on.
+         *     claims it). Finishes it CANCELLED with a cancelled note.
          *
          *     QUEUED only. A claimed/running turn is already executing in an emdash session;
-         *     stopping that is a racy, different operation (the runner owns the lease) and
-         *     is deliberately out of scope — cancel is 'un-queue', not 'kill'.
+         *     stopping that is a different, racier operation (the runner owns the lease) —
+         *     see `services.cancel_turn`, which signals the runner instead and is
+         *     deliberately not wired to this route yet.
          */
         readonly post: operations["apps_harness_api_cancel_turn"];
         readonly delete?: never;
@@ -2480,6 +2479,23 @@ export interface paths {
         readonly put?: never;
         /** Re-pin a session's oldest queued turn to a runner */
         readonly post: operations["apps_canopy_sessions_api_place"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Cancel the session's active turn */
+        readonly post: operations["apps_canopy_sessions_api_stop_session_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10931,6 +10947,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_stop_session_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };

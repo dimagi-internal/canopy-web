@@ -147,12 +147,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # turn events fan out to the session group automatically (realtime signal).
 
     async def _chat_stop(self, data):
-        # Cancel is 'un-queue', not 'kill' (harness owns a running turn's lease).
-        # Best-effort un-queue, then ack so the sender's Stop UI resets.
+        # Un-queue a queued turn, or signal the runner to interrupt an executing one
+        # (harness_services.cancel_turn). Broadcast to the WHOLE group so every
+        # participant's Stop UI resets, not just the sender's.
         await database_sync_to_async(self._cancel_session_turn)()
-        await self.send_json({
-            "event": "chat.stream_cancelled",
-            "data": {"message_id": data.get("message_id"), "partial_len": 0},
+        await self._broadcast({
+            "type": "chat.stream_cancelled",
+            "message_id": data.get("message_id"), "partial_len": 0,
         })
 
     # -- sync DB helpers --
@@ -174,11 +175,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     def _cancel_session_turn(self):
         turn = (
-            Turn.objects.filter(chat_session=self.session, status=Turn.QUEUED)
+            Turn.objects.filter(chat_session=self.session, status__in=list(Turn.NON_TERMINAL))
             .order_by("-created_at").first()
         )
         if turn is not None:
-            harness_services.cancel_queued_turn(turn)
+            harness_services.cancel_turn(turn)
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
@@ -219,6 +220,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 "holder_user_id": message["holder_user_id"],
                 "expires_at": message["expires_at"],
             },
+        })
+
+    async def chat_stream_cancelled(self, message):
+        await self.send_json({
+            "event": "chat.stream_cancelled",
+            "data": {"message_id": message.get("message_id"), "partial_len": message.get("partial_len", 0)},
         })
 
     async def presence_joined(self, message):
