@@ -562,6 +562,12 @@ class RunnerAssignment(models.Model):
         Runner, on_delete=models.CASCADE, related_name="agent_assignments"
     )
     rank = models.PositiveSmallIntegerField()  # 0 = first choice
+    # A disabled row stays in the agent's list (rank preserved, visible greyed
+    # in the UI) but must NEVER route: the claim path excludes it entirely, and
+    # it neither claims nor counts as a better-ranked availability blocker for a
+    # lower rank. Distinct from removal — the operator's "x" toggles this
+    # instead of deleting the row, so re-enabling doesn't lose the rank.
+    enabled = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["agent_id", "rank"]

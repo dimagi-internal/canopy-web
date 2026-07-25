@@ -739,8 +739,12 @@ def fire_schedule_route(
 @router.post("/runners/{runner_id}/drill", response=list[RunnerDrillOut])
 def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: DrillIn):
     """Fan out a readiness drill (owner-gated). Default: every agent assigned to
-    this runner; body.agents narrows by slug."""
+    this runner; body.agents narrows by slug. Deliberately includes DISABLED
+    assignment rows too — drill-before-enable is the intended workflow (prove a
+    standby actually works before flipping it live), so a disabled row must
+    stay drillable even though it can never claim routed traffic."""
     runner = _runner_or_404(request, runner_id)
+    # No enabled=True filter here on purpose — see the docstring above.
     assigned = Agent.objects.filter(runner_assignments__runner=runner)
     # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
     # hits the 422 below, rather than being treated the same as "drill everyone".

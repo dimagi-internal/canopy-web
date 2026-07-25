@@ -44,7 +44,9 @@ class RunnerPreferenceIn(StrictModel):
 class AgentRunnerOut(StrictModel):
     """One row of an agent's ordered runner list (the routing-matrix UI's read
     model). `online`/`ready` are computed per row from `Runner.live_status` /
-    `Runner.ready` — not queryable columns, so the list stays tiny by design."""
+    `Runner.ready` — not queryable columns, so the list stays tiny by design.
+    `enabled=False` means the row is kept (rank preserved, shown greyed) but
+    never routes — a toggle, not a removal."""
 
     runner_id: uuid.UUID
     runner_name: str
@@ -52,12 +54,27 @@ class AgentRunnerOut(StrictModel):
     rank: int
     online: bool
     ready: bool
+    enabled: bool = True
+
+
+class AgentRunnerRowIn(StrictModel):
+    """One row of the rows-form PUT body — carries `enabled` per runner,
+    unlike the legacy all-enabled `runner_ids` form below."""
+
+    runner_id: uuid.UUID
+    enabled: bool = True
 
 
 class AgentRunnersIn(StrictModel):
-    """Wholesale replace of an agent's ordered runner list — index = rank."""
+    """Wholesale replace of an agent's ordered runner list — index = rank.
 
-    runner_ids: list[uuid.UUID] = Field(default_factory=list)
+    Exactly ONE of the two fields must be provided (422 otherwise): `runners`
+    (ordered rows, each carrying its own `enabled`) or the legacy `runner_ids`
+    (ordered ids, all implicitly enabled). Both fully replace the prior list —
+    no partial-update ambiguity."""
+
+    runner_ids: list[uuid.UUID] | None = None
+    runners: list[AgentRunnerRowIn] | None = None
 
 
 class AgentRuntimeOut(StrictModel):

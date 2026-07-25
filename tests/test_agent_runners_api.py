@@ -58,6 +58,15 @@ def _put(client, slug, runner_ids):
     )
 
 
+def _put_rows(client, slug, rows):
+    """rows: list of (runner_id, enabled) tuples — the new per-row form."""
+    return client.put(
+        f"/api/agents/{slug}/runners",
+        data=json.dumps({"runners": [{"runner_id": str(rid), "enabled": en} for rid, en in rows]}),
+        content_type="application/json",
+    )
+
+
 def test_list_agent_runners_returns_seeded_order(client, agent, runner_a, runner_b):
     RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
     RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
@@ -160,6 +169,60 @@ def test_put_agent_runners_rejects_duplicate_runner_id(client, agent, runner_a, 
     # assignments unchanged
     assert RunnerAssignment.objects.filter(agent=agent).count() == 1
     assert RunnerAssignment.objects.filter(agent=agent).first().runner_id == runner_a.id
+
+
+def test_list_agent_runners_defaults_enabled_true(client, agent, runner_a):
+    RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
+    got = client.get(f"/api/agents/{agent.slug}/runners").json()
+    assert got[0]["enabled"] is True
+
+
+def test_put_agent_runners_rows_form_round_trips_enabled(client, agent, runner_a, runner_b):
+    r = _put_rows(client, agent.slug, [(runner_a.id, False), (runner_b.id, True)])
+    assert r.status_code == 200, r.content
+    got = r.json()
+    assert [x["runner_id"] for x in got] == [str(runner_a.id), str(runner_b.id)]
+    assert [x["enabled"] for x in got] == [False, True]
+
+    # Round-trips on a plain GET too, not just the PUT response.
+    got2 = client.get(f"/api/agents/{agent.slug}/runners").json()
+    assert [x["enabled"] for x in got2] == [False, True]
+
+
+def test_put_agent_runners_rows_form_toggle_preserves_rank(client, agent, runner_a, runner_b):
+    """Re-PUTting with a row flipped to disabled keeps its rank — a toggle, not
+    a removal."""
+    _put_rows(client, agent.slug, [(runner_a.id, True), (runner_b.id, True)])
+    r = _put_rows(client, agent.slug, [(runner_a.id, False), (runner_b.id, True)])
+    assert r.status_code == 200, r.content
+    got = r.json()
+    assert [x["runner_id"] for x in got] == [str(runner_a.id), str(runner_b.id)]
+    assert [x["rank"] for x in got] == [0, 1]
+    assert [x["enabled"] for x in got] == [False, True]
+
+
+def test_put_agent_runners_rejects_both_forms(client, agent, runner_a):
+    r = client.put(
+        f"/api/agents/{agent.slug}/runners",
+        data=json.dumps({"runner_ids": [str(runner_a.id)], "runners": [{"runner_id": str(runner_a.id)}]}),
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+def test_put_agent_runners_rejects_neither_form(client, agent):
+    r = client.put(f"/api/agents/{agent.slug}/runners", data=json.dumps({}), content_type="application/json")
+    assert r.status_code == 422, r.content
+
+
+def test_put_agent_runners_rows_form_applies_same_validation(client, agent, runner_a):
+    """The rows form gets the same visibility-scoped/no-dupes/retired 422s as
+    the legacy runner_ids form."""
+    retired = Runner.objects.create(name="retired-rows", kind=Runner.EMDASH, status=Runner.RETIRED)
+    r = _put_rows(client, agent.slug, [(runner_a.id, True), (retired.id, True)])
+    assert r.status_code == 422, r.content
+    assert str(retired.id) in r.json()["detail"]
+    assert RunnerAssignment.objects.filter(agent=agent).count() == 0
 
 
 def test_agent_runners_is_tenant_gated(client, workspace):

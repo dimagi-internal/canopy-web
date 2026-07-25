@@ -10,7 +10,8 @@ import type { RunnerOut } from '@/api/harness'
 // actually imported — which happens on the dynamic `import('./RunnerAssignments')`
 // at the bottom of this setup block, well after these consts are assigned.
 const getAgentRunners = vi.fn<() => Promise<AgentRunnerOut[]>>()
-const putAgentRunners = vi.fn<(slug: string, ids: readonly string[]) => Promise<AgentRunnerOut[]>>()
+const putAgentRunners =
+  vi.fn<(slug: string, rows: readonly { runnerId: string; enabled: boolean }[]) => Promise<AgentRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 
 vi.mock('@/api/agents', () => ({ getAgentRunners, putAgentRunners }))
@@ -26,6 +27,7 @@ function runner(id: string, overrides: Partial<AgentRunnerOut> = {}): AgentRunne
     rank: 1,
     online: true,
     ready: true,
+    enabled: true,
     ...overrides,
   }
 }
@@ -87,7 +89,7 @@ describe('RunnerAssignments', () => {
     expect(await screen.findByText(/unroutable/i)).toBeTruthy()
   })
 
-  it('moving a runner down PUTs the swapped id order', async () => {
+  it('moving a runner down PUTs the swapped row order', async () => {
     getAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
     listRunners.mockResolvedValue([fleetRunner('a'), fleetRunner('b')])
     putAgentRunners.mockResolvedValue([runner('b', { rank: 1 }), runner('a', { rank: 2 })])
@@ -97,21 +99,53 @@ describe('RunnerAssignments', () => {
 
     fireEvent.click(screen.getByLabelText('Move Runner a down'))
 
-    await waitFor(() => expect(putAgentRunners).toHaveBeenCalledWith('echo', ['b', 'a']))
+    await waitFor(() =>
+      expect(putAgentRunners).toHaveBeenCalledWith('echo', [
+        { runnerId: 'b', enabled: true },
+        { runnerId: 'a', enabled: true },
+      ]),
+    )
   })
 
-  it('removing a runner PUTs the id list without it', async () => {
+  it('toggling a runner off PUTs it disabled, keeps it in the list, and greys it out', async () => {
     getAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
     listRunners.mockResolvedValue([fleetRunner('a'), fleetRunner('b')])
-    putAgentRunners.mockResolvedValue([runner('b', { rank: 1 })])
+    putAgentRunners.mockResolvedValue([runner('a', { rank: 1, enabled: false }), runner('b', { rank: 2 })])
 
     render(<RunnerAssignments agentSlug="echo" />)
     await screen.findByTestId('runner-chip-a')
 
-    fireEvent.click(screen.getByLabelText('Remove Runner a'))
+    fireEvent.click(screen.getByLabelText('Disable Runner a'))
 
-    await waitFor(() => expect(putAgentRunners).toHaveBeenCalledWith('echo', ['b']))
-    await waitFor(() => expect(screen.queryByTestId('runner-chip-a')).toBeNull())
+    await waitFor(() =>
+      expect(putAgentRunners).toHaveBeenCalledWith('echo', [
+        { runnerId: 'a', enabled: false },
+        { runnerId: 'b', enabled: true },
+      ]),
+    )
+    // Still in the list — no removal — just visibly disabled.
+    const chip = await screen.findByTestId('runner-chip-a')
+    expect(chip.className).toMatch(/opacity-50/)
+    expect(await screen.findByLabelText('Enable Runner a')).toBeTruthy()
+  })
+
+  it('toggling a disabled runner back on PUTs it enabled', async () => {
+    getAgentRunners.mockResolvedValue([runner('a', { rank: 1, enabled: false }), runner('b', { rank: 2 })])
+    listRunners.mockResolvedValue([fleetRunner('a'), fleetRunner('b')])
+    putAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
+
+    render(<RunnerAssignments agentSlug="echo" />)
+    await screen.findByTestId('runner-chip-a')
+
+    fireEvent.click(screen.getByLabelText('Enable Runner a'))
+
+    await waitFor(() =>
+      expect(putAgentRunners).toHaveBeenCalledWith('echo', [
+        { runnerId: 'a', enabled: true },
+        { runnerId: 'b', enabled: true },
+      ]),
+    )
+    await waitFor(() => expect(screen.getByTestId('runner-chip-a').className).not.toMatch(/opacity-50/))
   })
 
   it('reverts optimistic state and shows an error when the PUT fails', async () => {
@@ -122,13 +156,13 @@ describe('RunnerAssignments', () => {
     render(<RunnerAssignments agentSlug="echo" />)
     await screen.findByTestId('runner-chip-a')
 
-    fireEvent.click(screen.getByLabelText('Remove Runner a'))
+    fireEvent.click(screen.getByLabelText('Disable Runner a'))
 
-    // Optimistic removal happens immediately...
-    expect(screen.queryByTestId('runner-chip-a')).toBeNull()
+    // Optimistic disable happens immediately...
+    expect(screen.getByTestId('runner-chip-a').className).toMatch(/opacity-50/)
 
     // ...then reverts once the PUT rejects, and surfaces the error.
-    await screen.findByTestId('runner-chip-a')
+    await waitFor(() => expect(screen.getByTestId('runner-chip-a').className).not.toMatch(/opacity-50/))
     expect(await screen.findByText('boom')).toBeTruthy()
   })
 
@@ -152,29 +186,43 @@ describe('RunnerAssignments', () => {
     // First click: move `a` down -> [b, a, c]. Still in flight.
     fireEvent.click(screen.getByLabelText('Move Runner a down'))
     await waitFor(() => expect(putAgentRunners).toHaveBeenCalledTimes(1))
-    expect(putAgentRunners).toHaveBeenNthCalledWith(1, 'echo', ['b', 'a', 'c'])
+    expect(putAgentRunners).toHaveBeenNthCalledWith(1, 'echo', [
+      { runnerId: 'b', enabled: true },
+      { runnerId: 'a', enabled: true },
+      { runnerId: 'c', enabled: true },
+    ])
 
-    // Second click, fired before the first resolves: remove `c` from the
-    // OPTIMISTIC (post-first-click) order -> [b, a]. Proves the mutation reads
-    // current state, not the stale render-time closure.
-    fireEvent.click(screen.getByLabelText('Remove Runner c'))
+    // Second click, fired before the first resolves: disable `c` on top of the
+    // OPTIMISTIC (post-first-click) order -> [b, a, c-disabled]. Proves the
+    // mutation reads current state, not the stale render-time closure. `c`
+    // stays in the list — there is no removal affordance anymore.
+    fireEvent.click(screen.getByLabelText('Disable Runner c'))
     await waitFor(() => expect(putAgentRunners).toHaveBeenCalledTimes(2))
-    expect(putAgentRunners).toHaveBeenNthCalledWith(2, 'echo', ['b', 'a'])
+    expect(putAgentRunners).toHaveBeenNthCalledWith(2, 'echo', [
+      { runnerId: 'b', enabled: true },
+      { runnerId: 'a', enabled: true },
+      { runnerId: 'c', enabled: false },
+    ])
 
     // Resolve the NEWER (second) commit first, then the OLDER (first) commit —
     // the out-of-order-resolve case. The newer result must win.
     await act(async () => {
-      second.resolve([runner('b', { rank: 1 }), runner('a', { rank: 2 })])
+      second.resolve([runner('b', { rank: 1 }), runner('a', { rank: 2 }), runner('c', { rank: 3, enabled: false })])
     })
-    await waitFor(() => expect(screen.queryByTestId('runner-chip-c')).toBeNull())
+    await waitFor(() => expect(screen.getByTestId('runner-chip-c').className).toMatch(/opacity-50/))
 
     await act(async () => {
       first.resolve([runner('b', { rank: 1 }), runner('a', { rank: 2 }), runner('c', { rank: 3 })])
     })
 
-    // The older response landing late must NOT resurrect `c`.
-    expect(screen.queryByTestId('runner-chip-c')).toBeNull()
+    // The older response landing late (still `enabled: true`) must NOT
+    // resurrect `c` back to enabled.
+    expect(screen.getByTestId('runner-chip-c').className).toMatch(/opacity-50/)
     const chips = screen.getAllByTestId(/^runner-chip-/)
-    expect(chips.map((c) => c.getAttribute('data-testid'))).toEqual(['runner-chip-b', 'runner-chip-a'])
+    expect(chips.map((c) => c.getAttribute('data-testid'))).toEqual([
+      'runner-chip-b',
+      'runner-chip-a',
+      'runner-chip-c',
+    ])
   })
 })

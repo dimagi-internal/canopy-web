@@ -18,6 +18,7 @@ from .schemas import (
     AgentIn,
     AgentOut,
     AgentRunnerOut,
+    AgentRunnerRowIn,
     AgentRunnersIn,
     AgentRuntimeOut,
     AgentSkillCatalogIn,
@@ -178,6 +179,7 @@ def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
             rank=a.rank,
             online=a.runner.live_status == a.runner.ONLINE,
             ready=a.runner.ready,
+            enabled=a.enabled,
         )
         for a in agent.runner_assignments.select_related("runner")
     ]
@@ -188,13 +190,28 @@ def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
 def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
     """Replace the agent's ORDERED runner list (index = rank) — the single
     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
-    a full row, so there is no partial-update ambiguity."""
+    a full row, so there is no partial-update ambiguity.
+
+    Accepts either form (exactly one must be provided — 422 otherwise):
+    `runners` (ordered rows, each carrying its own `enabled` — a disabled row
+    stays in the list, rank preserved, but never routes) or the legacy
+    `runner_ids` (ordered ids, all implicitly enabled)."""
     from apps.harness.api import _runner_visibility_q
     from apps.harness.models import Runner, RunnerAssignment
 
     agent = _get_agent_or_404(request, slug)
+
+    if (payload.runner_ids is None) == (payload.runners is None):
+        raise HttpError(422, "provide exactly one of runner_ids or runners")
+
+    if payload.runners is not None:
+        rows_in: list[AgentRunnerRowIn] = payload.runners
+    else:
+        rows_in = [AgentRunnerRowIn(runner_id=rid, enabled=True) for rid in payload.runner_ids]
+
+    ids = [row.runner_id for row in rows_in]
     # Reject duplicate runner IDs early
-    if len(payload.runner_ids) != len(set(payload.runner_ids)):
+    if len(ids) != len(set(ids)):
         raise HttpError(422, "duplicate runner id in list")
     # Scoped by the same _runner_visibility_q predicate apps/harness/api.py's
     # _runner_or_404/list_runners gate on — a runner_id the caller can't see
@@ -202,19 +219,19 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     # attachable/readable just because its UUID was guessed. See that
     # docstring for the full predicate story.
     runners = list(
-        Runner.objects.filter(id__in=payload.runner_ids)
+        Runner.objects.filter(id__in=ids)
         .exclude(status=Runner.RETIRED)
         .filter(_runner_visibility_q(request))
     )
     by_id = {r.id: r for r in runners}
-    missing = [str(rid) for rid in payload.runner_ids if rid not in by_id]
+    missing = [str(rid) for rid in ids if rid not in by_id]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent).delete()
         RunnerAssignment.objects.bulk_create([
-            RunnerAssignment(agent=agent, runner=by_id[rid], rank=i)
-            for i, rid in enumerate(payload.runner_ids)
+            RunnerAssignment(agent=agent, runner=by_id[row.runner_id], rank=i, enabled=row.enabled)
+            for i, row in enumerate(rows_in)
         ])
     return list_agent_runners(request, slug)
 

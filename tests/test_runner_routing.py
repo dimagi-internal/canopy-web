@@ -56,8 +56,8 @@ def _agent(slug="echo", workspace=None):
     return Agent.objects.create(slug=slug, name=slug.title(), workspace=workspace)
 
 
-def _assign(agent, runner, rank):
-    return RunnerAssignment.objects.create(agent=agent, runner=runner, rank=rank)
+def _assign(agent, runner, rank, enabled=True):
+    return RunnerAssignment.objects.create(agent=agent, runner=runner, rank=rank, enabled=enabled)
 
 
 def test_pinned_turn_invisible_to_other_runners():
@@ -155,6 +155,32 @@ def test_unassigned_runner_never_claims_even_with_capabilities():
     a = _agent("echo")  # no assignments at all → unroutable
     services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
     assert services.claim_next_turn(r) is None
+
+
+# --- enabled toggle (operator follow-up: disable, don't remove) -------------
+
+
+def test_disabled_rank0_does_not_block_enabled_rank1():
+    """A disabled rank-0 row must neither claim nor count as a better-ranked
+    availability blocker — rank 1 claims immediately, no grace wait needed."""
+    u = _user()
+    r0, r1 = _online_runner("r0", u), _online_runner("r1", u)
+    a = _agent("echo")
+    _assign(a, r0, 0, enabled=False)
+    _assign(a, r1, 1)
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c6")
+    assert services.claim_next_turn(r0) is None      # disabled → never claims
+    claimed = services.claim_next_turn(r1)
+    assert claimed is not None and claimed.status == Turn.CLAIMED
+
+
+def test_disabled_runner_itself_never_claims():
+    u = _user()
+    r0 = _online_runner("r0", u)
+    a = _agent("echo")
+    _assign(a, r0, 0, enabled=False)
+    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c7")
+    assert services.claim_next_turn(r0) is None
 
 
 # --- session-binding stickiness (Task 5) ------------------------------------

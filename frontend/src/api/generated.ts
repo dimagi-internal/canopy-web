@@ -1034,6 +1034,11 @@ export interface paths {
          * @description Replace the agent's ORDERED runner list (index = rank) — the single
          *     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
          *     a full row, so there is no partial-update ambiguity.
+         *
+         *     Accepts either form (exactly one must be provided — 422 otherwise):
+         *     `runners` (ordered rows, each carrying its own `enabled` — a disabled row
+         *     stays in the list, rank preserved, but never routes) or the legacy
+         *     `runner_ids` (ordered ids, all implicitly enabled).
          */
         readonly put: operations["apps_agents_api_replace_agent_runners"];
         readonly post?: never;
@@ -2250,7 +2255,10 @@ export interface paths {
         /**
          * Start Runner Drill
          * @description Fan out a readiness drill (owner-gated). Default: every agent assigned to
-         *     this runner; body.agents narrows by slug.
+         *     this runner; body.agents narrows by slug. Deliberately includes DISABLED
+         *     assignment rows too — drill-before-enable is the intended workflow (prove a
+         *     standby actually works before flipping it live), so a disabled row must
+         *     stay drillable even though it can never claim routed traffic.
          */
         readonly post: operations["apps_harness_api_start_runner_drill"];
         readonly delete?: never;
@@ -4519,6 +4527,8 @@ export interface components {
          * @description One row of an agent's ordered runner list (the routing-matrix UI's read
          *     model). `online`/`ready` are computed per row from `Runner.live_status` /
          *     `Runner.ready` — not queryable columns, so the list stays tiny by design.
+         *     `enabled=False` means the row is kept (rank preserved, shown greyed) but
+         *     never routes — a toggle, not a removal.
          */
         readonly AgentRunnerOut: {
             /**
@@ -4536,14 +4546,43 @@ export interface components {
             readonly online: boolean;
             /** Ready */
             readonly ready: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /**
+         * AgentRunnerRowIn
+         * @description One row of the rows-form PUT body — carries `enabled` per runner,
+         *     unlike the legacy all-enabled `runner_ids` form below.
+         */
+        readonly AgentRunnerRowIn: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
         };
         /**
          * AgentRunnersIn
          * @description Wholesale replace of an agent's ordered runner list — index = rank.
+         *
+         *     Exactly ONE of the two fields must be provided (422 otherwise): `runners`
+         *     (ordered rows, each carrying its own `enabled`) or the legacy `runner_ids`
+         *     (ordered ids, all implicitly enabled). Both fully replace the prior list —
+         *     no partial-update ambiguity.
          */
         readonly AgentRunnersIn: {
             /** Runner Ids */
-            readonly runner_ids?: readonly string[];
+            readonly runner_ids?: readonly string[] | null;
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][] | null;
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {

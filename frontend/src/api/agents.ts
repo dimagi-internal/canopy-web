@@ -205,14 +205,16 @@ export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
   return Array.from(unwrap(res, 'getAgentRunners'))
 }
 
-// Wholesale replace of an agent's ordered runner list — index = rank.
+// Wholesale replace of an agent's ordered runner list — index = rank. Each
+// row carries its own `enabled`: false keeps the row (rank preserved) but it
+// never routes — the toggle that replaced the old remove-chip affordance.
 export async function putAgentRunners(
   slug: string,
-  runnerIds: readonly string[],
+  rows: readonly { runnerId: string; enabled: boolean }[],
 ): Promise<AgentRunnerOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runners', {
     params: { path: { slug } },
-    body: { runner_ids: [...runnerIds] },
+    body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
   })
   return Array.from(unwrap(res, 'putAgentRunners'))
 }

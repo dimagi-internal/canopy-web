@@ -41,6 +41,7 @@ function agentRunner(id: string, overrides: Partial<AgentRunnerOut> = {}): Agent
     rank: 1,
     online: true,
     ready: true,
+    enabled: true,
     ...overrides,
   }
 }
@@ -232,13 +233,17 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    fireEvent.click(await screen.findByText('New chat'))
-    fireEvent.click(await screen.findByText('Acme'))
+    // Generous timeouts: the menu contents render only after the mocked
+    // listSlugs/listRunners promises resolve, and CI runners have blown the
+    // 1s findBy default here (observed once at 1021ms).
+    fireEvent.click(await screen.findByText('New chat', {}, { timeout: 5000 }))
+    fireEvent.click(await screen.findByText('Acme', {}, { timeout: 5000 }))
 
-    const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
-    await waitFor(() => expect(listRunners).toHaveBeenCalled())
-    await waitFor(() =>
-      expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
+    const select = (await screen.findByTestId('run-on-select', {}, { timeout: 5000 })) as HTMLSelectElement
+    await waitFor(() => expect(listRunners).toHaveBeenCalled(), { timeout: 5000 })
+    await waitFor(
+      () => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
+      { timeout: 5000 },
     )
   })
 })
