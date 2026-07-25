@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
@@ -18,7 +18,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import services
-from .models import AgentSchedule, Runner, RunnerDrill, Turn
+from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn
 from .schedule_services import serialize_schedule
 from .schemas import (
     BackfillSyncOut,
@@ -293,10 +293,21 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Retire a runner — permanent, not a liveness state (see Runner.live_status).
     Idempotent by construction: _runner_or_404 already excludes retired runners,
     so retiring an already-retired runner 404s at lookup rather than no-opping
-    here."""
+    here.
+
+    Deletes the runner's RunnerAssignment rows in the same transaction. A
+    retired runner is invisible to _runner_visibility_q, but its stale
+    assignment rows were NOT — GET /agents/{slug}/runners kept listing them,
+    and PUT /agents/{slug}/runners round-trips that same list to save any
+    unrelated change, so a lingering row 422'd every matrix save with "unknown
+    or retired runner id" (a prod incident 2026-07-25). Ranks of the
+    survivors need not be compacted — RunnerAssignment.rank is only ever
+    compared relatively (0 = first choice), never assumed contiguous."""
     runner = _runner_or_404(request, runner_id)
-    runner.status = Runner.RETIRED
-    runner.save(update_fields=["status"])
+    with transaction.atomic():
+        runner.status = Runner.RETIRED
+        runner.save(update_fields=["status"])
+        RunnerAssignment.objects.filter(runner=runner).delete()
     return Status(204, None)
 
 
