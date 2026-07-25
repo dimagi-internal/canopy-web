@@ -28,6 +28,38 @@ def test_open_send_ok(monkeypatch):
     assert cdp_control.open_and_send("T", "hi there")["action"] == "sent"
 
 
+def test_interrupt_calls_run_with_task_and_port(monkeypatch):
+    """interrupt() must reach the sidecar's `interrupt` command with {task, port} — the
+    same call shape open_and_send uses (matching _run's convention: command name + a
+    plain args dict; port default matches open_and_send's default of 9222)."""
+    captured = {}
+
+    def fake_run(command, args, **kwargs):
+        captured["command"] = command
+        captured["args"] = args
+        return {"ok": True, "task": args["task"]}
+
+    monkeypatch.setattr(cdp_control, "_run", fake_run)
+    result = cdp_control.interrupt("my-task")
+    assert captured["command"] == "interrupt"
+    assert captured["args"] == {"task": "my-task", "port": 9222}
+    assert result["task"] == "my-task"
+
+
+def test_interrupt_passes_a_non_default_port(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(cdp_control, "_run",
+                        lambda command, args, **k: captured.update(args=args) or {"ok": True})
+    cdp_control.interrupt("my-task", port=9333)
+    assert captured["args"] == {"task": "my-task", "port": 9333}
+
+
+def test_interrupt_ok(monkeypatch):
+    monkeypatch.setattr(cdp_control.subprocess, "run",
+                        _fake_run(json.dumps({"ok": True, "task": "T"})))
+    assert cdp_control.interrupt("T")["task"] == "T"
+
+
 def test_sidecar_error_raises_cdperror(monkeypatch):
     monkeypatch.setattr(cdp_control.subprocess, "run",
                         _fake_run(json.dumps({"ok": False, "error": 'no existing task "X"'})))

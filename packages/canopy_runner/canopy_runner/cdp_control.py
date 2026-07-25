@@ -135,3 +135,12 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     if clear_first:
         args["clearFirst"] = True
     return _run("open-send", args)
+
+
+def interrupt(task: str, *, port: int = 9222) -> dict:
+    """Press Escape in the task's emdash session — interrupts the running turn.
+
+    Opens `task` the same way `open_and_send` does (no text is inserted), then sends
+    Escape, which Claude Code's TUI treats as "stop the current turn". Raises CDPError
+    if the task isn't present (mirrors open_and_send's TASK_NOT_FOUND)."""
+    return _run("interrupt", {"task": task, "port": port})

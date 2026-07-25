@@ -69,6 +69,7 @@ ALLOWED_EVENT_KINDS = {
     "approval",
     "error",
     "heartbeat",
+    "cancel_requested",
 }
 
 
@@ -633,8 +634,8 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
     turn = _turn_or_404(request, turn_id)
-    if payload.status not in (Turn.DONE, Turn.FAILED):
-        raise HttpError(422, "finish status must be done|failed")
+    if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
+        raise HttpError(422, "finish status must be done|failed|cancelled")
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)
@@ -650,13 +651,12 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
 def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     """Cancel a QUEUED turn that has not started — the misfire case the phone
     composer needs (dispatch the wrong command, take it back before a runner
-    claims it). Records it FAILED with a cancelled note; there is no separate
-    CANCELLED status because nothing downstream distinguishes the two, and adding
-    one would touch the TERMINAL set every sweep and projection depends on.
+    claims it). Finishes it CANCELLED with a cancelled note.
 
     QUEUED only. A claimed/running turn is already executing in an emdash session;
-    stopping that is a racy, different operation (the runner owns the lease) and
-    is deliberately out of scope — cancel is 'un-queue', not 'kill'.
+    stopping that is a different, racier operation (the runner owns the lease) —
+    see `services.cancel_turn`, which signals the runner instead and is
+    deliberately not wired to this route yet.
     """
     turn = _turn_or_404(request, turn_id)
     if turn.status in Turn.TERMINAL:

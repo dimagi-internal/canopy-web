@@ -12,7 +12,7 @@ function StatusChip({ status }: { status: string }): JSX.Element {
   const tone =
     status === 'done'
       ? 'bg-success/10 text-success border-success/30'
-      : status === 'missed' || status === 'failed' || status === 'lost'
+      : status === 'missed' || status === 'failed' || status === 'lost' || status === 'cancelled'
         ? 'bg-warning/10 text-warning border-warning/30'
         : 'bg-info/10 text-info border-info/30'
   return <span className={`inline-flex rounded border px-1.5 py-0.5 text-[11px] ${tone}`}>{status}</span>

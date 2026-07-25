@@ -114,16 +114,22 @@ def bridge_response(
     max_rounds: int = 1200,
     sleep: Callable[[float], None],
     poll: float = 0.5,
+    should_stop: Callable[[], bool] | None = None,
 ) -> str:
     """Tail the transcript from `start_index`, posting each new assistant TEXT as an
     `assistant` event via `post_event`. Finish when no new records arrive for
-    `idle_rounds` consecutive polls (after >=1 assistant text), or `max_rounds` hit.
-    Returns the concatenated assistant text (for the turn's finish note)."""
+    `idle_rounds` consecutive polls (after >=1 assistant text), `max_rounds` hit, or
+    `should_stop()` returns true (checked at the top of every poll round — a user
+    cancel, e.g. `lambda: turn_id in CANCELLED_TURNS`, ends the bridge immediately
+    rather than waiting out the idle window). Returns the concatenated assistant
+    text collected so far (for the turn's finish note)."""
     seen = start_index
     got_assistant = False
     idle = 0
     collected: list[str] = []
     for _ in range(max_rounds):
+        if should_stop is not None and should_stop():
+            break
         records = records_fn()
         if len(records) > seen:
             for text in new_assistant_texts(records, seen):

@@ -147,12 +147,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # turn events fan out to the session group automatically (realtime signal).
 
     async def _chat_stop(self, data):
-        # Cancel is 'un-queue', not 'kill' (harness owns a running turn's lease).
-        # Best-effort un-queue, then ack so the sender's Stop UI resets.
-        await database_sync_to_async(self._cancel_session_turn)()
-        await self.send_json({
-            "event": "chat.stream_cancelled",
-            "data": {"message_id": data.get("message_id"), "partial_len": 0},
+        # Un-queue every queued turn, or signal the runner to interrupt an
+        # executing one (harness_services.cancel_turn). Broadcast to the WHOLE
+        # group so every participant's Stop UI resets, not just the sender's —
+        # but only when something was actually cancelled/cancel-requested, so a
+        # stray Stop with nothing to cancel doesn't flip everyone's UI to
+        # "cancelled" for no reason.
+        cancelled = await database_sync_to_async(self._cancel_session_turn)()
+        if not cancelled:
+            return
+        await self._broadcast({
+            "type": "chat.stream_cancelled",
+            "message_id": data.get("message_id"), "partial_len": 0,
         })
 
     # -- sync DB helpers --
@@ -172,13 +178,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             draft.save(update_fields=["body", "version", "updated_at"])
         return draft
 
-    def _cancel_session_turn(self):
-        turn = (
-            Turn.objects.filter(chat_session=self.session, status=Turn.QUEUED)
-            .order_by("-created_at").first()
-        )
-        if turn is not None:
-            harness_services.cancel_queued_turn(turn)
+    def _cancel_session_turn(self) -> bool:
+        # ALL non-terminal turns, not just the newest: a mid-reply send queues a
+        # second turn behind the one still running, so Stop must reach both.
+        # NOTE: not a bare `any(... for turn in turns)` — any() short-circuits
+        # on the first truthy result, which would skip cancelling every turn
+        # after the first non-None one.
+        turns = Turn.objects.filter(chat_session=self.session, status__in=list(Turn.NON_TERMINAL))
+        cancelled = False
+        for turn in turns:
+            if harness_services.cancel_turn(turn) is not None:
+                cancelled = True
+        return cancelled
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
@@ -219,6 +230,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 "holder_user_id": message["holder_user_id"],
                 "expires_at": message["expires_at"],
             },
+        })
+
+    async def chat_stream_cancelled(self, message):
+        await self.send_json({
+            "event": "chat.stream_cancelled",
+            "data": {"message_id": message.get("message_id"), "partial_len": message.get("partial_len", 0)},
         })
 
     async def presence_joined(self, message):

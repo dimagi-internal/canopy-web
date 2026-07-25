@@ -196,6 +196,12 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "message": message.get("message"),
         })
 
+    async def runner_cancel(self, message):
+        # runner.{id} group_send type="runner.cancel" — the user asked to stop a turn
+        # this runner is executing. Forwarded down the socket; the executor checks its
+        # cancel set every bridge poll (~0.5s), interrupts emdash, finishes CANCELLED.
+        await self.send_json({"type": "cancel", "turn_id": message.get("turn_id")})
+
     async def runner_stream(self, message):
         # runner.{id} group_send type="runner.stream" — start/stop live streaming a
         # session this runner backs. Forwarded to the runner socket; the runner also
