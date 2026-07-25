@@ -1,14 +1,16 @@
 """SP2a Task 3 — send_message enqueues a Turn; the ledger projects into Messages."""
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
-from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import services as harness
-from apps.harness.models import Turn
+from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -110,3 +112,91 @@ def test_maybe_execute_inline_runs_stub_when_enabled(settings):
     turn.refresh_from_db()
     assert turn.status == Turn.DONE
     assert [m.role for m in session.messages.order_by("turn_index")] == ["user", "assistant"]
+
+
+# --- Task 9: directed session placement -----------------------------------
+
+
+def _runner(name: str, *, paired_by) -> Runner:
+    return Runner.objects.create(
+        name=name, kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=paired_by,
+    )
+
+
+def test_directed_new_chat_pins_first_turn():
+    # A session created with a requested runner (a directed new chat) pins its
+    # FIRST send there — before any binding exists to make stickiness do the work.
+    user = User.objects.create_user("o", "o@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-directed", display_name="W", created_by=user)
+    r2 = _runner("r2", paired_by=user)
+    session = Session.objects.create(
+        workspace=ws, project="canopy-web", metadata={"requested_runner_id": str(r2.id)},
+    )
+    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c1")
+    assert turn.pinned_runner_id == r2.id
+
+
+def test_send_placement_wait_pins_to_bound_runner():
+    # placement="wait" pins the new turn to the session's currently bound runner
+    # even though that runner is offline — the point is to hold the turn for it
+    # rather than let it drift to whoever else is available.
+    user = User.objects.create_user("o2", "o2@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-wait", display_name="W", created_by=user)
+    r1 = _runner("r1", paired_by=user)  # offline: default Runner.status is DISCONNECTED
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
+    _msg, turn = chat.send_message(
+        session=session, text="hi", user=user, client_id="c2", placement="wait",
+    )
+    assert turn.pinned_runner_id == r1.id
+
+
+def test_place_repins_queued_turn():
+    # The chat banner's after-the-fact decision: place_queued_turn re-pins the
+    # oldest still-QUEUED turn without touching the send path.
+    user = User.objects.create_user("o3", "o3@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place", display_name="W", created_by=user)
+    r1 = _runner("r1", paired_by=user)
+    r2 = _runner("r2", paired_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
+    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c3")
+    chat.place_queued_turn(session=session, placement=str(r2.id))
+    turn.refresh_from_db()
+    assert turn.pinned_runner_id == r2.id
+
+
+def test_place_wait_requires_bound_runner():
+    user = User.objects.create_user("o4", "o4@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place-wait-422", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    chat.send_message(session=session, text="hi", user=user, client_id="c4")
+    with pytest.raises(ValueError):
+        chat.place_queued_turn(session=session, placement="wait")
+
+
+def test_place_unknown_runner_raises_value_error():
+    user = User.objects.create_user("o5", "o5@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place-unknown", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    chat.send_message(session=session, text="hi", user=user, client_id="c5")
+    with pytest.raises(ValueError):
+        chat.place_queued_turn(session=session, placement=str(uuid.uuid4()))
+
+
+def test_place_no_queued_turn_raises_lookup_error():
+    user = User.objects.create_user("o6", "o6@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place-empty", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    with pytest.raises(LookupError):
+        chat.place_queued_turn(session=session, placement="wait")
+
+
+def test_send_placement_unknown_runner_raises_value_error():
+    user = User.objects.create_user("o7", "o7@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-send-unknown", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    with pytest.raises(ValueError):
+        chat.send_message(
+            session=session, text="hi", user=user, client_id="c7", placement=str(uuid.uuid4()),
+        )

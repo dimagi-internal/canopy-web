@@ -220,7 +220,35 @@ def _next_index(session: Session) -> int:
     return 0 if current is None else current + 1
 
 
-def send_message(*, session: Session, text: str, user, client_id: str = "") -> tuple[Message, Turn]:
+def _resolve_placement(session: Session, placement: str | None):
+    """Directed-placement pin for a NEW turn about to be enqueued. `placement`
+    wins when given explicitly; otherwise an unbound session's stashed
+    `requested_runner_id` (set at directed-new-chat creation) pins the first
+    turn. A live binding needs no pin here — claim-time stickiness already
+    routes the turn to the binding holder (see claim_next_turn's session leg).
+
+    Returns a Runner|None. Raises ValueError for an explicit but unresolvable
+    placement (unknown/retired runner) — the caller surfaces that as a 422."""
+    from apps.harness.models import Runner
+
+    if placement == "wait":
+        binding = getattr(session, "runner_binding", None)
+        return binding.runner if binding and binding.runner_id else None
+    if placement:
+        pinned = Runner.objects.filter(id=placement).exclude(status=Runner.RETIRED).first()
+        if pinned is None:
+            raise ValueError("unknown runner for placement")
+        return pinned
+    if not getattr(session, "runner_binding", None):
+        rid = (session.metadata or {}).get("requested_runner_id")
+        if rid:
+            return Runner.objects.filter(id=rid).exclude(status=Runner.RETIRED).first()
+    return None
+
+
+def send_message(
+    *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
+) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
     Idempotency: pass a stable `client_id` (a client-generated nonce) to make a
@@ -228,6 +256,12 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     Without one, the key falls back to the message's session index — best-effort
     only (a genuine retry after the first commit would compute a new index), so a
     nonce is required for true double-submit safety.
+
+    `placement`: "wait" pins to the session's currently bound runner; a runner
+    UUID string pins to that runner outright; None leaves normal routing/
+    stickiness in charge (including, for the FIRST send of an unbound directed
+    new chat, the `requested_runner_id` stashed at create time). See
+    `_resolve_placement`.
     """
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -246,6 +280,7 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
         message = Message.objects.create(
             session=session, turn_index=index, role=Message.USER, plaintext=text, content=content,
         )
+        pinned = _resolve_placement(session, placement)
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
@@ -257,6 +292,7 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
             # runner to BRIDGE the emdash response back into the ledger (vs the normal
             # fire-and-continue), so the website streams the reply.
             origin_ref={"thread_key": str(session.id), "chat_session_id": str(session.id)},
+            pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
     # the human's message is an interjection. Push it down to the runner executing
@@ -265,6 +301,39 @@ def send_message(*, session: Session, text: str, user, client_id: str = "") -> t
     # never breaks the send).
     _maybe_interject(session, message)
     return message, turn
+
+
+def place_queued_turn(*, session: Session, placement: str) -> Turn:
+    """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
+    directed-placement decision (vs `_resolve_placement`, which only applies to
+    a turn being newly enqueued). `placement` is "wait" (pin to the session's
+    currently bound runner) or a runner UUID string.
+
+    Raises LookupError if there is no queued turn to place (-> 404), or
+    ValueError for an unresolvable placement (-> 422): "wait" with no bound
+    runner, or an unknown/retired runner id.
+    """
+    turn = (
+        Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
+        .order_by("created_at")
+        .first()
+    )
+    if turn is None:
+        raise LookupError("no queued turn to place")
+    if placement == "wait":
+        binding = getattr(session, "runner_binding", None)
+        if not (binding and binding.runner_id):
+            raise ValueError("session has no bound runner to wait for")
+        turn.pinned_runner_id = binding.runner_id
+    else:
+        from apps.harness.models import Runner
+
+        runner = Runner.objects.filter(id=placement).exclude(status=Runner.RETIRED).first()
+        if runner is None:
+            raise ValueError("unknown runner")
+        turn.pinned_runner = runner
+    turn.save(update_fields=["pinned_runner"])
+    return turn
 
 
 def _maybe_interject(session: Session, message: Message) -> None:

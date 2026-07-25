@@ -24,12 +24,14 @@ from .schemas import (
     BackfillStateOut,
     MessageOut,
     MessagePageOut,
+    PlaceIn,
     SendIn,
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
     SessionOut,
     StreamStateOut,
+    TurnOutMinimal,
 )
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -84,9 +86,14 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         agent = agent_services.get_agent(payload.agent_slug)
         if agent is None or agent.workspace_id != workspace.slug:
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
+    metadata = dict(payload.metadata)
+    if payload.runner_id:
+        # Directed new chat: stashed for the session's first send to pin onto
+        # (as long as it's still unbound at that point) — see services.send_message.
+        metadata["requested_runner_id"] = str(payload.runner_id)
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
-        project=payload.project, title=payload.title, metadata=payload.metadata,
+        project=payload.project, title=payload.title, metadata=metadata,
     )
     return _out(session)
 
@@ -159,12 +166,33 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     session = _session_or_404(request, session_id)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
-    message, turn = services.send_message(
-        session=session, text=payload.text, user=request.user, client_id=payload.client_id,
-    )
+    try:
+        message, turn = services.send_message(
+            session=session, text=payload.text, user=request.user,
+            client_id=payload.client_id, placement=payload.placement,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
     # Dev/test: run the stub inline. Production: leave it queued for a cloud runner.
     services.maybe_execute_inline(turn)
     return {"turn_id": turn.id if turn else None, "message": MessageOut.from_orm(message)}
+
+
+@router.post(
+    "/{session_id}/place", response=TurnOutMinimal,
+    summary="Re-pin a session's oldest queued turn to a runner",
+)
+def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
+    # The chat banner's after-the-fact directed-placement decision (vs. `runner_id`
+    # on create / `placement` on send, which only apply to a turn at enqueue time).
+    session = _session_or_404(request, session_id)
+    try:
+        turn = services.place_queued_turn(session=session, placement=payload.placement)
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return turn
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")

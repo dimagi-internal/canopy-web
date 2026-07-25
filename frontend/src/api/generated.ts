@@ -2393,6 +2393,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/place": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-pin a session's oldest queued turn to a runner */
+        readonly post: operations["apps_canopy_sessions_api_place"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/attach": {
         readonly parameters: {
             readonly query?: never;
@@ -6662,6 +6679,8 @@ export interface components {
             readonly metadata: {
                 readonly [key: string]: unknown;
             };
+            /** Runner Id */
+            readonly runner_id?: string | null;
         };
         /** MessageOut */
         readonly MessageOut: {
@@ -6706,6 +6725,33 @@ export interface components {
              * @default
              */
             readonly client_id: string;
+            /** Placement */
+            readonly placement?: string | null;
+        };
+        /**
+         * TurnOutMinimal
+         * @description Just enough of a Turn for the /place response — the caller only needs to
+         *     confirm the pin took, not the full harness TurnOut shape.
+         */
+        readonly TurnOutMinimal: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Pinned Runner Id */
+            readonly pinned_runner_id?: string | null;
+        };
+        /**
+         * PlaceIn
+         * @description Body for POST /{session_id}/place — the chat banner's after-the-fact
+         *     directed-placement decision on an already-queued turn.
+         */
+        readonly PlaceIn: {
+            /** Placement */
+            readonly placement: string;
         };
         /**
          * StreamStateOut
@@ -10634,6 +10680,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SendOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_place: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PlaceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnOutMinimal"];
                 };
             };
         };

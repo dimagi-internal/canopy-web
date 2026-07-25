@@ -6,7 +6,8 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.models import RunnerBinding, Session
+from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -81,3 +82,80 @@ def test_create_rejects_agent_and_project_together(client):
         content_type="application/json",
     )
     assert r.status_code == 422, r.content
+
+
+# --- Task 9: directed session placement -----------------------------------
+
+
+def test_create_with_runner_id_stashes_requested_runner_id(client, ctx):
+    user, _ws, _agent = ctx
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    r = client.post(
+        "/api/canopy-sessions/",
+        data={"project": "canopy-web", "runner_id": str(runner.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    sid = r.json()["id"]
+    session = Session.objects.get(pk=sid)
+    assert session.metadata["requested_runner_id"] == str(runner.id)
+
+
+def test_send_with_placement_pins_the_turn(client, ctx):
+    user, _ws, _agent = ctx
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "placement": str(runner.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    turn_id = r.json()["turn_id"]
+    turn = Turn.objects.get(pk=turn_id)
+    assert turn.pinned_runner_id == runner.id
+
+
+def test_send_with_unknown_placement_is_422(client, ctx):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "placement": "00000000-0000-0000-0000-000000000000"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+def test_place_repins_queued_turn(client, ctx, settings):
+    # place_queued_turn only matches a still-QUEUED turn — disable the inline
+    # stub (which would otherwise run the turn to DONE synchronously) so the
+    # send's turn is still there to re-pin.
+    settings.CHAT_STUB_EXECUTOR = False
+    user, _ws, _agent = ctx
+    r1 = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    r2 = Runner.objects.create(
+        name="r2", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+    )
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    RunnerBinding.objects.create(session_id=sid, runner=r1, thread_key=sid)
+    client.post(f"/api/canopy-sessions/{sid}/send", data={"text": "hi", "placement": "wait"}, content_type="application/json")
+
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/place", data={"placement": str(r2.id)}, content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["pinned_runner_id"] == str(r2.id)
+
+
+def test_place_with_no_queued_turn_is_404(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/place", data={"placement": "wait"}, content_type="application/json",
+    )
+    assert r.status_code == 404, r.content
