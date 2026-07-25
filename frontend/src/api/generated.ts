@@ -1855,6 +1855,15 @@ export interface paths {
          *     Idempotent by construction: _runner_or_404 already excludes retired runners,
          *     so retiring an already-retired runner 404s at lookup rather than no-opping
          *     here.
+         *
+         *     Deletes the runner's RunnerAssignment rows in the same transaction. A
+         *     retired runner is invisible to _runner_visibility_q, but its stale
+         *     assignment rows were NOT — GET /agents/{slug}/runners kept listing them,
+         *     and PUT /agents/{slug}/runners round-trips that same list to save any
+         *     unrelated change, so a lingering row 422'd every matrix save with "unknown
+         *     or retired runner id" (a prod incident 2026-07-25). Ranks of the
+         *     survivors need not be compacted — RunnerAssignment.rank is only ever
+         *     compared relatively (0 = first choice), never assumed contiguous.
          */
         readonly post: operations["apps_harness_api_retire_runner"];
         readonly delete?: never;
