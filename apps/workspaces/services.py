@@ -11,9 +11,10 @@ import datetime as dt
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.utils import timezone
 
-from .models import Workspace, WorkspaceInvite, WorkspaceMembership
+from .models import Workspace, WorkspaceInvite, WorkspaceMembership, generate_invite_token
 
 DEFAULT_WORKSPACE_SLUG = "dimagi"
 DEFAULT_WORKSPACE_NAME = "Dimagi"
@@ -178,9 +179,17 @@ def create_invite(
 ) -> WorkspaceInvite:
     """Create (or reuse) an invite for `email` to join `workspace` at `role`.
 
-    A live pending invite for the same (workspace, email) is reused as-is
-    rather than duplicated — the existing row's role/token/expiry stand; the
-    caller's `role` is ignored on reuse. Email is normalized to lowercase.
+    A "live" row for the same (workspace, email) — meaning never accepted,
+    never revoked — is reused REGARDLESS of expiry: this is the same row the
+    partial unique constraint treats as live (its condition doesn't consider
+    `expires_at`), so an ordinary re-invite after a lapsed 14-day TTL must
+    re-arm that same row rather than try to create a sibling and collide with
+    it. Reuse refreshes the row in place: a fresh token, a fresh expiry, and
+    the newly-requested role (unlike reusing a still-pending invite, where
+    the existing role/token/expiry stand as-is). Email is normalized to
+    lowercase. Belt-and-braces: if a genuinely concurrent call still races
+    past the `existing` check, the `.create()` IntegrityError is caught and
+    the winning row is re-fetched and returned instead of raising.
     """
     email = (email or "").strip().lower()
     existing = (
@@ -190,15 +199,27 @@ def create_invite(
         .order_by("-created_at")
         .first()
     )
-    if existing is not None and existing.is_pending():
+    if existing is not None:
+        if not existing.is_pending():  # never actioned, but its TTL lapsed — re-arm it
+            existing.token = generate_invite_token()
+            existing.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
+            existing.role = role
+            existing.save(update_fields=["token", "expires_at", "role"])
         return existing
-    return WorkspaceInvite.objects.create(
-        workspace=workspace,
-        email=email,
-        role=role,
-        invited_by=invited_by,
-        expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
-    )
+    try:
+        return WorkspaceInvite.objects.create(
+            workspace=workspace,
+            email=email,
+            role=role,
+            invited_by=invited_by,
+            expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
+        )
+    except IntegrityError:
+        # A concurrent caller won the race and inserted the live row first;
+        # return it instead of surfacing an unhandled 500 to this caller.
+        return WorkspaceInvite.objects.get(
+            workspace=workspace, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
 
 
 def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
