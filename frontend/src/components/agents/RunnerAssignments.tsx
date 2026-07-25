@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 
@@ -23,26 +23,90 @@ function dotTitle(r: AgentRunnerOut): string {
   return r.ready ? 'online — ready' : 'online — not ready'
 }
 
+// Pure id-list transforms, extracted so the ordering logic is unit-testable
+// without a React renderer (see RunnerAssignments.test.tsx).
+export function nextIdsForMove(rows: readonly AgentRunnerOut[], i: number, d: -1 | 1): string[] | null {
+  const j = i + d
+  if (j < 0 || j >= rows.length) return null
+  const ids = rows.map((r) => r.runner_id)
+  ;[ids[i], ids[j]] = [ids[j], ids[i]]
+  return ids
+}
+
+export function nextIdsForRemove(rows: readonly AgentRunnerOut[], id: string): string[] {
+  return rows.filter((r) => r.runner_id !== id).map((r) => r.runner_id)
+}
+
+export function nextIdsForAdd(rows: readonly AgentRunnerOut[], id: string): string[] {
+  return [...rows.map((r) => r.runner_id), id]
+}
+
+// Build the optimistic row list for a next-id ordering: rows we already know
+// about are re-ranked in place; an id not yet in `prev` (a fresh add) is
+// patched in from the fleet list so the chip renders immediately instead of
+// flashing empty until the PUT returns.
+export function buildOptimisticRows(
+  prev: readonly AgentRunnerOut[],
+  nextIds: readonly string[],
+  fleet: readonly RunnerOut[],
+): AgentRunnerOut[] {
+  const byId = new Map(prev.map((r) => [r.runner_id, r]))
+  return nextIds.map((id, i) => {
+    const existing = byId.get(id)
+    if (existing) return { ...existing, rank: i + 1 }
+    const f = fleet.find((r) => r.id === id)
+    return {
+      runner_id: id,
+      runner_name: f?.name ?? id,
+      kind: f?.kind ?? '',
+      rank: i + 1,
+      online: f?.status === 'online',
+      ready: f?.ready ?? false,
+    }
+  })
+}
+
 export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Element {
   const [rows, setRows] = useState<AgentRunnerOut[] | null>(null)
   const [fleet, setFleet] = useState<RunnerOut[]>([])
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // `rowsRef` always mirrors the latest `rows` the instant it's set — kept in
+  // lockstep by `applyRows` below rather than via a `useEffect` (which only
+  // catches up after a render/paint). Mutations read this ref, not the `rows`
+  // closed over at render time, so a second click fired before the first
+  // commit's response lands still computes its next-id list on top of that
+  // commit's optimistic update instead of clobbering it.
+  const rowsRef = useRef<AgentRunnerOut[]>([])
+  const applyRows = (next: AgentRunnerOut[]) => {
+    rowsRef.current = next
+    setRows(next)
+  }
+
+  // Monotonic commit sequence. Two overlapping `putAgentRunners` calls can
+  // resolve out of order (or one can error after a later one already
+  // succeeded); without this, "last to resolve" would silently win over
+  // "last issued", undoing a newer click. Each `commit` call captures the
+  // sequence number in effect when it starts and only applies its result
+  // (success or error-revert) if no newer commit has since been issued.
+  const commitSeqRef = useRef(0)
+
   useEffect(() => {
     let cancelled = false
     setRows(null)
+    rowsRef.current = []
     setError(null)
     Promise.all([getAgentRunners(agentSlug), listRunners()])
       .then(([r, f]) => {
         if (cancelled) return
-        setRows(r)
+        applyRows(r)
         setFleet(f)
       })
       .catch((e: unknown) => {
         if (cancelled) return
         setError(e instanceof Error ? e.message : 'Failed to load')
-        setRows([])
+        applyRows([])
       })
     return () => {
       cancelled = true
@@ -57,56 +121,41 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
 
   // Every mutation goes through here: compute the next ordered id list, apply it
   // to local state immediately, then persist — revert to the prior rows on error.
+  // `prev` is the pre-mutation snapshot to revert to; it is NOT necessarily the
+  // rows currently on screen (a queued second commit's `prev` is the first
+  // commit's optimistic result).
   const commit = async (nextIds: string[], prev: AgentRunnerOut[]) => {
-    // Optimistic reorder of the rows we already know about, keyed by id. Any id
-    // not yet in `rows` (a fresh add) is patched in from the fleet list so the
-    // chip renders immediately instead of flashing empty until the PUT returns.
-    const byId = new Map(prev.map((r) => [r.runner_id, r]))
-    const optimistic: AgentRunnerOut[] = nextIds.map((id, i) => {
-      const existing = byId.get(id)
-      if (existing) return { ...existing, rank: i + 1 }
-      const f = fleet.find((r) => r.id === id)
-      return {
-        runner_id: id,
-        runner_name: f?.name ?? id,
-        kind: f?.kind ?? '',
-        rank: i + 1,
-        online: f?.status === 'online',
-        ready: f?.ready ?? false,
-      }
-    })
-    setRows(optimistic)
+    const mySeq = ++commitSeqRef.current
+    const optimistic = buildOptimisticRows(prev, nextIds, fleet)
+    applyRows(optimistic)
     setError(null)
     try {
       const saved = await putAgentRunners(agentSlug, nextIds)
-      setRows(saved)
+      if (commitSeqRef.current !== mySeq) return // superseded by a newer commit
+      applyRows(saved)
     } catch (e: unknown) {
-      setRows(prev)
+      if (commitSeqRef.current !== mySeq) return // superseded by a newer commit
+      applyRows(prev)
       setError(e instanceof Error ? e.message : 'Failed to save')
     }
   }
 
   const move = (i: number, d: -1 | 1) => {
-    const prev = rows ?? []
-    const j = i + d
-    if (j < 0 || j >= prev.length) return
-    const nextIds = prev.map((r) => r.runner_id)
-    ;[nextIds[i], nextIds[j]] = [nextIds[j], nextIds[i]]
+    const prev = rowsRef.current
+    const nextIds = nextIdsForMove(prev, i, d)
+    if (nextIds === null) return
     void commit(nextIds, prev)
   }
 
   const remove = (id: string) => {
-    const prev = rows ?? []
-    void commit(
-      prev.filter((r) => r.runner_id !== id).map((r) => r.runner_id),
-      prev,
-    )
+    const prev = rowsRef.current
+    void commit(nextIdsForRemove(prev, id), prev)
   }
 
   const add = (id: string) => {
-    const prev = rows ?? []
+    const prev = rowsRef.current
     setMenuOpen(false)
-    void commit([...prev.map((r) => r.runner_id), id], prev)
+    void commit(nextIdsForAdd(prev, id), prev)
   }
 
   if (rows === null) {
