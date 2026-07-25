@@ -13,6 +13,8 @@ import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
 import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
+import { InviteAcceptPage } from './pages/InviteAcceptPage'
+import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { SystemPage } from './pages/SystemPage'
@@ -167,9 +169,16 @@ export const router = createBrowserRouter(guarded([
       // --- Public viewers (root; self-enforce visibility) ---
       { path: '/walkthrough/:id', element: <WalkthroughViewerPage /> },
       { path: '/review/:id', element: <ReviewPage /> },
+      // /invite/:token — the accept page. Deliberately OUTSIDE /w/:workspace:
+      // an invitee has no workspace membership yet, so there is no tenant to
+      // scope it under. Self-enforces via the preview/accept endpoints
+      // (AuthProvider + client.v2 both allowlist this prefix so an
+      // unauthenticated visitor reaches it instead of bouncing to login).
+      { path: '/invite/:token', element: <InviteAcceptPage /> },
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },
+      { path: '/w/:workspace/members', element: <WorkspaceMembersPage /> },
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },

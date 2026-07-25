@@ -43,3 +43,11 @@ def test_owner_crud_routes_stay_auth_gated_even_if_a_workspace_is_named_invites(
 
 def test_bare_invites_collection_is_not_public():
     assert _is_invite_link(_Req("/api/workspaces/invites/")) is False
+
+
+def test_invite_accept_spa_shell_is_public():
+    # /invite/<token> is the SPA shell (frontend/src/pages/InviteAcceptPage.tsx).
+    # An invitee has no session yet — possibly not even a Dimagi address — so the
+    # page itself must be reachable pre-auth; it self-enforces via the
+    # token-gated preview/accept API calls above.
+    assert _is_invite_link(_Req("/invite/tok123")) is True

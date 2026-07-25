@@ -93,7 +93,16 @@ def _is_invite_link(request) -> bool:
     # own per-route auth (session_auth + _require_role) would still gate those even
     # under a blanket prefix, but this regex removes the ambiguity outright instead
     # of relying on that second layer.
-    return bool(_INVITE_TOKEN_LINK.match(request.path))
+    #
+    # /invite/<token> (SPA shell) is also allowlisted here: the invitee has no
+    # session yet (may not even be a Dimagi address), so the accept page must
+    # render for them before OAuth — it calls the preview endpoint above to
+    # render, and only needs a session at the moment they click Accept (which
+    # 401s through Ninja's own auth if they somehow reach it unauthenticated).
+    path = request.path
+    if path.startswith("/invite/"):
+        return True
+    return bool(_INVITE_TOKEN_LINK.match(path))
 
 
 def _is_ddd_release_link(request) -> bool:
