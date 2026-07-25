@@ -245,6 +245,30 @@ def test_list_sessions_filters_by_metadata(client, ctx):
     assert len(r.json()) == 3
 
 
+def test_list_sessions_scopes_by_origin_key(client, ctx):
+    """An embedder whose own product is multi-tenant stamps its tenant into
+    metadata.origin_key; filtering on it keeps two of ITS tenants that share one
+    canopy workspace out of each other's lists."""
+    user, ws, _agent = ctx
+    Session.objects.create(
+        workspace=ws, created_by=user,
+        metadata={"source": "ace-web", "origin_key": "ace-web:team-a"},
+    )
+    Session.objects.create(
+        workspace=ws, created_by=user,
+        metadata={"source": "ace-web", "origin_key": "ace-web:team-b"},
+    )
+
+    r = client.get("/api/canopy-sessions/?source=ace-web&origin_key=ace-web:team-a")
+    assert r.status_code == 200, r.content
+    rows = r.json()
+    assert len(rows) == 1
+
+    # Unscoped still sees both — the filter is opt-in, never implicit.
+    r = client.get("/api/canopy-sessions/?source=ace-web")
+    assert len(r.json()) == 2
+
+
 # --- Task 11 fix wave: title vs bound session_key in _out --------------------
 
 

@@ -10828,6 +10828,7 @@ export interface operations {
                 readonly source?: string;
                 readonly opp_slug?: string;
                 readonly opp_run_id?: string;
+                readonly origin_key?: string;
             };
             readonly header?: never;
             readonly path?: never;

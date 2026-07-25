@@ -128,6 +128,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
 def list_sessions(
     request: HttpRequest, state: str = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
+    origin_key: str = "",
 ):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
@@ -156,8 +157,19 @@ def list_sessions(
     # session list to the sessions it cares about, keyed on the opaque
     # `metadata` bag a session carries (never interpreted elsewhere in this
     # app). Empty string = no filter, so the default call is unaffected.
+    #
+    # `origin_key` is the generic one: an embedder whose own product is
+    # multi-tenant stamps ITS tenant into metadata.origin_key at create time and
+    # filters on it here, so two of its tenants sharing one canopy workspace do
+    # not see each other's sessions in the list. Deliberately opaque — canopy
+    # never parses it. (Note the residual: this scopes the LIST; canopy's own
+    # tenancy still lets any member of the canopy workspace open a session by id.
+    # An embedder that needs hard isolation maps its tenants onto separate canopy
+    # workspaces instead.)
     if source:
         rows = rows.filter(metadata__source=source)
+    if origin_key:
+        rows = rows.filter(metadata__origin_key=origin_key)
     if opp_slug:
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:
