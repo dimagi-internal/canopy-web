@@ -41,6 +41,15 @@ from .schemas import (
 router = Router(auth=session_auth, tags=["chat"])
 
 
+def _runner_online(runner) -> bool | None:
+    """Liveness of a session's bound runner, or None when there is no binding."""
+    if runner is None:
+        return None
+    from apps.harness.models import Runner  # lazy: framework->framework import cycle
+
+    return runner.live_status == Runner.ONLINE
+
+
 def _out(session: Session) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     runner = binding.runner if (binding and binding.runner_id) else None
@@ -70,6 +79,10 @@ def _out(session: Session) -> dict:
         "running": services.is_session_running(binding),
         "runner_name": runner.name if runner else None,
         "runner_location": runner.location if runner else None,
+        # See SessionOut.runner_online: an embedder's delegated user cannot list
+        # runners, so the session payload is where they learn their bound runner
+        # went away. None when unbound — nothing to be offline.
+        "runner_online": _runner_online(runner),
         "session_key": binding.session_key if binding else "",
     }
 

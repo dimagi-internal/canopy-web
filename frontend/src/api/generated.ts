@@ -4356,6 +4356,8 @@ export interface components {
             readonly runner_name?: string | null;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Runner Online */
+            readonly runner_online?: boolean | null;
             /**
              * Session Key
              * @default
@@ -6863,6 +6865,8 @@ export interface components {
             readonly runner_name?: string | null;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Runner Online */
+            readonly runner_online?: boolean | null;
             /**
              * Session Key
              * @default

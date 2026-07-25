@@ -351,3 +351,34 @@ def test_stop_with_nothing_to_cancel_returns_false(client):
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json() == {"cancelled": False}
+
+
+# --- runner_online: liveness an embedder's delegated user can actually read ---
+
+
+def test_runner_online_reflects_binding_liveness(client, ctx):
+    """A delegated embedder user cannot list runners (harness scopes that to the
+    pairer), so the session payload must carry its bound runner's liveness —
+    otherwise a stalled chat is indistinguishable from a slow one."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    user, ws, _agent = ctx
+    session = Session.objects.create(workspace=ws, created_by=user)
+
+    # No binding -> None (nothing to be offline).
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is None
+
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True},
+        paired_by=user, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key=str(session.id))
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is True
+
+    # Heartbeat older than the online window -> offline.
+    Runner.objects.filter(pk=runner.pk).update(
+        last_heartbeat_at=timezone.now() - dt.timedelta(hours=2)
+    )
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is False
