@@ -63,6 +63,7 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
   const [drills, setDrills] = useState<RunnerDrillOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [drilling, setDrilling] = useState(false)
+  const [pollTick, setPollTick] = useState(0)
 
   const refresh = useCallback(async () => {
     try {
@@ -71,6 +72,8 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
       setError(null)
     } catch (e: unknown) {
       setError(errorText(e))
+    } finally {
+      setPollTick((t) => t + 1)
     }
   }, [runnerId])
 
@@ -95,8 +98,8 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
   }, [runnerId])
 
   // Self-scheduling poll: while any row is still pending, queue one more
-  // `refresh()` 10s out. Re-armed on every `drills` update (including the
-  // ones the poll itself produces), and torn down the instant nothing is
+  // `refresh()` 10s out. Re-armed on every poll tick (whether the tick
+  // succeeds or fails) via `pollTick`, and torn down the instant nothing is
   // pending anymore or the component unmounts.
   useEffect(() => {
     if (drills === null) return
@@ -105,7 +108,7 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
       void refresh()
     }, POLL_MS)
     return () => clearTimeout(t)
-  }, [drills, refresh])
+  }, [drills, refresh, pollTick])
 
   const onDrill = async () => {
     setDrilling(true)

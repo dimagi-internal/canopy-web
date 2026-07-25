@@ -174,4 +174,38 @@ describe('RunnerDrills', () => {
     })
     expect(listDrills).toHaveBeenCalledTimes(2)
   })
+
+  it('polling survives transient fetch errors and continues until resolved', async () => {
+    vi.useFakeTimers({ now: new Date('2026-07-24T12:00:00Z') })
+
+    // First call: initial render — one pending drill
+    listDrills.mockResolvedValueOnce([
+      drill(9, { outcome: 'pending', started_at: '2026-07-24T11:59:00Z', finished_at: null }),
+    ])
+
+    render(<RunnerDrills runnerId="r1" />)
+    await act(async () => {
+      await vi.waitFor(() => expect(listDrills).toHaveBeenCalledTimes(1))
+    })
+
+    // Second call (10s later): poll fails with transient error
+    listDrills.mockRejectedValueOnce(new Error('listDrills failed: {"detail":"network error"}'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    expect(listDrills).toHaveBeenCalledTimes(2)
+
+    // Third call (10s later): poll succeeds and returns resolved drill
+    listDrills.mockResolvedValueOnce([drill(9, { outcome: 'pass', finished_at: '2026-07-24T12:00:15Z' })])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    expect(listDrills).toHaveBeenCalledTimes(3)
+
+    // No more pending rows — a further 10s must NOT trigger a fourth poll.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    expect(listDrills).toHaveBeenCalledTimes(3)
+  })
 })
