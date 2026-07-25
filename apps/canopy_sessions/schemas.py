@@ -77,6 +77,14 @@ class SessionOut(Schema):
     running: bool = False
     runner_name: str | None = None
     runner_location: str | None = None
+    # Is the bound runner reachable right now? Carried on the session because a
+    # session's own payload is the only place a caller who can see the session is
+    # guaranteed to learn this: GET /api/harness/runners/ is scoped to runners the
+    # caller PAIRED (apps/harness/api.py::_runner_visibility_q), so an embedder's
+    # delegated user sees an empty fleet and could not otherwise tell a stalled
+    # chat ("bound runner offline, turn waiting") from a slow one. None = no
+    # binding, so there is nothing to be offline.
+    runner_online: bool | None = None
     session_key: str = ""
 
 
