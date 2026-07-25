@@ -133,6 +133,15 @@ def sweep_expired_leases() -> int:
         if updated:
             append_events(turn, [{"kind": "status", "payload": {"status": Turn.LOST, "reason": "lease_expired"}}])
             count += 1
+            # A LOST turn is marked via a queryset update, bypassing finish_turn —
+            # so the FAILED-drill hook there never fires and a drill's RunnerDrill
+            # would otherwise strand as pending forever. Mirror that hook here.
+            if turn.origin == Turn.ORIGIN_DRILL:
+                RunnerDrill.objects.filter(
+                    turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
+                ).update(outcome=RunnerDrill.OUTCOME_FAIL,
+                         summary="runner lost the turn (lease expired mid-drill)",
+                         finished_at=now)
     return count
 
 
@@ -1283,7 +1292,7 @@ Verify you can operate end-to-end in THIS environment, then report.
    it proves this environment can reach the control plane):
 
    curl -s -X POST "{report_url}" \\
-     -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "$CANOPY_PAT")" \\
+     -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "${{CANOPY_TOKEN:-$CANOPY_PAT}}")" \\
      -H "Content-Type: application/json" \\
      -d '{{"outcome": "pass", "summary": "<one-paragraph findings>"}}'
 

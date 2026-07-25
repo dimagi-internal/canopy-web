@@ -122,8 +122,13 @@ def run_claude(prompt: str, turn_id: str, emit) -> tuple[bool, str]:
         "--dangerously-skip-permissions",
     ]
     _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}")
+    # stderr goes to a file, not PIPE: a chatty claude can fill the 64KB pipe buffer
+    # while we're only reading stdout, deadlocking the process. A file has no such
+    # limit; we tail it for the failure path below.
+    stderr_path = workdir / "stderr.log"
+    stderr_file = stderr_path.open("w")
     proc = subprocess.Popen(
-        cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True
     )
     final_text = ""
     ok = True
@@ -160,10 +165,15 @@ def run_claude(prompt: str, turn_id: str, emit) -> tuple[bool, str]:
         if len(batch) >= 10:
             flush()
     proc.wait()
+    stderr_file.close()
     flush()
     if proc.returncode != 0 and not final_text:
         ok = False
-        final_text = (proc.stderr.read() if proc.stderr else "")[:500]
+        try:
+            tail = stderr_path.read_text(errors="replace")
+        except OSError:
+            tail = ""
+        final_text = tail[-500:]
     return ok, final_text
 
 
@@ -243,7 +253,17 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     waiting on right now). Returns the matched frame, or None on close/timeout."""
     import websocket  # local: only the WS path needs the dep
 
-    ws.send(json.dumps(frame))
+    # ws.settimeout() also governs sends, not just recv. A large event frame (e.g.
+    # drill doctor output) can take longer to write than the short WS_POLL_TIMEOUT
+    # allows; if the socket times out mid-write, OpenSSL has already handed part of
+    # the frame to the kernel and a subsequent SSL_write MUST resend the exact same
+    # buffer or it raises ssl.SSLError BAD_LENGTH — killing the process. Give sends
+    # a generous timeout, then restore the short poll timeout for the recv loop.
+    ws.settimeout(60)
+    try:
+        ws.send(json.dumps(frame))
+    finally:
+        ws.settimeout(WS_POLL_TIMEOUT)
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -312,10 +332,10 @@ def run_over_ws(runner_id: str) -> bool:
         def _beat():
             _ws_request(ws, {"action": "heartbeat", "active_turn_ids": []}, "heartbeat.ack", timeout=15)
 
-        _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
-        last_beat = time.monotonic()
-        _claim_and_run(ws, runner_id)  # drain anything already queued (no wake for those)
         try:
+            _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
+            last_beat = time.monotonic()
+            _claim_and_run(ws, runner_id)  # drain anything already queued (no wake for those)
             while not _stop:
                 try:
                     raw = ws.recv()
