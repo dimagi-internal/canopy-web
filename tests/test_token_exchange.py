@@ -54,6 +54,7 @@ def test_exchange_rejects_personal_token(cred):
 def test_ttl_clamped(cred):
     raw, _ = cred
     resp = _post(raw, "p@dimagi.com", ttl_seconds=99999999)
+    assert resp.status_code == 200
     tok = DelegatedToken.objects.latest("created_at")
     delta = (tok.expires_at - tok.created_at).total_seconds()
     assert delta <= 86400 + 5
