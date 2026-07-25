@@ -583,7 +583,9 @@ class RunnerDrill(models.Model):
     turn = models.ForeignKey(Turn, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     outcome = models.CharField(max_length=8, choices=OUTCOME_CHOICES, default=OUTCOME_PENDING)
     summary = models.TextField(blank=True, default="")
-    started_at = models.DateTimeField(auto_now_add=True)
+    # default=timezone.now (not auto_now_add) so start_drill's update_or_create can
+    # reset it on every re-drill — auto_now_add only stamps on the INITIAL insert.
+    started_at = models.DateTimeField(default=timezone.now)
     finished_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

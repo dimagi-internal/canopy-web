@@ -2212,6 +2212,66 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/drill": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start Runner Drill
+         * @description Fan out a readiness drill (owner-gated). Default: every agent assigned to
+         *     this runner; body.agents narrows by slug.
+         */
+        readonly post: operations["apps_harness_api_start_runner_drill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/drills": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Runner Drills */
+        readonly get: operations["apps_harness_api_list_runner_drills"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/drills/{drill_id}/report": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report Drill
+         * @description The drilled agent's callback. Gated like every runner route: the caller
+         *     must be the drilled runner's owner (the agent runs under the owner's
+         *     environment token, so this proves control-plane reachability too).
+         */
+        readonly post: operations["apps_harness_api_report_drill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/vapid-public-key": {
         readonly parameters: {
             readonly query?: never;
@@ -6458,6 +6518,44 @@ export interface components {
              */
             readonly slot: string;
         };
+        /** RunnerDrillOut */
+        readonly RunnerDrillOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Outcome */
+            readonly outcome: string;
+            /** Summary */
+            readonly summary: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /** Turn Id */
+            readonly turn_id: string | null;
+        };
+        /** DrillIn */
+        readonly DrillIn: {
+            /** Agents */
+            readonly agents?: readonly string[] | null;
+        };
+        /** DrillReportIn */
+        readonly DrillReportIn: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            readonly outcome: "pass" | "fail";
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+        };
         /** VapidKeyOut */
         readonly VapidKeyOut: {
             /** Public Key */
@@ -10260,6 +10358,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_start_runner_drill: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DrillIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDrillOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_list_runner_drills: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDrillOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_report_drill: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly drill_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DrillReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDrillOut"];
                 };
             };
         };

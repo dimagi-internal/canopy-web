@@ -535,3 +535,31 @@ class RunnerCredentialStatusOut(Schema):
     has_github_token: bool = False
     has_op_sa_token: bool = False
     updated_at: dt.datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Readiness drills (spec 2026-07-24-directed-runner-routing, Task 7)
+# ---------------------------------------------------------------------------
+
+
+class RunnerDrillOut(Schema):
+    id: int
+    agent_slug: str
+    outcome: str
+    summary: str
+    started_at: dt.datetime
+    finished_at: dt.datetime | None
+    turn_id: uuid.UUID | None
+
+    @staticmethod
+    def resolve_agent_slug(obj):
+        return obj.agent.slug
+
+
+class DrillIn(Schema):
+    agents: list[str] | None = None
+
+
+class DrillReportIn(Schema):
+    outcome: Literal["pass", "fail"]
+    summary: str = ""

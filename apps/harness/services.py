@@ -11,6 +11,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Max, Q
 from django.utils import timezone
@@ -27,6 +28,7 @@ from .models import (
     Item,
     Runner,
     RunnerAssignment,
+    RunnerDrill,
     Turn,
     TurnEvent,
 )
@@ -429,6 +431,15 @@ def finish_turn(
         sid = (turn.origin_ref or {}).get("schedule_id")
         if sid:
             resolve_schedule_nags(sid)
+    # A drill turn that fails outright (auth expired, environment broken) resolves
+    # its RunnerDrill without waiting for the agent's own report callback — the
+    # agent may never get far enough to curl the callback at all. Scoped to
+    # OUTCOME_PENDING so a drill already resolved by a report is not clobbered.
+    if turn.origin == Turn.ORIGIN_DRILL and status == Turn.FAILED:
+        RunnerDrill.objects.filter(
+            turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
+        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=result_note or "drill turn failed",
+                 finished_at=now)
     return turn
 
 
@@ -1080,6 +1091,71 @@ def resolve_schedule_nags(schedule_id: int) -> int:
         dismiss_item(item, by="system:schedule")
         count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# Readiness drills — a hard-pinned, read-only doctor turn per (runner, agent),
+# resolved by the drilled agent's own report callback (proving it can reach
+# the control plane) or by the turn failing outright. See
+# docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md.
+# ---------------------------------------------------------------------------
+
+DRILL_PROMPT = """READINESS DRILL — READ-ONLY. You are the agent "{agent_slug}".
+Verify you can operate end-to-end in THIS environment, then report.
+
+1. Confirm your working environment. If your agent repo is not checked out here,
+   clone it (read-only credentials are staged in this environment).
+2. Run your doctor / preflight / setup-verification checks. READ-ONLY mode:
+   take NO outward action — no emails, no posts, no board writes, no deploys,
+   no state mutations anywhere.
+3. Report the result back to canopy-web (this callback is part of the drill —
+   it proves this environment can reach the control plane):
+
+   curl -s -X POST "{report_url}" \\
+     -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "$CANOPY_PAT")" \\
+     -H "Content-Type: application/json" \\
+     -d '{{"outcome": "pass", "summary": "<one-paragraph findings>"}}'
+
+   Use "outcome": "fail" if ANY check failed, and say which. Keep the summary to
+   one paragraph. Do nothing after reporting."""
+
+
+def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
+    """Fan a readiness drill out over `agents`: reset each (runner, agent)
+    RunnerDrill to pending and enqueue one hard-pinned, read-only doctor turn
+    per agent. Drills queue behind real executing turns (the one-executing-turn
+    constraint) — they never interrupt live work."""
+    drills: list[RunnerDrill] = []
+    for agent in agents:
+        drill, _ = RunnerDrill.objects.update_or_create(
+            runner=runner, agent=agent,
+            defaults={"outcome": RunnerDrill.OUTCOME_PENDING, "summary": "",
+                      "finished_at": None, "started_at": timezone.now()},
+        )
+        report_url = f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
+        turn, _created = enqueue_turn(
+            agent=agent,
+            origin=Turn.ORIGIN_DRILL,
+            idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
+            prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url),
+            pinned_runner=runner,
+        )
+        drill.turn = turn
+        drill.save(update_fields=["turn"])
+        drills.append(drill)
+    return drills
+
+
+def report_drill(drill: RunnerDrill, *, outcome: str, summary: str) -> RunnerDrill:
+    """The drilled agent's own callback — proves this environment can reach the
+    control plane, not just run its checks locally."""
+    if outcome not in (RunnerDrill.OUTCOME_PASS, RunnerDrill.OUTCOME_FAIL):
+        raise ValueError(f"outcome must be pass|fail, got {outcome!r}")
+    drill.outcome = outcome
+    drill.summary = summary
+    drill.finished_at = timezone.now()
+    drill.save(update_fields=["outcome", "summary", "finished_at"])
+    return drill
 
 
 def seed_assignments_from_capabilities() -> int:

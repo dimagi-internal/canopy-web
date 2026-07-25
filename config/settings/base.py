@@ -316,6 +316,11 @@ CHAT_STUB_EXECUTOR = env.bool("CHAT_STUB_EXECUTOR", default=True)
 # encryption key can rotate independently of SECRET_KEY.
 FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 
+# This deployment's own externally-reachable base URL — no request context to derive
+# it from when services.py builds a callback URL for a drilled agent to POST back to
+# (a shell prompt, not an HTTP view). connectlabs.py overrides to the labs URL.
+CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost:8000")
+
 # CORS
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
