@@ -299,7 +299,9 @@ class TurnStartIn(Schema):
 
 
 class TurnFinishIn(Schema):
-    status: str  # done|failed
+    status: str  # done|failed|cancelled — a runner's own cancel_turn interrupt
+    # finishes the turn cancelled (see the CDP-interrupt cancel flow); done and
+    # failed remain the normal completion outcomes.
     result_note: str = ""
 
 

@@ -18,6 +18,8 @@ from ninja.errors import HttpError
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
+from apps.harness import services as harness_services
+from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -266,6 +268,23 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return turn
+
+
+@router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")
+def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
+    session = _session_or_404(request, session_id)
+    # ALL non-terminal turns, not just the newest: a mid-reply send queues a
+    # second turn behind the one still running, so Stop must reach both — the
+    # running one gets cancel_requested, the queued one is finished CANCELLED.
+    # NOTE: this must not be a bare `any(... for turn in turns)` — any() short-
+    # circuits on the first truthy result, which would skip cancelling every
+    # turn after the first non-None one.
+    turns = Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+    cancelled = False
+    for turn in turns:
+        if harness_services.cancel_turn(turn) is not None:
+            cancelled = True
+    return {"cancelled": cancelled}
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")

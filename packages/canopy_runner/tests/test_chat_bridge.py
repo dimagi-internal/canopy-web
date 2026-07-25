@@ -82,3 +82,19 @@ def test_conversational_messages_only_after_since():
         {"index": 3, "role": "assistant", "text": "a2"},
     ]
     assert conversational_messages(recs, 3) == []
+
+
+def test_bridge_should_stop_breaks_immediately():
+    from canopy_runner import chat_bridge
+    posted = []
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return calls["n"] >= 2  # stop on the second poll
+
+    text = chat_bridge.bridge_response(
+        posted.append, lambda: [], start_index=0,
+        sleep=lambda s: None, should_stop=should_stop)
+    assert text == ""
+    assert calls["n"] == 2  # loop exited on the stop, not max_rounds

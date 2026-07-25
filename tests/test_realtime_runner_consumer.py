@@ -191,6 +191,24 @@ async def test_interject_frame_reaches_the_runner():
     await comm.disconnect()
 
 
+async def test_cancel_frame_reaches_the_runner():
+    from channels.layers import get_channel_layer
+
+    from apps.realtime import groups
+
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+
+    layer = get_channel_layer()
+    await layer.group_send(groups.runner_group(runner.id), {
+        "type": "runner.cancel", "turn_id": "t-456",
+    })
+    frame = await comm.receive_json_from(timeout=2)
+    assert frame == {"type": "cancel", "turn_id": "t-456"}
+    await comm.disconnect()
+
+
 async def test_send_message_interjects_the_running_runner():
     from apps.canopy_sessions.models import Session
     from apps.canopy_sessions.services import send_message

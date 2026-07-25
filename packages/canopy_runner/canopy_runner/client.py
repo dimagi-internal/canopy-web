@@ -159,8 +159,8 @@ class Client:
     def start(self, turn_id: str, session_id: str = "") -> None:
         self._call("POST", f"/turns/{turn_id}/start", {"session_id": session_id})
 
-    def finish(self, turn_id: str, note: str = "") -> None:
-        self._call("POST", f"/turns/{turn_id}/finish", {"status": "done", "result_note": note})
+    def finish(self, turn_id: str, note: str = "", status: str = "done") -> None:
+        self._call("POST", f"/turns/{turn_id}/finish", {"status": status, "result_note": note})
 
     def fail_turn(self, turn_id: str, note: str) -> None:
         self._call("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})

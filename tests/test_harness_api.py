@@ -137,6 +137,30 @@ def test_start_and_finish(client, agent):
     assert finished.status_code == 200 and finished.json()["status"] == "done"
 
 
+def test_finish_with_cancelled_status_is_accepted(client, agent):
+    # C1: the runner's own cancel_turn interrupt calls client.finish(...,
+    # status="cancelled") — the finish route must accept it, not 422 (which
+    # would bounce back as a ClientError and land the turn FAILED, flipping
+    # readiness.mark_failed on a runner that behaved correctly).
+    rid = _pair(client)
+    assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
+    tid = client.post(
+        "/api/harness/turns/",
+        {"agent_slug": "echo", "origin": "manual", "idempotency_key": "k1"},
+        content_type="application/json",
+    ).json()["id"]
+    claimed = client.post(f"/api/harness/runners/{rid}/claim")
+    assert claimed.status_code == 200 and claimed.json()["id"] == tid
+    finished = client.post(
+        f"/api/harness/turns/{tid}/finish",
+        {"status": "cancelled", "result_note": "interrupted"},
+        content_type="application/json",
+    )
+    assert finished.status_code == 200, finished.content
+    assert finished.json()["status"] == "cancelled"
+
+
 def test_finish_on_queued_turn_is_409(client, agent):
     tid = client.post(
         "/api/harness/turns/",

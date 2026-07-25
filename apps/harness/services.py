@@ -127,21 +127,33 @@ def sweep_expired_leases() -> int:
     )
     count = 0
     for turn in expired:
+        # A turn with cancel_requested already in its ledger closes CANCELLED
+        # instead of LOST — the runner never got the chance to act on the
+        # cancel signal before its lease expired, but the intent was still to
+        # stop, not to lose the turn.
+        requested = turn.events.filter(kind="cancel_requested").exists()
+        status = Turn.CANCELLED if requested else Turn.LOST
         updated = Turn.objects.filter(pk=turn.pk, lease_expires_at__lt=now).exclude(
             status__in=Turn.TERMINAL
-        ).update(status=Turn.LOST, finished_at=now)
+        ).update(status=status, finished_at=now)
         if updated:
-            append_events(turn, [{"kind": "status", "payload": {"status": Turn.LOST, "reason": "lease_expired"}}])
+            append_events(turn, [{"kind": "status", "payload": {"status": status, "reason": "lease_expired"}}])
             count += 1
-            # A LOST turn is marked via a queryset update, bypassing finish_turn —
-            # so the FAILED-drill hook there never fires and a drill's RunnerDrill
-            # would otherwise strand as pending forever. Mirror that hook here.
-            if turn.origin == Turn.ORIGIN_DRILL:
+            # A LOST/CANCELLED turn is marked via a queryset update, bypassing
+            # finish_turn — so the FAILED-drill hook there never fires and a
+            # drill's RunnerDrill would otherwise strand as pending forever.
+            # Mirror that hook here for both sweep outcomes (finding M2): a
+            # cancel-requested drill whose runner then disappears is just as
+            # stranded as a plain lost one without this.
+            if turn.origin == Turn.ORIGIN_DRILL and status in (Turn.LOST, Turn.CANCELLED):
+                summary = (
+                    "drill turn cancelled (lease expired after cancel was requested)"
+                    if status == Turn.CANCELLED
+                    else "runner lost the turn (lease expired mid-drill)"
+                )
                 RunnerDrill.objects.filter(
                     turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-                ).update(outcome=RunnerDrill.OUTCOME_FAIL,
-                         summary="runner lost the turn (lease expired mid-drill)",
-                         finished_at=now)
+                ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
     return count
 
 
@@ -519,9 +531,9 @@ def mark_running(turn: Turn, *, session_id: str = "") -> Turn:
 def finish_turn(
     turn: Turn, *, status: str, result_note: str = "", allow_queued: bool = False
 ) -> Turn:
-    """Transition CLAIMED|RUNNING|NEEDS_HUMAN -> DONE|FAILED|MISSED. A no-op (no
-    event, no field writes) if the turn is already terminal — idempotent, and
-    guards against resurrecting a turn already swept to lost.
+    """Transition CLAIMED|RUNNING|NEEDS_HUMAN -> DONE|FAILED|MISSED|CANCELLED. A
+    no-op (no event, no field writes) if the turn is already terminal —
+    idempotent, and guards against resurrecting a turn already swept to lost.
 
     A QUEUED turn is deliberately NOT finishable by default: a runner must never
     finish a turn it never claimed (the API surfaces that attempt as a 409).
@@ -529,8 +541,16 @@ def finish_turn(
     a slot nobody ever picked up is the textbook MISSED. Without it, supersede
     would silently skip queued occurrences and the board would accumulate them.
     """
-    if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED):
-        raise ValueError(f"finish status must be done|failed|missed, got {status!r}")
+    if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
+        raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
+    if status == Turn.DONE and turn.events.filter(kind="cancel_requested").exists():
+        # Server-side backstop (a deaf/poll-only runner can miss the
+        # runner.cancel control frame entirely and finish DONE anyway,
+        # stranding a cancel_requested event with no CANCELLED turn to match
+        # it). Mirrors sweep_expired_leases's same reasoning: the user asked to
+        # stop, so a full reply that raced through the interrupt is still a
+        # cancelled turn, not a done one.
+        status = Turn.CANCELLED
     now = timezone.now()
     from_states = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
     if allow_queued:
@@ -552,22 +572,78 @@ def finish_turn(
     # its RunnerDrill without waiting for the agent's own report callback — the
     # agent may never get far enough to curl the callback at all. Scoped to
     # OUTCOME_PENDING so a drill already resolved by a report is not clobbered.
-    if turn.origin == Turn.ORIGIN_DRILL and status == Turn.FAILED:
+    # CANCELLED is included too: drills queue behind real executing turns
+    # (start_drill's docstring) and the plain /turns/{id}/cancel route has no
+    # origin filter, so a queued drill can be cancelled out from under itself —
+    # without this it would strand OUTCOME_PENDING forever, the same failure
+    # mode this hook exists to prevent for FAILED.
+    if turn.origin == Turn.ORIGIN_DRILL and status in (Turn.FAILED, Turn.CANCELLED):
+        if status == Turn.CANCELLED:
+            summary = "drill turn cancelled"
+        else:
+            summary = result_note or "drill turn failed"
         RunnerDrill.objects.filter(
             turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=result_note or "drill turn failed",
-                 finished_at=now)
+        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
     return turn
 
 
 def cancel_queued_turn(turn: Turn) -> Turn | None:
-    """Best-effort un-queue: FAIL a still-QUEUED turn. Cancel is 'un-queue', not
-    'kill' — a CLAIMED/RUNNING turn is owned by its runner's lease and is left
-    alone (returns None). Terminal turns also return None (idempotent no-op). The
-    REST cancel view and chat's `chat.stop` both route through here."""
+    """Best-effort un-queue: mark a still-QUEUED turn CANCELLED. Cancel is
+    'un-queue', not 'kill' — a CLAIMED/RUNNING turn is owned by its runner's
+    lease and is left alone (returns None). Terminal turns also return None
+    (idempotent no-op). The REST cancel view and chat's `chat.stop` both route
+    through here."""
     if turn.status != Turn.QUEUED:
         return None
-    return finish_turn(turn, status=Turn.FAILED, result_note="cancelled", allow_queued=True)
+    return finish_turn(turn, status=Turn.CANCELLED, result_note="cancelled", allow_queued=True)
+
+
+def cancel_turn(turn: Turn) -> Turn | None:
+    """Full cancel semantics for chat.stop / the REST stop route. A QUEUED turn
+    is finished CANCELLED immediately. An executing turn is NOT force-finished —
+    the runner owns its lease — instead we record cancel_requested in the ledger
+    and signal the claiming runner over its control channel; the runner interrupts
+    the emdash session and finishes the turn as cancelled (or, if the runner is
+    gone, the lease sweep sees cancel_requested and closes it CANCELLED)."""
+    if turn.status == Turn.QUEUED:
+        # Race guard (finding M1): this is a read-then-act on `turn.status`, and
+        # a runner's claim can land between the read and the write, moving the
+        # turn QUEUED -> CLAIMED underneath us. Routing that through
+        # finish_turn(allow_queued=True) would be wrong here — its from_states
+        # already includes CLAIMED/RUNNING/NEEDS_HUMAN, so it would happily
+        # force-finish the now-claimed turn as CANCELLED out from under the
+        # runner that just picked it up. Guard the UPDATE itself on
+        # status=QUEUED so only a turn still queued at write-time is affected.
+        now = timezone.now()
+        updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED).update(
+            status=Turn.CANCELLED, finished_at=now, result_note="cancelled",
+        )
+        turn.refresh_from_db()
+        if updated:
+            append_events(turn, [{
+                "kind": "status",
+                "payload": {"status": Turn.CANCELLED, "result_note": "cancelled"},
+            }])
+            # Mirror finish_turn's drill hook (bypassed above) so a queued
+            # drill cancelled this way doesn't strand OUTCOME_PENDING.
+            if turn.origin == Turn.ORIGIN_DRILL:
+                RunnerDrill.objects.filter(
+                    turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
+                ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary="drill turn cancelled", finished_at=now)
+            return turn
+        # Lost the race: the turn is no longer QUEUED (claimed out from under
+        # us, or already terminal). Fall through to the freshly-refreshed
+        # status below rather than the stale one we started with.
+    if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
+        append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+        if turn.claimed_by_id:
+            from apps.realtime import groups
+
+            groups.publish(groups.runner_group(turn.claimed_by_id),
+                           {"type": "runner.cancel", "turn_id": str(turn.id)})
+        return turn
+    return None
 
 
 # --------------------------------------------------------------------------------------

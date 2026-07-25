@@ -32,3 +32,19 @@ def test_report_sessions_defaults_archived_to_empty(monkeypatch):
     c, sent = _client(monkeypatch)
     c.report_sessions("r1", [])
     assert sent[-1]["body"] == {"sessions": [], "archived": []}
+
+
+def test_finish_defaults_status_done(monkeypatch):
+    """Unchanged wire shape for every pre-existing caller that doesn't pass status."""
+    c, sent = _client(monkeypatch)
+    c.finish("t-1", note="all done")
+    assert sent[-1]["path"] == "/turns/t-1/finish"
+    assert sent[-1]["body"] == {"status": "done", "result_note": "all done"}
+
+
+def test_finish_carries_explicit_cancelled_status(monkeypatch):
+    """Cancel finishes a turn with status=cancelled — the server-side status Turn.CANCELLED
+    (apps/harness/models.py) expects verbatim."""
+    c, sent = _client(monkeypatch)
+    c.finish("t-1", note="cancelled by user", status="cancelled")
+    assert sent[-1]["body"] == {"status": "cancelled", "result_note": "cancelled by user"}

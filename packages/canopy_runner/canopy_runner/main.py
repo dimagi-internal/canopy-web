@@ -45,6 +45,13 @@ _last_session_report = 0.0
 _last_branch_check = 0.0
 _cached_branch = ""
 
+# RC-cancel: turn ids the user asked to stop, relayed down the wake listener's
+# control channel as `{"type": "cancel", "turn_id": ...}` frames (see WakeListener's
+# on_control). The bridge poll loop (Task 8) checks membership here to interrupt a
+# running turn; module-scoped so the wake listener's callback and the executor share
+# one set for the process's lifetime without threading extra state through the loop.
+CANCELLED_TURNS: set[str] = set()
+
 
 def _code_branch(now_fn=time.monotonic) -> str:
     """The git branch of the runner's OWN checkout (best-effort, throttled+cached).
@@ -171,7 +178,10 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
     if turn is None:
         return "idle"
     try:
-        return execute.execute_turn(cfg, client, cfg.runner_id, turn)
+        return execute.execute_turn(
+            cfg, client, cfg.runner_id, turn,
+            cancel_check=lambda tid: tid in CANCELLED_TURNS,
+        )
     except Exception as exc:  # noqa: BLE001 — one turn must never kill the loop
         logger.exception("execute_turn crashed for %s", turn.get("id"))
         note = f"runner execute crashed: {exc}"
@@ -181,6 +191,14 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         except ClientError:
             pass
         return f"failed:{turn.get('id')}"
+    finally:
+        # Evict once the turn is done, regardless of outcome — CANCELLED_TURNS is a
+        # transient "stop now" signal, not a durable per-turn record; leaving an id in
+        # it forever would wrongly mark any FUTURE turn that reused the same id (turn
+        # ids aren't reused today, but leaking membership is a latent footgun either
+        # way — and it just keeps a module-level set growing unbounded for the life
+        # of the process).
+        CANCELLED_TURNS.discard(turn["id"])
 
 
 # Per-session incremental tail readers, keyed by emdash_task — the byte-offset change
@@ -608,7 +626,12 @@ def main() -> None:
     # instead of waiting out poll_seconds. Additive + best-effort — polling stays the
     # fallback and still owns heartbeat/claim/execute; off if websocket-client is absent.
     from .wake import WakeListener
-    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id)
+
+    def _on_control(msg: dict) -> None:
+        if msg.get("type") == "cancel" and msg.get("turn_id"):
+            CANCELLED_TURNS.add(str(msg["turn_id"]))
+
+    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id, on_control=_on_control)
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")

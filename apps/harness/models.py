@@ -166,13 +166,13 @@ class Turn(models.Model):
     """One unit of agent work — the execution envelope around board commands."""
 
     QUEUED, CLAIMED, RUNNING, NEEDS_HUMAN = "queued", "claimed", "running", "needs_human"
-    DONE, FAILED, LOST, MISSED = "done", "failed", "lost", "missed"
+    DONE, FAILED, LOST, MISSED, CANCELLED = "done", "failed", "lost", "missed", "cancelled"
     STATUS_CHOICES = [
         (QUEUED, "Queued"), (CLAIMED, "Claimed"), (RUNNING, "Running"),
         (NEEDS_HUMAN, "Needs human"), (DONE, "Done"), (FAILED, "Failed"),
-        (LOST, "Lost"), (MISSED, "Missed"),
+        (LOST, "Lost"), (MISSED, "Missed"), (CANCELLED, "Cancelled"),
     ]
-    TERMINAL = {DONE, FAILED, LOST, MISSED}
+    TERMINAL = {DONE, FAILED, LOST, MISSED, CANCELLED}
     NON_TERMINAL = {QUEUED, CLAIMED, RUNNING, NEEDS_HUMAN}
 
     ORIGIN_BOARD, ORIGIN_API, ORIGIN_SLACK, ORIGIN_CRON, ORIGIN_MANUAL, ORIGIN_EMAIL, ORIGIN_DRILL = (
