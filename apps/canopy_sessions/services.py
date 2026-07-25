@@ -220,6 +220,29 @@ def _next_index(session: Session) -> int:
     return 0 if current is None else current + 1
 
 
+def _placeable_runner(session: Session, runner_id):
+    """A runner may be a placement target only if it could actually CLAIM this
+    session's turns — its pairer belongs to the session's workspace (mirrors
+    claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
+    runner would leave the pinned turn permanently unclaimable). Invisible ids
+    resolve to None so callers 422 exactly like a nonexistent id (no oracle)."""
+    from apps.harness.models import Runner
+    from apps.workspaces import services as wsvc
+
+    if not runner_id:
+        return None
+    runner = (
+        Runner.objects.filter(id=runner_id, paired_by__isnull=False)
+        .exclude(status=Runner.RETIRED)
+        .first()
+    )
+    if runner is None:
+        return None
+    if not wsvc.is_member(runner.paired_by, session.workspace_id):
+        return None
+    return runner
+
+
 def _resolve_placement(session: Session, placement: str | None):
     """Directed-placement pin for a NEW turn about to be enqueued. `placement`
     wins when given explicitly; otherwise an unbound session's stashed
@@ -228,21 +251,20 @@ def _resolve_placement(session: Session, placement: str | None):
     routes the turn to the binding holder (see claim_next_turn's session leg).
 
     Returns a Runner|None. Raises ValueError for an explicit but unresolvable
-    placement (unknown/retired runner) — the caller surfaces that as a 422."""
-    from apps.harness.models import Runner
-
+    placement (unknown/retired/foreign-tenant runner) — the caller surfaces
+    that as a 422."""
     if placement == "wait":
         binding = getattr(session, "runner_binding", None)
         return binding.runner if binding and binding.runner_id else None
     if placement:
-        pinned = Runner.objects.filter(id=placement).exclude(status=Runner.RETIRED).first()
+        pinned = _placeable_runner(session, placement)
         if pinned is None:
             raise ValueError("unknown runner for placement")
         return pinned
     if not getattr(session, "runner_binding", None):
         rid = (session.metadata or {}).get("requested_runner_id")
         if rid:
-            return Runner.objects.filter(id=rid).exclude(status=Runner.RETIRED).first()
+            return _placeable_runner(session, rid)
     return None
 
 
@@ -326,9 +348,7 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
             raise ValueError("session has no bound runner to wait for")
         turn.pinned_runner_id = binding.runner_id
     else:
-        from apps.harness.models import Runner
-
-        runner = Runner.objects.filter(id=placement).exclude(status=Runner.RETIRED).first()
+        runner = _placeable_runner(session, placement)
         if runner is None:
             raise ValueError("unknown runner")
         turn.pinned_runner = runner

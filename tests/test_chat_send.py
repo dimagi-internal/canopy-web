@@ -11,7 +11,7 @@ from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import services as harness
 from apps.harness.models import Runner, Turn
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -128,6 +128,7 @@ def test_directed_new_chat_pins_first_turn():
     # FIRST send there — before any binding exists to make stickiness do the work.
     user = User.objects.create_user("o", "o@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-directed", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     r2 = _runner("r2", paired_by=user)
     session = Session.objects.create(
         workspace=ws, project="canopy-web", metadata={"requested_runner_id": str(r2.id)},
@@ -156,6 +157,7 @@ def test_place_repins_queued_turn():
     # oldest still-QUEUED turn without touching the send path.
     user = User.objects.create_user("o3", "o3@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     r1 = _runner("r1", paired_by=user)
     r2 = _runner("r2", paired_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
@@ -200,3 +202,46 @@ def test_send_placement_unknown_runner_raises_value_error():
         chat.send_message(
             session=session, text="hi", user=user, client_id="c7", placement=str(uuid.uuid4()),
         )
+
+
+def test_send_placement_foreign_tenant_runner_raises_value_error():
+    # A runner paired by a user who is NOT a member of the session's workspace
+    # is not a valid placement target — it could never claim the turn it would
+    # be pinned to (claim_next_turn's tenant_q derives from paired_by's
+    # memberships), so this must 422 like an unknown id, not orphan the turn.
+    user = User.objects.create_user("o8", "o8@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-send-foreign", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
+    outsider = User.objects.create_user("outsider", "outsider@dimagi.com", "pw")
+    foreign_runner = _runner("foreign", paired_by=outsider)  # not a member of `ws`
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+
+    with pytest.raises(ValueError):
+        chat.send_message(
+            session=session, text="hi", user=user, client_id="c8",
+            placement=str(foreign_runner.id),
+        )
+    # No turn was ever pinned to the foreign runner.
+    assert not Turn.objects.filter(pinned_runner=foreign_runner).exists()
+
+
+def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
+    # Same gap, after-the-fact: place_queued_turn must reject a runner whose
+    # pairer isn't a member of the session's workspace, and must leave the
+    # turn's existing pin untouched.
+    user = User.objects.create_user("o9", "o9@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place-foreign", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
+    outsider = User.objects.create_user("outsider2", "outsider2@dimagi.com", "pw")
+    foreign_runner = _runner("foreign2", paired_by=outsider)  # not a member of `ws`
+
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c9")
+    original_pin = turn.pinned_runner_id
+
+    with pytest.raises(ValueError):
+        chat.place_queued_turn(session=session, placement=str(foreign_runner.id))
+
+    turn.refresh_from_db()
+    assert turn.pinned_runner_id == original_pin
+    assert turn.pinned_runner_id != foreign_runner.id

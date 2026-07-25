@@ -153,6 +153,26 @@ def test_place_repins_queued_turn(client, ctx, settings):
     assert r.json()["pinned_runner_id"] == str(r2.id)
 
 
+def test_send_with_foreign_tenant_placement_is_422(client, ctx):
+    # A runner paired by a user who is NOT a member of this session's workspace
+    # is not a valid placement target (it could never claim the resulting
+    # turn) — must 422 exactly like an unknown runner id, not silently pin a
+    # turn that becomes permanently unclaimable.
+    user, _ws, _agent = ctx
+    outsider = User.objects.create_user("outsider", "outsider@dimagi.com", "pw")
+    foreign_runner = Runner.objects.create(
+        name="foreign", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=outsider,
+    )
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "placement": str(foreign_runner.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert not Turn.objects.filter(pinned_runner=foreign_runner).exists()
+
+
 def test_place_with_no_queued_turn_is_404(client):
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(
