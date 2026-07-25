@@ -177,3 +177,31 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
 
     turn.refresh_from_db()
     assert turn.status == Turn.CANCELLED
+
+
+def test_cancel_queued_drill_turn_resolves_runner_drill(canopy, jj):
+    """Drills queue behind real executing turns (start_drill's docstring), and
+    the plain /turns/{id}/cancel route has no origin filter — a queued drill
+    can be cancelled out from under itself. Without the finish_turn hook
+    covering CANCELLED, its RunnerDrill would strand OUTCOME_PENDING forever."""
+    from django.utils import timezone
+
+    from apps.harness import services
+    from apps.harness.models import RunnerDrill
+
+    agent = Agent.objects.create(slug="echo-drill", name="Echo", workspace=canopy)
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(),
+    )
+    [drill] = services.start_drill(runner, [agent])
+    turn = drill.turn
+    assert turn.status == Turn.QUEUED
+
+    cancelled = services.cancel_queued_turn(turn)
+
+    assert cancelled.status == Turn.CANCELLED
+    drill.refresh_from_db()
+    assert drill.outcome == RunnerDrill.OUTCOME_FAIL
+    assert drill.outcome != RunnerDrill.OUTCOME_PENDING
+    assert "cancelled" in drill.summary

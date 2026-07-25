@@ -525,9 +525,9 @@ def mark_running(turn: Turn, *, session_id: str = "") -> Turn:
 def finish_turn(
     turn: Turn, *, status: str, result_note: str = "", allow_queued: bool = False
 ) -> Turn:
-    """Transition CLAIMED|RUNNING|NEEDS_HUMAN -> DONE|FAILED|MISSED. A no-op (no
-    event, no field writes) if the turn is already terminal — idempotent, and
-    guards against resurrecting a turn already swept to lost.
+    """Transition CLAIMED|RUNNING|NEEDS_HUMAN -> DONE|FAILED|MISSED|CANCELLED. A
+    no-op (no event, no field writes) if the turn is already terminal —
+    idempotent, and guards against resurrecting a turn already swept to lost.
 
     A QUEUED turn is deliberately NOT finishable by default: a runner must never
     finish a turn it never claimed (the API surfaces that attempt as a 409).
@@ -558,11 +558,19 @@ def finish_turn(
     # its RunnerDrill without waiting for the agent's own report callback — the
     # agent may never get far enough to curl the callback at all. Scoped to
     # OUTCOME_PENDING so a drill already resolved by a report is not clobbered.
-    if turn.origin == Turn.ORIGIN_DRILL and status == Turn.FAILED:
+    # CANCELLED is included too: drills queue behind real executing turns
+    # (start_drill's docstring) and the plain /turns/{id}/cancel route has no
+    # origin filter, so a queued drill can be cancelled out from under itself —
+    # without this it would strand OUTCOME_PENDING forever, the same failure
+    # mode this hook exists to prevent for FAILED.
+    if turn.origin == Turn.ORIGIN_DRILL and status in (Turn.FAILED, Turn.CANCELLED):
+        if status == Turn.CANCELLED:
+            summary = "drill turn cancelled"
+        else:
+            summary = result_note or "drill turn failed"
         RunnerDrill.objects.filter(
             turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=result_note or "drill turn failed",
-                 finished_at=now)
+        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
     return turn
 
 
