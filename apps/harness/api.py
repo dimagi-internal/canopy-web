@@ -232,6 +232,7 @@ def list_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(_runner_visibility_q(request))
+        .prefetch_related("drills")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
     return list(qs[:50])

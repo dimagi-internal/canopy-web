@@ -130,7 +130,9 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 @router.patch("/{slug}/runner-preference", response=AgentDetailOut,
               summary="Set an agent's ordered runner-kind preference")
 def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPreferenceIn) -> AgentDetailOut:
-    """Update just the ordered runner-kind preference (cloud/emdash/remote), no
+    """DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
+
+    Update just the ordered runner-kind preference (cloud/emdash/remote), no
     clobber of the agent's other fields. Honored at claim time — see
     harness.services.claim_next_turn."""
     from apps.harness.models import Runner

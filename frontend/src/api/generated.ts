@@ -988,7 +988,9 @@ export interface paths {
         readonly head?: never;
         /**
          * Set an agent's ordered runner-kind preference
-         * @description Update just the ordered runner-kind preference (cloud/emdash/remote), no
+         * @description DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
+         *
+         *     Update just the ordered runner-kind preference (cloud/emdash/remote), no
          *     clobber of the agent's other fields. Honored at claim time — see
          *     harness.services.claim_next_turn.
          */
@@ -5967,6 +5969,22 @@ export interface components {
              */
             readonly sections: readonly components["schemas"]["SharedSectionOut"][];
         };
+        /**
+         * DrillRollup
+         * @description Aggregated readiness-drill outcomes for one runner, across all its
+         *     (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
+         *     a client-side fetch-and-reduce over /runners/{id}/drills.
+         */
+        readonly DrillRollup: {
+            /** Passed */
+            readonly passed: number;
+            /** Failed */
+            readonly failed: number;
+            /** Pending */
+            readonly pending: number;
+            /** Last Finished At */
+            readonly last_finished_at: string | null;
+        };
         /** RunnerOut */
         readonly RunnerOut: {
             /**
@@ -6000,6 +6018,7 @@ export interface components {
             readonly workspace: string | null;
             /** Paired By Email */
             readonly paired_by_email: string | null;
+            readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
         };
         /** RunnerIn */
         readonly RunnerIn: {
