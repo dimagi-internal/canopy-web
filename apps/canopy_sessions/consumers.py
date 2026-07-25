@@ -199,6 +199,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         for frame in stream_map.turn_event_to_frames(evt, lambda _seq: mid):
             await self.send_json(frame)
 
+    async def session_title_updated(self, message):
+        await self.send_json({"event": "session.title_updated", "data": {"title": message["title"]}})
+
     async def draft_updated(self, message):
         await self.send_json({"event": "draft.updated", "data": message["draft"]})
 
