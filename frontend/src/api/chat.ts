@@ -18,6 +18,8 @@ export type ChatSessionDetail = components["schemas"]["SessionDetailOut"];
 export type MessagePage = components["schemas"]["MessagePageOut"];
 export type StreamState = components["schemas"]["StreamStateOut"];
 export type BackfillState = components["schemas"]["BackfillStateOut"];
+export type SendResult = components["schemas"]["SendOut"];
+export type TurnPlacementResult = components["schemas"]["TurnOutMinimal"];
 
 export class ChatApiError extends Error {
   code: string;
@@ -67,6 +69,9 @@ export interface CreateSessionInput {
   // route; omit to use the caller's default.
   workspace?: string;
   metadata?: Record<string, unknown>;
+  // Directed placement: pin the session's turns to this runner from creation
+  // (rather than the default assignment-cascade routing).
+  runnerId?: string;
 }
 
 export function createSession(
@@ -83,6 +88,7 @@ export function createSession(
       agent_slug: input.agentSlug ?? null,
       project: input.project ?? "",
       metadata: input.metadata ?? {},
+      runner_id: input.runnerId ?? null,
     }),
   });
 }
@@ -131,5 +137,37 @@ export function detachSession(id: string): Promise<StreamState> {
 export function requestBackfill(id: string): Promise<BackfillState> {
   return request<BackfillState>(`/api/canopy-sessions/${encodeURIComponent(id)}/backfill`, {
     method: "POST",
+  });
+}
+
+/**
+ * Send a message — commits the co-edited draft, enqueuing a session Turn.
+ * `placement` is the chat banner's directed-placement decision ("wait" to
+ * hold for the pinned runner, "continue" to fall back to the cascade); omit
+ * to use the server default.
+ */
+export function sendMessage(
+  id: string,
+  text: string,
+  clientId = "",
+  placement?: string,
+): Promise<SendResult> {
+  return request<SendResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      client_id: clientId,
+      placement: placement ?? null,
+    }),
+  });
+}
+
+/** Re-pin a session's oldest queued turn to a runner (after-the-fact directed placement). */
+export function placeTurn(id: string, placement: string): Promise<TurnPlacementResult> {
+  return request<TurnPlacementResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/place`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ placement }),
   });
 }
