@@ -29,9 +29,15 @@ def _user(t):
     return json.dumps({"type": "user", "message": {"content": t}}) + "\n"
 
 
-def test_drains_backfill_and_ships_full_transcript(tmp_path, monkeypatch):
+def _summary():
+    return json.dumps({"type": "summary", "summary": "meta"}) + "\n"
+
+
+def test_drains_backfill_and_ships_full_transcript_with_ordinals(tmp_path, monkeypatch):
+    """Every message carries its RAW record index (the leading summary record shifts
+    them), so the server can key rows on the same ordinals the live stream uses."""
     p = tmp_path / "echo.jsonl"
-    p.write_text(_user("q1") + _asst("a1") + _user("q2") + _asst("a2"))
+    p.write_text(_summary() + _user("q1") + _asst("a1") + _user("q2") + _asst("a2"))
     monkeypatch.setattr(m.transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
 
     c = _Client([{"session_id": "s1", "session_key": "echo-1", "project": "echo"}])
@@ -40,8 +46,8 @@ def test_drains_backfill_and_ships_full_transcript(tmp_path, monkeypatch):
     assert len(c.shipped) == 1
     sid, messages = c.shipped[0]
     assert sid == "s1"
-    assert [(x["role"], x["text"]) for x in messages] == [
-        ("user", "q1"), ("assistant", "a1"), ("user", "q2"), ("assistant", "a2"),
+    assert [(x["index"], x["role"], x["text"]) for x in messages] == [
+        (1, "user", "q1"), (2, "assistant", "a1"), (3, "user", "q2"), (4, "assistant", "a2"),
     ]
 
 

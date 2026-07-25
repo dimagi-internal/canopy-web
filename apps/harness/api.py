@@ -375,6 +375,8 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     """The sessions this runner should be tailing live (a viewer is attached). The
     observable half of attach/detach — the runner syncs this each tick and starts/
     stops tailers; the WS runner.stream frame is only a latency optimization."""
+    from django.db.models import Max as _Max
+
     from apps.canopy_sessions.models import RunnerBinding
 
     runner = _runner_or_404(request, runner_id)
@@ -382,34 +384,54 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner, stream_desired=True)
         .exclude(session_key="")
+        # The catch-up marker: on attach the runner ships every transcript record
+        # AFTER the server's max persisted turn_index (None = stream-forward only).
+        .annotate(_last_index=_Max("session__messages__turn_index"))
     )
     return {"streams": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.project}
+         "project": b.session.project, "last_index": b._last_index}
         for b in bindings
     ]}
 
 
 @router.post("/runners/{runner_id}/session-stream", response=StreamPostOut)
 def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: SessionStreamIn):
-    """The runner ships live assistant events for a session it backs; the server fans
-    them to the session group as the same chat.turn_event frames the chat path uses
-    (turn-less -> the consumer derives seq:<n> message ids). Live view only — no
-    Message rows (that is the on-demand backfill, POST /session-backfill)."""
-    from apps.canopy_sessions.models import RunnerBinding
+    """The runner ships live conversational events for a session it backs. For an
+    origin=runner session, events carrying a transcript ordinal are PERSISTED as
+    Message rows first (the transcript is the durable source — spec 2026-07-24),
+    then the assistant frames fan out to the session group as the same
+    chat.turn_event frames the chat path uses (turn-less -> the consumer derives
+    seq:<n> message ids). User events are persisted but never live-pushed — the
+    sender's client already echoed them optimistically."""
+    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions.models import RunnerBinding, Session
     from apps.realtime import groups
 
     runner = _runner_or_404(request, runner_id)
-    if not RunnerBinding.objects.filter(session_id=payload.session_id, runner=runner).exists():
+    binding = (
+        RunnerBinding.objects.select_related("session")
+        .filter(session_id=payload.session_id, runner=runner).first()
+    )
+    if binding is None:
         raise HttpError(404, "session not bound to this runner")
+    if binding.session.origin == Session.ORIGIN_RUNNER:
+        # Ordinal-less events (an old runner) stay live-view-only: persisting
+        # assistant rows without the user side would blank the tail fallback's
+        # human half the moment any row exists.
+        chat_services.persist_transcript_rows(binding.session, [
+            {"index": e.index, "role": e.kind, "text": (e.payload or {}).get("text", "")}
+            for e in payload.events if e.index >= 0
+        ])
     sgroup = groups.session_group(payload.session_id)
     n = 0
     for e in payload.events:
-        groups.publish(sgroup, {
-            "type": "chat.turn_event",
-            "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
-            "turn_id": None,
-        })
+        if e.kind != "user":
+            groups.publish(sgroup, {
+                "type": "chat.turn_event",
+                "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
+                "turn_id": None,
+            })
         n += 1
     return {"count": n}
 

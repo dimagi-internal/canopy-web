@@ -77,23 +77,31 @@ def _user_text(content) -> str:
     return ""
 
 
-def transcript_messages(records: list[dict]) -> list[dict]:
-    """The full transcript as chronological {"role","text"} rows — user + assistant
-    text only (tool blocks skipped, matching the v1 bridge). Drives on-demand
-    backfill of a local session's history into server Message rows."""
+def conversational_messages(records: list[dict], since: int) -> list[dict]:
+    """Conversational rows after `since`, as chronological {"index","role","text"}.
+
+    `index` is the RAW position in the records list (== the .jsonl line ordinal;
+    read_records reads the whole file, so it's stable and append-only). It is the
+    identity the server keys Message.turn_index on for a runner session, which is
+    what makes the live stream, catch-up, and backfill idempotent against each
+    other. User + assistant text only (tool blocks skipped, matching the v1
+    bridge); non-conversational records advance the index without emitting a row.
+    Pass since=-1 for the full transcript."""
     out: list[dict] = []
-    for rec in records:
+    for i, rec in enumerate(records):
+        if i <= since:
+            continue
         kind = rec.get("type")
         msg = rec.get("message")
         content = msg.get("content", "") if isinstance(msg, dict) else ""
         if kind == "user":
             t = _user_text(content)
             if t:
-                out.append({"role": "user", "text": t})
+                out.append({"index": i, "role": "user", "text": t})
         elif kind == "assistant":
             t = _assistant_text(content)
             if t:
-                out.append({"role": "assistant", "text": t})
+                out.append({"index": i, "role": "assistant", "text": t})
     return out
 
 
