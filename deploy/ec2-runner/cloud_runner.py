@@ -251,9 +251,19 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     skills, state — not an empty scratch dir. Everything else (project turns,
     session turns, or an agent bootstrap hasn't reached yet) keeps the original
     scratch-dir behavior. Best-effort: a pull failure logs and still uses the
-    clone as-is (stale beats absent)."""
+    clone as-is (stale beats absent).
+
+    Session turns are excluded explicitly: TurnOut surfaces agent_slug for an
+    agent-backed chat session too, but a live chat session is bridged, not run
+    from a repo checkout — so a chat turn must keep scratch-dir behavior even
+    once cloud sessions ship (this runner does not declare capabilities.sessions
+    today, so it is inert now, but the guard makes the intent explicit)."""
+    # A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
+    # session id in origin_ref — that, not a top-level field, is the session
+    # signal on TurnOut. A live chat is bridged, never run from a checkout.
+    is_session = bool((turn.get("origin_ref") or {}).get("chat_session_id"))
     slug = turn.get("agent_slug") or ""
-    if slug:
+    if slug and not is_session:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
         if (agent_dir / ".git").is_dir():
             try:

@@ -104,8 +104,10 @@ install_gog() {
 
   if command -v gh >/dev/null 2>&1; then
     # `gh release download` with no tag pulls the LATEST release; GH_TOKEN is
-    # optional for a public repo but avoids the unauthenticated 60/hr rate limit
-    # (the runner's staged GITHUB_TOKEN, when present, doubles as this).
+    # optional for a public repo but avoids the unauthenticated 60/hr rate limit.
+    # cloud_runner stages the GitHub token into git's credential store, not a
+    # GITHUB_TOKEN env var, so this is usually empty — harmless (public repo);
+    # export GITHUB_TOKEN before invoking if you hit the anonymous rate limit.
     if ! GH_TOKEN="${GITHUB_TOKEN:-}" gh release download -R steipete/gogcli \
         --pattern 'gogcli_*_linux_amd64.tar.gz' --dir "$tmp" --clobber 2>&1; then
       warn "gh release download failed; falling back to the GitHub API + curl"

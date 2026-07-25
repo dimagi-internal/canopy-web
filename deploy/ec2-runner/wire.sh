@@ -86,8 +86,16 @@ if [[ -z "$RUNNER_ID" ]]; then
     RUNNER_ID=$(python3 -c "
 import json
 rows = json.load(open('$TMP/runners.json'))
+# The genuinely-fresh box is the one that has NEVER heartbeated: on boot the
+# runner pairs (creating this row) and then BLOCKS in fetch_and_stage_credential
+# BEFORE it starts heartbeating — so a NULL last_heartbeat_at means 'paired,
+# waiting for the credential bundle we are about to POST'. A dead predecessor
+# left by down.sh carries a real (stale) timestamp, and since GET orders by
+# last_heartbeat_at desc nulls_last it would otherwise sort AHEAD of the new
+# box and get picked by mistake. Filter on the never-heartbeated signal, not
+# status, to survive the standard down.sh && up.sh && wire.sh recycle.
 for r in rows:
-    if r['kind'] == 'cloud' and r['name'] == '$RUNNER_NAME' and r['status'] != 'online':
+    if r['kind'] == 'cloud' and r['name'] == '$RUNNER_NAME' and not r.get('last_heartbeat_at'):
         print(r['id']); break
 ")
     [[ -n "$RUNNER_ID" ]] && break
@@ -171,6 +179,12 @@ for slug in "${AGENT_SLUGS[@]}"; do
   ACTION=$(python3 -c "
 import json
 rows = json.load(open('$TMP/rows-${slug}.json'))
+if not isinstance(rows, list):
+    # An RFC7807 problem+json body (e.g. a mistyped --agents slug -> 404, or a
+    # deleted agent) — curl -sS returns 0 with an error body, so guard here
+    # rather than let the swap logic throw and abort the whole run mid-loop.
+    print('skip')
+    raise SystemExit(0)
 if not rows:
     print('skip')  # no assignments at all — default scope leaves this agent untouched
     raise SystemExit(0)
