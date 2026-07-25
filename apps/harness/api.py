@@ -182,8 +182,25 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
             raise HttpError(404, f"workspace '{explicit}' not found")
         ws_slug = explicit
     else:
+        # A runner MUST belong to a workspace: a workspace-less one is
+        # half-broken with no signal — heartbeat and claim work (tenancy
+        # derives from paired_by), but every session report 404s, so its
+        # sessions silently never surface (prod incident 2026-07-25: a
+        # multi-workspace pairer made user_default_workspace() None and the
+        # runner paired NULL). Fail loud instead of pairing broken.
         default = wsvc.user_default_workspace(request.user)
-        ws_slug = default.slug if default else None
+        if default is None:
+            n = len(wsvc.user_workspace_slugs(request.user))
+            detail = (
+                "you belong to no workspace" if n == 0
+                else f"you belong to {n} workspaces, so there is no default"
+            )
+            raise HttpError(
+                422,
+                f"a runner must belong to a workspace and {detail} — "
+                "pass `workspace` explicitly",
+            )
+        ws_slug = default.slug
     runner = Runner.objects.create(
         name=payload.name,
         kind=payload.kind,
