@@ -127,16 +127,22 @@ def sweep_expired_leases() -> int:
     )
     count = 0
     for turn in expired:
+        # A turn with cancel_requested already in its ledger closes CANCELLED
+        # instead of LOST — the runner never got the chance to act on the
+        # cancel signal before its lease expired, but the intent was still to
+        # stop, not to lose the turn.
+        requested = turn.events.filter(kind="cancel_requested").exists()
+        status = Turn.CANCELLED if requested else Turn.LOST
         updated = Turn.objects.filter(pk=turn.pk, lease_expires_at__lt=now).exclude(
             status__in=Turn.TERMINAL
-        ).update(status=Turn.LOST, finished_at=now)
+        ).update(status=status, finished_at=now)
         if updated:
-            append_events(turn, [{"kind": "status", "payload": {"status": Turn.LOST, "reason": "lease_expired"}}])
+            append_events(turn, [{"kind": "status", "payload": {"status": status, "reason": "lease_expired"}}])
             count += 1
             # A LOST turn is marked via a queryset update, bypassing finish_turn —
             # so the FAILED-drill hook there never fires and a drill's RunnerDrill
             # would otherwise strand as pending forever. Mirror that hook here.
-            if turn.origin == Turn.ORIGIN_DRILL:
+            if turn.origin == Turn.ORIGIN_DRILL and status == Turn.LOST:
                 RunnerDrill.objects.filter(
                     turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
                 ).update(outcome=RunnerDrill.OUTCOME_FAIL,
@@ -529,8 +535,8 @@ def finish_turn(
     a slot nobody ever picked up is the textbook MISSED. Without it, supersede
     would silently skip queued occurrences and the board would accumulate them.
     """
-    if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED):
-        raise ValueError(f"finish status must be done|failed|missed, got {status!r}")
+    if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
+        raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
     now = timezone.now()
     from_states = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
     if allow_queued:
@@ -561,13 +567,34 @@ def finish_turn(
 
 
 def cancel_queued_turn(turn: Turn) -> Turn | None:
-    """Best-effort un-queue: FAIL a still-QUEUED turn. Cancel is 'un-queue', not
-    'kill' — a CLAIMED/RUNNING turn is owned by its runner's lease and is left
-    alone (returns None). Terminal turns also return None (idempotent no-op). The
-    REST cancel view and chat's `chat.stop` both route through here."""
+    """Best-effort un-queue: mark a still-QUEUED turn CANCELLED. Cancel is
+    'un-queue', not 'kill' — a CLAIMED/RUNNING turn is owned by its runner's
+    lease and is left alone (returns None). Terminal turns also return None
+    (idempotent no-op). The REST cancel view and chat's `chat.stop` both route
+    through here."""
     if turn.status != Turn.QUEUED:
         return None
-    return finish_turn(turn, status=Turn.FAILED, result_note="cancelled", allow_queued=True)
+    return finish_turn(turn, status=Turn.CANCELLED, result_note="cancelled", allow_queued=True)
+
+
+def cancel_turn(turn: Turn) -> Turn | None:
+    """Full cancel semantics for chat.stop / the REST stop route. A QUEUED turn
+    is finished CANCELLED immediately. An executing turn is NOT force-finished —
+    the runner owns its lease — instead we record cancel_requested in the ledger
+    and signal the claiming runner over its control channel; the runner interrupts
+    the emdash session and finishes the turn as cancelled (or, if the runner is
+    gone, the lease sweep sees cancel_requested and closes it CANCELLED)."""
+    if turn.status == Turn.QUEUED:
+        return finish_turn(turn, status=Turn.CANCELLED, result_note="cancelled", allow_queued=True)
+    if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
+        append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+        if turn.claimed_by_id:
+            from apps.realtime import groups
+
+            groups.publish(groups.runner_group(turn.claimed_by_id),
+                           {"type": "runner.cancel", "turn_id": str(turn.id)})
+        return turn
+    return None
 
 
 # --------------------------------------------------------------------------------------

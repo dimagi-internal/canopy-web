@@ -46,7 +46,7 @@ def test_cancel_a_queued_project_turn(cli, canopy):
 
     assert resp.status_code == 200, resp.content
     turn.refresh_from_db()
-    assert turn.status == Turn.FAILED
+    assert turn.status == Turn.CANCELLED
     assert "cancelled" in turn.result_note
 
 
@@ -56,7 +56,7 @@ def test_cancel_a_queued_agent_turn(cli, canopy):
 
     assert cli.post(f"/api/harness/turns/{turn.id}/cancel").status_code == 200
     turn.refresh_from_db()
-    assert turn.status == Turn.FAILED
+    assert turn.status == Turn.CANCELLED
 
 
 def test_cannot_cancel_a_running_turn(cli, canopy):
@@ -112,3 +112,68 @@ def test_cannot_cancel_another_tenants_turn(client, canopy, jj):
     assert resp.status_code == 404
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED  # untouched
+
+
+# --------------------------------------------------------------------------------------
+# services.cancel_turn — the full cancel semantics (chat.stop / the REST stop route,
+# task 6+). Queued unqueues immediately; an executing turn is signalled, not
+# force-finished — the runner owns its lease.
+# --------------------------------------------------------------------------------------
+
+
+def test_cancel_turn_unqueues_as_cancelled(canopy):
+    from apps.harness import services
+
+    turn = Turn.objects.create(
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-1"
+    )
+    out = services.cancel_turn(turn)
+    assert out.status == Turn.CANCELLED
+
+
+def test_cancel_turn_signals_running_turn(canopy, jj, monkeypatch):
+    from django.utils import timezone
+
+    from apps.harness import services
+
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities={"agents": ["echo"]},
+    )
+    turn = Turn.objects.create(
+        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-2",
+        status=Turn.RUNNING, claimed_by=runner,
+    )
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+
+    out = services.cancel_turn(turn)
+
+    assert out.status == turn.status  # unchanged — runner owns the lease
+    assert turn.events.filter(kind="cancel_requested").exists()
+    assert published and published[0][1]["type"] == "runner.cancel"
+
+
+def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.harness import services
+
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    turn = Turn.objects.create(
+        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-3",
+        status=Turn.RUNNING, claimed_by=runner,
+        lease_expires_at=timezone.now() - dt.timedelta(minutes=1),
+    )
+
+    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    services.sweep_expired_leases()
+
+    turn.refresh_from_db()
+    assert turn.status == Turn.CANCELLED
