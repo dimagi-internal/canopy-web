@@ -90,6 +90,32 @@ def test_failed_drill_turn_marks_drill_fail(django_user_model):
     assert "claude auth expired" in d.summary
 
 
+def test_lost_drill_turn_marks_drill_fail(django_user_model):
+    # A LOST turn is marked via sweep_expired_leases's queryset update, which
+    # bypasses finish_turn entirely — so the FAILED-drill hook there never
+    # fires on its own. Assert sweep_expired_leases mirrors that hook so a
+    # drill whose runner disappears mid-turn doesn't strand as pending forever.
+    u = django_user_model.objects.create_user(username="o5", password="x")
+    r = Runner.objects.create(name="s5", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+                              last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    a = Agent.objects.create(slug="echo5", name="Echo5")
+    RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
+    [d] = services.start_drill(r, [a])
+    turn = Turn.objects.get(origin=Turn.ORIGIN_DRILL)
+    Turn.objects.filter(pk=turn.pk).update(
+        status=Turn.CLAIMED, claimed_by=r,
+        lease_expires_at=timezone.now() - timezone.timedelta(minutes=5),
+    )
+    swept = services.sweep_expired_leases()
+    assert swept == 1
+    turn.refresh_from_db()
+    assert turn.status == Turn.LOST
+    d.refresh_from_db()
+    assert d.outcome == RunnerDrill.OUTCOME_FAIL
+    assert "lost" in d.summary.lower()
+    assert d.finished_at is not None
+
+
 def test_redrill_resets_to_pending(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,

@@ -157,9 +157,15 @@ Resources:
                 WantedBy=multi-user.target
           runcmd:
             - [ bash, -c, "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -" ]
-            - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip python3-websocket" ]
+            - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip gnupg python3-websocket" ]
             - [ bash, -c, "npm i -g @anthropic-ai/claude-code" ]
             - [ bash, -c, "curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && cd /tmp && unzip -q awscliv2.zip && ./aws/install" ]
+            # gh (GitHub CLI) and op (1Password CLI) — drill doctors flagged both as
+            # missing on the box. Non-fatal (|| true): a transient repo/network hiccup
+            # here shouldn't wedge the whole cloud-init run; the runner still comes up
+            # and a later `canopy-fetch-env`/manual apt-get can retry.
+            - [ bash, -c, "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y gh || true" ]
+            - [ bash, -c, "curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main' > /etc/apt/sources.list.d/1password.list && mkdir -p /etc/debsig/policies/AC2D62742012EA22 /usr/share/debsig/keyrings/AC2D62742012EA22 && curl -fsSL https://downloads.1password.com/linux/debian/debsig/1password.pol -o /etc/debsig/policies/AC2D62742012EA22/1password.pol && curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && apt-get update && apt-get install -y 1password-cli || true" ]
             # Materialize the env + creds once (as root) BEFORE first start, so the
             # unit doesn't fail on a missing EnvironmentFile on boot.
             - [ bash, -c, "/usr/local/bin/canopy-fetch-env" ]
