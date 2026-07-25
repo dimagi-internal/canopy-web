@@ -93,4 +93,20 @@ describe("PlacementBanner", () => {
 
     expect(screen.getByText("Could not place the turn.")).toBeTruthy();
   });
+
+  it("renders error and info distinctly styled when both are present", () => {
+    render(
+      <PlacementBanner
+        runnerName="Laptop"
+        eligibleRunners={[]}
+        error="boom"
+        info="Placed."
+        onWait={vi.fn()}
+        onPlace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Placed.").className).toContain("text-muted-foreground");
+    expect(screen.getByText("boom").className).toContain("text-destructive");
+  });
 });

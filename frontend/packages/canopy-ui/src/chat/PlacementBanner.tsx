@@ -14,10 +14,12 @@ export interface PlacementBannerProps {
   eligibleRunners: PlacementRunner[];
   /** True while a placement POST is in flight — disables both actions. */
   busy?: boolean;
-  /** A message to surface below the actions (failure OR informational, e.g.
-   *  "no pending message to place" — the kit has a single message slot; the
-   *  container decides what belongs in it). */
+  /** A failure message to surface below the actions (e.g. "no pending
+   *  message to place"). Rendered with destructive styling. */
   error?: string | null;
+  /** A non-failure status message (e.g. "Placed — the new runner will pick it
+   *  up shortly."). Rendered muted, visually distinct from `error`. */
+  info?: string | null;
   /** Keep the turn queued for the bound runner to come back online. */
   onWait: () => void;
   /** Re-place the turn onto the given runner id. */
@@ -37,6 +39,7 @@ export function PlacementBanner({
   eligibleRunners,
   busy = false,
   error,
+  info,
   onWait,
   onPlace,
 }: PlacementBannerProps) {
@@ -83,6 +86,7 @@ export function PlacementBanner({
         </select>
       )}
       {error && <span className="text-destructive">{error}</span>}
+      {info && <span className="text-muted-foreground">{info}</span>}
     </div>
   );
 }

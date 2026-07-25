@@ -42,15 +42,23 @@ router = Router(auth=session_auth, tags=["chat"])
 def _out(session: Session) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     runner = binding.runner if (binding and binding.runner_id) else None
+    # The name a human recognises for a runner-bound session is the emdash
+    # task (what they see in emdash), not a thread_key hash a fallback title
+    # may have captured. Web chats keep their own title. Web-origin sessions
+    # also prefer their own title once set (e.g. the server-side auto-titler)
+    # over a bound session_key, since a web chat's binding is an execution
+    # detail, not the identity the human gave the conversation.
+    prefer_own = session.origin != Session.ORIGIN_RUNNER and bool(session.title)
     return {
         "id": session.id,
         "agent_slug": session.agent.slug if session.agent_id else None,
         "project": session.project,
         "workspace": session.workspace_id,
-        # The name a human recognises for a runner-bound session is the emdash
-        # task (what they see in emdash), not a thread_key hash a fallback title
-        # may have captured. Web chats keep their own title.
-        "title": (binding.session_key if (binding and binding.session_key) else session.title),
+        "title": (
+            session.title
+            if prefer_own
+            else ((binding.session_key if (binding and binding.session_key) else "") or session.title)
+        ),
         "status": session.status,
         "created_at": session.created_at,
         # When it last DID something (binding > newest message > created).

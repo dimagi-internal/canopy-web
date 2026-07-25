@@ -366,7 +366,8 @@ export function ChatPage() {
                 runnerName={meta?.runner_name ?? ''}
                 eligibleRunners={placementRunners}
                 busy={placing}
-                error={placeError ?? placeInfo}
+                error={placeError}
+                info={placeInfo}
                 onWait={waitForIt}
                 onPlace={continueOn}
               />
