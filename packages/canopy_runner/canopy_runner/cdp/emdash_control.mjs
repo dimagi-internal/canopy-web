@@ -11,6 +11,9 @@
 //                                           emdash switched tasks) — does NOT clobber it.
 //   open-send {task, text, clearFirst}-> {ok, action:"sent-cleared"} kills the current input
 //                                           line first, then sends (the human's "Clear & send").
+//   interrupt {task}                  -> {ok, task} opens the task (same lookup as open-send)
+//                                           and presses Escape — Claude Code's TUI treats
+//                                           this as "stop the running turn" (see runner.cancel).
 // Text is delivered via CDP Input.insertText (one atomic commit, not char-by-char
 // typing) so it lands fast and narrows the window for a keystroke collision.
 // All output is a single JSON line on stdout. Occlusion-proof: uses JS-dispatched
@@ -67,6 +70,39 @@ const clickLabel = (label) => page.evaluate((l) => {
   const btn = [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === l);
   if (!btn) return false; btn.click(); return true;
 }, label);
+
+// Shared REUSE lookup: find `task` in the (virtualized) sidebar, open it, and focus its
+// live terminal input. Used by both open-send (which then reads/inserts text) and
+// interrupt (which just needs the terminal focused so Escape lands in the right pane).
+// Fails (via `fail`, which exits the process) on any step that can't be completed —
+// callers never see a partial/ambiguous state.
+const openTask = async (task) => {
+  const found = await scrollToFind(`Open task ${task}`);
+  // TASK_NOT_FOUND is a claim about the WHOLE sidebar, only trustworthy now that we
+  // scan all of it. Even so the caller cross-checks it against emdash's sqlite before
+  // creating anything, and any LATER failure here means the task exists but the
+  // interaction glitched — the caller must NOT create a duplicate.
+  if (!found) fail(`TASK_NOT_FOUND: no task "${task}" in this emdash (archived, or another macOS account)`);
+  if (!await clickLabel(`Open task ${task}`)) {
+    fail(`could not click task "${task}" after locating it in the sidebar`);
+  }
+  await page.waitForTimeout(1200);
+  // Focus the ACTIVE terminal's input. xterm's real input is an off-screen
+  // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
+  // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
+  // task's pane) when several are mounted.
+  const focused = await page.evaluate(() => {
+    const terms = [...document.querySelectorAll('.xterm')]
+      .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
+    const term = terms[0];
+    const ta = (term && term.querySelector('.xterm-helper-textarea'))
+      || document.querySelector('textarea[aria-label="Terminal input"]');
+    if (!ta) return false;
+    ta.focus();
+    return true;
+  });
+  if (!focused) fail(`could not focus the terminal input for task "${task}"`);
+};
 
 try {
   if (command === 'list') {
@@ -135,31 +171,7 @@ try {
     // live (observed 2026-07-15: eva's org-research session, present in emdash's DB,
     // reported TASK_NOT_FOUND and duplicated).
     const { task, text, clearFirst } = args;
-    const found = await scrollToFind(`Open task ${task}`);
-    // TASK_NOT_FOUND is a claim about the WHOLE sidebar, only trustworthy now that we
-    // scan all of it. Even so the caller cross-checks it against emdash's sqlite before
-    // creating anything, and any LATER failure here means the task exists but the
-    // interaction glitched — the caller must NOT create a duplicate.
-    if (!found) fail(`TASK_NOT_FOUND: no task "${task}" in this emdash (archived, or another macOS account)`);
-    if (!await clickLabel(`Open task ${task}`)) {
-      fail(`could not click task "${task}" after locating it in the sidebar`);
-    }
-    await page.waitForTimeout(1200);
-    // Focus the ACTIVE terminal's input. xterm's real input is an off-screen
-    // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
-    // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
-    // task's pane) when several are mounted.
-    const focused = await page.evaluate(() => {
-      const terms = [...document.querySelectorAll('.xterm')]
-        .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
-      const term = terms[0];
-      const ta = (term && term.querySelector('.xterm-helper-textarea'))
-        || document.querySelector('textarea[aria-label="Terminal input"]');
-      if (!ta) return false;
-      ta.focus();
-      return true;
-    });
-    if (!focused) fail(`could not focus the terminal input for task "${task}"`);
+    await openTask(task);
 
     // Read whatever is ALREADY sitting in the prompt. claude's TUI renders its input
     // inside a bordered box; the input line is the last visible row carrying a '>'
@@ -212,6 +224,15 @@ try {
         out({ ok: true, action: 'sent', task });
       }
     }
+
+  } else if (command === 'interrupt') {
+    // Cancel: open the task exactly as open-send does (find + focus its terminal),
+    // but instead of inserting text just press Escape — Claude Code's TUI treats Esc
+    // as "stop the current turn" mid-flight.
+    const { task } = args;
+    await openTask(task);
+    await page.keyboard.press('Escape');   // Claude Code: Esc interrupts the running turn
+    out({ ok: true, task });
 
   } else {
     fail(`unknown command: ${command}`);

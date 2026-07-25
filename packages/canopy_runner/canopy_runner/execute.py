@@ -171,11 +171,18 @@ def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll:
     return path
 
 
-def execute_chat_turn(cfg, client, runner_id: str, turn: dict) -> str:
+def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
     then BRIDGE the assistant reply back into the ledger — unlike agent/project turns,
     which fire-and-continue in the visible emdash session. The chat SessionConsumer turns
-    the bridged assistant events into chat.stream_* so the website streams the reply."""
+    the bridged assistant events into chat.stream_* so the website streams the reply.
+
+    `cancel_check`, when given, is `lambda turn_id: bool` (main.py wires it to
+    `turn_id in CANCELLED_TURNS`). Threaded into the bridge as `should_stop` so a user
+    cancel ends the poll immediately rather than waiting out the idle window; once the
+    bridge exits on that signal we press Escape in the live emdash session (best-effort
+    — a failed interrupt must not block finishing the turn) and finish CANCELLED
+    instead of the normal done."""
     turn_id = turn["id"]
     agent_slug = turn.get("agent_slug") or ""
     project = turn.get("project") or ""
@@ -227,19 +234,31 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict) -> str:
         lambda e: client.post_events(turn_id, [e]),
         lambda: chat_bridge.read_records(path),
         start_index=start_index, sleep=time.sleep,
+        should_stop=(lambda: cancel_check(turn_id)) if cancel_check else None,
     )
+    if cancel_check and cancel_check(turn_id):
+        try:
+            cdp_control.interrupt(task, port=cfg.cdp_port)
+        except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
+            logger.warning("chat turn=%s: interrupt failed: %s", turn_id, exc)
+        client.finish(turn_id, note="cancelled by user", status="cancelled")
+        logger.info("chat turn=%s cancelled by user (task=%s)", turn_id, task)
+        return f"cancelled:{turn_id}"
     client.finish(turn_id, note=f"chat reply bridged ({len(text)} chars)")
     logger.info("chat turn=%s bridged %d chars from task=%s", turn_id, len(text), task)
     return f"chat:{turn_id}:{task}"
 
 
-def execute_turn(cfg, client, runner_id: str, turn: dict) -> str:
+def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """Route one claimed turn to an emdash session (reuse or create). Returns a short
-    action string: reused:<id> | created:<id>:<task> | failed:<id>."""
+    action string: reused:<id> | created:<id>:<task> | failed:<id>.
+
+    `cancel_check` (`lambda turn_id: bool`) is threaded straight through to
+    `execute_chat_turn` — only chat/session turns are cancellable today (see there)."""
     # A chat session send is bridged back to the website (its own path); everything
     # else fires into the visible emdash session and continues there.
     if (turn.get("origin_ref") or {}).get("chat_session_id"):
-        return execute_chat_turn(cfg, client, runner_id, turn)
+        return execute_chat_turn(cfg, client, runner_id, turn, cancel_check=cancel_check)
     turn_id = turn["id"]
     # `agent` names the emdash project to drive for BOTH turn kinds — an agent's
     # slug or, for a repo turn, the project name. cdp_control takes a project name

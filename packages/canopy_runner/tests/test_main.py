@@ -233,13 +233,80 @@ def test_drain_one_runs_exactly_one_turn_without_polling(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "_fire_due_schedules",
                         lambda *a, **k: pytest.fail("drain_one must NOT fire schedules"))
     seen = {}
-    monkeypatch.setattr("canopy_runner.execute.execute_turn",
-                        lambda cfg, client, rid, turn: seen.update(turn=turn) or f"reused:{turn['id']}")
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: seen.update(turn=turn) or f"reused:{turn['id']}",
+    )
 
     client = _CdpClient({"id": "t-9", "agent_slug": "eva"})
     assert main_mod.drain_one(_cdp_cfg(tmp_path), client) == "reused:t-9"
     assert seen["turn"]["id"] == "t-9"
     assert client.beats == 1 and client.claims == 1
+
+
+def test_claim_and_execute_threads_cancel_check_and_evicts_on_return(tmp_path, monkeypatch):
+    """The RC-cancel seam: _claim_and_execute must pass a cancel_check that reflects
+    CANCELLED_TURNS membership down to execute_turn, and must discard the turn id from
+    CANCELLED_TURNS once execute_turn returns — otherwise a reused turn id would read
+    as perpetually cancelled for whichever NEXT turn happens to reclaim it."""
+    from types import SimpleNamespace
+
+    from canopy_runner import execute
+
+    class _FakeClient:
+        def claim(self, runner_id, paused_agents=None):
+            return {"id": "t-9", "agent_slug": "eva"}
+
+        def fail_turn(self, turn_id, note):
+            pass
+
+    seen = {}
+
+    def fake_execute_turn(cfg, client, rid, turn, cancel_check=None):
+        seen["cancel_check"] = cancel_check
+        seen["cancelled_at_call_time"] = cancel_check("t-9") if cancel_check else None
+        return f"cancelled:{turn['id']}"
+
+    monkeypatch.setattr(execute, "execute_turn", fake_execute_turn)
+    cfg = SimpleNamespace(runner_id="r-1", state_path=str(tmp_path / "runner-state.json"))
+    main_mod.CANCELLED_TURNS.add("t-9")
+    try:
+        assert main_mod._claim_and_execute(cfg, _FakeClient(), paused=set()) == "cancelled:t-9"
+        assert seen["cancelled_at_call_time"] is True
+        assert "t-9" not in main_mod.CANCELLED_TURNS
+    finally:
+        main_mod.CANCELLED_TURNS.discard("t-9")  # don't leak into other tests
+
+
+def test_claim_and_execute_evicts_from_cancelled_turns_even_if_execute_turn_crashes(tmp_path, monkeypatch):
+    """The discard runs in a finally — a crashing turn must not leave its id stuck in
+    CANCELLED_TURNS forever (it would poison every future turn that reuses that id)."""
+    from types import SimpleNamespace
+
+    from canopy_runner import execute
+
+    class _FakeClient:
+        def __init__(self):
+            self.failed = []
+
+        def claim(self, runner_id, paused_agents=None):
+            return {"id": "t-crash", "agent_slug": "eva"}
+
+        def fail_turn(self, turn_id, note):
+            self.failed.append((turn_id, note))
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(execute, "execute_turn", _boom)
+    cfg = SimpleNamespace(runner_id="r-1", state_path=str(tmp_path / "runner-state.json"))
+    main_mod.CANCELLED_TURNS.add("t-crash")
+    try:
+        result = main_mod._claim_and_execute(cfg, _FakeClient(), paused=set())
+        assert result == "failed:t-crash"
+        assert "t-crash" not in main_mod.CANCELLED_TURNS
+    finally:
+        main_mod.CANCELLED_TURNS.discard("t-crash")
 
 
 def test_drain_one_idle_when_nothing_queued(monkeypatch, tmp_path):
@@ -355,8 +422,10 @@ def _stub_cdp(monkeypatch, healthy):
 
 def test_cdp_healthy_claims_and_executes(monkeypatch, tmp_path):
     _stub_cdp(monkeypatch, healthy=True)
-    monkeypatch.setattr("canopy_runner.execute.execute_turn",
-                        lambda cfg, client, rid, turn: f"created:{turn['id']}:task")
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: f"created:{turn['id']}:task",
+    )
     client = _CdpLoopClient(turns=[{"id": "t-1", "agent_slug": "eva"}])
     assert run_once(_cdp_loop_cfg(tmp_path), client) == "created:t-1:task"
     assert client.claims == 1
@@ -401,8 +470,10 @@ def test_cdp_down_still_polls_inbox_and_schedules(monkeypatch, tmp_path):
 def test_cdp_recovery_drains_the_backlog(monkeypatch, tmp_path):
     """When emdash comes back, the next tick claims + drains the queued turn normally."""
     _stub_cdp(monkeypatch, healthy=False)
-    monkeypatch.setattr("canopy_runner.execute.execute_turn",
-                        lambda cfg, client, rid, turn: f"reused:{turn['id']}")
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: f"reused:{turn['id']}",
+    )
     cfg = _cdp_loop_cfg(tmp_path)
     client = _CdpLoopClient(turns=[{"id": "t-1", "agent_slug": "eva"}])
 

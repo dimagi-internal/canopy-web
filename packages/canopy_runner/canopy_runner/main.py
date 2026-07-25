@@ -178,7 +178,10 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
     if turn is None:
         return "idle"
     try:
-        return execute.execute_turn(cfg, client, cfg.runner_id, turn)
+        return execute.execute_turn(
+            cfg, client, cfg.runner_id, turn,
+            cancel_check=lambda tid: tid in CANCELLED_TURNS,
+        )
     except Exception as exc:  # noqa: BLE001 — one turn must never kill the loop
         logger.exception("execute_turn crashed for %s", turn.get("id"))
         note = f"runner execute crashed: {exc}"
@@ -188,6 +191,14 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         except ClientError:
             pass
         return f"failed:{turn.get('id')}"
+    finally:
+        # Evict once the turn is done, regardless of outcome — CANCELLED_TURNS is a
+        # transient "stop now" signal, not a durable per-turn record; leaving an id in
+        # it forever would wrongly mark any FUTURE turn that reused the same id (turn
+        # ids aren't reused today, but leaking membership is a latent footgun either
+        # way — and it just keeps a module-level set growing unbounded for the life
+        # of the process).
+        CANCELLED_TURNS.discard(turn["id"])
 
 
 # Per-session incremental tail readers, keyed by emdash_task — the byte-offset change
