@@ -29,6 +29,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -61,6 +62,11 @@ HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "20"))
 # heartbeat gated on recv() timing out would never fire and the runner would go
 # stale while still connected.
 WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
+# How often the lease-renewal thread heartbeats WHILE a turn is executing (both
+# loops block inside run_claude() for the whole turn, so nothing else heartbeats
+# during that window). Must stay comfortably under DEFAULT_LEASE_SECONDS (900s,
+# apps/harness/services.py) or a long turn gets swept LOST mid-execution.
+LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
 
 _stop = False
@@ -87,6 +93,35 @@ def _api(method: str, path: str, body: dict | None = None) -> tuple[int, dict | 
     except urllib.error.URLError as exc:
         _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
+
+
+def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
+    """Renew this turn's claim lease for the duration of execution.
+
+    Both `_claim_and_run` (WS) and `run_over_rest`'s turn body block inside
+    `run_claude()` for the entire turn — no heartbeat happens while that call
+    is running, and the idle heartbeats both loops send elsewhere carry
+    `active_turn_ids: []`, which renews nothing (apps/harness/services.py::
+    heartbeat only renews leases for ids in that list). Without this, any
+    turn running longer than DEFAULT_LEASE_SECONDS (900s) gets swept LOST
+    out from under a runner that is still actively working it.
+
+    Runs on its own daemon thread and heartbeats over plain REST via `_api`,
+    which opens a fresh HTTPS connection per call — deliberately, so this is
+    safe to run concurrently with the WS loop's own socket use. The thread
+    must NEVER touch `ws` (send/recv/close): the websocket-client `WebSocket`
+    object is not safe to share across threads, and the caller's loop is
+    already reading/writing it. Caller stops the thread (`.set()`) in a
+    `finally` once the turn ends, whether it succeeded, failed, or raised.
+    """
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.wait(LEASE_HEARTBEAT_SECONDS):
+            _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id]})
+
+    threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
+    return stop
 
 
 def pair_or_load() -> str:
@@ -232,10 +267,14 @@ def run_over_rest(runner_id: str) -> None:
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
 
+        lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
-            ok, text = run_claude(turn.get("prompt", ""), turn_id, emit)
-        except Exception as exc:  # never let one turn kill the loop
-            ok, text = False, f"runner error: {exc}"
+            try:
+                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit)
+            except Exception as exc:  # never let one turn kill the loop
+                ok, text = False, f"runner error: {exc}"
+        finally:
+            lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
         finish = "done" if ok else "failed"
         _api("POST", f"/turns/{turn_id}/finish", {"status": finish, "result_note": text[:2000]})
         _log(f"finished turn {turn_id[:8]}: {finish}")
@@ -290,10 +329,17 @@ def _claim_and_run(ws, runner_id: str) -> None:
     def emit(events, _tid=tid):
         _ws_request(ws, {"action": "event", "turn_id": _tid, "events": events}, "event.ack", timeout=60)
 
+    # Lease renewal runs on its own thread over REST (never over `ws` — see
+    # _start_lease_renewal) so the lease survives the whole time run_claude()
+    # blocks this loop.
+    lease_stop = _start_lease_renewal(runner_id, tid)
     try:
-        ok, text = run_claude(turn.get("prompt", ""), tid, emit)
-    except Exception as exc:
-        ok, text = False, f"runner error: {exc}"
+        try:
+            ok, text = run_claude(turn.get("prompt", ""), tid, emit)
+        except Exception as exc:
+            ok, text = False, f"runner error: {exc}"
+    finally:
+        lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
     _ws_request(ws, {"action": "finish", "turn_id": tid,
                      "status": "done" if ok else "failed", "result_note": text[:2000]}, "finish.ack")
     _log(f"finished turn {tid[:8]} (WS): {'done' if ok else 'failed'}")

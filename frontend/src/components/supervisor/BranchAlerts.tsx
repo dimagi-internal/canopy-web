@@ -1,0 +1,72 @@
+import type { JSX } from 'react'
+import type { RunnerOut } from '@/api/harness'
+import { wrongBranchAlerts } from './wrongBranch'
+
+// LOUD alert: a runner on any branch but main is silently running stale/wrong
+// code. Two variants (see wrongBranch.ts): a HEARTBEATING runner is fixed on
+// its machine; a QUIET one can never heartbeat its way off the branch — the
+// shown branch is its last report — so the in-place resolve is Retire.
+export function BranchAlerts({
+  runners,
+  retiringId,
+  onRetire,
+}: {
+  runners: readonly RunnerOut[] | null
+  retiringId: string | null
+  onRetire: (runner: RunnerOut) => void
+}): JSX.Element {
+  return (
+    <>
+      {wrongBranchAlerts(runners).map(({ runner: r, unreachable }) => (
+        <div
+          key={`branch-alert-${r.id}`}
+          role="alert"
+          data-testid={`runner-branch-alert-${r.id}`}
+          className="rounded-lg border-2 border-destructive bg-destructive/15 p-3 text-destructive"
+        >
+          <p className="text-[13px] font-bold uppercase tracking-wide">
+            {unreachable ? '⚠ Offline runner stuck on wrong branch' : '⚠ Runner on wrong branch — stale code'}
+          </p>
+          <p className="mt-1 text-[13px] leading-snug">
+            <span className="font-semibold">{r.name}</span>{' '}
+            {unreachable ? 'last reported branch' : 'is running on branch'}{' '}
+            <span className="rounded bg-destructive/20 px-1 font-mono font-semibold">{r.code_branch}</span>, not{' '}
+            <span className="font-mono">main</span>.{' '}
+            {unreachable ? (
+              <>
+                It has <span className="font-semibold">stopped heartbeating</span>, so this alert can never
+                clear on its own.
+              </>
+            ) : (
+              <>
+                Its turns are executing <span className="font-semibold">stale / wrong code</span> — another
+                process likely checked out a branch in the runner's checkout.
+              </>
+            )}
+          </p>
+          <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
+            {unreachable ? 'Bring it back on that machine:' : 'Fix on that machine, then restart the runner:'}
+            <br />
+            <span className="font-mono">git -C ~/emdash-projects/canopy-web checkout main &amp;&amp; git pull</span>
+          </p>
+          {unreachable && (
+            <>
+              <button
+                type="button"
+                data-testid={`retire-runner-${r.id}`}
+                disabled={retiringId === r.id}
+                onClick={() => onRetire(r)}
+                className="mt-2 rounded-md border border-destructive bg-destructive px-2.5 py-1 text-[12px] font-semibold text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+              >
+                {retiringId === r.id ? 'Retiring…' : 'Retire runner'}
+              </button>
+              <p className="mt-1 text-[11px] leading-snug opacity-80">
+                Retiring is permanent for this row and clears the alert; re-pairing later mints a fresh runner.
+              </p>
+            </>
+          )}
+        </div>
+      ))}
+    </>
+  )
+}

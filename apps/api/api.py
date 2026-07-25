@@ -157,6 +157,7 @@ from apps.harness.items_api import (  # noqa: E402
 )
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
+from apps.tokens.exchange_api import exchange_router  # noqa: E402
 
 api.add_router("/projects", projects_router)
 api.add_router("/issues", issues_router)
@@ -166,6 +167,7 @@ api.add_router("", common_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
+api.add_router("/auth", exchange_router)
 api.add_router("/reviews", reviews_router)
 api.add_router("/ddd", runs_router)
 api.add_router("/shareouts", shareouts_router)

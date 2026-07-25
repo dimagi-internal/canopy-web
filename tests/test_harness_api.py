@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness.models import HEARTBEAT_ONLINE_WINDOW, Runner, RunnerAssignment
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
@@ -17,6 +18,11 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture()
 def client():
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    # Pairing requires a resolvable workspace tenant (a workspace-less runner
+    # heartbeats fine but 404s every session report — found on prod 2026-07-25),
+    # so the baseline caller has exactly one, like every real auto-joined user.
+    ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     c = Client()
     c.force_login(user)
     return c
@@ -399,3 +405,46 @@ def test_enqueue_records_the_human_who_launched_the_turn(client, agent):
     assert enq.json()["enqueued_by_email"] == "jj@dimagi.com"
     from apps.harness.models import Turn
     assert Turn.objects.get(idempotency_key="who").enqueued_by.email == "jj@dimagi.com"
+
+
+# --- pairing requires a workspace tenant (2026-07-25 incident) --------------
+# A workspace-less runner is half-broken with no signal: heartbeat and claim
+# work (tenancy derives from paired_by), but POST /runners/{id}/sessions 404s
+# forever, so its sessions silently never appear anywhere.
+
+def _pair_resp(c, **extra):
+    return c.post(
+        "/api/harness/runners/",
+        {"name": "box", "kind": "emdash", "capabilities": {}, **extra},
+        content_type="application/json",
+    )
+
+
+def test_pair_422s_when_the_pairer_belongs_to_no_workspace():
+    u = User.objects.create_user("lonely", "lonely@example.org", "pw")
+    c = Client(); c.force_login(u)
+    resp = _pair_resp(c)
+    assert resp.status_code == 422
+    assert Runner.objects.count() == 0
+
+
+def test_pair_422s_when_the_default_is_ambiguous_without_an_explicit_workspace(client):
+    # A second membership makes user_default_workspace() None — exactly how the
+    # NULL-workspace runner was minted on prod. The error must demand an
+    # explicit workspace rather than silently pairing a broken runner.
+    user = User.objects.get(username="jj")
+    ws2 = Workspace.objects.create(slug="connect", display_name="Connect", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws2, role=WorkspaceMembership.OWNER)
+    resp = _pair_resp(client)
+    assert resp.status_code == 422
+    assert Runner.objects.count() == 0
+    # ...and passing it explicitly works.
+    ok = _pair_resp(client, workspace="connect")
+    assert ok.status_code == 201
+    assert ok.json()["workspace"] == "connect"
+
+
+def test_pair_resolves_the_sole_membership_as_the_workspace(client):
+    resp = _pair_resp(client)
+    assert resp.status_code == 201
+    assert resp.json()["workspace"] == "dimagi"

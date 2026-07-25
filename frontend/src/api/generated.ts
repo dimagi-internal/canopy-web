@@ -530,6 +530,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/auth/token-exchange": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Exchange an app credential for a delegated user token */
+        readonly post: operations["apps_tokens_exchange_api_token_exchange"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/reviews/": {
         readonly parameters: {
             readonly query?: never;
@@ -3414,6 +3431,26 @@ export interface components {
         readonly PersonalTokenCreateIn: {
             /** Label */
             readonly label: string;
+        };
+        /** TokenExchangeOut */
+        readonly TokenExchangeOut: {
+            /** Token */
+            readonly token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+        };
+        /** TokenExchangeIn */
+        readonly TokenExchangeIn: {
+            /** Acting As Email */
+            readonly acting_as_email: string;
+            /**
+             * Ttl Seconds
+             * @default 3600
+             */
+            readonly ttl_seconds: number;
         };
         /**
          * ReviewListItemOut
@@ -7906,6 +7943,30 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_tokens_exchange_api_token_exchange: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TokenExchangeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TokenExchangeOut"];
+                };
             };
         };
     };
