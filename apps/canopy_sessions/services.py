@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import uuid
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -224,12 +225,20 @@ def _placeable_runner(session: Session, runner_id):
     """A runner may be a placement target only if it could actually CLAIM this
     session's turns — its pairer belongs to the session's workspace (mirrors
     claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
-    runner would leave the pinned turn permanently unclaimable). Invisible ids
-    resolve to None so callers 422 exactly like a nonexistent id (no oracle)."""
+    runner would leave the pinned turn permanently unclaimable) AND it is
+    session-capable (capabilities.sessions — the runner-side truth for who
+    may execute a chat turn; a pin can't override that). Invisible ids
+    resolve to None so callers 422 exactly like a nonexistent id (no oracle);
+    a malformed id (not a UUID) resolves to None the same way rather than
+    raising django's ValidationError out of the ORM lookup."""
     from apps.harness.models import Runner
     from apps.workspaces import services as wsvc
 
     if not runner_id:
+        return None
+    try:
+        uuid.UUID(str(runner_id))
+    except (ValueError, AttributeError, TypeError):
         return None
     runner = (
         Runner.objects.filter(id=runner_id, paired_by__isnull=False)
@@ -237,6 +246,8 @@ def _placeable_runner(session: Session, runner_id):
         .first()
     )
     if runner is None:
+        return None
+    if not runner.session_capable():
         return None
     if not wsvc.is_member(runner.paired_by, session.workspace_id):
         return None

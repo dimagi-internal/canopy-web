@@ -173,6 +173,46 @@ def test_send_with_foreign_tenant_placement_is_422(client, ctx):
     assert not Turn.objects.filter(pinned_runner=foreign_runner).exists()
 
 
+def test_send_with_malformed_placement_is_422(client, ctx):
+    # A non-UUID placement string must 422, not 500 — django's ValidationError
+    # from a raw string ORM lookup must never leak past _placeable_runner.
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "placement": "banana"},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+def test_place_with_malformed_placement_is_422(client, ctx, settings):
+    settings.CHAT_STUB_EXECUTOR = False
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    client.post(f"/api/canopy-sessions/{sid}/send", data={"text": "hi"}, content_type="application/json")
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/place", data={"placement": "banana"}, content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+
+
+def test_send_with_sessions_incapable_placement_is_422(client, ctx):
+    # A pin can direct a chat turn to a runner that isn't sessions-capable
+    # unless the server rejects it — such a runner could claim the turn (pins
+    # bypass target/routing matching) but could never bridge the reply back.
+    user, _ws, _agent = ctx
+    incapable = Runner.objects.create(
+        name="incapable", kind=Runner.EMDASH, capabilities={}, paired_by=user,
+    )
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "placement": str(incapable.id)},
+        content_type="application/json",
+    )
+    assert r.status_code == 422, r.content
+    assert not Turn.objects.filter(pinned_runner=incapable).exists()
+
+
 def test_place_with_no_queued_turn_is_404(client):
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(

@@ -143,8 +143,11 @@ export function ChatSessionsPanel({
     setRunnersLoading(true)
     pickedAgentSlugRef.current = agent.slug
     // AgentRunnerOut does NOT carry `capabilities` — this list is just the
-    // agent's assigned runners. If the picked runner isn't sessions-capable,
-    // the server routing safely leaves the turn QUEUED rather than dropping it.
+    // agent's assigned runners, so it may still list a runner that isn't
+    // sessions-capable. The server is the actual gate: picking one here 422s
+    // the send/place call (canopy_sessions.services._placeable_runner rejects
+    // a non-session-capable runner) rather than pinning a turn no runner can
+    // ever claim.
     getAgentRunners(agent.slug)
       .then((options) => {
         if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)

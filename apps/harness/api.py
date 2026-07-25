@@ -709,7 +709,9 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     this runner; body.agents narrows by slug."""
     runner = _runner_or_404(request, runner_id)
     assigned = Agent.objects.filter(runner_assignments__runner=runner)
-    agents = list(assigned.filter(slug__in=payload.agents) if payload.agents else assigned)
+    # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
+    # hits the 422 below, rather than being treated the same as "drill everyone".
+    agents = list(assigned.filter(slug__in=payload.agents) if payload.agents is not None else assigned)
     if not agents:
         raise HttpError(422, "no assigned agents to drill — assign this runner to an agent first")
     return services.start_drill(runner, agents)

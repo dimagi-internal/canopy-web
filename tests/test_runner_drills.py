@@ -15,6 +15,40 @@ from apps.harness.models import Runner, RunnerAssignment, RunnerDrill, Turn
 pytestmark = pytest.mark.django_db
 
 
+def test_start_drill_endpoint_empty_agents_list_is_422(django_user_model):
+    # payload.agents=[] must narrow to "drill nothing" (422), not be treated
+    # the same as omitted/None ("drill everyone assigned").
+    u = django_user_model.objects.create_user(username="o3", password="x")
+    client = Client()
+    client.force_login(u)
+    r = Runner.objects.create(name="s3", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+                              last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    a = Agent.objects.create(slug="echo3", name="echo3")
+    RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
+
+    resp = client.post(
+        f"/api/harness/runners/{r.id}/drill", data={"agents": []}, content_type="application/json",
+    )
+    assert resp.status_code == 422, resp.content
+
+
+def test_start_drill_endpoint_omitted_agents_drills_all_assigned(django_user_model):
+    u = django_user_model.objects.create_user(username="o4", password="x")
+    client = Client()
+    client.force_login(u)
+    r = Runner.objects.create(name="s4", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+                              last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    a1, a2 = (Agent.objects.create(slug=s, name=s) for s in ("echo4", "ada4"))
+    for i, a in enumerate((a1, a2)):
+        RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
+
+    resp = client.post(
+        f"/api/harness/runners/{r.id}/drill", data={}, content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    assert len(resp.json()) == 2
+
+
 def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="standby", kind=Runner.EMDASH, capabilities={}, paired_by=u,

@@ -286,7 +286,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         target_q = target_q | session_leg
     # A pin trumps target/routing matching (but NOTHING else): a turn pinned to
     # this runner is claimable even with empty capabilities — that is what lets a
-    # warm standby be drilled. A turn pinned elsewhere is invisible.
+    # warm standby be drilled. A turn pinned elsewhere is invisible. Note the pin
+    # arm also bypasses exclude_slugs (the per-agent LOCAL pause) — deliberately:
+    # a pin is a drill or an explicit placement, i.e. operator intent, and that
+    # intent should not be silently swallowed by a pause the operator set for
+    # unrelated routed traffic on the same agent.
     match_q = Q(pinned_runner=runner) | (target_q & routing_q)
     candidates = list(
         Turn.objects.filter(status=Turn.QUEUED)

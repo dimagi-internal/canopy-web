@@ -58,8 +58,9 @@ class Agent(models.Model):
     # Ordered runner-KIND preference, e.g. ["cloud", "emdash"]. As of the
     # directed-runner-routing cascade (spec 2026-07-24), agent-turn claim
     # eligibility is decided by RunnerAssignment rank instead — this field is no
-    # longer read by harness.services.claim_next_turn. Retained for the UI/API
-    # surfaces that still display/edit it (see frontend runnerPriority.ts).
+    # longer read by harness.services.claim_next_turn. Retained only for the
+    # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
+    # AgentIn during the deprecation window.
     runner_preference = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

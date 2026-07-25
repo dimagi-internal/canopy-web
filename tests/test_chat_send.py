@@ -225,6 +225,48 @@ def test_send_placement_foreign_tenant_runner_raises_value_error():
     assert not Turn.objects.filter(pinned_runner=foreign_runner).exists()
 
 
+def test_send_placement_malformed_runner_id_raises_value_error():
+    # A malformed (non-UUID) placement string must not blow past ValueError into
+    # django's ValidationError from the ORM lookup — it 422s exactly like an
+    # unknown id (_placeable_runner validates the string before filtering).
+    user = User.objects.create_user("o10", "o10@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-send-malformed", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    with pytest.raises(ValueError):
+        chat.send_message(
+            session=session, text="hi", user=user, client_id="c10", placement="banana",
+        )
+
+
+def test_place_malformed_runner_id_raises_value_error():
+    user = User.objects.create_user("o11", "o11@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-place-malformed", display_name="W", created_by=user)
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    chat.send_message(session=session, text="hi", user=user, client_id="c11")
+    with pytest.raises(ValueError):
+        chat.place_queued_turn(session=session, placement="banana")
+
+
+def test_send_placement_sessions_incapable_runner_raises_value_error():
+    # A pin can't route a chat turn to a runner that declares no sessions
+    # capability — it would claim the turn (pins bypass target/routing) but
+    # could never bridge it. _placeable_runner must reject it like a foreign
+    # or unknown runner.
+    user = User.objects.create_user("o12", "o12@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-send-incapable", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
+    incapable = Runner.objects.create(
+        name="incapable", kind=Runner.EMDASH, capabilities={}, paired_by=user,
+    )
+    session = Session.objects.create(workspace=ws, project="canopy-web")
+    with pytest.raises(ValueError):
+        chat.send_message(
+            session=session, text="hi", user=user, client_id="c12",
+            placement=str(incapable.id),
+        )
+    assert not Turn.objects.filter(pinned_runner=incapable).exists()
+
+
 def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     # Same gap, after-the-fact: place_queued_turn must reject a runner whose
     # pairer isn't a member of the session's workspace, and must leave the
