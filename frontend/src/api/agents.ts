@@ -198,20 +198,6 @@ export async function listPendingCommands(slug: string): Promise<AgentCommandOut
   return listAgentCommands(slug, 'pending')
 }
 
-// Update an agent's ordered runner-kind preference (the runner-order UI). A
-// dedicated PATCH so it never clobbers the agent's other fields. Returns the
-// refreshed agent detail.
-export async function updateAgentRunnerPreference(
-  slug: string,
-  runnerPreference: readonly string[],
-): Promise<AgentDetailOut> {
-  const res = await apiV2.PATCH('/api/agents/{slug}/runner-preference', {
-    params: { path: { slug } },
-    body: { runner_preference: [...runnerPreference] },
-  })
-  return normalizeAgentDetail(unwrap(res, 'updateAgentRunnerPreference'))
-}
-
 // The ordered runner-assignment API (the routing-matrix UI's read/write
 // model) — supersedes the deprecated kind-based runner_preference above.
 export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {

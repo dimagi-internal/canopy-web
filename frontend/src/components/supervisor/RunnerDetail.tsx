@@ -1,25 +1,24 @@
 import { useState, type JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
-import { RunnerOrder } from '@/components/agents/RunnerOrder'
-import { agentsForKind, ordinal } from './runnerPriority'
+import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
 // (online ∧ ready — a stale runner reporting last-known ready=true is NOT), what
 // agents/repos it can drive, and who paired it (the owner that governs what it may
-// work for). Plus which agents prioritize this runner's KIND — editable in place.
+// work for). Below that, the fleet-wide routing matrix — editable in place, so
+// "which agents route to me, and at what rank" is answerable without leaving the
+// runner detail view. (Assignments are now per-RUNNER, not per-kind, so there is
+// no cheap query for "agents that include just this runner" — the matrix's chips
+// already surface this runner's name/rank wherever it appears.)
 export function RunnerDetail({
   runner,
   agents,
-  runners,
-  onAgentSaved,
   onBack,
 }: {
   runner: RunnerOut
   agents: AgentOut[]
-  runners: RunnerOut[]
-  onAgentSaved: (slug: string, pref: string[]) => void
   onBack: () => void
 }): JSX.Element {
   const online = runner.status === 'online'
@@ -32,7 +31,6 @@ export function RunnerDetail({
       ? { text: 'not ready', cls: 'bg-destructive/15 text-destructive' }
       : { text: runner.status || 'offline', cls: 'bg-muted text-muted-foreground' }
   const caps = (runner.capabilities ?? {}) as { agents?: string[]; projects?: string[] }
-  const { ranked, acceptsAll } = agentsForKind(agents, runner.kind)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const toggle = (slug: string) =>
     setExpanded((prev) => {
@@ -49,7 +47,7 @@ export function RunnerDetail({
     </div>
   )
 
-  const agentRow = (a: AgentOut, badge: string) => (
+  const agentRow = (a: AgentOut) => (
     <div key={a.slug} className="rounded-md border border-border bg-background">
       <button
         type="button"
@@ -58,18 +56,11 @@ export function RunnerDetail({
         data-testid={`runner-priority-agent-${a.slug}`}
       >
         <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{a.name}</span>
-        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{badge}</span>
         <span className="shrink-0 text-muted-foreground">{expanded.has(a.slug) ? '▾' : '▸'}</span>
       </button>
       {expanded.has(a.slug) && (
         <div className="px-2 pb-2">
-          <RunnerOrder
-            slug={a.slug}
-            name={a.name}
-            preference={a.runner_preference ?? []}
-            runners={runners}
-            onSaved={(pref) => onAgentSaved(a.slug, pref)}
-          />
+          <RunnerAssignments agentSlug={a.slug} />
         </div>
       )}
     </div>
@@ -104,21 +95,13 @@ export function RunnerDetail({
         {row('status', runner.status ?? 'unknown')}
       </div>
 
-      {/* Which agents route work to this runner's KIND, and how strongly. */}
+      {/* The fleet-wide routing matrix, expandable per agent — no cheap query for
+          "agents that route to just this runner" now that assignments are
+          per-runner rather than per-kind (see file header). */}
       <div className="flex flex-col gap-1.5" data-testid="runner-priority">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Agent priority · {runner.kind || 'unknown'}
-        </span>
-        {ranked.length === 0 && acceptsAll.length === 0 && (
-          <p className="text-[12px] text-muted-foreground">No agents prioritize this runner kind.</p>
-        )}
-        {ranked.map((r) => agentRow(r.agent, ordinal(r.rank)))}
-        {acceptsAll.length > 0 && (
-          <>
-            <span className="mt-1 text-[11px] text-foreground-subtle">any — accepts all kinds</span>
-            {acceptsAll.map((a) => agentRow(a, 'any'))}
-          </>
-        )}
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Agent routing</span>
+        {agents.length === 0 && <p className="text-[12px] text-muted-foreground">No agents.</p>}
+        {agents.map((a) => agentRow(a))}
       </div>
     </div>
   )
