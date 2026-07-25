@@ -54,9 +54,15 @@ class BearerTokenAuthMiddleware:
         from apps.tokens.models import PersonalToken
 
         token = PersonalToken.lookup(raw)
-        if token is None:
+        if token is not None:
+            PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
+            request.user = token.user
+            request._dont_enforce_csrf_checks = True
             return
 
-        PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
-        request.user = token.user
-        request._dont_enforce_csrf_checks = True
+        from apps.tokens.models import DelegatedToken
+
+        dtok = DelegatedToken.lookup(raw)
+        if dtok is not None and dtok.user.is_active:
+            request.user = dtok.user
+            request._dont_enforce_csrf_checks = True
