@@ -139,7 +139,7 @@ export function InviteAcceptPage(): JSX.Element | null {
         </p>
         <a
           href={loginHref(currentPath)}
-          className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+          className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
           Sign in with Google to accept
         </a>

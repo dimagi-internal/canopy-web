@@ -1,4 +1,6 @@
-"""Social account adapter enforcing an email-domain allowlist."""
+"""Allauth adapters: close local signup, and gate social login on the
+email-domain allowlist (or a pending workspace invite)."""
+from allauth.account.adapter import DefaultAccountAdapter
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.contrib.auth import get_user_model
@@ -101,3 +103,26 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         matches = list(User.objects.filter(email__iexact=email)[:2])
         if len(matches) == 1:
             sociallogin.connect(request, matches[0])
+
+
+class CustomAccountAdapter(DefaultAccountAdapter):
+    """Close local (username/password) signup entirely.
+
+    Allauth's URLconf is mounted whole, which ships an OPEN
+    `/accounts/signup/` form by default. That route bypasses
+    CustomSocialAccountAdapter completely, so a stranger could register any
+    address — including one at an allowlisted domain — with a self-chosen
+    password and be auto-joined to the workspaces that trust that domain,
+    never touching Google. Every legitimate identity here comes from the
+    social provider (or is provisioned server-side by a management command
+    with an unusable password), so nothing is lost by closing it.
+
+    NOTE: `ACCOUNT_LOGIN_METHODS` / `ACCOUNT_SIGNUP_FIELDS` in settings are
+    allauth>=65 names and are INERT on the pinned 0.63.x — they look like
+    they restrict signup and do not. This adapter is the control that
+    actually works; do not remove it in favour of those settings without
+    first confirming the installed allauth version reads them.
+    """
+
+    def is_open_for_signup(self, request):
+        return False
