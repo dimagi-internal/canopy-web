@@ -45,6 +45,13 @@ _last_session_report = 0.0
 _last_branch_check = 0.0
 _cached_branch = ""
 
+# RC-cancel: turn ids the user asked to stop, relayed down the wake listener's
+# control channel as `{"type": "cancel", "turn_id": ...}` frames (see WakeListener's
+# on_control). The bridge poll loop (Task 8) checks membership here to interrupt a
+# running turn; module-scoped so the wake listener's callback and the executor share
+# one set for the process's lifetime without threading extra state through the loop.
+CANCELLED_TURNS: set[str] = set()
+
 
 def _code_branch(now_fn=time.monotonic) -> str:
     """The git branch of the runner's OWN checkout (best-effort, throttled+cached).
@@ -608,7 +615,12 @@ def main() -> None:
     # instead of waiting out poll_seconds. Additive + best-effort — polling stays the
     # fallback and still owns heartbeat/claim/execute; off if websocket-client is absent.
     from .wake import WakeListener
-    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id)
+
+    def _on_control(msg: dict) -> None:
+        if msg.get("type") == "cancel" and msg.get("turn_id"):
+            CANCELLED_TURNS.add(str(msg["turn_id"]))
+
+    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id, on_control=_on_control)
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")

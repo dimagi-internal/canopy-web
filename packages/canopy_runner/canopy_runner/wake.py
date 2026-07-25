@@ -25,22 +25,27 @@ def ws_url(base_url: str, runner_id: str) -> str:
 
 
 class WakeListener:
-    def __init__(self, base_url: str, token: str, runner_id: str, *, recv_timeout: int = 30):
+    def __init__(self, base_url: str, token: str, runner_id: str, *, recv_timeout: int = 30,
+                 on_control=None):
         self.event = threading.Event()
         self._url = ws_url(base_url, runner_id)
         self._token = token
         self._recv_timeout = recv_timeout
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.on_control = on_control
 
     def _handle(self, raw: str) -> None:
-        """Set the wake event on a `wake` frame; ignore everything else."""
+        """Set the wake event on a `wake` frame; route other control frames (cancel,
+        interject, stream) to on_control; ignore malformed lines."""
         try:
             msg = json.loads(raw)
         except (ValueError, TypeError):
             return
         if msg.get("type") == "wake":
             self.event.set()
+        elif self.on_control is not None and msg.get("type"):
+            self.on_control(msg)
 
     def start(self) -> bool:
         """Begin listening. Returns False (poll-only) if websocket-client is absent."""
