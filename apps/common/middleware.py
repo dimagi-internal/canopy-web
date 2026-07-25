@@ -77,6 +77,34 @@ def _is_walkthrough_link(request) -> bool:
     )
 
 
+_INVITE_TOKEN_LINK = re.compile(r"^/api/workspaces/invites/[^/]+/(preview|accept)$")
+
+
+def _is_invite_link(request) -> bool:
+    # /api/workspaces/invites/<token>/preview (auth=None — lets a not-yet-logged-in
+    # visitor see what they were invited to before OAuth) and
+    # /api/workspaces/invites/<token>/accept (already requires a session via Ninja's
+    # own session_auth; letting an anonymous call through the middleware just moves
+    # which layer issues the 401). Matched as an EXACT route shape, not a blanket
+    # "/api/workspaces/invites/" prefix: the owner-only invite CRUD routes live at
+    # /api/workspaces/{slug}/invites/... and would collide with that broader prefix
+    # if a workspace's slug were literally "invites" (e.g.
+    # /api/workspaces/invites/invites/ = list-invites for that workspace). Ninja's
+    # own per-route auth (session_auth + _require_role) would still gate those even
+    # under a blanket prefix, but this regex removes the ambiguity outright instead
+    # of relying on that second layer.
+    #
+    # /invite/<token> (SPA shell) is also allowlisted here: the invitee has no
+    # session yet (may not even be a Dimagi address), so the accept page must
+    # render for them before OAuth — it calls the preview endpoint above to
+    # render, and only needs a session at the moment they click Accept (which
+    # 401s through Ninja's own auth if they somehow reach it unauthenticated).
+    path = request.path
+    if path.startswith("/invite/"):
+        return True
+    return bool(_INVITE_TOKEN_LINK.match(path))
+
+
 def _is_ddd_release_link(request) -> bool:
     # /ddd-release/<slug>/<run_id> (SPA shell) and the read API
     # (/api/ddd/release/<run_id>/) self-enforce the ?t=<share_token> gate (or a
@@ -116,6 +144,7 @@ class LoginRequiredMiddleware:
             or _is_review_link(request.path)
             or _is_share_link(request.path)
             or _is_ddd_release_link(request)
+            or _is_invite_link(request)
         ):
             return self.get_response(request)
 

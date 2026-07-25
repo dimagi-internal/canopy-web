@@ -204,6 +204,13 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 
 # allauth
 ACCOUNT_EMAIL_VERIFICATION = "none"
+# Identity comes from Google only: close the local username/password signup
+# form that allauth.urls otherwise exposes at /accounts/signup/ (it bypasses
+# the social adapter's domain/invite gate entirely).
+ACCOUNT_ADAPTER = "apps.common.auth_adapter.CustomAccountAdapter"
+# NB: the two settings below are allauth>=65 names and are INERT on the
+# pinned 0.63.x. Kept for the eventual upgrade; they are NOT what closes
+# signup today — ACCOUNT_ADAPTER above is.
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*"]
 SOCIALACCOUNT_LOGIN_ON_GET = True

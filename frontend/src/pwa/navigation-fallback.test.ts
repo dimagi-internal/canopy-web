@@ -22,6 +22,7 @@ describe('navigate-fallback ownership', () => {
       '/reviews',
       '/review/abc',
       '/share/tok123',
+      '/invite/tok123',
       '/ddd-release/nutrition-demo/run-1',
       '/w/connect',
       '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',

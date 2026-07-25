@@ -78,6 +78,7 @@ the active workspace. `/ddd-plans` and `/reviews` now redirect to `/`.
 - `/w/:workspace/walkthroughs` — Sharable demos uploaded from `/canopy:walkthrough`
 - `/w/:workspace/ddd` (+ `/ddd/:narrative`, `/ddd/:narrative/:runId`) — Demo-driven-development (DDD) views: narrative → version → run → package (video + deck + narrative + links)
 - `/w/:workspace/agents` — First-class AI agents list (e.g. "Echo")
+- `/w/:workspace/members` — Members + invites admin surface (owner-only actions): list members, remove a member, invite by email, list/revoke pending invites. Canopy sends no email — invite by copying the generated `/invite/:token` link and sending it yourself.
 - `/w/:workspace/agents/:slug` — Agent workspace: a full-bleed rail + scrolling main built on `canopy-ui`. Sub-routes (rail): **Inbox** (the default landing — the agent's OPEN `Item`s, ranked review→question, decidable in place; legacy `needs-you` path 302s here), Overview, Tasks (the "who has the ball" board), **Items** (the full item ledger incl. decided/dismissed; `?batch=<key>` renders one sitting, e.g. a fleet audit), Turns (packaged units of work + optional transcript), Schedules, Syncs, Work products, Skills
 - `/w/:workspace/schedules` — Weekly calendar of that workspace's recurring schedules
 - `/w/:workspace/chat` — Session-centric chat home: a findable list of your chat sessions to continue from any device + "New chat with `<agent>`". Reusable `ChatSessionsPanel` (cross-workspace); supervisor's Sessions tab embeds it (with the grouped-by-project `OpenSessions` view). "Chats" nav entry.
@@ -92,6 +93,7 @@ the active workspace. `/ddd-plans` and `/reviews` now redirect to `/`.
 - `/settings` — AI backend status, switch backends, headless Claude CLI auth, theme toggle, and debug-session minting (consolidated under the user menu)
 - `/walkthrough/:id` — Single walkthrough viewer (HTML iframe or video player). Reclaimed from `/w/:id` when `/w/` became the tenant prefix; a legacy `/w/<uuid>/content` link 302-redirects here
 - `/review/:id` — Editable narrative review surface for DDD (approve / redraft a story before build); public (link-visibility) reviews are readable by anyone with the URL, but submitting a decision requires a Dimagi login
+- `/invite/:token` — Accept-invite page (deliberately outside `/w/:workspace/`: an invitee has no membership yet, so there's no tenant to scope into). Pre-auth, previews the invite (masked email, workspace name, role) via `GET /api/workspaces/invites/{token}/preview`; accepting requires a Dimagi (or invite-admitted) login
 - `/share/:token` — Public, chrome-less read-only viewer for a shared session (no login; mounted outside the app shell)
 - `/api/` — REST API
 - `/admin/` — Django admin
@@ -140,7 +142,10 @@ The tenant that owns agents + runs. `Workspace` + members (owner / editor / view
 - `POST /api/workspaces/{slug}/invites/` — Invite by email (owner-only)
 - `GET /api/workspaces/{slug}/invites/` — List invites (member-only)
 - `POST /api/workspaces/{slug}/invites/{invite_id}/revoke` — Revoke an invite (owner-only)
+- `GET /api/workspaces/invites/{token}/preview` — Pre-auth invite preview (`auth=None`; minimal disclosure — a dead token reveals only that it's dead, never which workspace it pointed at). Drives `/invite/:token`
 - `POST /api/workspaces/invites/{token}/accept` — Accept an invite
+
+**`dimagi` is the only auto-join workspace; every other workspace is invite-only.** `auto_join_domains` (non-empty only for `dimagi`, seeded from `AUTH_ALLOWED_EMAIL_DOMAIN` by `ensure_default_workspace()`) is server-only — never client-settable (`WorkspaceCreateIn` has no such field; `StrictModel` 422s a request that sends it anyway) — so getting into any other workspace means an owner invites you by email from `/w/:workspace/members` and you accept via the emailed-by-hand `/invite/:token` link (canopy sends no email itself; copy the link and send it yourself, e.g. Slack/email). Audit production for drift with `uv run python manage.py audit_auto_join` (reports every workspace with non-empty `auto_join_domains` — slug, domains, member count); `--fix` clears it on every workspace except `dimagi`. Safe to run repeatedly.
 
 ### Issues (`apps/issues`)
 A `canopy.origin` record store — GitHub issue provenance / evidence capture (the issues ACE files as it runs).

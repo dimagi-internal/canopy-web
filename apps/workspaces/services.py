@@ -7,13 +7,19 @@ after scoping turns on.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
+from django.utils import timezone
 
-from .models import Workspace, WorkspaceMembership
+from .models import Workspace, WorkspaceInvite, WorkspaceMembership, generate_invite_token
 
 DEFAULT_WORKSPACE_SLUG = "dimagi"
 DEFAULT_WORKSPACE_NAME = "Dimagi"
+
+INVITE_TTL_DAYS = 14
 
 
 def allowed_domains() -> list[str]:
@@ -150,3 +156,211 @@ def current_workspace(user, explicit: str | None = None) -> Workspace:
     if ws is None:
         raise ValueError("no unambiguous workspace for user; specify one")
     return ws
+
+
+# ---- invites ----
+
+
+class InviteError(Exception):
+    """Raised by `accept_invite` for any reason acceptance can't proceed.
+
+    `.code` is a closed set an HTTP layer (or the OAuth login gate in Task 2)
+    maps to a status/decision: not_found, expired, revoked, already_accepted,
+    email_mismatch.
+    """
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def create_invite(
+    *, workspace: Workspace, email: str, role: str, invited_by
+) -> WorkspaceInvite:
+    """Create (or reuse) an invite for `email` to join `workspace` at `role`.
+
+    A "live" row for the same (workspace, email) — meaning never accepted,
+    never revoked — is reused REGARDLESS of expiry: this is the same row the
+    partial unique constraint treats as live (its condition doesn't consider
+    `expires_at`), so an ordinary re-invite after a lapsed 14-day TTL must
+    re-arm that same row rather than try to create a sibling and collide with
+    it. Reuse refreshes the row in place: a fresh token, a fresh expiry, and
+    the newly-requested role (unlike reusing a still-pending invite, where
+    the existing role/token/expiry stand as-is). Email is normalized to
+    lowercase. Belt-and-braces: if a genuinely concurrent call still races
+    past the `existing` check, the `.create()` IntegrityError is caught and
+    the winning row is re-fetched and returned instead of raising.
+    """
+    email = (email or "").strip().lower()
+    existing = (
+        WorkspaceInvite.objects.filter(
+            workspace=workspace, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if existing is not None:
+        if not existing.is_pending():  # never actioned, but its TTL lapsed — re-arm it
+            existing.token = generate_invite_token()
+            existing.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
+            existing.role = role
+            existing.save(update_fields=["token", "expires_at", "role"])
+        return existing
+    try:
+        return WorkspaceInvite.objects.create(
+            workspace=workspace,
+            email=email,
+            role=role,
+            invited_by=invited_by,
+            expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
+        )
+    except IntegrityError:
+        # A concurrent caller won the race and inserted the live row first;
+        # return it instead of surfacing an unhandled 500 to this caller.
+        return WorkspaceInvite.objects.get(
+            workspace=workspace, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+
+
+def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
+    """Accept an invite by token on behalf of `user`.
+
+    Returns (workspace, role) — role is the user's resulting membership role,
+    which is their EXISTING role if they were already a member at a different
+    role (get_or_create semantics: acceptance never changes an existing role).
+    Raises InviteError on any invalid state; never mutates on failure.
+    """
+    try:
+        inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
+    except WorkspaceInvite.DoesNotExist:
+        raise InviteError("not_found")
+    if inv.accepted_at is not None:
+        raise InviteError("already_accepted")
+    if inv.revoked_at is not None:
+        raise InviteError("revoked")
+    if inv.expires_at <= timezone.now():
+        raise InviteError("expired")
+    if inv.email and (getattr(user, "email", "") or "").lower() != inv.email.lower():
+        raise InviteError("email_mismatch")
+    m, _ = WorkspaceMembership.objects.get_or_create(
+        workspace=inv.workspace, user=user,
+        defaults={"role": inv.role, "invited_by": inv.invited_by},
+    )
+    inv.accepted_at = timezone.now()
+    inv.save(update_fields=["accepted_at"])
+    return inv.workspace, m.role
+
+
+def revoke_invite(*, invite: WorkspaceInvite) -> None:
+    """Revoke a pending invite. Idempotent: a no-op on an already-revoked or
+    already-accepted invite (never reopens an accepted one). Refreshes from
+    the DB first so a caller holding a stale in-memory copy (e.g. fetched
+    before a concurrent accept) still gets the correct, current guard."""
+    invite.refresh_from_db(fields=["accepted_at", "revoked_at"])
+    if invite.accepted_at is None and invite.revoked_at is None:
+        invite.revoked_at = timezone.now()
+        invite.save(update_fields=["revoked_at"])
+
+
+def invite_status(invite: WorkspaceInvite) -> str:
+    """Classify an invite's current lifecycle state for the pre-auth preview
+    endpoint. One of `pending` | `expired` | `revoked` | `accepted` — checked
+    in the same priority order as `accept_invite`'s guards (accepted wins over
+    revoked, which wins over a lapsed TTL), so the two never disagree."""
+    if invite.accepted_at is not None:
+        return "accepted"
+    if invite.revoked_at is not None:
+        return "revoked"
+    if invite.expires_at <= timezone.now():
+        return "expired"
+    return "pending"
+
+
+def mask_email(email: str) -> str:
+    """Mask an email's local part for pre-auth disclosure: keep the domain (so
+    the right person recognizes their own invite) but never reveal the full
+    local part — not even a 1-2 char one. Keeps only the first character and
+    replaces the rest with a fixed-width mask (never leaks the local part's
+    actual length either)."""
+    email = (email or "").strip()
+    if "@" not in email:
+        return "•••"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"•••@{domain}"
+    return f"{local[0]}•••@{domain}"
+
+
+def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
+    """The most recent LIVE (pending) invite addressed to `email`, or None.
+
+    Case-insensitive; ignores expired/revoked/accepted rows. Used by the OAuth
+    login adapter to help decide whether an otherwise-non-allowlisted email
+    may clear the login gate (see `email_admitted_outside_domain`). This
+    function does NOT itself join anyone to anything — it does not auto-join
+    a fresh signup, and never will: the ONLY path that creates a
+    WorkspaceMembership from an invite is `accept_invite`, called explicitly
+    by the user after they sign in. Do not "restore" auto-join behavior here.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    candidate = (
+        WorkspaceInvite.objects.filter(
+            email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if candidate is not None and candidate.is_pending():
+        return candidate
+    return None
+
+
+def email_admitted_outside_domain(email: str) -> bool:
+    """Whether `email` may clear the OAuth login gate despite failing the
+    global domain allowlist — the right question is NOT just "is there a
+    pending invite", it's "does this email have any legitimate workspace
+    standing right now": either it already belongs to a user holding at
+    least one `WorkspaceMembership` (e.g. a previously-accepted invitee), OR
+    there is a currently-live invite for it.
+
+    Treating "pending invite only" as the whole answer 403s an accepted
+    invitee on their very next login (accepting clears `pending`), which
+    just pushes operators toward leaving invites open indefinitely — a
+    strictly worse security posture than checking membership too. The
+    trade-off this accepts: removing a user's last `WorkspaceMembership`
+    does not revoke an already-open browser session, only their NEXT login.
+
+    This is a LOGIN-GATE check only — it never creates, and must never be
+    made to create, a `WorkspaceMembership`; only `accept_invite` does that.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    if WorkspaceMembership.objects.filter(user__email__iexact=email).exists():
+        return True
+    return pending_invite_for_email(email) is not None
+
+
+def can_create_workspace(user) -> bool:
+    """Gate on workspace CREATION (not on membership/access itself): an
+    invite-admitted user who is not yet a member of anything must not be
+    able to bootstrap their own workspace and mint invites of their own —
+    otherwise invite-admission is transitively delegable to an attacker
+    (create a workspace, invite arbitrary addresses, each newly-invited
+    address then clears the login gate too) — see the F1 security finding
+    on the invite-aware login gate.
+
+    Allowed iff EITHER the caller's own email domain is on the global
+    allowlist (an ordinary Dimagi/partner account, not merely
+    invite-admitted), OR the caller already holds at least one
+    `WorkspaceMembership` (so an accepted invitee has the same ordinary
+    standing as anyone else once they've actually joined something).
+    """
+    from apps.common.auth_domains import email_in_allowlist
+
+    email = getattr(user, "email", "") or ""
+    if email_in_allowlist(email):
+        return True
+    return WorkspaceMembership.objects.filter(user=user).exists()

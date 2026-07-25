@@ -60,6 +60,7 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?review\//, // /review/:id surface
   /^\/(canopy\/)?walkthrough\//, // /walkthrough/:id VIEWER shell (…/content denied below)
   /^\/(canopy\/)?share\//, // /share/:token public viewer
+  /^\/(canopy\/)?invite\//, // /invite/:token accept page
 ]
 
 /**

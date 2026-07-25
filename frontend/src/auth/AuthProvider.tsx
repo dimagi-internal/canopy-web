@@ -15,6 +15,10 @@ const AuthContext = createContext<AuthState>({ status: 'loading', user: null })
 // the API self-enforces (private resources 404 to anonymous callers).
 // Legacy /w/<uuid> walkthrough links pass too (the router redirects them to
 // /walkthrough/<uuid>), but /w/<workspace> tenant paths stay behind the gate.
+// /invite/<token> is the odd one out: the invitee has no Dimagi session (may
+// not even be a Dimagi address), so the accept page must render for an
+// anonymous visitor — it self-enforces via the token-gated preview/accept
+// endpoints, same shape as the others.
 const LEGACY_WALKTHROUGH_RE =
   /^\/w\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i
 function isPublicLinkRoute(): boolean {
@@ -25,6 +29,7 @@ function isPublicLinkRoute(): boolean {
     path.startsWith('/walkthrough/') ||
     path.startsWith('/share/') ||
     path.startsWith('/ddd-release/') ||
+    path.startsWith('/invite/') ||
     LEGACY_WALKTHROUGH_RE.test(path)
   )
 }
