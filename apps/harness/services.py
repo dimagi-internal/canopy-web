@@ -184,7 +184,10 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
     The claim path layers routing_q, the pin arm, the availability cascade, and
     the per-candidate refinements on top; this is the coarse target match.
     """
-    agent_leg = Q(agent__runner_assignments__runner=runner)
+    # Both conditions on the SAME assignment row (a single Q, not two ANDed Qs)
+    # so they share the join — a disabled row for this runner must not match
+    # via some OTHER enabled row on the same agent.
+    agent_leg = Q(agent__runner_assignments__runner=runner, agent__runner_assignments__enabled=True)
     if exclude_slugs:
         # Per-agent pause: the runner locally paused these agents; never claim their
         # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
@@ -410,8 +413,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     }
     assignment_map: dict = {}
     if agent_ids:
+        # enabled=True only: a disabled row must neither claim (it's excluded from
+        # `rows`, so `mine` in _assignment_allows_for_agent comes back None) nor
+        # count as a better-ranked availability blocker for a lower enabled rank.
         rows = (
-            RunnerAssignment.objects.filter(agent_id__in=agent_ids)
+            RunnerAssignment.objects.filter(agent_id__in=agent_ids, enabled=True)
             .select_related("runner").order_by("rank")
         )
         for row in rows:

@@ -41,6 +41,7 @@ function agentRunner(id: string, overrides: Partial<AgentRunnerOut> = {}): Agent
     rank: 1,
     online: true,
     ready: true,
+    enabled: true,
     ...overrides,
   }
 }

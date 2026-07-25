@@ -32,7 +32,11 @@ export function RunnerDetail({
       ? { text: 'not ready', cls: 'bg-destructive/15 text-destructive' }
       : { text: runner.status || 'offline', cls: 'bg-muted text-muted-foreground' }
   const caps = (runner.capabilities ?? {}) as { agents?: string[]; projects?: string[] }
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  // Every agent row starts EXPANDED — opening a runner's detail should show
+  // the assignment editor rows without an extra click (the routing tab is
+  // gone; this is now where routing gets edited). A small fleet makes
+  // "expand every row" cheap, so simplicity wins over a per-row default.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(agents.map((a) => a.slug)))
   const toggle = (slug: string) =>
     setExpanded((prev) => {
       const next = new Set(prev)

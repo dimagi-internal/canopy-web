@@ -5,8 +5,15 @@ import { listRunners, type RunnerOut } from '@/api/harness'
 // The routing-matrix row: which RUNNERS (not kinds) this agent will route to, in
 // rank order. Supersedes RunnerOrder's kind-based `runner_preference` — a rank is
 // now a specific paired runner, not a class of runner. Every mutation (reorder,
-// remove, add) computes the full ordered id list and PUTs it optimistically
+// toggle, add) computes the full ordered rows list and PUTs it optimistically
 // (local state first, revert on failure) so the row never blocks on a round-trip.
+//
+// There is deliberately NO removal affordance. What used to be "×" (drop the
+// runner from the list) is now a toggle: clicking it flips `enabled` and PUTs
+// the full rows list. A disabled row stays in the list — rank preserved,
+// rendered greyed — it just never routes (apps/harness/services.py's claim
+// path excludes it entirely). Re-adding an already-listed-but-disabled runner
+// from the + menu just re-enables it in place.
 
 const KIND_GLYPH: Record<string, string> = {
   emdash: 'emdash',
@@ -23,45 +30,62 @@ function dotTitle(r: AgentRunnerOut): string {
   return r.ready ? 'online — ready' : 'online — not ready'
 }
 
-// Pure id-list transforms, extracted so the ordering logic is unit-testable
-// without a React renderer (see RunnerAssignments.test.tsx).
-export function nextIdsForMove(rows: readonly AgentRunnerOut[], i: number, d: -1 | 1): string[] | null {
+// The rows form PUT sends: {runnerId, enabled}, index = rank. Pure
+// row-list transforms, extracted so the logic is unit-testable without a
+// React renderer (see RunnerAssignments.test.tsx).
+export type RunnerRow = { runnerId: string; enabled: boolean }
+
+function toRows(rows: readonly AgentRunnerOut[]): RunnerRow[] {
+  return rows.map((r) => ({ runnerId: r.runner_id, enabled: r.enabled }))
+}
+
+export function nextRowsForMove(rows: readonly AgentRunnerOut[], i: number, d: -1 | 1): RunnerRow[] | null {
   const j = i + d
   if (j < 0 || j >= rows.length) return null
-  const ids = rows.map((r) => r.runner_id)
-  ;[ids[i], ids[j]] = [ids[j], ids[i]]
-  return ids
+  const next = toRows(rows)
+  ;[next[i], next[j]] = [next[j], next[i]]
+  return next
 }
 
-export function nextIdsForRemove(rows: readonly AgentRunnerOut[], id: string): string[] {
-  return rows.filter((r) => r.runner_id !== id).map((r) => r.runner_id)
+// Replaces the old remove — flips `enabled` in place, rank untouched. This is
+// the whole of what used to be the "×" remove button: no row is ever dropped
+// from the list by user action anymore.
+export function nextRowsForToggle(rows: readonly AgentRunnerOut[], id: string): RunnerRow[] {
+  return toRows(rows).map((r) => (r.runnerId === id ? { ...r, enabled: !r.enabled } : r))
 }
 
-export function nextIdsForAdd(rows: readonly AgentRunnerOut[], id: string): string[] {
-  return [...rows.map((r) => r.runner_id), id]
+// Adding an id already in the list (a disabled row) re-enables it in place
+// rather than duplicating it; a genuinely new id is appended enabled.
+export function nextRowsForAdd(rows: readonly AgentRunnerOut[], id: string): RunnerRow[] {
+  const existing = toRows(rows)
+  if (existing.some((r) => r.runnerId === id)) {
+    return existing.map((r) => (r.runnerId === id ? { ...r, enabled: true } : r))
+  }
+  return [...existing, { runnerId: id, enabled: true }]
 }
 
-// Build the optimistic row list for a next-id ordering: rows we already know
-// about are re-ranked in place; an id not yet in `prev` (a fresh add) is
-// patched in from the fleet list so the chip renders immediately instead of
-// flashing empty until the PUT returns.
+// Build the optimistic row list for a next-rows ordering: rows we already
+// know about are re-ranked/re-enabled in place; an id not yet in `prev` (a
+// fresh add) is patched in from the fleet list so the chip renders
+// immediately instead of flashing empty until the PUT returns.
 export function buildOptimisticRows(
   prev: readonly AgentRunnerOut[],
-  nextIds: readonly string[],
+  nextRows: readonly RunnerRow[],
   fleet: readonly RunnerOut[],
 ): AgentRunnerOut[] {
   const byId = new Map(prev.map((r) => [r.runner_id, r]))
-  return nextIds.map((id, i) => {
-    const existing = byId.get(id)
-    if (existing) return { ...existing, rank: i + 1 }
-    const f = fleet.find((r) => r.id === id)
+  return nextRows.map((row, i) => {
+    const existing = byId.get(row.runnerId)
+    if (existing) return { ...existing, rank: i + 1, enabled: row.enabled }
+    const f = fleet.find((r) => r.id === row.runnerId)
     return {
-      runner_id: id,
-      runner_name: f?.name ?? id,
+      runner_id: row.runnerId,
+      runner_name: f?.name ?? row.runnerId,
       kind: f?.kind ?? '',
       rank: i + 1,
       online: f?.status === 'online',
       ready: f?.ready ?? false,
+      enabled: row.enabled,
     }
   })
 }
@@ -119,18 +143,18 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
     [fleet, assignedIds],
   )
 
-  // Every mutation goes through here: compute the next ordered id list, apply it
-  // to local state immediately, then persist — revert to the prior rows on error.
-  // `prev` is the pre-mutation snapshot to revert to; it is NOT necessarily the
-  // rows currently on screen (a queued second commit's `prev` is the first
-  // commit's optimistic result).
-  const commit = async (nextIds: string[], prev: AgentRunnerOut[]) => {
+  // Every mutation goes through here: compute the next ordered rows list, apply
+  // it to local state immediately, then persist — revert to the prior rows on
+  // error. `prev` is the pre-mutation snapshot to revert to; it is NOT
+  // necessarily the rows currently on screen (a queued second commit's `prev`
+  // is the first commit's optimistic result).
+  const commit = async (nextRows: RunnerRow[], prev: AgentRunnerOut[]) => {
     const mySeq = ++commitSeqRef.current
-    const optimistic = buildOptimisticRows(prev, nextIds, fleet)
+    const optimistic = buildOptimisticRows(prev, nextRows, fleet)
     applyRows(optimistic)
     setError(null)
     try {
-      const saved = await putAgentRunners(agentSlug, nextIds)
+      const saved = await putAgentRunners(agentSlug, nextRows)
       if (commitSeqRef.current !== mySeq) return // superseded by a newer commit
       applyRows(saved)
     } catch (e: unknown) {
@@ -142,20 +166,21 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
 
   const move = (i: number, d: -1 | 1) => {
     const prev = rowsRef.current
-    const nextIds = nextIdsForMove(prev, i, d)
-    if (nextIds === null) return
-    void commit(nextIds, prev)
+    const nextRows = nextRowsForMove(prev, i, d)
+    if (nextRows === null) return
+    void commit(nextRows, prev)
   }
 
-  const remove = (id: string) => {
+  // Replaces the old remove: flips enabled, never drops the row.
+  const toggle = (id: string) => {
     const prev = rowsRef.current
-    void commit(nextIdsForRemove(prev, id), prev)
+    void commit(nextRowsForToggle(prev, id), prev)
   }
 
   const add = (id: string) => {
     const prev = rowsRef.current
     setMenuOpen(false)
-    void commit(nextIdsForAdd(prev, id), prev)
+    void commit(nextRowsForAdd(prev, id), prev)
   }
 
   if (rows === null) {
@@ -173,12 +198,21 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
       {rows.map((r, i) => (
         <span
           key={r.runner_id}
-          className="flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-1"
+          className={`flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-1 ${
+            r.enabled ? '' : 'opacity-50'
+          }`}
           data-testid={`runner-chip-${r.runner_id}`}
         >
           <span className="w-3.5 text-center text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
-          <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass(r)}`} title={dotTitle(r)} />
-          <span className="max-w-[10rem] truncate text-[12px] text-foreground">{r.runner_name}</span>
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${r.enabled ? dotClass(r) : 'bg-muted-foreground'}`}
+            title={r.enabled ? dotTitle(r) : 'disabled'}
+          />
+          <span
+            className={`max-w-[10rem] truncate text-[12px] ${r.enabled ? 'text-foreground' : 'text-muted-foreground'}`}
+          >
+            {r.runner_name}
+          </span>
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
             {KIND_GLYPH[r.kind] ?? r.kind}
           </span>
@@ -200,13 +234,21 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
           >
             ↓
           </button>
+          {/* No removal affordance — deliberate. This toggles `enabled`
+              instead: a disabled runner stays in the list (rank preserved,
+              greyed here) but never routes for this agent. */}
           <button
             type="button"
-            onClick={() => remove(r.runner_id)}
-            className="px-0.5 text-muted-foreground hover:text-destructive"
-            aria-label={`Remove ${r.runner_name}`}
+            onClick={() => toggle(r.runner_id)}
+            className={`px-0.5 ${r.enabled ? 'text-muted-foreground hover:text-destructive' : 'text-muted-foreground hover:text-success'}`}
+            aria-label={r.enabled ? `Disable ${r.runner_name}` : `Enable ${r.runner_name}`}
+            title={
+              r.enabled
+                ? 'disable for this agent'
+                : "disabled — won't run for this agent (click to enable)"
+            }
           >
-            ×
+            {r.enabled ? '⏻' : '↺'}
           </button>
         </span>
       ))}

@@ -9,7 +9,6 @@ import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import { AgentKpiCard } from '@/components/supervisor/AgentKpiCard'
 import { ItemInbox } from '@/components/supervisor/ItemInbox'
 import { ChatSessionsPanel } from '@/components/chat/ChatSessionsPanel'
-import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { InstallPrompt } from '@/pwa/InstallPrompt'
 import { PushToggle } from '@/pwa/PushToggle'
 import { setBadge } from '@/pwa/usePush'
@@ -125,9 +124,10 @@ export default function SupervisorPage(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams()
   const raw = searchParams.get('tab')
   // Unknown / absent value falls back to Inbox — never a blank tab, and no param
-  // means Inbox (what push targets).
-  const tab =
-    raw === 'sessions' || raw === 'agents' || raw === 'runners' || raw === 'routing' ? raw : 'inbox'
+  // means Inbox (what push targets). Routing edits moved onto the Runners tab
+  // (RunnerDetail's per-agent RunnerAssignments editor) — there is no
+  // standalone Routing tab anymore.
+  const tab = raw === 'sessions' || raw === 'agents' || raw === 'runners' ? raw : 'inbox'
   const onTab = (value: string) =>
     // Push history (not replace) so the phone back button steps through tabs.
     // Inbox is the bare URL; the others carry ?tab=.
@@ -216,9 +216,6 @@ export default function SupervisorPage(): JSX.Element {
           <TabsTrigger value="runners" data-testid="tab-runners">
             Runners
           </TabsTrigger>
-          <TabsTrigger value="routing" data-testid="tab-routing">
-            Routing
-          </TabsTrigger>
         </TabsList>
 
         {/* Inbox — the fleet's open items, actionable in place (the act-now surface). */}
@@ -274,31 +271,6 @@ export default function SupervisorPage(): JSX.Element {
             <Skeleton className="h-12 w-full" />
           ) : (
             <RunnerStatus runners={renderRunners} onSelect={setSelectedRunner} />
-          )}
-        </TabsContent>
-
-        {/* Routing — the matrix: one ranked runner-assignment row per agent. */}
-        <TabsContent value="routing" className="flex flex-col gap-4">
-          {errs.agents ? (
-            <BandError message={errs.agents} />
-          ) : agents === null ? (
-            <div className="flex flex-col gap-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : agents.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">No agents.</p>
-          ) : (
-            <div className="flex flex-col gap-2" data-testid="routing-matrix">
-              {agents.map((a) => (
-                <div key={a.slug} className="flex items-center gap-3">
-                  <span className="w-24 shrink-0 truncate text-[12px] font-medium text-foreground" title={a.name}>
-                    {a.name}
-                  </span>
-                  <RunnerAssignments agentSlug={a.slug} />
-                </div>
-              ))}
-            </div>
           )}
         </TabsContent>
       </Tabs>
