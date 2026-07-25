@@ -72,6 +72,19 @@ function renderPanel(agents: AgentOut[]) {
   )
 }
 
+// A promise plus its resolve/reject, so a test can control exactly when a
+// getAgentRunners call settles — needed to reproduce the out-of-order-resolve
+// race. Mirrors RunnerAssignments.test.tsx's deferred idiom.
+function deferred<T>() {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -165,6 +178,47 @@ describe('ChatSessionsPanel — Run on picker', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalled())
     const call = createSession.mock.calls[0][0] as { runnerId?: string }
     expect(call.runnerId).toBeUndefined()
+  })
+
+  it('does not let a stale getAgentRunners response overwrite a later pick', async () => {
+    listSessions.mockResolvedValue([])
+    listSlugs.mockResolvedValue([])
+
+    const first = deferred<AgentRunnerOut[]>()
+    const second = deferred<AgentRunnerOut[]>()
+    getAgentRunners
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+
+    renderPanel([
+      agent({ slug: 'echo', name: 'Echo' }),
+      agent({ slug: 'hal', name: 'Hal', workspace: 'dimagi' }),
+    ])
+
+    // Pick Echo — still in flight.
+    fireEvent.click(await screen.findByText('New chat'))
+    fireEvent.click(await screen.findByText('Echo'))
+    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(1, 'echo'))
+
+    // Before it resolves, go back and pick Hal instead — also in flight.
+    fireEvent.click(screen.getByText('Back'))
+    fireEvent.click(await screen.findByText('Hal'))
+    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(2, 'hal'))
+
+    // Resolve the NEWER (Hal) request first.
+    await act(async () => {
+      second.resolve([agentRunner('r2', { runner_name: 'Cloud', online: true })])
+    })
+    const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Cloud']),
+    )
+
+    // The stale OLDER (Echo) response landing late must not overwrite Hal's options.
+    await act(async () => {
+      first.resolve([agentRunner('r1', { runner_name: 'Laptop', online: true })])
+    })
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Cloud'])
   })
 
   it('filters project "Run on" options to online + sessions-capable fleet runners', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import {
@@ -130,17 +130,31 @@ export function ChatSessionsPanel({
     setSelectedRunnerId('')
   }, [])
 
+  // pickAgent is an event handler, not an effect, so there's no cleanup
+  // function to cancel a stale in-flight fetch — a ref tracking the
+  // currently-picked slug lets a late response check whether it's still
+  // wanted before applying, so rapidly switching agents can't have a slower
+  // earlier response overwrite a newer pick's runner options.
+  const pickedAgentSlugRef = useRef<string | null>(null)
+
   const pickAgent = useCallback((agent: AgentOut) => {
     setSelectedRunnerId('')
     setPending({ kind: 'agent', agent })
     setRunnersLoading(true)
+    pickedAgentSlugRef.current = agent.slug
     // AgentRunnerOut does NOT carry `capabilities` — this list is just the
     // agent's assigned runners. If the picked runner isn't sessions-capable,
     // the server routing safely leaves the turn QUEUED rather than dropping it.
     getAgentRunners(agent.slug)
-      .then(setAgentRunnerOptions)
-      .catch(() => setAgentRunnerOptions([]))
-      .finally(() => setRunnersLoading(false))
+      .then((options) => {
+        if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)
+      })
+      .catch(() => {
+        if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions([])
+      })
+      .finally(() => {
+        if (pickedAgentSlugRef.current === agent.slug) setRunnersLoading(false)
+      })
   }, [])
 
   const pickProject = useCallback(

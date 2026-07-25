@@ -85,8 +85,8 @@ export function ChatPage() {
   }, [id])
 
   // Fleet runner list, for deriving the bound runner's liveness + the
-  // "Continue on…" eligible set. Fetched once; not re-polled — see the
-  // placement-banner simplification note in the task report.
+  // "Continue on…" eligible set. Fetched once on mount; re-polled below
+  // while the offline banner is showing (see the recovery-poll effect).
   useEffect(() => {
     let live = true
     listRunners()
@@ -107,6 +107,46 @@ export function ChatPage() {
     [fleetRunners],
   )
 
+  // Best-effort fleet resync, used both by the recovery poll below and after
+  // a successful placement — non-fatal on failure (the banner just keeps
+  // showing the last-known snapshot).
+  const refreshFleet = useCallback(() => {
+    listRunners()
+      .then((r) => setFleetRunners(r))
+      .catch(() => {
+        /* non-fatal: keep the last-known fleet snapshot */
+      })
+  }, [])
+
+  // While the offline banner is up, a bound runner that recovers later in
+  // the same page-load would otherwise leave a stale-offline false positive
+  // forever — the fleet list is only fetched once on mount. Poll on a modest
+  // interval for as long as the condition holds, so recovery hides the
+  // banner; stop the instant it flips false (recovered, or session switch).
+  useEffect(() => {
+    if (!boundOffline) return
+    let cancelled = false
+    const POLL_MS = 30_000
+    let timer: ReturnType<typeof setTimeout>
+    const tick = () => {
+      listRunners()
+        .then((r) => {
+          if (!cancelled) setFleetRunners(r)
+        })
+        .catch(() => {
+          /* non-fatal: retry next tick */
+        })
+        .finally(() => {
+          if (!cancelled) timer = setTimeout(tick, POLL_MS)
+        })
+    }
+    timer = setTimeout(tick, POLL_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [boundOffline])
+
   const placementFail = useCallback((err: unknown) => {
     if (err instanceof ChatApiError && err.status === 404) {
       setPlaceInfo('No pending message to place.')
@@ -124,10 +164,13 @@ export function ChatPage() {
     setPlaceInfo(null)
     setPlaceError(null)
     placeTurn(id, 'wait')
-      .then(() => setPlaceInfo('Waiting for the bound runner.'))
+      .then(() => {
+        setPlaceInfo('Waiting for the bound runner.')
+        refreshFleet()
+      })
       .catch(placementFail)
       .finally(() => setPlacing(false))
-  }, [id, placementFail])
+  }, [id, placementFail, refreshFleet])
 
   const continueOn = useCallback(
     (runnerId: string) => {
@@ -139,11 +182,12 @@ export function ChatPage() {
         .then(() => {
           setPlaceInfo('Placed — the new runner will pick it up shortly.')
           setShowContinuePicker(false)
+          refreshFleet()
         })
         .catch(placementFail)
         .finally(() => setPlacing(false))
     },
-    [id, placementFail],
+    [id, placementFail, refreshFleet],
   )
 
   // Attach-on-open / detach-on-unmount. The server's attach counter floors at
@@ -300,7 +344,7 @@ export function ChatPage() {
       </div>
       {boundOffline && (
         <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning">
-          <span className="font-medium">{meta?.runner_name} is offline</span>
+          <span className="font-medium">{meta?.runner_name} is unavailable</span>
           <button
             type="button"
             onClick={waitForIt}
