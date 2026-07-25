@@ -4,6 +4,8 @@ from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.contrib.auth import get_user_model
 from django.shortcuts import render
 
+from apps.workspaces.services import pending_invite_for_email
+
 from .auth_domains import allowed_email_domains, email_in_allowlist
 
 
@@ -11,14 +13,28 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     def pre_social_login(self, request, sociallogin):
         email = (sociallogin.account.extra_data.get("email") or "").lower()
         if not email_in_allowlist(email):
-            allowed = ", ".join(allowed_email_domains())
-            response = render(
-                request,
-                "auth/domain_rejected.html",
-                {"email": email, "allowed_domain": allowed},
-                status=403,
-            )
-            raise ImmediateHttpResponse(response)
+            # An email outside the global domain allowlist is normally a hard
+            # reject — but a LIVE workspace invite is a strictly narrower,
+            # explicit admission than adding a domain to the allowlist: it is
+            # per-address (not per-domain), issued by a workspace owner (not
+            # an env var), and self-expiring/revocable.
+            # `pending_invite_for_email` already excludes expired/revoked/
+            # already-accepted rows, and "" never matches (guards a blank
+            # sociallogin email from slipping through on an empty lookup).
+            # Critically, admitting the LOGIN grants no access by itself —
+            # membership is only ever created by `accept_invite`, which the
+            # user must still call explicitly after signing in. So this can
+            # only ever let an invited human reach the accept step; it can
+            # never itself join a workspace.
+            if not email or pending_invite_for_email(email) is None:
+                allowed = ", ".join(allowed_email_domains())
+                response = render(
+                    request,
+                    "auth/domain_rejected.html",
+                    {"email": email, "allowed_domain": allowed},
+                    status=403,
+                )
+                raise ImmediateHttpResponse(response)
 
         self._connect_jit_identity(request, sociallogin, email)
 
