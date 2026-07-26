@@ -1096,6 +1096,52 @@ uv run --project ~/emdash/repositories/canopy python -m scripts.ddd.backfill_sce
 
 Expected: one line per spec. `.why_brief.yaml` files report `+0 ids`.
 
+- [ ] **Step 2b: Handle the two drifted specs (MEASURED 2026-07-26 — do not skip)**
+
+A dry run of the backfill against all 12 live specs, compared against canopy-web's
+stored narration ids, found the "ids line up for free" assumption holds for most but
+**not all** specs:
+
+| narrative | web version | result |
+|---|---|---|
+| `verified-monitoring` | v17 | ids match exactly |
+| `microplans-study-groups` | v14 | ids match exactly |
+| `campaign-utility-tool` | v4 | ids match exactly |
+| `program-admin-report` | v3 | all 14 web ids match; local carries 1 extra scene |
+| `create-survey-solicitation` | v12 | **only 4 of 9 ids overlap — genuinely diverged** |
+
+`create-survey-solicitation`'s local titles and its web narrative have drifted (web:
+*"AI drafts the scoring rubric and Maya publishes the call"*; local: *"Maya generates
+the scoring criteria with AI"*). Backfilling that spec from local titles mints ids
+canopy-web has never seen, so the first pull orphans all eight local scenes and writes
+empty `show` recipes — the exact D1 failure this work exists to prevent.
+
+**Fix it by hand before pulling, for that one spec only.** Fetch the current narration
+ids and write them onto the matching local scenes:
+
+```bash
+TOKEN=$(cat ~/.claude/canopy/workbench-token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://labs.connect.dimagi.com/canopy/api/ddd/narratives/create-survey-solicitation/" \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+v=max((v for v in d['versions'] if v.get('narration')), key=lambda x: x['version'])
+for n in v['narration']:
+    print(n['id'], '|', n.get('title'))
+"
+```
+
+Then set each local scene's `id:` to the web id for the beat it films. A local scene
+with no counterpart on the web keeps a locally-minted id and will be dropped by the
+first pull (web owns the scene list) — that is correct, and is why this is a manual
+5-minute reconciliation rather than a tool. `program-admin-report`'s extra scene is the
+same situation and needs no action.
+
+Deliberately NOT automated: this is a one-time, two-file problem, and a
+`--ids-from-web` flag would put a network dependency into a migration tool to save one
+manual pass.
+
 - [ ] **Step 3: Verify every scene now has an id**
 
 ```bash
