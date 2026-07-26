@@ -530,6 +530,51 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/feedback/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List feedback */
+        readonly get: operations["apps_feedback_api_list_feedback"];
+        readonly put?: never;
+        /**
+         * Ingest feedback (batch, idempotent)
+         * @description Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc
+         *     is safe. ``submitted_by`` is the CALLER (the agent's PAT user, or the logged
+         *     in human) — never the external author, who has no account here.
+         */
+        readonly post: operations["apps_feedback_api_ingest_feedback"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/feedback/{feedback_id}/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Record a disposition
+         * @description How a decision turn records what it did. The only mutation — feedback is
+         *     what somebody said, and editing that after the fact would make the pool
+         *     untrustworthy as a record.
+         */
+        readonly post: operations["apps_feedback_api_resolve_feedback"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/auth/token-exchange": {
         readonly parameters: {
             readonly query?: never;
@@ -3636,6 +3681,133 @@ export interface components {
              * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
              */
             readonly ttl_days?: number | null;
+        };
+        /** FeedbackIngestOut */
+        readonly FeedbackIngestOut: {
+            /** Created */
+            readonly created: number;
+            /** Duplicate */
+            readonly duplicate: number;
+            /** Ids */
+            readonly ids: readonly number[];
+        };
+        /**
+         * FeedbackBatchIn
+         * @description Batch on purpose: a Google Doc has forty comments and an agent ingests
+         *     them in one call, atomically.
+         */
+        readonly FeedbackBatchIn: {
+            /** Items */
+            readonly items: readonly components["schemas"]["FeedbackIn"][];
+        };
+        /** FeedbackIn */
+        readonly FeedbackIn: {
+            /**
+             * Target Kind
+             * @default narrative
+             */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version?: number | null;
+            /**
+             * Anchor Id
+             * @default
+             */
+            readonly anchor_id: string;
+            /**
+             * Kind
+             * @default comment
+             * @enum {string}
+             */
+            readonly kind: "comment" | "suggestion";
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
+            /**
+             * Suggested Text
+             * @default
+             */
+            readonly suggested_text: string;
+            /**
+             * Author Name
+             * @default
+             */
+            readonly author_name: string;
+            /**
+             * Author Email
+             * @default
+             */
+            readonly author_email: string;
+            /**
+             * Channel
+             * @default web
+             * @enum {string}
+             */
+            readonly channel: "web" | "email" | "gdoc" | "manual" | "api";
+            /**
+             * Source Ref
+             * @default
+             */
+            readonly source_ref: string;
+        };
+        /** FeedbackListOut */
+        readonly FeedbackListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["FeedbackOut"][];
+        };
+        /** FeedbackOut */
+        readonly FeedbackOut: {
+            /** Id */
+            readonly id: number;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Author Email */
+            readonly author_email: string;
+            /** Channel */
+            readonly channel: string;
+            /** Source Ref */
+            readonly source_ref: string;
+            /** State */
+            readonly state: string;
+            /** Disposition Note */
+            readonly disposition_note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version: number | null;
+            /** Created At */
+            readonly created_at: string;
+        };
+        /** FeedbackResolveIn */
+        readonly FeedbackResolveIn: {
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "new" | "triaged" | "answered" | "declined";
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version?: number | null;
         };
         /** TokenExchangeOut */
         readonly TokenExchangeOut: {
@@ -8256,6 +8428,81 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_feedback_api_list_feedback: {
+        readonly parameters: {
+            readonly query?: {
+                readonly target_kind?: string | null;
+                readonly target_ref?: string | null;
+                readonly state?: string | null;
+                readonly channel?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FeedbackListOut"];
+                };
+            };
+        };
+    };
+    readonly apps_feedback_api_ingest_feedback: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["FeedbackBatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FeedbackIngestOut"];
+                };
+            };
+        };
+    };
+    readonly apps_feedback_api_resolve_feedback: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly feedback_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["FeedbackResolveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FeedbackOut"];
+                };
             };
         };
     };

@@ -233,20 +233,27 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    // The per-await budgets below are 5s EACH, but vitest's default per-TEST
-    // timeout is also 5s — so the test died at 5s before any of them could be
-    // used, making them decorative. Observed failing at exactly 5006ms on CI
-    // (#391) while passing locally. The test timeout (3rd arg to `it`) is what
-    // actually has to be raised; this matters more under a merge queue, where a
-    // flake ejects the PR from the queue rather than just asking for a re-run.
-    fireEvent.click(await screen.findByText('New chat', {}, { timeout: 5000 }))
-    fireEvent.click(await screen.findByText('Acme', {}, { timeout: 5000 }))
+    // Two-part timeout, and BOTH parts have to be raised together.
+    //
+    // #391 raised the per-TEST timeout (3rd arg to `it`) to 20s after this died
+    // at exactly 5006ms on CI while passing locally — but left the per-await
+    // budgets at 5s. So the binding constraint just moved: it then failed at
+    // ~6095ms on `findByText('Acme')`, which is its own 5s budget expiring
+    // inside a 20s test. Locally the whole test runs in ~200ms; CI is 30x
+    // slower here, so every budget needs headroom, not just the outer one.
+    //
+    // This matters more under a merge queue, where a flake ejects the PR from
+    // the queue rather than just asking for a re-run.
+    const BUDGET = 15_000
 
-    const select = (await screen.findByTestId('run-on-select', {}, { timeout: 5000 })) as HTMLSelectElement
-    await waitFor(() => expect(listRunners).toHaveBeenCalled(), { timeout: 5000 })
+    fireEvent.click(await screen.findByText('New chat', {}, { timeout: BUDGET }))
+    fireEvent.click(await screen.findByText('Acme', {}, { timeout: BUDGET }))
+
+    const select = (await screen.findByTestId('run-on-select', {}, { timeout: BUDGET })) as HTMLSelectElement
+    await waitFor(() => expect(listRunners).toHaveBeenCalled(), { timeout: BUDGET })
     await waitFor(
       () => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
-      { timeout: 5000 },
+      { timeout: BUDGET },
     )
   }, 20_000)
 })
