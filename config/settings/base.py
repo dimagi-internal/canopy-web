@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     "apps.timeline",
     "apps.system",
     "apps.harness",
+    "apps.feedback",
     "apps.realtime",
     "apps.canopy_sessions",
 ]
