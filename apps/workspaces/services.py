@@ -56,11 +56,21 @@ def ensure_default_workspace() -> Workspace | None:
     return ws
 
 
-def ensure_member(ws: Workspace, user, role: str = WorkspaceMembership.EDITOR) -> WorkspaceMembership:
-    m, _ = WorkspaceMembership.objects.get_or_create(
-        workspace=ws, user=user, defaults={"role": role}
+def ensure_member(
+    ws: Workspace, user, role: str = WorkspaceMembership.EDITOR, *, provisioned_by_app=None,
+) -> tuple[WorkspaceMembership, bool]:
+    """get_or_create — CREATE-ONLY: an existing member's role is never raised
+    or lowered by this call, in either direction. `provisioned_by_app` (an
+    `apps.tokens.models.AppCredential`) is recorded ONLY on create, so it
+    marks provenance for a token-exchange-provisioned grant specifically —
+    never retroactively attached to a pre-existing organic membership.
+    Returns `(membership, created)` so a caller (e.g. token-exchange) can
+    tell whether it actually granted something worth logging."""
+    m, created = WorkspaceMembership.objects.get_or_create(
+        workspace=ws, user=user,
+        defaults={"role": role, "provisioned_by_app": provisioned_by_app},
     )
-    return m
+    return m, created
 
 
 def auto_join_workspaces(user) -> None:

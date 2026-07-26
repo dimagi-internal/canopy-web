@@ -1,0 +1,86 @@
+<!doctype html>
+{% comment %}
+  Overrides allauth's stock `socialaccount/authentication_error.html`, which is
+  an unstyled dead end ("Third-Party Login Failure") offering no way forward.
+
+  This page is reached far more often than "third-party login failure" implies.
+  allauth's `verify_and_unstash_state` POPS the state from the session and
+  Google's `code` is single-use, so ANY replay of a callback URL lands here by
+  construction: a restored tab, a back-button press, a reload, an autocompleted
+  URL from history. The sign-in itself may have already succeeded. Stock
+  allauth answers that with a dead end, which is how one spent callback got
+  reported as "the app is broken" (labs, 2026-07-26).
+
+  Deliberately a LINK, not an auto-redirect or meta-refresh: we are here
+  BECAUSE a login round-trip did not stick, so bouncing automatically is how a
+  dead end becomes an infinite loop. Same principle as `shouldBounceToLogin`
+  in frontend/src/api/client.v2.ts — on repeat failure, hand control back to
+  the human. The retry uses the url tag so it carries FORCE_SCRIPT_NAME
+  (/canopy); a hardcoded href would walk the user into the sibling
+  connect-labs tenant on this shared hostname.
+{% endcomment %}
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign-in didn't complete · Canopy</title>
+  <style>
+    :root {
+      --stone-50: #fafaf9;
+      --stone-100: #f5f5f4;
+      --stone-200: #e7e5e4;
+      --stone-500: #78716c;
+      --stone-700: #44403c;
+      --stone-900: #1c1917;
+      --orange: #ea580c;
+    }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--stone-50);
+      color: var(--stone-900);
+      font-family: "DM Sans", system-ui, -apple-system, Segoe UI, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .card {
+      background: white;
+      border: 1px solid var(--stone-200);
+      border-radius: 12px;
+      padding: 2.5rem;
+      max-width: 28rem;
+      width: 100%;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    h1 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+    p { color: var(--stone-700); line-height: 1.5; margin: 0 0 1rem; }
+    p.muted { color: var(--stone-500); font-size: 0.875rem; }
+    a { color: var(--orange); }
+    a.btn {
+      display: inline-block;
+      background: var(--orange);
+      color: white;
+      text-decoration: none;
+      padding: 0.625rem 1.125rem;
+      border-radius: 8px;
+      font-weight: 500;
+      margin-top: 0.5rem;
+    }
+    a.btn:hover { filter: brightness(0.95); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sign-in didn't complete</h1>
+    <p>
+      That sign-in link had already been used. Google's sign-in links work only
+      once, so reopening or reloading this page will always land here.
+    </p>
+    <p class="muted">
+      Reloading won't help — start a fresh sign-in instead.
+    </p>
+    <a class="btn" href="{% url 'google_login' %}">Sign in again</a>
+  </div>
+</body>
+</html>
