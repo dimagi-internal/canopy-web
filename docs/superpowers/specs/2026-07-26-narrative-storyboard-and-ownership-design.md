@@ -94,9 +94,15 @@ Consequences, all three from one change:
 - the recipe file becomes keyable by scene → L1 is possible at all
 
 **Fix the pull path** (D2): `web_narrative_to_spec_parts` maps `narration[].text` →
-`scene.narrative`; `scene.narrative` joins `_NARRATIVE_SCENE_FIELDS`. `concept_claim`
-stays web-owned but is never again overwritten with voiceover prose — it is the falsifiable
-claim `ddd-concept-eval` judges, and it is not the spoken line.
+`scene.narrative`, and `_NARRATIVE_SCENE_FIELDS` becomes
+`("title", "persona", "provenance", "narrative", "features")`.
+
+`concept_claim` **leaves the web-owned set entirely.** `NarrationItem` has no
+`concept_claim` field (`scripts/narrative/models.py:794-812`), so it is never transmitted
+to canopy-web — the pull was *reconstructing* it from `text`, which is precisely why D2
+destroys it. Under "one writer per field" it is local: the dev-facing falsifiable claim
+`ddd-concept-eval` judges, never seen or edited by a reviewer. Reclassifying it is the
+fix; keeping it nominally web-owned while no writer on that side exists is the bug.
 
 **Migration is a freebie, but only until someone rewords a title.** canopy-web's stored
 narration ids for all 13 existing narratives *already are* the current title slugs, so
