@@ -310,11 +310,20 @@ class TranscriptAppendIn(Schema):
     verbatim (see services.append_transcript). Never re-encoded or parsed."""
 
     lines: list[str]
+    # Optional per-batch idempotency key (security review 2026-07-26, F5): if
+    # this matches the LAST batch actually applied to the turn, the append is
+    # a no-op (a retry after a lost response), not a double-append. Omit to
+    # skip dedup entirely — older/simpler callers are unaffected.
+    batch_id: str = ""
 
 
 class TranscriptAppendOut(Schema):
     line_count: int
     bytes_raw: int
+    # True once this turn's transcript has hit services.TRANSCRIPT_TURN_MAX_BYTES
+    # (F2) — every batch from here on is silently dropped, so a runner can stop
+    # bothering to flush further content for this turn.
+    truncated: bool
 
 
 class ScheduleIn(Schema):

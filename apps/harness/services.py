@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gzip
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -519,7 +520,18 @@ def append_events(turn: Turn, events: list[dict]) -> int:
     return len(rows)
 
 
-def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
+# Per-TURN ceiling on retained raw transcript content (security review
+# 2026-07-26, F2). `raw_jsonl_gz` is Postgres `bytea` (1GB hard limit) and
+# `bytes_raw` a `PositiveIntegerField` (2GB) — an unbounded single turn would
+# eventually hit one of those and raise a raw DB error mid-turn with no
+# upstream signal. 100MB (uncompressed) is generous headroom above even an
+# unusually long, tool-output-heavy turn while sitting multiple orders of
+# magnitude under both hard limits, so this is a backstop against a runaway
+# turn, not a realistic ceiling for normal use.
+TRANSCRIPT_TURN_MAX_BYTES = 100 * 1024 * 1024
+
+
+def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -> TurnTranscript:
     """Accumulate raw `claude -p` JSONL lines onto a turn's retained transcript.
 
     Idempotent-per-turn in the sense that repeated calls ACCUMULATE (a turn
@@ -551,6 +563,21 @@ def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
     Task-2 upstream bug surfaces at the boundary instead of as an unexplained
     later cost discrepancy. Not raised: a malformed batch should still be
     retained, not dropped.
+
+    `batch_id` (security review F5) is an optional caller-supplied idempotency
+    key for THIS batch. If it matches the turn's `last_batch_id` — the
+    immediately preceding call — this is a retry after a lost response, and
+    the batch is dropped as a no-op rather than double-appended (a lost-ack
+    retry is the realistic case; an arbitrary OLDER batch replayed later is
+    not guarded against). Omit it (empty string, the default) to skip
+    dedup entirely — existing/older callers are unaffected.
+
+    Per-turn size ceiling (F2): once accumulated `bytes_raw` would cross
+    `TRANSCRIPT_TURN_MAX_BYTES`, this batch's actual content is DROPPED and a
+    single synthetic marker line is written in its place, then `truncated`
+    latches permanently — every later call for this turn is a silent no-op.
+    A turn still executing must not be failed over transcript SIZE, so this
+    never raises; the caller (the HTTP route) always sees success.
     """
     # Drop truly-empty elements (see docstring) before both the count and the
     # join — a splitter's trailing "" must never count as a stored line.
@@ -574,16 +601,45 @@ def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
             TurnTranscript.objects.select_for_update().filter(turn=turn).first()
         )
 
-        joined = "\n".join(lines)
-        # A bare "\n" glues this batch onto whatever's already stored — but
+        if batch_id and transcript is not None and transcript.last_batch_id == batch_id:
+            # A retry of the batch we JUST applied (its response was lost in
+            # transit) — already reflected in the stored content, so this is
+            # a no-op, not a double-append.
+            return transcript
+
+        if transcript is not None and transcript.truncated:
+            # Per-turn ceiling already hit — drop everything further,
+            # including a marker (that was written exactly once, at the
+            # crossing call below).
+            return transcript
+
+        content = "\n".join(lines)
+        added_lines = len(lines)
+        existing_bytes = transcript.bytes_raw if transcript is not None else 0
+        newly_truncated = False
+        if existing_bytes + len(content.encode("utf-8")) > TRANSCRIPT_TURN_MAX_BYTES:
+            # This batch would cross the ceiling. Drop its actual content —
+            # never mind what it was — and write ONE synthetic marker line
+            # instead, so a re-derivation downstream can see the transcript
+            # was cut off rather than silently ending mid-stream.
+            content = json.dumps({
+                "type": "canopy_transcript_truncated",
+                "reason": (
+                    f"turn transcript exceeded {TRANSCRIPT_TURN_MAX_BYTES} "
+                    "bytes; further content for this turn was dropped"
+                ),
+            })
+            added_lines = 1
+            newly_truncated = True
+
+        # A bare "\n" glues this content onto whatever's already stored — but
         # only when both sides are non-empty, so a first-ever or all-blank
         # batch never introduces a phantom separator.
-        if transcript is not None and transcript.bytes_raw and joined:
-            new_raw = ("\n" + joined).encode("utf-8")
+        if transcript is not None and transcript.bytes_raw and content:
+            new_raw = ("\n" + content).encode("utf-8")
         else:
-            new_raw = joined.encode("utf-8")
+            new_raw = content.encode("utf-8")
 
-        added_lines = len(lines)
         added_bytes = len(new_raw)
         new_member = gzip.compress(new_raw) if new_raw else b""
 
@@ -593,27 +649,63 @@ def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
                 raw_jsonl_gz=new_member,
                 line_count=added_lines,
                 bytes_raw=added_bytes,
+                truncated=newly_truncated,
+                last_batch_id=batch_id,
             )
         elif new_member:
             transcript.raw_jsonl_gz = bytes(transcript.raw_jsonl_gz) + new_member
             transcript.line_count = transcript.line_count + added_lines
             transcript.bytes_raw = transcript.bytes_raw + added_bytes
+            if newly_truncated:
+                transcript.truncated = True
+            if batch_id:
+                transcript.last_batch_id = batch_id
             transcript.save(
-                update_fields=["raw_jsonl_gz", "line_count", "bytes_raw", "updated_at"]
+                update_fields=[
+                    "raw_jsonl_gz", "line_count", "bytes_raw", "truncated",
+                    "last_batch_id", "updated_at",
+                ]
             )
         # else: an all-blank batch on top of existing content — nothing new
-        # to add, leave the row untouched.
+        # to add, leave the row untouched (batch_id is deliberately not
+        # recorded here either: replaying a genuinely blank batch is already
+        # a no-op, so there's nothing dedup needs to protect).
         return transcript
 
 
 def read_transcript(turn: Turn) -> bytes:
     """Decompressed raw JSONL for a turn, or b"" if nothing was ever appended
     (a turn with no transcript is common — e.g. non-CLI turns — and must read
-    as empty rather than raise)."""
+    as empty rather than raise).
+
+    For in-process consumers only (e.g. a future cost-derivation job running
+    server-side). The HTTP read route does NOT call this — see
+    `read_transcript_gzipped`, which avoids materializing the whole
+    decompressed blob in a web worker's memory (security review 2026-07-26,
+    F3)."""
     transcript = TurnTranscript.objects.filter(turn=turn).first()
     if transcript is None or not transcript.raw_jsonl_gz:
         return b""
     return gzip.decompress(bytes(transcript.raw_jsonl_gz))
+
+
+def read_transcript_gzipped(turn: Turn) -> bytes:
+    """The STILL-COMPRESSED raw transcript bytes for a turn, or b"" if none.
+
+    O(1) server memory regardless of transcript size: unlike `read_transcript`,
+    this never decompresses. The HTTP GET route serves this directly with
+    `Content-Encoding: gzip` and lets the CLIENT inflate it — a multi-hour
+    turn's full transcript would otherwise force the API worker to
+    materialize the entire decompressed blob (twice: once from
+    `gzip.decompress`, again when `HttpResponse` buffers it), which can spike
+    memory by ~2x the decompressed size and OOM the container serving
+    unrelated requests (security review 2026-07-26, F3 — the sibling
+    `/events` route caps at 500 rows for the same reason; this has no
+    cursor, so the whole blob must be handled without expanding it)."""
+    transcript = TurnTranscript.objects.filter(turn=turn).first()
+    if transcript is None or not transcript.raw_jsonl_gz:
+        return b""
+    return bytes(transcript.raw_jsonl_gz)
 
 
 def mark_running(turn: Turn, *, session_id: str = "") -> Turn:

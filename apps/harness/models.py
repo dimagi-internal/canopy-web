@@ -364,17 +364,37 @@ class TurnTranscript(models.Model):
     rows. See services.append_transcript for why (O(1) appends instead of
     decompress-all + recompress-all under the Turn row lock).
 
-    RETENTION: unbounded. No cap, TTL, or archival tier exists — this table
-    grows monotonically with every turn that streams a transcript, forever.
-    That is a deliberate gap, not an oversight: retention policy is an
-    ops/product decision, not implicit in the storage model. Tracked here so
-    it isn't silently forgotten; not addressed by this model.
+    RETENTION (cross-turn, unbounded): no cap, TTL, or archival tier exists on
+    this TABLE — it grows monotonically with every turn that streams a
+    transcript, forever. That is a deliberate gap, not an oversight: retention
+    policy is an ops/product decision, not implicit in the storage model.
+    Tracked here so it isn't silently forgotten; not addressed by this model.
+
+    SIZE (per-turn, bounded — security review 2026-07-26, F2): a single turn's
+    content IS capped at `services.TRANSCRIPT_TURN_MAX_BYTES` — a different
+    axis from the retention gap above. `raw_jsonl_gz` is Postgres `bytea`
+    (1GB hard limit) and `bytes_raw` a `PositiveIntegerField` (2GB), and both
+    would otherwise eventually raise a raw DB error mid-turn for a
+    long-running/tool-heavy session with no upstream signal. `truncated`
+    latches permanently once a turn crosses the ceiling — `append_transcript`
+    writes one synthetic marker line at the crossing point and silently drops
+    everything after, rather than 4xx-ing a turn that is still executing (its
+    transcript getting long is not a reason to fail a live run).
+
+    `last_batch_id` is a single-slot idempotency guard (F5): if a runner's
+    flush POST commits but the response is lost, its retry re-sends the SAME
+    batch — recognized here and dropped rather than double-appended (this
+    store exists to derive cost, so silent duplication would inflate it with
+    no way to detect it after the fact). Only guards against replaying the
+    IMMEDIATELY PRECEDING batch, not an arbitrary older one replayed later.
     """
 
     turn = models.OneToOneField(Turn, on_delete=models.CASCADE, related_name="transcript")
     raw_jsonl_gz = models.BinaryField()
     line_count = models.PositiveIntegerField(default=0)
     bytes_raw = models.PositiveIntegerField(default=0)
+    truncated = models.BooleanField(default=False)
+    last_batch_id = models.CharField(max_length=200, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

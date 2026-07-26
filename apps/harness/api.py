@@ -80,9 +80,10 @@ ALLOWED_EVENT_KINDS = {
 # still bounding a runaway/misbehaving batch rather than accepting an
 # unbounded body straight into a gzip+DB write under the turn row lock.
 #
-# Deliberately well under Django's DATA_UPLOAD_MAX_MEMORY_SIZE (2.5MB default,
-# unset here) rather than close to it: a request whose JSON-encoded body
-# crosses THAT ceiling never reaches this view at all — request.body raises
+# Deliberately well under settings.DATA_UPLOAD_MAX_MEMORY_SIZE (pinned
+# explicitly to 2.5MB, config/settings/base.py — security review 2026-07-26,
+# F8) rather than close to it: a request whose JSON-encoded body crosses THAT
+# ceiling never reaches this view at all — request.body raises
 # RequestDataTooBig as an unhandled 500 before Ninja even parses the payload.
 # Keeping this cap well below it means an oversized batch always surfaces as
 # our clean 422, not an occasional 500 depending on JSON escaping overhead.
@@ -97,6 +98,16 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
     rather than imported: api modules must not depend on each other, and the
     harness is framework-tier.
+
+    Fails CLOSED on a workspace-less agent (security review 2026-07-26, F1):
+    `agent.workspace_id` falsy must not short-circuit to "ungated" — that would
+    hand ANY authenticated user (not just a workspace member) full read/write on
+    a null-workspace agent's turns, including this app's own raw transcripts.
+    Latent today (production has zero agents with workspace_id IS NULL), but a
+    fail-open tenancy gate is a bug regardless of whether anything currently
+    exploits it. A pre-migration agent with no workspace is simply not
+    resolvable via this API until it's backfilled a workspace — it does not
+    fall back to "visible to everyone."
     """
     agent = Agent.objects.filter(slug=slug).first()
     if agent is None:
@@ -105,7 +116,7 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     ws = getattr(request, "workspace_slug", None)
     if ws and agent.workspace_id != ws:
         raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
-    if agent.workspace_id and not wsvc.is_member(request.user, agent.workspace_id):
+    if not agent.workspace_id or not wsvc.is_member(request.user, agent.workspace_id):
         raise HttpError(404, f"agent '{slug}' not found")
     return agent
 
@@ -171,6 +182,16 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     A PROJECT turn has no agent/session to derive from, so it carries its own
     workspace FK and is gated on that instead. Same 404-not-403 rule either way:
     non-membership must not leak existence.
+
+    Every rejection here raises the SAME uniform `HttpError(404, "turn not
+    found")` — including the agent-turn branch, which delegates to
+    `_agent_or_404` (security review 2026-07-26, F4): that helper's own 404
+    names the agent (`"agent 'ada' not found"`), and the shared error handler
+    copies an HttpError's message into both `title` and `detail`. Left
+    un-caught, a caller holding a stale/guessed turn UUID would learn not just
+    that the turn exists, but which agent owns it. Catching and re-raising
+    here keeps every turn-not-resolvable case indistinguishable from the
+    others, from the caller's side.
     """
     turn = (
         Turn.objects.select_related("agent", "claimed_by", "chat_session")
@@ -180,7 +201,10 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     if turn is None:
         raise HttpError(404, "turn not found")
     if turn.agent_id:
-        _agent_or_404(request, turn.agent.slug)  # raises 404 on wrong tenant
+        try:
+            _agent_or_404(request, turn.agent.slug)  # raises on wrong tenant
+        except HttpError:
+            raise HttpError(404, "turn not found") from None
         return turn
 
     # Session turn: tenancy derives from the chat session's workspace (a session
@@ -698,6 +722,13 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
     Appending to an already-terminal turn is allowed by design: a runner may
     flush its last batch after finishing (services.append_transcript has no
     status check either).
+
+    `batch_id`, if given, dedups a retry of the immediately-preceding batch
+    (F5). The per-turn size ceiling (F2) is enforced inside
+    `services.append_transcript` itself, never here — crossing it drops the
+    batch's content and writes a marker rather than 4xx-ing, because a
+    turn's transcript getting long is not a reason to fail a live run;
+    `truncated` in the response tells the caller that happened.
     """
     turn = _turn_or_404(request, turn_id)
     total_bytes = sum(len(line.encode("utf-8")) for line in payload.lines)
@@ -707,20 +738,41 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
             f"transcript batch too large ({total_bytes} bytes; "
             f"limit is {TRANSCRIPT_APPEND_MAX_BYTES} bytes per request)",
         )
-    transcript = services.append_transcript(turn, payload.lines)
-    return {"line_count": transcript.line_count, "bytes_raw": transcript.bytes_raw}
+    transcript = services.append_transcript(turn, payload.lines, batch_id=payload.batch_id)
+    return {
+        "line_count": transcript.line_count,
+        "bytes_raw": transcript.bytes_raw,
+        "truncated": transcript.truncated,
+    }
 
 
 @router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
 def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
-    """The byte-for-byte raw transcript (no envelope, no serialization) — a
-    turn with nothing ever appended reads as an empty 200, not a 404; absence
-    of a transcript is not absence of a turn. No `response=` schema is
-    declared so Ninja returns this HttpResponse verbatim instead of trying to
-    serialize it (mirrors apps/canopy_sessions.api.attachment_content)."""
+    """The byte-for-byte raw transcript — a turn with nothing ever appended
+    reads as an empty 200, not a 404; absence of a transcript is not absence
+    of a turn. No `response=` schema is declared so Ninja returns this
+    HttpResponse verbatim instead of trying to serialize it (mirrors
+    apps/canopy_sessions.api.attachment_content).
+
+    Serves the STILL-GZIPPED bytes with `Content-Encoding: gzip` rather than
+    decompressing server-side (security review 2026-07-26, F3): the sibling
+    `/events` route caps at 500 rows, but this route has no cursor, so a
+    multi-hour turn's full transcript would otherwise force this worker to
+    materialize the entire decompressed blob just to serve one request —
+    ~2x the decompressed size in memory (once from `gzip.decompress`, again
+    when `HttpResponse` buffers it), enough to OOM the container. A real
+    HTTP client (browser fetch, curl --compressed) transparently inflates
+    `Content-Encoding: gzip` — this is a transport optimization, not a format
+    change the caller needs to know about. The empty-transcript case omits
+    the header entirely: `gzip.decompress(b"")` raises on the client, and an
+    empty body doesn't need "encoding" to begin with.
+    """
     turn = _turn_or_404(request, turn_id)
-    raw = services.read_transcript(turn)
-    return HttpResponse(raw, content_type="application/x-ndjson")
+    raw_gz = services.read_transcript_gzipped(turn)
+    response = HttpResponse(raw_gz, content_type="application/x-ndjson")
+    if raw_gz:
+        response["Content-Encoding"] = "gzip"
+    return response
 
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)

@@ -10,6 +10,7 @@ See .superpowers/sdd/2026-07-26-run-convergence-canopy-side/task-1-brief.md.
 from __future__ import annotations
 
 import gzip
+import json
 import logging
 import zlib
 
@@ -270,3 +271,122 @@ def test_line_without_embedded_newline_logs_nothing(caplog):
         target_logger.removeHandler(caplog.handler)
 
     assert len(caplog.records) == 0
+
+
+# --- Security review 2026-07-26 fix round -----------------------------------
+#
+# F2 — a per-turn ceiling (services.TRANSCRIPT_TURN_MAX_BYTES), checked inside
+# the same locked transaction as every other append, so a runaway/very-long
+# turn can never grow this row past Postgres's bytea limit (or the
+# PositiveIntegerField counters) and blow up mid-turn. The real ceiling is
+# 100MB; these tests monkeypatch it down to something tiny so they run fast
+# and deterministically.
+
+
+def test_batch_under_the_ceiling_is_unaffected(monkeypatch):
+    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 1000)
+    turn = _turn()
+
+    transcript = services.append_transcript(turn, ["short line"])
+
+    assert transcript.truncated is False
+    assert services.read_transcript(turn) == b"short line"
+
+
+def test_crossing_the_ceiling_drops_the_batch_and_writes_one_marker(monkeypatch):
+    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 10)
+    turn = _turn()
+
+    transcript = services.append_transcript(turn, ["this line is way over ten bytes"])
+
+    assert transcript.truncated is True
+    raw = services.read_transcript(turn)
+    # The real batch content is NOT present — it was dropped, not partially
+    # kept — only the synthetic marker line was written.
+    assert b"way over ten bytes" not in raw
+    marker = json.loads(raw)
+    assert marker["type"] == "canopy_transcript_truncated"
+
+
+def test_after_truncation_every_further_batch_is_a_silent_noop(monkeypatch):
+    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 10)
+    turn = _turn()
+    services.append_transcript(turn, ["over the tiny ceiling"])
+    raw_after_marker = services.read_transcript(turn)
+
+    transcript = services.append_transcript(turn, ["more content, still dropped"])
+
+    assert transcript.truncated is True
+    # No second marker, no new content — byte-for-byte unchanged.
+    assert services.read_transcript(turn) == raw_after_marker
+
+
+def test_truncation_never_raises_a_running_turn_must_not_4xx(monkeypatch):
+    """The whole point of F2: a turn whose transcript got long is still a
+    turn that's succeeding. append_transcript must return normally, never
+    raise, when it crosses the ceiling."""
+    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 1)
+    turn = _turn()
+
+    transcript = services.append_transcript(turn, ["anything at all"])
+
+    assert isinstance(transcript, TurnTranscript)
+
+
+# F5 — a single-slot idempotency guard: a batch_id matching the turn's most
+# recently applied batch is recognized as a lost-response retry and dropped,
+# not double-appended (this store exists to derive cost, so silent
+# duplication would inflate it invisibly).
+
+
+def test_replaying_the_same_batch_id_is_a_noop():
+    turn = _turn()
+    services.append_transcript(turn, ["line one"], batch_id="b1")
+
+    replay = services.append_transcript(turn, ["line one"], batch_id="b1")
+
+    assert services.read_transcript(turn) == b"line one"  # not doubled
+    assert replay.line_count == 1
+
+
+def test_a_new_batch_id_after_a_prior_one_still_appends():
+    turn = _turn()
+    services.append_transcript(turn, ["line one"], batch_id="b1")
+
+    transcript = services.append_transcript(turn, ["line two"], batch_id="b2")
+
+    assert services.read_transcript(turn) == b"line one\nline two"
+    assert transcript.line_count == 2
+
+
+def test_omitting_batch_id_never_dedups():
+    """Backward compatible: an older/simpler caller that never sends batch_id
+    keeps accumulating normally — dedup is opt-in, not assumed."""
+    turn = _turn()
+    services.append_transcript(turn, ["line one"])
+
+    transcript = services.append_transcript(turn, ["line one"])
+
+    assert services.read_transcript(turn) == b"line one\nline one"
+    assert transcript.line_count == 2
+
+
+# F3 — the HTTP GET route serves the STILL-COMPRESSED bytes (Content-Encoding:
+# gzip) rather than decompressing server-side, to keep server memory O(1)
+# regardless of transcript size. read_transcript_gzipped is the service half
+# of that; read_transcript (decompressing) stays for in-process consumers.
+
+
+def test_read_transcript_gzipped_round_trips_via_manual_decompression():
+    turn = _turn()
+    services.append_transcript(turn, ["a", "b"])
+
+    raw_gz = services.read_transcript_gzipped(turn)
+
+    assert raw_gz != b"a\nb"  # still compressed, not the plaintext
+    assert gzip.decompress(raw_gz) == b"a\nb"
+
+
+def test_read_transcript_gzipped_with_no_rows_returns_empty_bytes():
+    turn = _turn()
+    assert services.read_transcript_gzipped(turn) == b""

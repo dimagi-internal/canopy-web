@@ -72,7 +72,18 @@ def test_stranger_enqueueing_for_someone_elses_agent_gets_404(stranger_client, a
 
 def test_stranger_cannot_read_someone_elses_turn(owner_client, stranger_client, agent):
     turn_id = _enqueue(owner_client).json()["id"]
-    assert stranger_client.get(f"/api/harness/turns/{turn_id}").status_code == 404
+    resp = stranger_client.get(f"/api/harness/turns/{turn_id}")
+    assert resp.status_code == 404
+    # Security review 2026-07-26, F4: status-code-only assertions here are
+    # exactly what let the agent-turn branch leak the agent's slug via
+    # _agent_or_404's own 404 message (copied into both title and detail by
+    # the shared HttpError handler) go undetected. _turn_or_404 now catches
+    # and re-raises a uniform message — pin the body, not just the code.
+    body = resp.json()
+    assert body["title"] == "turn not found"
+    assert body["detail"] == "turn not found"
+    assert "echo" not in body["title"].lower()
+    assert "echo" not in (body["detail"] or "").lower()
 
 
 def test_stranger_cannot_finish_someone_elses_turn(owner_client, stranger_client, agent):
@@ -287,11 +298,21 @@ def test_list_turns_only_shows_my_tenants_turns(owner_client, stranger_client, a
     assert resp.json() == []  # filtered, not 404 — a list of nothing
 
 
-def test_null_workspace_agent_stays_ungated(owner_client):
-    """Agents predating tenancy have workspace=None. They must keep working —
-    the existing suite creates agents exactly this way."""
+def test_null_workspace_agent_now_fails_closed(owner_client):
+    """Superseded by the security review (2026-07-26, F1): a workspace-less
+    agent used to be silently ungated here (`if agent.workspace_id and not
+    is_member(...)` short-circuits to "allow" when workspace_id is falsy) —
+    any authenticated user, not just a workspace member, could act on it.
+    With transcripts that would hand a stranger an agent's full raw
+    `claude -p` output. `_agent_or_404` now fails CLOSED instead: a
+    workspace-less agent is unresolvable via this API until it's homed.
+
+    Production carries zero agents with workspace_id IS NULL (verified at
+    review time), and the real creation path (`apps.agents.api.upsert_agent`)
+    always homes a new agent to a workspace — this is a legacy/pre-migration
+    edge case, not a live user-facing flow."""
     Agent.objects.create(slug="legacy", name="Legacy")
-    assert _enqueue(owner_client, slug="legacy", key="k-legacy").status_code == 201
+    assert _enqueue(owner_client, slug="legacy", key="k-legacy").status_code == 404
 
 
 # --- pair_runner workspace-assignment branches (Task 2, uncovered) ---------

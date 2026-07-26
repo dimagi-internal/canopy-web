@@ -2228,11 +2228,24 @@ export interface paths {
         };
         /**
          * Raw retained JSONL for a turn
-         * @description The byte-for-byte raw transcript (no envelope, no serialization) — a
-         *     turn with nothing ever appended reads as an empty 200, not a 404; absence
-         *     of a transcript is not absence of a turn. No `response=` schema is
-         *     declared so Ninja returns this HttpResponse verbatim instead of trying to
-         *     serialize it (mirrors apps/canopy_sessions.api.attachment_content).
+         * @description The byte-for-byte raw transcript — a turn with nothing ever appended
+         *     reads as an empty 200, not a 404; absence of a transcript is not absence
+         *     of a turn. No `response=` schema is declared so Ninja returns this
+         *     HttpResponse verbatim instead of trying to serialize it (mirrors
+         *     apps/canopy_sessions.api.attachment_content).
+         *
+         *     Serves the STILL-GZIPPED bytes with `Content-Encoding: gzip` rather than
+         *     decompressing server-side (security review 2026-07-26, F3): the sibling
+         *     `/events` route caps at 500 rows, but this route has no cursor, so a
+         *     multi-hour turn's full transcript would otherwise force this worker to
+         *     materialize the entire decompressed blob just to serve one request —
+         *     ~2x the decompressed size in memory (once from `gzip.decompress`, again
+         *     when `HttpResponse` buffers it), enough to OOM the container. A real
+         *     HTTP client (browser fetch, curl --compressed) transparently inflates
+         *     `Content-Encoding: gzip` — this is a transport optimization, not a format
+         *     change the caller needs to know about. The empty-transcript case omits
+         *     the header entirely: `gzip.decompress(b"")` raises on the client, and an
+         *     empty body doesn't need "encoding" to begin with.
          */
         readonly get: operations["apps_harness_api_read_turn_transcript"];
         readonly put?: never;
@@ -2247,6 +2260,13 @@ export interface paths {
          *     Appending to an already-terminal turn is allowed by design: a runner may
          *     flush its last batch after finishing (services.append_transcript has no
          *     status check either).
+         *
+         *     `batch_id`, if given, dedups a retry of the immediately-preceding batch
+         *     (F5). The per-turn size ceiling (F2) is enforced inside
+         *     `services.append_transcript` itself, never here — crossing it drops the
+         *     batch's content and writes a marker rather than 4xx-ing, because a
+         *     turn's transcript getting long is not a reason to fail a live run;
+         *     `truncated` in the response tells the caller that happened.
          */
         readonly post: operations["apps_harness_api_append_turn_transcript"];
         readonly delete?: never;
@@ -7011,6 +7031,8 @@ export interface components {
             readonly line_count: number;
             /** Bytes Raw */
             readonly bytes_raw: number;
+            /** Truncated */
+            readonly truncated: boolean;
         };
         /**
          * TranscriptAppendIn
@@ -7020,6 +7042,11 @@ export interface components {
         readonly TranscriptAppendIn: {
             /** Lines */
             readonly lines: readonly string[];
+            /**
+             * Batch Id
+             * @default
+             */
+            readonly batch_id: string;
         };
         /** TurnStartIn */
         readonly TurnStartIn: {
