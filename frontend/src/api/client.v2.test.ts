@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rewriteForWorkspace, shouldBounceToLogin } from './client.v2'
+import { isLoginBounceInFlight, rewriteForWorkspace, shouldBounceToLogin } from './client.v2'
 
 // The login-loop breaker. A lapsed session should bounce through OAuth exactly
 // once; a second 401 landing back inside the window means the round-trip isn't
@@ -28,6 +28,28 @@ describe('shouldBounceToLogin', () => {
   it('treats the exact window boundary as elapsed, so it bounces', () => {
     const now = 1_000_000
     expect(shouldBounceToLogin(now - WINDOW, now)).toBe(true)
+  })
+})
+
+// The flicker guard, and specifically why it is NOT the loop guard's stamp.
+//
+// Both answer a question about bouncing, but different ones, and conflating
+// them reintroduces the bug in the worst case. `shouldBounceToLogin` reads a
+// sessionStorage stamp that deliberately OUTLIVES the page — it has to survive
+// the navigation to Google and back, so it is still "recent" when we return
+// from a FAILED round-trip. That is precisely the moment the login card must
+// render, because the guard has declined to navigate and only the user can
+// drive it now.
+//
+// `isLoginBounceInFlight` asks the narrower question the UI actually needs:
+// have we committed to a navigation in THIS page load? A full-page navigation
+// ends the page, so the answer resets by construction — no window, no clock.
+describe('isLoginBounceInFlight', () => {
+  it('is false on a fresh page load, so the login card renders by default', () => {
+    // No 401 has been handled in this module instance. The card is the correct
+    // default: hiding it behind a bounce that never happens would leave an
+    // anonymous user staring at "Signing in…" forever.
+    expect(isLoginBounceInFlight()).toBe(false)
   })
 })
 

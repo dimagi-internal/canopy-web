@@ -37,6 +37,26 @@ export function noteAuthSucceeded(): void {
   }
 }
 
+// Set the instant we commit to a full-page OAuth navigation, so the UI can tell
+// "anonymous, and we are leaving for Google right now" apart from "anonymous,
+// and we are staying put". Without that distinction AuthProvider paints the
+// login card during the browser's navigation delay and it is immediately swept
+// away — the flicker from our own Sign-in button to Google's, reported on
+// Android 2026-07-26.
+//
+// A module-scoped flag, NOT sessionStorage, and that is the whole point: this
+// asks "is a navigation in flight in THIS page load", which a full-page
+// navigation ends by definition. The loop guard's stamp deliberately outlives
+// the page (it must survive the trip to Google and back) and so cannot answer
+// it — a stamp is still recent when we return from a FAILED round-trip, which
+// is exactly when we must show the login card rather than hide it.
+let loginBounceInFlight = false;
+
+/** Whether a full-page OAuth navigation has been committed to in this page load. */
+export function isLoginBounceInFlight(): boolean {
+  return loginBounceInFlight;
+}
+
 function redirectToLogin(): void {
   let lastRedirectAt = 0;
   try {
@@ -56,6 +76,7 @@ function redirectToLogin(): void {
     /* unavailable — a best-effort guard is better than blocking the redirect */
   }
   const next = encodeURIComponent(window.location.pathname + window.location.search);
+  loginBounceInFlight = true;
   // Prefix-aware: BASE_URL is "/" at root and "/canopy/" as a labs tenant, so
   // this stays under the deployment instead of bouncing to a sibling tenant.
   window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/accounts/google/login/?next=${next}`;
