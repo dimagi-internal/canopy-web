@@ -8,6 +8,24 @@ export function isDraftIdle(draft: Draft | null | undefined): boolean {
 }
 
 /**
+ * Whether keystrokes need to be mirrored to the server AS YOU TYPE.
+ *
+ * The co-edited draft only earns its cost when somebody else is looking at it.
+ * Alone in a session — the overwhelmingly common case — a per-keystroke
+ * `draft.update` buys nothing and costs a round trip, a re-render on the echo,
+ * and a version to disagree about. The body still reaches the server once,
+ * right before `chat.send` (which commits the SERVER's copy), so sending is
+ * unaffected; see useSessionSocket.sendChat.
+ *
+ * Presence includes yourself, so "alone" is a set of 0 or 1. An empty set means
+ * presence has not arrived yet — treated as alone, since the pre-connect window
+ * is exactly when there is no one to sync with.
+ */
+export function shouldSyncDraftLive(presenceUserIds: readonly number[]): boolean {
+  return presenceUserIds.length > 1;
+}
+
+/**
  * Milliseconds until the draft lock becomes idle. Returns 0 if already
  * idle. Use this to schedule a timer that forces a re-render at the
  * idle transition point.
