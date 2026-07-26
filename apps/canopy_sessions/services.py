@@ -380,10 +380,11 @@ def transcript_sourced(session) -> bool:
         IS no transcript to read.
 
     Sessions created before the unification carry no flag and stay ledger-sourced
-    for life: their rows are numbered by a dense counter (0,1,2…) which would
-    collide with transcript ordinals in the same `turn_index` column, so switching
-    one mid-life would drop or misorder history. New chats get the unified path;
-    `convert_session_to_transcript_source` migrates an old one deliberately.
+    until reset: their rows are numbered by a dense counter (0,1,2…) which would
+    collide with transcript ordinals in the same `turn_index` column, so nothing
+    switches one implicitly. `manage.py reset_chat_state` moves them over in bulk —
+    cheap, because for a bound session these rows are a CACHE of the transcript,
+    not an archive.
     """
     if session.origin == Session.ORIGIN_RUNNER:
         return True  # discovered in emdash: the transcript is all there ever was
