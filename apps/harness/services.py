@@ -527,8 +527,44 @@ def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
     with a bare "\\n" exactly as the CLI's own JSONL framing does; no
     re-encoding, no reordering, no rewriting a line's content. canopy stores
     bytes only and never parses this JSONL — that stays the consumer's job.
+
+    O(1) per append: rather than decompress-everything-then-recompress-
+    everything (O(total accumulated) on every call — expensive while holding
+    the same Turn row lock the claim/finish paths take), this gzip-compresses
+    only THIS batch and concatenates the resulting gzip member onto the
+    stored blob. `gzip.decompress` transparently reassembles a concatenated
+    multi-member stream (stdlib-verified:
+    `gzip.decompress(gzip.compress(b"a") + gzip.compress(b"b")) == b"ab"`),
+    so this is backward compatible with rows already written as a single
+    member — no migration, no format break.
+
+    A caller that splits a stream chunk on "\\n" will periodically produce a
+    batch whose only element is the trailing empty segment — a real but
+    zero-byte "line". Those are dropped before counting/encoding so
+    `line_count` never claims a line the stored bytes don't have; an
+    all-blank batch is a true no-op (existing content, counters, and stored
+    bytes are all left untouched).
+
+    An element that itself contains an embedded "\\n" violates the one-
+    JSONL-record-per-element contract (it understates `line_count` and would
+    inject a stray join at the next append) — logged as a warning so a
+    Task-2 upstream bug surfaces at the boundary instead of as an unexplained
+    later cost discrepancy. Not raised: a malformed batch should still be
+    retained, not dropped.
     """
-    new_raw = "\n".join(raw_lines).encode("utf-8")
+    # Drop truly-empty elements (see docstring) before both the count and the
+    # join — a splitter's trailing "" must never count as a stored line.
+    lines = [line for line in raw_lines if line != ""]
+
+    if any("\n" in line for line in lines):
+        logger.warning(
+            "append_transcript(turn=%s): a raw line contains an embedded "
+            "newline, violating the one-JSONL-record-per-element contract — "
+            "line_count and the stored join structure will be wrong for this "
+            "batch",
+            turn.pk,
+        )
+
     with transaction.atomic():
         # Lock the turn row first so concurrent appenders to the same turn
         # serialize (mirrors append_events — sqlite ignores select_for_update,
@@ -537,36 +573,36 @@ def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
         transcript = (
             TurnTranscript.objects.select_for_update().filter(turn=turn).first()
         )
-        if transcript is None:
-            combined = new_raw
-            line_count = len(raw_lines)
-        else:
-            existing = (
-                gzip.decompress(bytes(transcript.raw_jsonl_gz))
-                if transcript.raw_jsonl_gz
-                else b""
-            )
-            if existing and new_raw:
-                combined = existing + b"\n" + new_raw
-            else:
-                combined = existing + new_raw
-            line_count = transcript.line_count + len(raw_lines)
 
-        compressed = gzip.compress(combined)
+        joined = "\n".join(lines)
+        # A bare "\n" glues this batch onto whatever's already stored — but
+        # only when both sides are non-empty, so a first-ever or all-blank
+        # batch never introduces a phantom separator.
+        if transcript is not None and transcript.bytes_raw and joined:
+            new_raw = ("\n" + joined).encode("utf-8")
+        else:
+            new_raw = joined.encode("utf-8")
+
+        added_lines = len(lines)
+        added_bytes = len(new_raw)
+        new_member = gzip.compress(new_raw) if new_raw else b""
+
         if transcript is None:
             transcript = TurnTranscript.objects.create(
                 turn=turn,
-                raw_jsonl_gz=compressed,
-                line_count=line_count,
-                bytes_raw=len(combined),
+                raw_jsonl_gz=new_member,
+                line_count=added_lines,
+                bytes_raw=added_bytes,
             )
-        else:
-            transcript.raw_jsonl_gz = compressed
-            transcript.line_count = line_count
-            transcript.bytes_raw = len(combined)
+        elif new_member:
+            transcript.raw_jsonl_gz = bytes(transcript.raw_jsonl_gz) + new_member
+            transcript.line_count = transcript.line_count + added_lines
+            transcript.bytes_raw = transcript.bytes_raw + added_bytes
             transcript.save(
                 update_fields=["raw_jsonl_gz", "line_count", "bytes_raw", "updated_at"]
             )
+        # else: an all-blank batch on top of existing content — nothing new
+        # to add, leave the row untouched.
         return transcript
 
 

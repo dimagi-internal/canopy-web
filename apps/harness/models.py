@@ -356,6 +356,19 @@ class TurnTranscript(models.Model):
     cost/structure features re-derive from, so it must hold the CLI's output
     byte-for-byte. canopy never parses this JSONL — that is the consumer's
     business (see services.append_transcript / read_transcript).
+
+    `raw_jsonl_gz` may hold MULTIPLE concatenated gzip members (one per
+    `append_transcript` batch) rather than a single re-compressed blob —
+    `gzip.decompress` reassembles a concatenated multi-member stream
+    transparently, so this is format-compatible with earlier single-member
+    rows. See services.append_transcript for why (O(1) appends instead of
+    decompress-all + recompress-all under the Turn row lock).
+
+    RETENTION: unbounded. No cap, TTL, or archival tier exists — this table
+    grows monotonically with every turn that streams a transcript, forever.
+    That is a deliberate gap, not an oversight: retention policy is an
+    ops/product decision, not implicit in the storage model. Tracked here so
+    it isn't silently forgotten; not addressed by this model.
     """
 
     turn = models.OneToOneField(Turn, on_delete=models.CASCADE, related_name="transcript")
