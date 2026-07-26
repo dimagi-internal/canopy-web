@@ -4,15 +4,27 @@ import type { Message } from "./protocol";
  * A renderable row in the chat: either a single message (user / assistant /
  * standalone tool, etc.) or a paired tool_use + tool_result.
  *
- * Pairing rule: a ``tool_use`` row is paired with the FIRST subsequent
- * ``tool_result`` whose ``content.tool_use_id`` matches the ``tool_use``'s
- * ``content.id``. If no matching result exists yet (the turn is still
- * streaming), the row is rendered as a tool-pair with ``result === null``
- * — UI shows that as the "pending" state.
+ * Pairing rule, id-first with an order-based fallback: a ``tool_use`` row is
+ * paired with the FIRST subsequent ``tool_result`` whose ``content.tool_use_id``
+ * matches the ``tool_use``'s ``content.id``, when both carry one. Correlation
+ * ids are what make this unambiguous — with **parallel** tool calls (routine
+ * for Claude) or two calls sharing a name, a flat tool_start/tool_end stream
+ * has no other way to tell which result belongs to which call.
  *
- * Unpaired ``tool_result`` rows (no preceding ``tool_use`` with a matching
- * id — shouldn't happen in practice, but defend) fall through as standalone
- * messages so we never silently drop content.
+ * Not every producer stamps ids yet: events already in the ledger predate
+ * this field, and some runners (see `packages/canopy_runner`) don't emit it
+ * until updated separately. When a ``tool_result`` carries no id at all, it
+ * falls back to the FIRST still-open ``tool_use`` that *also* has no id
+ * (oldest-first, FIFO) — today's pre-correlation pairing heuristic. That
+ * fallback queue is tracked separately from the id map, so an id-tagged
+ * stream and a legacy no-id stream can be interleaved (e.g. older turns in
+ * the same session predating the id, followed by newer ones that have it)
+ * without cross-pairing into each other.
+ *
+ * Unpaired ``tool_result`` rows (an id that matches no pending ``tool_use``,
+ * or no id and nothing left in the no-id fallback queue — shouldn't happen
+ * in practice, but defend) fall through as standalone messages so we never
+ * silently drop content.
  */
 export type ChatRow =
   | { kind: "message"; message: Message; key: string }
@@ -21,13 +33,13 @@ export type ChatRow =
 function toolUseId(message: Message): string | null {
   const content = message.content as Record<string, unknown> | undefined;
   const id = content?.id;
-  return typeof id === "string" ? id : null;
+  return typeof id === "string" && id !== "" ? id : null;
 }
 
 function toolResultId(message: Message): string | null {
   const content = message.content as Record<string, unknown> | undefined;
   const id = content?.tool_use_id;
-  return typeof id === "string" ? id : null;
+  return typeof id === "string" && id !== "" ? id : null;
 }
 
 export function pairToolMessages(messages: Message[]): ChatRow[] {
@@ -35,6 +47,10 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
   // Map of tool_use_id → index into rows[] for that pair. Lets a tool_result
   // arriving later in the stream slot itself into the existing pair row.
   const pendingByToolId = new Map<string, number>();
+  // FIFO fallback queue of row indices for tool_use rows with NO id — the
+  // pre-correlation pairing heuristic, kept alive for producers/ledger rows
+  // that predate tool_use_id.
+  const pendingNoId: number[] = [];
 
   for (const m of messages) {
     if (m.role === "tool_use") {
@@ -46,8 +62,11 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
         key: `pair-${m.id}`,
       };
       rows.push(row);
+      const idx = rows.length - 1;
       if (id !== null) {
-        pendingByToolId.set(id, rows.length - 1);
+        pendingByToolId.set(id, idx);
+      } else {
+        pendingNoId.push(idx);
       }
       continue;
     }
@@ -63,10 +82,30 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
             continue;
           }
         }
+        // An id that matches no pending id-tagged use — a genuine ghost,
+        // never absorbed by the no-id fallback queue (that queue is for
+        // results that carry no id of their own, not for stray ids).
+        rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+        continue;
       }
-      // Fallthrough: no preceding tool_use match — show standalone so
-      // content isn't silently dropped.
-      rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+      // No id on the result at all — fall back to the oldest still-open
+      // no-id tool_use (order-based pairing, same as before correlation
+      // ids existed).
+      let paired = false;
+      while (pendingNoId.length > 0) {
+        const idx = pendingNoId.shift() as number;
+        const row = rows[idx];
+        if (row.kind === "tool_pair" && row.result === null) {
+          rows[idx] = { ...row, result: m };
+          paired = true;
+          break;
+        }
+      }
+      if (!paired) {
+        // Nothing left in the fallback queue to pair with — standalone so
+        // content isn't silently dropped.
+        rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+      }
       continue;
     }
     rows.push({ kind: "message", message: m, key: `msg-${m.id}` });

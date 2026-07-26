@@ -25,6 +25,48 @@ def test_tool_events_map():
     )[0]["event"] == "chat.tool_result"
 
 
+def test_tool_use_id_is_carried_through_to_the_client_frame():
+    """RC/run-convergence PR3: with parallel tool calls, the client needs
+    tool_use_id to pair a tool_end to its tool_start unambiguously. The
+    ledger payload is forwarded to the client verbatim as `block`, so a
+    producer that stamps the id gets it all the way to the frame with no
+    extra plumbing here — this test pins that contract in place."""
+    start_frames = turn_event_to_frames(
+        {
+            "seq": 1,
+            "kind": "tool_start",
+            "payload": {"id": "call-1", "name": "Bash", "input": {"command": "ls"}},
+            "ts": "t",
+        },
+        _rid,
+    )
+    assert start_frames[0]["data"]["block"]["id"] == "call-1"
+    assert start_frames[0]["data"]["block"]["input"] == {"command": "ls"}
+
+    end_frames = turn_event_to_frames(
+        {
+            "seq": 2,
+            "kind": "tool_end",
+            "payload": {"tool_use_id": "call-1", "is_error": False, "content": "out"},
+            "ts": "t",
+        },
+        _rid,
+    )
+    assert end_frames[0]["data"]["block"]["tool_use_id"] == "call-1"
+    assert end_frames[0]["data"]["block"]["is_error"] is False
+
+
+def test_tool_events_without_an_id_still_render():
+    """Backward compatibility: older ledger rows / not-yet-updated runners
+    have no tool_use_id at all. The frame must still be produced (the client
+    is responsible for the FIFO fallback pairing, not this pure mapper)."""
+    frames = turn_event_to_frames(
+        {"seq": 1, "kind": "tool_start", "payload": {"name": "Bash"}, "ts": "t"}, _rid
+    )
+    assert frames[0]["event"] == "chat.tool_use"
+    assert "id" not in frames[0]["data"]["block"]
+
+
 def test_status_and_heartbeat_are_silent():
     assert turn_event_to_frames({"seq": 1, "kind": "status", "payload": {"status": "running"}, "ts": "t"}, _rid) == []
     assert turn_event_to_frames({"seq": 1, "kind": "heartbeat", "payload": {}, "ts": "t"}, _rid) == []
