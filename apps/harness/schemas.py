@@ -305,6 +305,18 @@ class TurnFinishIn(Schema):
     result_note: str = ""
 
 
+class TranscriptAppendIn(Schema):
+    """Raw `claude -p` JSONL lines to append — one element per JSONL record,
+    verbatim (see services.append_transcript). Never re-encoded or parsed."""
+
+    lines: list[str]
+
+
+class TranscriptAppendOut(Schema):
+    line_count: int
+    bytes_raw: int
+
+
 class ScheduleIn(Schema):
     """Create payload. Cron + tz validate here so a bad expression 422s as
     problem+json at edit time — a typo that silently never fires is the worst

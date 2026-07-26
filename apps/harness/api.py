@@ -5,7 +5,7 @@ import uuid
 
 from django.db import models, transaction
 from django.db.models import Q
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -46,6 +46,8 @@ from .schemas import (
     SessionStreamIn,
     StreamPostOut,
     StreamSyncOut,
+    TranscriptAppendIn,
+    TranscriptAppendOut,
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
@@ -71,6 +73,20 @@ ALLOWED_EVENT_KINDS = {
     "heartbeat",
     "cancel_requested",
 }
+
+# A runner is expected to flush the raw transcript periodically (never holding
+# a whole run in memory — see cloud_runner's design), so a well-behaved batch
+# is at most tens of KB. 1MB per request is generous headroom above that while
+# still bounding a runaway/misbehaving batch rather than accepting an
+# unbounded body straight into a gzip+DB write under the turn row lock.
+#
+# Deliberately well under Django's DATA_UPLOAD_MAX_MEMORY_SIZE (2.5MB default,
+# unset here) rather than close to it: a request whose JSON-encoded body
+# crosses THAT ceiling never reaches this view at all — request.body raises
+# RequestDataTooBig as an unhandled 500 before Ninja even parses the payload.
+# Keeping this cap well below it means an oversized batch always surfaces as
+# our clean 422, not an occasional 500 depending on JSON escaping overhead.
+TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
 
 
 def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
@@ -669,6 +685,42 @@ def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
     turn = _turn_or_404(request, turn_id)
     events = turn.events.filter(seq__gt=after).order_by("seq")[:500]
     return {"events": list(events)}
+
+
+@router.post("/turns/{turn_id}/transcript", response=TranscriptAppendOut)
+def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: TranscriptAppendIn):
+    """Ingest a batch of raw `claude -p` JSONL lines onto a turn's retained
+    transcript. Same tenancy gate as every other turn route (_turn_or_404) —
+    deliberately not a bespoke check; a transcript is more sensitive than a
+    turn's status, and a second gate is exactly how the session-turn tenancy
+    leak happened.
+
+    Appending to an already-terminal turn is allowed by design: a runner may
+    flush its last batch after finishing (services.append_transcript has no
+    status check either).
+    """
+    turn = _turn_or_404(request, turn_id)
+    total_bytes = sum(len(line.encode("utf-8")) for line in payload.lines)
+    if total_bytes > TRANSCRIPT_APPEND_MAX_BYTES:
+        raise HttpError(
+            422,
+            f"transcript batch too large ({total_bytes} bytes; "
+            f"limit is {TRANSCRIPT_APPEND_MAX_BYTES} bytes per request)",
+        )
+    transcript = services.append_transcript(turn, payload.lines)
+    return {"line_count": transcript.line_count, "bytes_raw": transcript.bytes_raw}
+
+
+@router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
+def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
+    """The byte-for-byte raw transcript (no envelope, no serialization) — a
+    turn with nothing ever appended reads as an empty 200, not a 404; absence
+    of a transcript is not absence of a turn. No `response=` schema is
+    declared so Ninja returns this HttpResponse verbatim instead of trying to
+    serialize it (mirrors apps/canopy_sessions.api.attachment_content)."""
+    turn = _turn_or_404(request, turn_id)
+    raw = services.read_transcript(turn)
+    return HttpResponse(raw, content_type="application/x-ndjson")
 
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)

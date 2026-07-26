@@ -2219,6 +2219,42 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/transcript": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Raw retained JSONL for a turn
+         * @description The byte-for-byte raw transcript (no envelope, no serialization) — a
+         *     turn with nothing ever appended reads as an empty 200, not a 404; absence
+         *     of a transcript is not absence of a turn. No `response=` schema is
+         *     declared so Ninja returns this HttpResponse verbatim instead of trying to
+         *     serialize it (mirrors apps/canopy_sessions.api.attachment_content).
+         */
+        readonly get: operations["apps_harness_api_read_turn_transcript"];
+        readonly put?: never;
+        /**
+         * Append Turn Transcript
+         * @description Ingest a batch of raw `claude -p` JSONL lines onto a turn's retained
+         *     transcript. Same tenancy gate as every other turn route (_turn_or_404) —
+         *     deliberately not a bespoke check; a transcript is more sensitive than a
+         *     turn's status, and a second gate is exactly how the session-turn tenancy
+         *     leak happened.
+         *
+         *     Appending to an already-terminal turn is allowed by design: a runner may
+         *     flush its last batch after finishing (services.append_transcript has no
+         *     status check either).
+         */
+        readonly post: operations["apps_harness_api_append_turn_transcript"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/start": {
         readonly parameters: {
             readonly query?: never;
@@ -6969,6 +7005,22 @@ export interface components {
             /** Events */
             readonly events: readonly components["schemas"]["TurnEventOut"][];
         };
+        /** TranscriptAppendOut */
+        readonly TranscriptAppendOut: {
+            /** Line Count */
+            readonly line_count: number;
+            /** Bytes Raw */
+            readonly bytes_raw: number;
+        };
+        /**
+         * TranscriptAppendIn
+         * @description Raw `claude -p` JSONL lines to append — one element per JSONL record,
+         *     verbatim (see services.append_transcript). Never re-encoded or parsed.
+         */
+        readonly TranscriptAppendIn: {
+            /** Lines */
+            readonly lines: readonly string[];
+        };
         /** TurnStartIn */
         readonly TurnStartIn: {
             /**
@@ -10937,6 +10989,52 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnEventCountOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_read_turn_transcript: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_harness_api_append_turn_transcript: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TranscriptAppendIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TranscriptAppendOut"];
                 };
             };
         };
