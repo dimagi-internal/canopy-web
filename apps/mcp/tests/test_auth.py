@@ -56,3 +56,28 @@ def test_revoked_token_rejected():
     token.save(update_fields=["revoked_at"])
 
     assert async_to_sync(CanopyPATVerifier().verify_token)(raw) is None
+
+
+@pytest.mark.django_db
+def test_expired_token_rejected():
+    """MCP resolves PATs through PersonalToken.lookup(), so token expiry must
+    reject here exactly as it does for bearer auth — asserted explicitly because
+    MCP is the surface where a lookup regression would go unnoticed longest."""
+    from datetime import timedelta
+
+    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
+    raw, token = PersonalToken.create_for_user(user=user, label="cli", ttl_days=30)
+    assert async_to_sync(CanopyPATVerifier().verify_token)(raw) is not None
+
+    PersonalToken.objects.filter(pk=token.pk).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert async_to_sync(CanopyPATVerifier().verify_token)(raw) is None
+
+
+@pytest.mark.django_db
+def test_non_expiring_token_accepted():
+    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
+    raw, token = PersonalToken.create_for_user(user=user, label="cli", ttl_days=0)
+    assert token.expires_at is None
+    assert async_to_sync(CanopyPATVerifier().verify_token)(raw) is not None

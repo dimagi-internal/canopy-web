@@ -1,8 +1,10 @@
 """Personal Access Tokens (PATs).
 
-A PAT is a long-lived bearer token bound to a single user. The raw token
-is shown once at creation; only the sha256 hash is stored. Revocable
-per-token; auditable via `last_used_at`.
+A PAT is a bearer token bound to a single user. The raw token is shown once at
+creation; only the sha256 hash is stored. Revocable per-token; auditable via
+`last_used_at`. Tokens expire after `settings.PAT_DEFAULT_TTL_DAYS` (180) unless
+minted with an explicit `ttl_days` — where 0 means "never expires", matching the
+GitHub PAT model and the labs `mcp_create_token --ttl-days 0` convention.
 
 Replaces the previous shared-secret flow (`/api/auth/e2e-login/` +
 `WORKBENCH_WRITE_TOKEN` allowlist) with per-user, per-purpose tokens.
@@ -11,9 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
+from django.utils import timezone
 
 from apps.workspaces.models import WorkspaceMembership
 
@@ -36,6 +41,16 @@ class PersonalToken(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "When this token stops authenticating. NULL means it never expires — "
+            "which covers both tokens minted before expiry existed (grandfathered "
+            "by migration 0005, which deliberately has no data step) and tokens "
+            "minted with ttl_days=0. Enforced in lookup(), not by callers."
+        ),
+    )
 
     class Meta:
         db_table = "personal_tokens"
@@ -49,29 +64,60 @@ class PersonalToken(models.Model):
 
     @property
     def is_active(self) -> bool:
-        return self.revoked_at is None
+        """Display-only truth. MUST agree with lookup()'s filter — lookup is the
+        security boundary; this is what admin and the API render. A divergence
+        between the two would let a surface report healthy while auth rejects it.
+        """
+        if self.revoked_at is not None:
+            return False
+        return self.expires_at is None or self.expires_at > timezone.now()
 
     @classmethod
-    def create_for_user(cls, *, user, label: str) -> tuple[str, PersonalToken]:
+    def create_for_user(
+        cls, *, user, label: str, ttl_days: int | None = None
+    ) -> tuple[str, PersonalToken]:
         """Mint a token. The raw value is returned ONCE — it's never stored.
+
+        `ttl_days` follows the same rule on every surface (API and CLI):
+        None uses settings.PAT_DEFAULT_TTL_DAYS, 0 means never expires, and any
+        positive integer is that many days. There is deliberately no upper bound:
+        with 0 available, a cap would only mislead a caller asking for a long TTL
+        into silently receiving a shorter one.
 
         The caller is responsible for delivering the raw value to the
         token owner (UI display, env-var dump, etc.).
         """
+        if ttl_days is None:
+            ttl_days = getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180)
+        ttl_days = int(ttl_days)
+        if ttl_days < 0:
+            raise ValueError("ttl_days cannot be negative (0 means never expires)")
+        expires_at = (
+            None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
+        )
         raw = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
-        token = cls.objects.create(user=user, token_hash=token_hash, label=label)
+        token = cls.objects.create(
+            user=user, token_hash=token_hash, label=label, expires_at=expires_at
+        )
         return raw, token
 
     @classmethod
     def lookup(cls, raw: str) -> PersonalToken | None:
-        """Find an unrevoked token by its raw value. Returns None on miss."""
+        """Find a live (unrevoked, unexpired) token by its raw value.
+
+        THE enforcement point for both bearer auth (`BearerTokenAuthMiddleware`)
+        and MCP (`CanopyPATVerifier`) — both resolve tokens through here, so
+        expiry lands on both surfaces at once and cannot drift between them.
+        A NULL expires_at never expires (see the field's help_text).
+        """
         if not raw:
             return None
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
         return (
             cls.objects.select_related("user")
             .filter(token_hash=token_hash, revoked_at__isnull=True)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
             .first()
         )
 
