@@ -66,7 +66,13 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub labs-jj-canopy-web-attachments-${AWS::AccountId}
+      # Literal, not !Sub: the SAME name is repeated as the container's
+      # CANOPY_ATTACHMENTS_BUCKET env value below, and that one MUST be a plain
+      # string (deploy/aws/render_taskdef.py reads this template outside
+      # CloudFormation and drops any env var whose value is an intrinsic).
+      # Keep the two in sync; render_taskdef's REQUIRED_ENV guard fails the
+      # deploy loudly if the env one ever goes missing.
+      BucketName: labs-jj-canopy-web-attachments-858923557655
       # Nothing in this bucket is ever public. The app streams every byte itself
       # (see apps/canopy_sessions/attachment_storage.py), so there is no reason
       # for anonymous or cross-account access to exist at all.
@@ -239,7 +245,7 @@ Resources:
             # GCP deploy. The matching SA key is the CANOPY_DRIVE_SA_KEY_JSON
             # secret below.
             - { Name: CANOPY_DRIVE_ROOT_FOLDER_ID, Value: 1cUv7wQXOvVwuZ86PdhkxpFcuB4Lm9fPz }
-            - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: !Ref AttachmentsBucket }
+            - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: labs-jj-canopy-web-attachments-858923557655 }
             # Web Push (VAPID). The public key is not a secret — it ships in the
             # JS bundle so the browser can subscribe with it; it is the other
             # half of the VapidPrivateKey secret below and the two must match.
