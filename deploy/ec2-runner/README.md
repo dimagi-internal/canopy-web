@@ -7,9 +7,10 @@ output into the `TurnEvent` ledger, and finishes the turn. As of the
 **cloud-agent-bootstrap** milestone it is agent-ready — a real third standby, not
 just a `canopy-web` repo runner — see
 `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`. As of
-**run-convergence PR2** it is also **session-capable**: it also posts the raw
-transcript for every turn and can `--resume` a claude CLI session across turns —
-see "Session-capable, transcript-posting, resumable" below.
+**run-convergence PR2** it also posts the raw transcript for every turn and CAN
+(opt-in, off by default — see below) become session-capable and `--resume` a
+claude CLI session across turns — see "Session-capable, transcript-posting,
+resumable" below.
 
 Everything is declared in **`runner.cfn.yaml`** (CloudFormation, matching
 `deploy/aws/canopy-web.cfn.yaml`): the instance, security group, IAM role, and a
@@ -91,18 +92,29 @@ code" below), it is NOT tied to the stack's cloud-init generation.
 
 ## Session-capable, transcript-posting, resumable (run-convergence PR2)
 
-The runner declares **`capabilities.sessions: true`** by default (env
-`RUNNER_SESSIONS`, "0"/"false"/"no" to opt a specific box out) — this is what makes
-it eligible to claim chat/session-targeted `Turn`s at all (`claim_next_turn` gates
-those on `Runner.session_capable()`, apps/harness/models.py). It is **not yet a
-CloudFormation parameter** (`runner.cfn.yaml` only templates
+The runner CAN declare **`capabilities.sessions: true`**, opt-in via
+**`RUNNER_SESSIONS=1`** (default **OFF**) — this is what makes it eligible to claim
+chat/session-targeted `Turn`s at all (`claim_next_turn` gates those on
+`Runner.session_capable()`, apps/harness/models.py). **Do not turn this on yet.**
+This runner has no durable-record path for a chat session: on labs
+(`CHAT_STUB_EXECUTOR=False`), every session is stamped `transcript_sourced` at
+creation, which means the reduced `TurnEvent`s this runner posts to
+`/turns/{id}/events` never become durable `Message` rows and the user's own line is
+never durably written either — the only durable path is
+`POST /runners/{id}/session-stream` with per-line transcript ordinals, which today
+has exactly one caller, `packages/canopy_runner` (the laptop runner). Flipping
+`sessions` on today means a chat this runner claims streams a perfect-looking live
+reply and then loses the ENTIRE conversation the moment the user reloads the page.
+Flip the default only once that path (`session-stream` + `/streams` + `/backfills`)
+is built here too. It is **not yet a CloudFormation parameter**
+(`runner.cfn.yaml` only templates
 `RUNNER_PROJECTS`/`RUNNER_AGENTS`/`RUNNER_WORKSPACE`/`RUNNER_NAME` into
-`runner.env`); since the default is on, no template change is needed to enable it —
-to disable it on a specific box, add `RUNNER_SESSIONS=0` to `/opt/canopy-runner/runner.env`
-by hand and restart the service. Capabilities are re-synced on every restart
-(`pair_or_load` now `PATCH`es an already-paired runner's capabilities in place, via
-`PATCH /api/harness/runners/{id}`), so flipping the env on an existing box takes
-effect on the next restart without re-pairing (which would otherwise orphan its
+`runner.env`); enabling it today means adding `RUNNER_SESSIONS=1` to
+`/opt/canopy-runner/runner.env` by hand and restarting the service — don't, until
+the durable-record work above ships. Capabilities are re-synced on every restart
+(`pair_or_load` `PATCH`es an already-paired runner's capabilities in place, via
+`PATCH /api/harness/runners/{id}`), so a later flip of the default takes effect on
+the next restart without re-pairing (which would otherwise orphan its
 `RunnerBinding`s).
 
 **Raw transcript, forwarded verbatim.** Every raw `claude -p --output-format
@@ -115,56 +127,80 @@ purpose. Batching is **by bytes, not line count** — the server caps a single
 request at 1 MiB of line bytes (`TRANSCRIPT_APPEND_MAX_BYTES` in
 `apps/harness/api.py`) and 422s over it, since a single large tool result can
 exceed a naive per-N-lines batch — `cloud_runner.py` flushes at 512 KiB
-(`TRANSCRIPT_FLUSH_BYTES`) or every 10s (`TRANSCRIPT_FLUSH_SECONDS`), whichever
-comes first, well under the server's cap, and always flushes whatever remains at
-the end of the turn. Every batch carries a unique `batch_id` scoped to
-`(turn, attempt, seq)` so a resume-fallback retry (see below) can never collide
-with — and silently no-op-drop — an earlier attempt's batch. A transcript POST
-failure is logged and swallowed: **it never fails the turn.**
+(`TRANSCRIPT_FLUSH_BYTES`) or **every 10s on a dedicated background thread**
+(`TRANSCRIPT_FLUSH_SECONDS`), whichever comes first, well under the server's cap.
+The background thread is what makes the time trigger actually periodic — the byte
+trigger alone only runs when a NEW line arrives, so a long-quiet stdout (a
+multi-minute tool call) would otherwise hold buffered lines in memory indefinitely.
+A single line too large to ever fit the server's cap is replaced with a synthetic
+`canopy_runner_line_dropped` marker (never silently dropped with no trace). Every
+batch carries a unique `batch_id` scoped to `(turn, attempt, seq)` so a
+resume-fallback retry (see below) can never collide with — and silently no-op-drop
+— an earlier attempt's batch, and a transient POST failure (5xx/timeout) retries a
+few times with that SAME id before giving up on just that slice; the server's
+`truncated` response flag is honored (further posting for that turn stops once the
+server has stopped storing it). A transcript failure is logged and swallowed:
+**it never fails the turn**, and buffered-but-unflushed content is still flushed
+in a `finally` even if the read loop itself raises (e.g. a dropped WS `emit`).
 
-**Real `--resume` continuity.** A session turn's CLI session id is captured from
-the first stream-json line that carries one (normally `system`/`init`, which fires
-before any other output) and round-tripped through the EXISTING
-resolve-session/record-session RPCs (`POST /api/harness/runners/{id}/resolve-session`
-/ `record-session`) so a later turn on the same canopy `Session` can pass it back as
-`--resume <id>` instead of cold-starting. Concretely: `_session_resume_plan` asks
-resolve-session for a reusable handle before running claude; `_record_session_resume`
-reports the fresh (or reused) session id back after the turn. This reuses
-`RunnerBinding.session_key` — documented as "engine-agnostic ... was emdash_task" —
-rather than the newer `Session.cli_session_id` column
-(`apps/canopy_sessions/models.py`), which the docstring says is unwired for exactly
-this purpose but which nothing in `apps/harness/services.py` actually persists yet
-(`record_session`'s `session_id` param is accepted for wire-compat and currently
-discarded). `cloud_runner.py` sends BOTH fields on every record-session call, so
-wiring that column server-side later needs zero runner-side changes. Reuse is
-additionally gated on a stable `RUNNER_HOST` value (new env var, defaults to
-`RUNNER_NAME`) sent on every heartbeat/pairing call — `RunnerBinding.reusable_by`
-requires the runner id AND host to match the ones that recorded the binding, so a
-brand-new EC2 instance (a new `RUNNER_HOST`, since `RUNNER_NAME` defaults from the
-hostname) correctly cannot "resume" a session it never actually ran, and falls back
-to a fresh spawn instead.
+**Real `--resume` continuity, with a stable per-session working directory.**
+A session turn's CLI session id is captured from the first stream-json line that
+carries one (normally `system`/`init`, which fires before any other output) and
+round-tripped through the EXISTING resolve-session/record-session RPCs
+(`POST /api/harness/runners/{id}/resolve-session` / `record-session`) so a later
+turn on the same canopy `Session` can pass it back as `--resume <id>` instead of
+cold-starting. Concretely: `_session_resume_plan` asks resolve-session for a
+reusable handle before running claude; `_record_session_resume` reports the fresh
+(or reused) session id back after the turn. This reuses `RunnerBinding.session_key`
+— documented as "engine-agnostic ... was emdash_task" — rather than a
+`Session.cli_session_id`-style column (no such field exists anywhere in the
+codebase despite the originating plan naming one — confirmed by grep; see
+`_session_resume_plan`'s docstring). `cloud_runner.py` also sends a `session_id`
+field on every record-session call (currently a documented no-op server-side), so
+wiring a real column for this later needs zero runner-side changes. Reuse is
+additionally gated on a stable `RUNNER_HOST` value (defaults to `RUNNER_NAME`) sent
+on every heartbeat/pairing call — `RunnerBinding.reusable_by` requires the runner id
+AND host to match the ones that recorded the binding, so a brand-new EC2 instance
+correctly cannot "resume" a session it never actually ran.
 
-If `--resume <id>` yields **nothing** — the CLI exits non-zero having emitted no
-stream-json lines at all, its behavior when the resume target no longer exists —
-`run_claude` retries **once** as a fresh spawn (no `--resume`), mirroring the
-reuse-then-fall-back-to-create pattern `packages/canopy_runner/execute.py` already
-uses for emdash sessions. A failure that happens AFTER real output was produced
-under a resumed session is treated as a genuine task failure and is never retried
-(retrying would silently duplicate work under a new session).
+Critically, **every turn on the same canopy Session runs in the SAME working
+directory** (`WORK_DIR/sessions/<chat_session_id>`, keyed on the canopy Session id,
+never the turn id) — Claude Code resolves a `--resume` target by a cwd-derived
+project directory (`~/.claude/projects/<cwd with '/','.' -> '-'>/<session-id>.jsonl`),
+so a session id captured under one cwd is invisible under a different one. Before
+ever invoking `--resume`, `_resume_target_exists` checks that file actually exists
+under the turn's cwd — the cheap local equivalent of
+`packages/canopy_runner/execute.py`'s verify-before-reuse (it reads emdash's DB
+before driving a task; this reads the filesystem before resuming a transcript) — and
+drops straight to a fresh spawn if it doesn't, rather than ever invoking a doomed
+`--resume`. As a second-layer safety net, if the file existed but the CLI still
+yields NOTHING (exits non-zero having emitted no stream-json lines at all), `run_claude`
+retries **once** as a fresh spawn (no `--resume`). A failure that happens AFTER real
+output was produced under a resumed session is treated as a genuine task failure and
+is never retried (retrying would silently duplicate work under a new session).
 
 **What was and was not verified.** There is no live cloud runner instance running
 today (the EC2 stack is down), so none of this has been exercised against a real
 `claude` binary or a real canopy-web deployment. What IS covered, by unit tests
 under `deploy/ec2-runner/tests/` (mocking `subprocess.Popen` and the runner's own
 `_api` helper — see the test file for exactly what's stubbed): capability
-env-gating and the pair-time `PATCH`-in-place sync; byte-bounded transcript
-batching (`_chunk_transcript_lines`); `--resume` argv construction; the
-resolve-session/record-session request shapes (including the agentless-and-
-projectless-session degrade-to-fresh-spawn case); and `run_claude`'s session-id
-capture, transcript forwarding, and the resume-fails-then-falls-back-to-fresh-spawn
-behavior (and that a genuine post-resume failure does NOT retry). Not verified:
-the real `claude -p --output-format stream-json` event shape (the `system`/`init`
-event carrying `session_id` is documented CLI behavior, not something captured
+env-gating (default OFF) and the pair-time `PATCH`-in-place sync; byte-bounded
+transcript batching including the oversized-line marker and driving `run_claude`'s
+own byte-threshold flush (not just the pure helper); the periodic background flush
+actually firing during a simulated multi-second-quiet stdout; transcript POST retry
++ truncation handling; `--resume` argv construction; the resume-target
+filesystem-existence gate (including the stable-per-session-cwd behavior itself —
+two different turn ids on the same chat_session_id resolve to the same directory);
+the resolve-session/record-session request shapes (including the
+agentless-and-projectless-session degrade-to-fresh-spawn case, with a
+non-vacuous-pass assertion that `_api` was actually called); `run_claude`'s
+session-id capture, transcript forwarding, the resume-fails-then-falls-back
+behavior (and that a genuine post-resume failure does NOT retry); and that a
+mid-loop exception (e.g. a broken `emit`) still flushes buffered transcript/events
+in the `finally` rather than dropping them. Not verified: the real
+`claude -p --output-format stream-json` event shape (the `system`/`init` event
+carrying `session_id`, and Claude Code's cwd-encoding convention for
+`~/.claude/projects/`, are both documented CLI behavior, not something captured
 from a live run here), real network behavior against `apps/harness`'s actual
 endpoints, and end-to-end resume against a real, previously-`--resume`d Claude
 session.

@@ -6,15 +6,19 @@ drives a GUI over CDP, which is wrong for a headless box. This pairs a cloud run
 claims harness Turns, runs `claude -p` (stream-json) on the turn's prompt, streams
 the assistant/tool output into the TurnEvent ledger, and finishes the turn.
 
-SESSION-CAPABLE (RC/run-convergence PR2): this runner declares `capabilities.sessions`
-(RUNNER_SESSIONS, default on) so it is eligible to claim chat/session-targeted Turns —
-see Runner.session_capable() in apps/harness/models.py. Every raw stream-json line the
-CLI emits is ALSO forwarded verbatim to POST /turns/{id}/transcript (batched by bytes;
-see deploy/ec2-runner/README.md), in addition to the reduced TurnEvents. And a session
-turn's CLI session id is captured from the stream and round-tripped through the
-existing resolve-session/record-session RPCs so a later turn on the same canopy
-Session can `--resume` it instead of cold-starting — see _session_resume_plan /
-_record_session_resume below for exactly which field carries that id and why.
+SESSION-CAPABLE, OPT-IN (RC/run-convergence PR2): this runner CAN declare
+`capabilities.sessions` (RUNNER_SESSIONS=1; default OFF) to become eligible to claim
+chat/session-targeted Turns — see Runner.session_capable() in apps/harness/models.py.
+It is off by default because this runner has no durable-record path for a chat
+session yet (see the RUNNER_SESSIONS comment at its declaration for the full trace);
+turning it on today means a real conversation's history can be silently lost. Every
+raw stream-json line the CLI emits is ALSO forwarded verbatim to
+POST /turns/{id}/transcript (batched by bytes; see deploy/ec2-runner/README.md), in
+addition to the reduced TurnEvents. And a session turn's CLI session id is captured
+from the stream and round-tripped through the existing resolve-session/record-session
+RPCs so a later turn on the same canopy Session can `--resume` it instead of
+cold-starting — see _session_resume_plan / _record_session_resume below for exactly
+which field carries that id and why.
 
 Config comes from the environment (see deploy/ec2-runner/README.md):
   CANOPY_BASE_URL   e.g. https://labs.connect.dimagi.com/canopy
@@ -22,8 +26,8 @@ Config comes from the environment (see deploy/ec2-runner/README.md):
   RUNNER_NAME       display name (default: this hostname)
   RUNNER_PROJECTS   comma-separated repo names this runner may drive (e.g. canopy-web)
   RUNNER_AGENTS     comma-separated agent slugs this runner may drive (e.g. echo,ada)
-  RUNNER_SESSIONS   whether this runner claims chat/session turns (default: on; "0"/
-                     "false"/"no" to disable)
+  RUNNER_SESSIONS   whether this runner claims chat/session turns (default: OFF —
+                     opt-in; see the RUNNER_SESSIONS declaration for why)
   RUNNER_HOST       stable identity for session-reuse gating (default: RUNNER_NAME).
                      Analogous to emdash's per-macOS-account host, but for a headless
                      box it just needs to be STABLE across process restarts on the
@@ -85,12 +89,23 @@ if _csv("RUNNER_PROJECTS"):
     RUNNER_CAPS["projects"] = _csv("RUNNER_PROJECTS")
 if _csv("RUNNER_AGENTS"):
     RUNNER_CAPS["agents"] = _csv("RUNNER_AGENTS")
-# Default ON: this runner kind (headless, `claude -p` subprocess) is exactly the
-# session-capable executor SP2b anticipated (apps/canopy_sessions/models.py's
-# Session.cli_session_id docstring: "continuity for the real subprocess runner").
-# Opt out per-box with RUNNER_SESSIONS=0 if a particular instance should stay
-# agent/project-only.
-RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", True)
+# Default OFF (opt-in, RUNNER_SESSIONS=1): this runner has no durable-record path
+# for a chat session yet. On labs (CHAT_STUB_EXECUTOR=False) every session is
+# stamped transcript_sourced at creation (apps/canopy_sessions/services.py
+# create_session), which means the reduced TurnEvents this runner posts to
+# /turns/{id}/events NEVER become durable Message rows (project_events short-
+# circuits to 0 for such a session) and the user's own line is never durably
+# written either (_send_transcript_sourced_message deliberately authors none).
+# The only durable path is POST /runners/{id}/session-stream with per-line
+# transcript ordinals -> services.persist_transcript_rows, which today has
+# exactly one caller: packages/canopy_runner/canopy_runner/client.py (the
+# laptop runner). Until THIS runner implements that same call (plus honoring
+# /runners/{id}/streams + /backfills), declaring sessions:true would make it
+# eligible to claim a real chat turn, stream a perfect-looking live reply, and
+# then silently lose the entire conversation the moment the user reloads the
+# page — worse than not claiming it at all. Flip this default only once
+# persist_transcript_rows (via session-stream/streams/backfills) is wired here.
+RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", False)
 if RUNNER_SESSIONS:
     RUNNER_CAPS["sessions"] = True
 RUNNER_WORKSPACE = os.environ.get("RUNNER_WORKSPACE", "")
@@ -165,14 +180,33 @@ def _chunk_transcript_lines(
     """Split raw JSONL lines into batches whose UTF-8-encoded total stays at or
     under `max_bytes` — the server enforces a hard per-request byte cap, not a
     line count, so a single giant tool-result line would blow past a count-based
-    batch. A single line that itself exceeds `max_bytes` still ships alone rather
-    than being dropped (the server's own 100MB per-turn ceiling, not this client,
-    is the backstop for that pathological case)."""
+    batch.
+
+    A single line that itself exceeds `max_bytes` can never fit even alone: the
+    server 422s the WHOLE request when total_bytes > its cap
+    (apps/harness/api.py), before `append_transcript`'s separate 100MB per-turn
+    ceiling is ever consulted — that ceiling is a different mechanism and is not
+    a backstop for this case. Shipping it "alone" would still fail, silently
+    dropping the line with no record. Instead it is replaced with a synthetic
+    `canopy_runner_line_dropped` marker line, so a cost/structure aggregator
+    reading the transcript can at least SEE the gap instead of it vanishing."""
     batches: list[list[str]] = []
     current: list[str] = []
     current_bytes = 0
     for line in lines:
         n = len(line.encode("utf-8"))
+        if n > max_bytes:
+            if current:
+                batches.append(current)
+                current = []
+                current_bytes = 0
+            marker = json.dumps({
+                "type": "canopy_runner_line_dropped",
+                "reason": "line exceeds the per-request transcript byte cap",
+                "bytes": n,
+            })
+            batches.append([marker])
+            continue
         if current and current_bytes + n > max_bytes:
             batches.append(current)
             current = []
@@ -300,28 +334,59 @@ def _agent_env(slug: str | None) -> dict:
     return env
 
 
-def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[str]) -> None:
-    """Ship one already-byte-bounded batch. Best-effort: per the transcript
-    contract (deploy/ec2-runner/README.md), a transcript failure must never fail
-    the turn, so every error is logged and swallowed here, never raised.
+# Bounded retry for a transient transcript-POST failure (5xx/timeout/URLError).
+# Small and short: this runs INLINE in the turn's own execution path (see
+# run_claude's flush_transcript), so it must not itself become the thing that
+# stalls a live turn for a long time.
+TRANSCRIPT_POST_RETRIES = 3
+TRANSCRIPT_POST_RETRY_SLEEP_SECONDS = 1.0
 
-    `batch_id` is scoped to (turn, attempt, seq) rather than just (turn, seq): a
-    resume-fallback retry (see `run_claude`) re-invokes this whole function with
-    seq restarting at 1, and reusing a bare `f"{turn_id}:{seq}"` id would collide
-    with the FIRST (failed-resume) attempt's batch 1 — the server's dedup treats
-    a repeated batch_id as a lost-ack retry and silently no-ops it, which would
-    drop the fresh attempt's transcript rather than the intended duplicate."""
+
+def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[str]) -> bool:
+    """Ship one already-byte-bounded batch, retrying a transient failure a few
+    times with the SAME `batch_id` (never fabricating a new one per attempt —
+    that would defeat the server's last-batch dedup, apps/harness/services.py,
+    which is exactly what makes a same-id retry safe rather than a duplicate).
+
+    Returns False iff the SERVER reports this turn's transcript as `truncated`
+    (its per-turn size ceiling latched) — the caller should stop posting for
+    the rest of THIS turn, since every further byte would be silently dropped
+    server-side anyway. Returns True in every other case, including after
+    exhausting retries on a genuinely failing batch: per the transcript
+    contract (deploy/ec2-runner/README.md), a transcript failure must never
+    fail the TURN, so a batch that never lands is logged and abandoned rather
+    than raised, but posting continues for whatever comes next.
+
+    `batch_id` is scoped to (turn, attempt, seq) rather than just (turn, seq):
+    a resume-fallback retry (see `run_claude`) re-invokes this whole function
+    with seq restarting at 1, and reusing a bare `f"{turn_id}:{seq}"` id would
+    collide with the FIRST (failed-resume) attempt's batch 1 — the server's
+    dedup treats a repeated batch_id as a lost-ack retry and silently no-ops
+    it, which would drop the fresh attempt's transcript rather than the
+    intended duplicate."""
     if not lines:
-        return
+        return True
     batch_id = f"{turn_id}:{attempt_id}:{seq}"
-    try:
-        status, _ = _api(
-            "POST", f"/turns/{turn_id}/transcript", {"lines": lines, "batch_id": batch_id}
-        )
-        if status != 200:
-            _log(f"transcript POST turn={turn_id[:8]} batch={seq} -> {status}")
-    except Exception as exc:  # noqa: BLE001 — a transcript hiccup must never fail the turn
-        _log(f"transcript POST turn={turn_id[:8]} batch={seq} raised: {exc}")
+    body = {"lines": lines, "batch_id": batch_id}
+    for attempt in range(1, TRANSCRIPT_POST_RETRIES + 1):
+        try:
+            status, payload = _api("POST", f"/turns/{turn_id}/transcript", body)
+        except Exception as exc:  # noqa: BLE001 — a transcript hiccup must never fail the turn
+            status, payload = 0, None
+            _log(f"transcript POST turn={turn_id[:8]} batch={seq} attempt={attempt} raised: {exc}")
+        if status == 200:
+            if payload and payload.get("truncated"):
+                _log(f"transcript POST turn={turn_id[:8]}: server reports truncated; "
+                     "no further posts for this turn")
+                return False
+            return True
+        if attempt < TRANSCRIPT_POST_RETRIES:
+            _log(f"transcript POST turn={turn_id[:8]} batch={seq} -> {status}; "
+                 f"retry {attempt}/{TRANSCRIPT_POST_RETRIES}")
+            time.sleep(TRANSCRIPT_POST_RETRY_SLEEP_SECONDS)
+    _log(f"transcript POST turn={turn_id[:8]} batch={seq} failed after "
+         f"{TRANSCRIPT_POST_RETRIES} attempts; this slice is lost, continuing")
+    return True
 
 
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
@@ -349,23 +414,35 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     the caller round-trips it through record-session so a LATER turn on the same
     canopy Session can pass it back as `resume_session_id` here.
 
-    `resume_session_id`, if given, is passed as `--resume <id>`. If that yields
-    NOTHING — the process exits non-zero having emitted no stream-json lines at
-    all, the CLI's behavior when a resume target no longer exists — this retries
-    ONCE as a fresh spawn (`_resume_retried` guards against looping), mirroring
-    the reuse-then-fall-back-to-create pattern packages/canopy_runner/execute.py
-    already uses for emdash sessions: never assume continuity works, always have
-    a cold-start fallback.
+    `resume_session_id`, if given, is verified FIRST against the local
+    filesystem (`_resume_target_exists` — Claude Code resolves `--resume` by
+    cwd-derived project dir, so a session captured under a different cwd is
+    invisible here regardless of the id) and dropped to a fresh spawn
+    immediately if that fails, rather than ever invoking a doomed `--resume`.
+    As a second-layer safety net — if the file existed but the CLI still
+    yields NOTHING (exits non-zero having emitted no stream-json lines at
+    all) — this retries ONCE as a fresh spawn (`_resume_retried` guards
+    against looping), mirroring the reuse-then-fall-back-to-create pattern
+    packages/canopy_runner/execute.py already uses for emdash sessions: never
+    assume continuity works, always have a cold-start fallback.
     """
     workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
     workdir.mkdir(parents=True, exist_ok=True)
+    if resume_session_id and not _resume_target_exists(workdir, resume_session_id):
+        _log(f"resume target {resume_session_id!r} not found under {workdir} "
+             f"(turn {turn_id[:8]}); treating as a fresh spawn")
+        resume_session_id = None
     cmd = _claude_cmd(prompt, resume_session_id)
     _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}"
          + (f" --resume {resume_session_id}" if resume_session_id else ""))
     # stderr goes to a file, not PIPE: a chatty claude can fill the 64KB pipe buffer
     # while we're only reading stdout, deadlocking the process. A file has no such
     # limit; we tail it for the failure path below.
-    stderr_path = workdir / "stderr.log"
+    # A resume-fallback retry (_resume_retried=True) writes to a DIFFERENT file
+    # than the original attempt, so a failed --resume's stderr — the only
+    # evidence of why it failed — survives the fresh-spawn retry instead of
+    # being truncated by its `.open("w")` (review finding M2).
+    stderr_path = workdir / ("stderr.resume-retry.log" if _resume_retried else "stderr.log")
     stderr_file = stderr_path.open("w")
     proc = subprocess.Popen(
         cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True,
@@ -380,7 +457,11 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     transcript_buf: list[str] = []
     transcript_bytes = 0
     transcript_seq = 0
-    last_transcript_flush = time.monotonic()
+    transcript_stopped = False  # latched True once the server reports `truncated`
+    # Guards transcript_buf/transcript_bytes/transcript_seq/transcript_stopped,
+    # which the main read loop AND the periodic flush thread below both touch.
+    transcript_lock = threading.Lock()
+    transcript_flush_stop = threading.Event()
 
     def flush():
         nonlocal batch
@@ -389,63 +470,117 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             batch = []
 
     def flush_transcript():
-        nonlocal transcript_buf, transcript_bytes, transcript_seq, last_transcript_flush
-        for chunk in _chunk_transcript_lines(transcript_buf):
-            transcript_seq += 1
-            _post_transcript_batch(turn_id, attempt_id, transcript_seq, chunk)
-        transcript_buf = []
-        transcript_bytes = 0
-        last_transcript_flush = time.monotonic()
+        # Swap-and-clear happens under the lock (short critical section); the
+        # actual chunking + network POSTs run with the lock HELD too (simpler
+        # and race-free, at the cost of some backpressure on a concurrent
+        # appender — the same tradeoff `emit()` already carries elsewhere in
+        # this file). `nonlocal` writes inside a `with` block are fine: the
+        # lock only serializes callers, it doesn't scope the names.
+        nonlocal transcript_buf, transcript_bytes, transcript_seq, transcript_stopped
+        with transcript_lock:
+            if not transcript_buf or transcript_stopped:
+                transcript_buf = []
+                transcript_bytes = 0
+                return
+            pending = transcript_buf
+            transcript_buf = []
+            transcript_bytes = 0
+            for chunk in _chunk_transcript_lines(pending):
+                transcript_seq += 1
+                if not _post_transcript_batch(turn_id, attempt_id, transcript_seq, chunk):
+                    transcript_stopped = True
+                    break
 
-    for line in proc.stdout:  # type: ignore[union-attr]
-        line = line.strip()
-        if not line:
-            continue
-        lines_seen += 1
-        transcript_buf.append(line)
-        transcript_bytes += len(line.encode("utf-8"))
-        if (transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
-                or time.monotonic() - last_transcript_flush >= TRANSCRIPT_FLUSH_SECONDS):
+    def _periodic_flush() -> None:
+        # The byte-size flush trigger below only runs when a NEW line arrives,
+        # so a long-quiet stdout (a multi-minute tool call — CLAUDE.md's own
+        # worked example is 296s) would otherwise hold buffered lines in RAM
+        # indefinitely, lost to any crash/SIGTERM/instance-stop in the
+        # meantime (review finding I2). This thread is what makes
+        # TRANSCRIPT_FLUSH_SECONDS actually periodic rather than "on the next
+        # line after N seconds".
+        while not transcript_flush_stop.wait(TRANSCRIPT_FLUSH_SECONDS):
             flush_transcript()
+
+    flusher = threading.Thread(
+        target=_periodic_flush, daemon=True, name=f"transcript-flush-{turn_id[:8]}",
+    )
+    flusher.start()
+
+    loop_error: Exception | None = None
+    try:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            line = line.strip()
+            if not line:
+                continue
+            lines_seen += 1
+            should_flush = False
+            with transcript_lock:
+                transcript_buf.append(line)
+                transcript_bytes += len(line.encode("utf-8"))
+                should_flush = transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
+            if should_flush:
+                flush_transcript()
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if evt.get("session_id"):
+                cli_session_id = evt["session_id"]
+            etype = evt.get("type")
+            if etype == "assistant":
+                for block in (evt.get("message", {}).get("content") or []):
+                    if block.get("type") == "text" and block.get("text"):
+                        batch.append({"kind": "assistant", "payload": {"text": block["text"]}})
+                    elif block.get("type") == "tool_use":
+                        batch.append({"kind": "tool_start", "payload": {"name": block.get("name", "")}})
+            elif etype == "user":
+                for block in (evt.get("message", {}).get("content") or []):
+                    if block.get("type") == "tool_result":
+                        batch.append({"kind": "tool_end", "payload": {}})
+            elif etype == "result":
+                final_text = evt.get("result", "") or ""
+                ok = not evt.get("is_error", False)
+            if len(batch) >= 10:
+                flush()
+    except Exception as exc:  # noqa: BLE001 — must not lose buffered events/transcript
+        loop_error = exc
+    finally:
+        # Everything here runs whether the loop finished cleanly, raised, or
+        # the process is still alive (review finding I3: the ORIGINAL code had
+        # no try/finally at all, so an exception mid-loop — e.g. the WS `emit`
+        # breaking on a dropped socket — dropped every buffered line/event).
+        transcript_flush_stop.set()
         try:
-            evt = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if evt.get("session_id"):
-            cli_session_id = evt["session_id"]
-        etype = evt.get("type")
-        if etype == "assistant":
-            for block in (evt.get("message", {}).get("content") or []):
-                if block.get("type") == "text" and block.get("text"):
-                    batch.append({"kind": "assistant", "payload": {"text": block["text"]}})
-                elif block.get("type") == "tool_use":
-                    batch.append({"kind": "tool_start", "payload": {"name": block.get("name", "")}})
-        elif etype == "user":
-            for block in (evt.get("message", {}).get("content") or []):
-                if block.get("type") == "tool_result":
-                    batch.append({"kind": "tool_end", "payload": {}})
-        elif etype == "result":
-            final_text = evt.get("result", "") or ""
-            ok = not evt.get("is_error", False)
-        if len(batch) >= 10:
-            flush()
-    proc.wait()
-    stderr_file.close()
-    flush()
-    flush_transcript()
-    if proc.returncode != 0 and not final_text:
+            proc.wait()
+        except Exception:  # noqa: BLE001 — best-effort reap; loop_error already captured
+            pass
+        stderr_file.close()
+        try:
+            flush()  # calls the caller-supplied `emit` — can itself raise (e.g. a dead WS)
+        except Exception as exc:  # noqa: BLE001 — cleanup must not lose flush_transcript below
+            if loop_error is None:
+                loop_error = exc
+        flush_transcript()  # never raises — _post_transcript_batch swallows everything
+    if loop_error is not None:
+        ok = False
+        final_text = final_text or f"runner error while streaming claude output: {loop_error}"
+    elif proc.returncode != 0 and not final_text:
         ok = False
         try:
             tail = stderr_path.read_text(errors="replace")
         except OSError:
             tail = ""
         final_text = tail[-500:]
-    if resume_session_id and not _resume_retried and lines_seen == 0 and proc.returncode != 0:
-        # The CLI emitted NOTHING at all before exiting — the resume target is
-        # gone (expired/evicted), not a genuine task failure. Fall back to a
-        # fresh spawn rather than surfacing a cold "resume failed" as the turn's
-        # result. A failure AFTER real output happened is a genuine task failure
-        # and must not retry (that would silently duplicate work/tokens).
+    if (resume_session_id and not _resume_retried and lines_seen == 0
+            and loop_error is None and proc.returncode != 0):
+        # The CLI emitted NOTHING at all before exiting even though the
+        # transcript file existed at start (already verified above) — some
+        # other resume failure (a corrupt/incompatible file, a CLI version
+        # mismatch). Fall back to a fresh spawn rather than surfacing a cold
+        # "resume failed" as the turn's result. A failure AFTER real output
+        # happened is a genuine task failure and must not retry (that would
+        # silently duplicate work/tokens).
         _log(f"resume of session {resume_session_id!r} yielded nothing "
              f"(turn {turn_id[:8]}); falling back to a fresh spawn")
         return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
@@ -467,6 +602,16 @@ def _stage_github_token(token: str) -> None:
         _log(f"warn: could not stage github token: {exc}")
 
 
+def _chat_session_id(turn: dict) -> str:
+    """The canopy Session id (origin_ref.chat_session_id) for a SESSION-targeted
+    turn, or "" for an agent/project turn. This is the one identity that is
+    INVARIANT for the life of a conversation — unlike `thread_key` (see
+    `_session_thread_key`), which can take other forms (e.g. "emdash:<task>" for
+    a runner-discovered binding) — so it is what `_turn_cwd` keys a session's
+    on-disk workdir on, not the turn id and not the thread key."""
+    return (turn.get("origin_ref") or {}).get("chat_session_id") or ""
+
+
 def _turn_agent_slug(turn: dict) -> str:
     """The agent this turn runs AS, or "" — the single place that decision is made.
 
@@ -477,9 +622,19 @@ def _turn_agent_slug(turn: dict) -> str:
     `_agent_env` (whose credentials to load) so the two can never disagree about
     what counts as an agent turn.
     """
-    if (turn.get("origin_ref") or {}).get("chat_session_id"):
+    if _chat_session_id(turn):
         return ""
     return turn.get("agent_slug") or ""
+
+
+def _safe_session_dirname(session_id: str) -> str:
+    """A filesystem-safe basename for a session workdir. `session_id` is normally
+    a canopy Session UUID (server-controlled at creation, but a turn payload is
+    still data off the wire) — this never trusts it enough to join onto a path
+    unsanitized, mirroring packages/canopy_runner/canopy_runner/execute.py's
+    `_safe_name` for the same reason."""
+    cleaned = "".join(c if (c.isalnum() or c in "._-") else "-" for c in session_id).strip(".-")
+    return cleaned[:80] or "unknown-session"
 
 
 def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
@@ -488,21 +643,26 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     bootstrapped clone under AGENT_ROOT (bootstrap_agents.sh, run once per
     service start — see bootstrap_agent_fleet) runs IN that clone, freshly
     `git pull`ed here at claim, so it sees the agent's real repo — config,
-    skills, state — not an empty scratch dir. Everything else (project turns,
-    session turns, or an agent bootstrap hasn't reached yet) keeps the original
-    scratch-dir behavior. Best-effort: a pull failure logs and still uses the
-    clone as-is (stale beats absent).
+    skills, state — not an empty scratch dir. Best-effort: a pull failure logs
+    and still uses the clone as-is (stale beats absent).
 
-    Session turns are excluded explicitly: TurnOut surfaces agent_slug for an
-    agent-backed chat session too, but a session turn's "prompt" is one message
-    in an ongoing conversation, not "go work in this repo" — scratch-dir is the
-    right default whether or not the session happens to have an agent identity.
-    (This runner now DOES declare capabilities.sessions and executes session
-    turns directly via `claude -p --resume` — see run_claude/_session_resume_plan
-    — so this is live, not merely anticipatory.)"""
-    # A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
-    # session id in origin_ref — that, not a top-level field, is the session
-    # signal on TurnOut. A live chat is bridged, never run from a checkout.
+    A SESSION turn gets a STABLE per-canopy-Session directory
+    (WORK_DIR/sessions/<chat_session_id>), checked BEFORE the agent-clone branch
+    and never the turn-id scratch dir: Claude Code resolves a `--resume` target
+    by the cwd-derived project directory
+    (~/.claude/projects/<cwd with '/','.' -> '-'>/<session-id>.jsonl), so a
+    session id captured under one cwd is invisible under a different one. Every
+    turn on the same conversation MUST share one cwd or `--resume` can never
+    resolve — keying on the turn id (the pre-fix behavior) handed every turn on
+    a session its own directory and made resume permanently unresolvable.
+    A brand-new-per-turn scratch dir remains correct for project/agent turns
+    (each is its own unit of work), just not for a session's ongoing thread.
+
+    Everything else (project turns, or an agent bootstrap hasn't reached yet)
+    keeps the original scratch-dir behavior."""
+    session_id = _chat_session_id(turn)
+    if session_id:
+        return pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
     slug = _turn_agent_slug(turn)
     if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
@@ -606,15 +766,45 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
 
 # ── session continuity (resolve-session / record-session round-trip) ───────
 def _session_thread_key(turn: dict) -> str:
-    """The chat_session id for a SESSION-targeted turn, or "" for an agent/project
-    turn. apps/canopy_sessions/services.py always stamps BOTH `thread_key` and
-    `chat_session_id` together on a chat send's origin_ref — `chat_session_id`'s
-    presence is the reliable "this is a session turn" signal (mirrors
-    `_turn_agent_slug` above); `thread_key` is what resolve/record-session key on."""
+    """The key resolve-session/record-session use for a SESSION-targeted turn, or
+    "" for an agent/project turn. apps/canopy_sessions/services.py always stamps
+    BOTH `thread_key` and `chat_session_id` together on a chat send's origin_ref;
+    `thread_key` is what the RPCs key on (it can be "emdash:<task>" for a
+    runner-discovered binding, unlike `_chat_session_id`, which is always the
+    canopy Session's own id — that's what `_turn_cwd` keys the workdir on)."""
     ref = turn.get("origin_ref") or {}
-    if not ref.get("chat_session_id"):
+    session_id = _chat_session_id(turn)
+    if not session_id:
         return ""
-    return ref.get("thread_key") or ref["chat_session_id"]
+    return ref.get("thread_key") or session_id
+
+
+# Claude Code resolves a `--resume <id>` target by cwd, not by id alone: the
+# transcript lives at ~/.claude/projects/<cwd with '/','.' -> '-'>/<id>.jsonl.
+# Mirrors packages/canopy_runner/canopy_runner/transcript.py's
+# `encode_project_dir` (duplicated, not imported: that package pulls in
+# non-stdlib deps and this runner is deliberately stdlib-only).
+CLAUDE_PROJECTS_HOME = pathlib.Path.home() / ".claude" / "projects"
+
+
+def _encode_project_dir(cwd: pathlib.Path) -> str:
+    return str(cwd).replace("/", "-").replace(".", "-")
+
+
+def _resume_target_exists(cwd: pathlib.Path, session_id: str) -> bool:
+    """Whether claude actually has a transcript to `--resume` for (cwd, session_id)
+    — the cheap, local equivalent of packages/canopy_runner/execute.py's
+    verify-before-reuse (it reads emdash's DB to confirm a task exists before
+    driving it; this reads the filesystem to confirm a transcript exists before
+    resuming it). Never guesses: a missing file, or any OSError while checking,
+    is treated as "not resumable" so the caller falls back to a fresh spawn
+    instead of a doomed `--resume` invocation."""
+    if not session_id:
+        return False
+    try:
+        return (CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{session_id}.jsonl").is_file()
+    except OSError:
+        return False
 
 
 def _session_resume_plan(runner_id: str, turn: dict) -> str:
@@ -626,10 +816,11 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     Reuses the existing resolve-session RPC (apps/harness/api.py) rather than a
     new endpoint — `RunnerBinding.session_key` is documented as "engine-agnostic
     ... was emdash_task", so a raw claude CLI session id is exactly the kind of
-    handle it was generalized to carry. `Session.cli_session_id` (the column
-    SP2b's docstring names for this) stays unwired by this PR — see the PR2
-    report for why that's a deliberate, small, separately-tracked gap rather
-    than blocking this on a schema/service change.
+    handle it was generalized to carry. The originating plan for this work named
+    a `canopy_sessions.Session.cli_session_id` column for this purpose — no such
+    field or docstring exists anywhere in the codebase (confirmed by grep before
+    writing this), so this deliberately reuses the field that DOES exist and is
+    fully wired end to end, rather than adding a new column/service change.
 
     An agentless AND projectless session (legal per the Session model, but not
     something resolve-session's tenant gate accepts today) degrades silently to
@@ -664,10 +855,11 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
 
     Sends BOTH `emdash_task_id` (what's actually read back today, via
     RunnerBinding.session_key) and `session_id` (the wire-compat field already
-    threaded through RecordSessionIn -> services.record_session, currently a
-    documented no-op) — the moment the server wires that param through to
-    `Session.cli_session_id`, this call starts populating it with zero runner-
-    side changes.
+    threaded through RecordSessionIn -> services.record_session, currently
+    accepted and silently discarded there) — if a `Session`-level column for
+    this is ever added and wired server-side, this call starts populating it
+    with zero runner-side changes; see `_session_resume_plan`'s docstring for
+    why no such column exists today despite the originating plan naming one.
     """
     thread_key = _session_thread_key(turn)
     if not thread_key or not cli_session_id:
