@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { Draft } from "./protocol"
-import { IDLE_THRESHOLD_MS, isDraftIdle, msUntilDraftIdle } from "./drafts"
+import {
+  IDLE_THRESHOLD_MS,
+  isDraftIdle,
+  msUntilDraftIdle,
+  shouldSyncDraftLive,
+} from "./drafts"
 
 const NOW = 1_700_000_000_000
 
@@ -62,5 +67,24 @@ describe("msUntilDraftIdle", () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     expect(msUntilDraftIdle(draftEditedAt(IDLE_THRESHOLD_MS + 5000))).toBe(0)
+  })
+})
+
+describe("shouldSyncDraftLive", () => {
+  it("does not mirror keystrokes when you are alone", () => {
+    // The single-player case: a per-keystroke draft.update costs a round trip,
+    // an echo that can rewind the textarea, and a version to disagree about —
+    // and protects no co-editor, because there isn't one.
+    expect(shouldSyncDraftLive([1])).toBe(false)
+  })
+
+  it("treats an empty presence set as alone", () => {
+    // Pre-connect: presence has not landed yet, which is precisely when there
+    // is nobody to sync with.
+    expect(shouldSyncDraftLive([])).toBe(false)
+  })
+
+  it("mirrors keystrokes once somebody else is present", () => {
+    expect(shouldSyncDraftLive([1, 2])).toBe(true)
   })
 })
