@@ -258,6 +258,32 @@ WALKTHROUGH_MAX_UPLOAD_BYTES = env.int(
     "WALKTHROUGH_MAX_UPLOAD_BYTES", default=75 * 1024 * 1024,
 )
 
+# --- Chat attachments (apps/canopy_sessions) -------------------------
+# S3 bucket holding chat attachment bytes. Empty string disables the feature
+# entirely: uploads 503 with code="attachments-not-configured" rather than
+# half-working, so a dev box without AWS credentials fails loudly instead of
+# writing rows that point at bytes which do not exist.
+#
+# Access is granted by a BUCKET policy naming the ECS task role, not by an IAM
+# policy on that role: the task role (labs-jj-ecs-task-role) belongs to the
+# shared labs platform and is only a *parameter* to our CloudFormation stack, so
+# we cannot attach to it. See deploy/aws/canopy-web.cfn.yaml.
+CANOPY_ATTACHMENTS_BUCKET = env("CANOPY_ATTACHMENTS_BUCKET", default="")
+
+# Max bytes for one attachment. Deliberately far below the walkthrough cap: this
+# is the phone-screenshot path, and the bytes stream through the web dyno.
+ATTACHMENT_MAX_UPLOAD_BYTES = env.int(
+    "ATTACHMENT_MAX_UPLOAD_BYTES", default=10 * 1024 * 1024,
+)
+
+# An allowlist, never a denylist: the bytes are handed to an agent that will
+# open them, and the browser renders them inline. Images only for now — the
+# stated use case is "show the agent a screenshot".
+ATTACHMENT_ALLOWED_CONTENT_TYPES = env.list(
+    "ATTACHMENT_ALLOWED_CONTENT_TYPES",
+    default=["image/png", "image/jpeg", "image/gif", "image/webp"],
+)
+
 # --- Agent-run Drive backing (apps/agent_runs) -----------------------
 # Drive-as-truth run store for agents whose runs live in a Google Drive
 # tree (e.g. ACE opps under ACE/<slug>/runs/<run-id>/). All knobs are

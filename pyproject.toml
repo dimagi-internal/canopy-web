@@ -21,6 +21,10 @@ dependencies = [
     "fastmcp>=3.3,<4.0",
     "channels>=4.1,<5.0",
     "channels-redis>=4.2,<5.0",
+    # S3 for chat attachment bytes (apps/canopy_sessions/attachment_storage.py).
+    # Credentials come from the ECS task role's ambient environment; boto3
+    # resolves them itself and no key is ever handled in code.
+    "boto3>=1.34,<2.0",
     # The Django-free run-lifecycle core (read model + RunStore Protocol + Drive
     # adapter). Lives in-repo at packages/canopy_agent_runs; resolved as an editable
     # path dep via [tool.uv.sources] below. Django's DbRunStore (apps/agent_runs)
