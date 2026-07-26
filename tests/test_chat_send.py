@@ -94,13 +94,21 @@ def test_status_events_are_not_transcript_rows():
 def test_maybe_execute_inline_leaves_turn_for_runner_when_disabled(settings):
     # Production (CHAT_STUB_EXECUTOR=False): a send enqueues and waits for a
     # session-capable cloud runner — no inline stub, no assistant message yet.
+    #
+    # And NO durable user row: a runner will drive this session in emdash, so the
+    # transcript is its record and the user's line lands when the runner ships the
+    # record it became (transcript_sourced). Writing one here too would put the
+    # same message at two different indexes in one column. Until the turn runs,
+    # the text lives in Turn.prompt and the client's optimistic echo.
     settings.CHAT_STUB_EXECUTOR = False
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    msg, turn = chat.send_message(session=session, text="hi", user=user)
     chat.maybe_execute_inline(turn)
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
-    assert [m.role for m in session.messages.all()] == ["user"]
+    assert session.messages.count() == 0
+    assert msg.pk.startswith("transient:")   # serialized to the client, never saved
+    assert turn.prompt == "hi"               # the text is not lost while it waits
 
 
 def test_maybe_execute_inline_runs_stub_when_enabled(settings):

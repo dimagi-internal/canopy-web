@@ -338,13 +338,56 @@ def create_session(*, workspace, created_by, agent=None, project: str = "", titl
     from .models import SessionParticipant
     from .participants import ensure_participant
 
+    meta = dict(metadata or {})
+    # A real runner will drive this session in emdash, so its transcript is the
+    # record — stamped at birth, never inferred later, so a session can't change
+    # its mind about where its history lives (see `transcript_sourced`). Under the
+    # dev stub there is no emdash session and no transcript, so the ledger stays
+    # the source.
+    if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
+        meta.setdefault(TRANSCRIPT_SOURCED, True)
     with transaction.atomic():
         session = Session.objects.create(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
-            title=title, metadata=metadata or {},
+            title=title, metadata=meta,
         )
         ensure_participant(session, created_by, SessionParticipant.OWNER)
     return session
+
+
+# Marks a session whose DURABLE record is its Claude transcript, keyed on each
+# record's ordinal — as opposed to the ledger projection, which only ever captures
+# what happened inside a Turn. Stamped at creation when a real runner will execute
+# the session (see `create_session`); runner-discovered sessions qualify by
+# construction. See `transcript_sourced`.
+TRANSCRIPT_SOURCED = "transcript_sourced"
+
+
+def transcript_sourced(session) -> bool:
+    """True when this session's durable messages come from its transcript.
+
+    ONE rule for both kinds of session — where a conversation ORIGINATED (a phone
+    composer vs a task discovered in emdash) says nothing about where its record
+    should live, and treating it as if it did is what split the two paths:
+
+      - transcript-sourced: every record in the emdash session becomes a Message,
+        keyed on its transcript ordinal, whether or not a Turn was open. Covers
+        text you type directly in emdash and text the agent writes after handing
+        the floor back (a background job finishing), neither of which sits inside
+        a turn.
+      - ledger-sourced (the fallback): Messages are projected from a Turn's events.
+        Only for sessions no runner will ever execute — the dev stub, where there
+        IS no transcript to read.
+
+    Sessions created before the unification carry no flag and stay ledger-sourced
+    for life: their rows are numbered by a dense counter (0,1,2…) which would
+    collide with transcript ordinals in the same `turn_index` column, so switching
+    one mid-life would drop or misorder history. New chats get the unified path;
+    `convert_session_to_transcript_source` migrates an old one deliberately.
+    """
+    if session.origin == Session.ORIGIN_RUNNER:
+        return True  # discovered in emdash: the transcript is all there ever was
+    return bool((session.metadata or {}).get(TRANSCRIPT_SOURCED))
 
 
 def _next_index(session: Session) -> int:
@@ -434,8 +477,8 @@ def send_message(
     send, so this path writes no row — the frontend already echoes the message
     optimistically (draft.committed), and a transient Message keeps the contract.
     """
-    if session.origin == Session.ORIGIN_RUNNER:
-        return _send_runner_message(
+    if transcript_sourced(session):
+        return _send_transcript_sourced_message(
             session=session, text=text, client_id=client_id, placement=placement
         )
     with transaction.atomic():
@@ -518,10 +561,16 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
     return turn
 
 
-def _send_runner_message(
+def _send_transcript_sourced_message(
     *, session: Session, text: str, client_id: str = "", placement: str | None = None
 ) -> tuple[Message, Turn]:
-    """The runner-session send path: enqueue the Turn, author NO durable user row.
+    """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
+
+    Your words become durable when the runner ships the transcript record they
+    became — the same line the agent actually read — rather than a second copy
+    written here at a different index. Until then they live in `Turn.prompt` and
+    the client's optimistic echo, so a send that waits for an offline runner shows
+    locally and becomes durable the moment the turn is executed.
 
     The returned Message is transient (never saved): MessageOut serializes it for
     the REST response and the WS handler broadcasts str(pk) as user_message_id, so
@@ -606,7 +655,7 @@ def project_events(turn: Turn, rows) -> int:
     index space. The ledger frames still stream to the live client unchanged."""
     if not turn.chat_session_id:
         return 0
-    if turn.chat_session.origin == Session.ORIGIN_RUNNER:
+    if transcript_sourced(turn.chat_session):
         return 0
     created = 0
     with transaction.atomic():

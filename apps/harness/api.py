@@ -485,7 +485,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     seq:<n> message ids). User events are persisted but never live-pushed — the
     sender's client already echoed them optimistically."""
     from apps.canopy_sessions import services as chat_services
-    from apps.canopy_sessions.models import RunnerBinding, Session
+    from apps.canopy_sessions.models import RunnerBinding
     from apps.realtime import groups
 
     runner = _runner_or_404(request, runner_id)
@@ -495,7 +495,12 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     )
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
-    if binding.session.origin == Session.ORIGIN_RUNNER:
+    if chat_services.transcript_sourced(binding.session):
+        # Not "was this session discovered in emdash?" — where a conversation
+        # started says nothing about where its record belongs. A phone-created chat
+        # is driven by the same runner, in the same emdash session, writing the same
+        # transcript, so it persists the same way (see services.transcript_sourced).
+        #
         # Ordinal-less events (an old runner) stay live-view-only: persisting
         # assistant rows without the user side would blank the tail fallback's
         # human half the moment any row exists.
