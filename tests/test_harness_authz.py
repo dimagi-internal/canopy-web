@@ -298,43 +298,14 @@ def test_list_turns_only_shows_my_tenants_turns(owner_client, stranger_client, a
     assert resp.json() == []  # filtered, not 404 — a list of nothing
 
 
-def test_null_workspace_agent_now_fails_closed(owner_client):
-    """Superseded by the security review (2026-07-26, F1): a workspace-less
-    agent used to be silently ungated here (`if agent.workspace_id and not
-    is_member(...)` short-circuits to "allow" when workspace_id is falsy) —
-    any authenticated user, not just a workspace member, could act on it.
-    With transcripts that would hand a stranger an agent's full raw
-    `claude -p` output. `_agent_or_404` now fails CLOSED instead: a
-    workspace-less agent is unresolvable via this API until it's homed.
-
-    Production carries zero agents with workspace_id IS NULL (verified at
-    review time), and the real creation path (`apps.agents.api.upsert_agent`)
-    always homes a new agent to a workspace — this is a legacy/pre-migration
-    edge case, not a live user-facing flow."""
-    Agent.objects.create(slug="legacy", name="Legacy")
-    assert _enqueue(owner_client, slug="legacy", key="k-legacy").status_code == 404
-
-
-def test_list_turns_excludes_unhomed_agent_turns(owner_client):
-    """Security review 2026-07-26, hole B: list_turns unconditionally OR'd in
-    Q(agent__workspace_id__isnull=True), so ANY authenticated caller saw every
-    unhomed agent's turns — TurnOut leaks `prompt`, `origin_ref`, `session_id`.
-    That is strictly more permissive than `_agent_or_404` (F1 above), which
-    already 404s a workspace-less agent for everyone: a turn could be listed
-    here and then 404 on every single-turn action, the exact list-vs-gate
-    drift `_runner_visibility_q`'s docstring warns about. Fails closed to
-    match: an unhomed agent's turns are invisible in the list too.
-
-    Enqueueing via the API is itself fail-closed now, so build the turn
-    directly (mirrors the legacy/pre-migration row this models)."""
-    orphan = Agent.objects.create(slug="orphan", name="Orphan")
-    Turn.objects.create(
-        agent=orphan, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-orphan",
-        prompt="/echo:turn",
-    )
-    resp = owner_client.get("/api/harness/turns/")
-    assert resp.status_code == 200
-    assert resp.json() == []
+# The two unhomed-agent tests that used to sit here — `_agent_or_404` 404ing a
+# workspace-less agent (security review 2026-07-26, F1) and `list_turns`
+# excluding its turns (hole B) — are gone with the row they needed:
+# Agent.workspace is NOT NULL as of agents/0013, so the state cannot be
+# constructed. See tests/test_agent_workspace_not_null.py. Their cross-tenant
+# counterparts, which are the half with something left to prove, remain above
+# and below: `test_stranger_enqueueing_for_someone_elses_agent_gets_404` and
+# `test_list_turns_only_shows_my_tenants_turns`.
 
 
 def test_list_turns_excludes_other_tenants_project_and_session_turns(owner_client, stranger_client, workspace):

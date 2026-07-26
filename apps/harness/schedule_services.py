@@ -16,7 +16,6 @@ import datetime as dt
 
 from canopy_cron import next_slots, slots_between
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -47,14 +46,21 @@ def _resolve_agent(user, agent_slug: str, *, workspace_slug: str | None = None) 
 
     REST passes request.workspace_slug (preserving today's behavior); the MCP
     passes None (membership gating only, no tenant-URL concept). Every failure
-    raises ScheduleNotFound — 404-not-403 on the REST side, no existence leak."""
+    raises ScheduleNotFound — 404-not-403 on the REST side, no existence leak.
+
+    Membership is checked UNCONDITIONALLY. This read `if agent.workspace_id and
+    not is_member(...)`, which short-circuits to "allow" on a workspace-less
+    agent — handing every authenticated caller (REST and MCP alike) that agent's
+    full schedule CRUD: list, create, update, delete, run-now. `Agent.workspace`
+    is NOT NULL as of agents/0013 so no such row can exist, but the fail-open
+    SHAPE is the bug that kept recurring, so it goes too."""
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent is None:
         raise ScheduleNotFound(agent_slug)
     wsvc.auto_join_workspaces(user)
     if workspace_slug and agent.workspace_id != workspace_slug:
         raise ScheduleNotFound(agent_slug)  # wrong tenant
-    if agent.workspace_id and not wsvc.is_member(user, agent.workspace_id):
+    if not agent.workspace_id or not wsvc.is_member(user, agent.workspace_id):
         raise ScheduleNotFound(agent_slug)
     return agent
 
@@ -157,8 +163,14 @@ def week_schedules(workspace_ids: set, start: dt.datetime, *, created_by=None) -
     """Every ENABLED schedule in `workspace_ids`, each with its fires in the
     week [start, start+8d). `workspace_ids` is the caller's already-resolved
     visible-workspace set (the route computes it from apps.workspaces.services),
-    so this stays request-free. A None in the set means 'legacy unhomed agents'
-    — matched explicitly, since SQL IN never matches NULL.
+    so this stays request-free.
+
+    The set used to be allowed to contain `None`, meaning "also match legacy
+    unhomed agents", which this turned into an OR'd
+    `Q(agent__workspace_id__isnull=True)` — leaking an unhomed agent's schedule,
+    cron and timezone to every authenticated flat-route caller. `Agent.workspace`
+    is NOT NULL as of agents/0013, so there is no such agent and no such leg:
+    membership is the whole rule.
 
     `created_by` (a User) narrows to schedules that person set up — this is what
     makes 'my calendar' actually personal, rather than 'every schedule in my
@@ -172,12 +184,10 @@ def week_schedules(workspace_ids: set, start: dt.datetime, *, created_by=None) -
     # `dayIdx < 7` guard (bucketByDay) trims any fire that overflows into day 7,
     # so widening the window never double-counts or shows next week's fires.
     end = start + dt.timedelta(days=8)
-    non_null = {w for w in workspace_ids if w is not None}
-    q = Q(agent__workspace_id__in=non_null)
-    if None in workspace_ids:
-        q |= Q(agent__workspace_id__isnull=True)
     schedules = (
-        AgentSchedule.objects.filter(enabled=True).filter(q).select_related("agent")
+        AgentSchedule.objects.filter(enabled=True)
+        .filter(agent__workspace_id__in=workspace_ids)
+        .select_related("agent")
     )
     if created_by is not None:
         schedules = schedules.filter(created_by=created_by)

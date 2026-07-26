@@ -24,7 +24,9 @@ def _ws(slug="canopy"):
 
 
 def _agent(slug="echo", ws=None):
-    return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws)
+    from apps.workspaces.testing import a_workspace
+
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws or a_workspace())
 
 
 def test_a_turn_cannot_target_both_an_agent_and_a_project():

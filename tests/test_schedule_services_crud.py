@@ -188,21 +188,23 @@ def test_week_schedules_scoped_to_given_workspaces(owner, agent, ws):
     assert rows == []
 
 
-def test_week_schedules_none_in_set_includes_unhomed_agents():
-    """`None` in workspace_ids means 'legacy unhomed agents' (workspace_id IS
-    NULL). Django's `__in={None, ...}` silently drops None — SQL IN never
-    matches NULL — so week_schedules adds an explicit isnull=True branch.
-    Pin it both ways: present when None is in the set, absent when it isn't."""
-    orphan = Agent.objects.create(slug="orphan", name="Orphan")  # no workspace
+def test_week_schedules_never_matches_on_a_null_workspace(agent):
+    """`workspace_ids` used to be allowed to contain `None`, meaning "also match
+    legacy unhomed agents", which week_schedules turned into an OR'd
+    `Q(agent__workspace_id__isnull=True)` — leaking every unhomed agent's
+    schedule name, prompt, cron and timezone to any authenticated flat-route
+    caller (`_visible_workspace_ids` unioned `{None}` in on the unpinned
+    branch). Both the leg and the row it admitted are gone (agents/0013).
+
+    A stray `None` in the set must therefore match NOTHING rather than
+    everything — Django's `__in` silently drops it, which is now exactly the
+    desired behaviour rather than the bug the isnull branch worked around."""
     AgentSchedule.objects.create(
-        agent=orphan, name="Orphan sched", prompt="p", cron="0 9 * * *", timezone="UTC"
+        agent=agent, name="Homed sched", prompt="p", cron="0 9 * * *", timezone="UTC"
     )
     start = dt.datetime(2026, 7, 13, 0, 0, tzinfo=dt.UTC)
 
-    included = ss.week_schedules({None}, start)
-    assert len(included) == 1
-    assert included[0]["schedule"]["name"] == "Orphan sched"
-    assert included[0]["workspace_slug"] is None
-
-    excluded = ss.week_schedules({"somews"}, start)
-    assert excluded == []
+    assert ss.week_schedules({None}, start) == []
+    assert ss.week_schedules(set(), start) == []
+    rows = ss.week_schedules({agent.workspace_id}, start)
+    assert [r["schedule"]["name"] for r in rows] == ["Homed sched"]

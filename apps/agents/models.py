@@ -31,12 +31,23 @@ class Agent(models.Model):
     workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
         related_name="agents",
-        help_text="The tenant that owns this agent. Nullable for migration "
-        "safety; the API always assigns one (default workspace when unspecified).",
+        help_text="The tenant that owns this agent. NOT NULL: an agent always "
+        "has exactly one tenant, so no tenancy predicate anywhere may treat "
+        "NULL as 'allow'.",
     )
+    # NOT NULL is a SECURITY invariant, not tidiness. This column was nullable
+    # "for migration safety" from 0006 until 0013, long after 0007's backfill
+    # discharged that need — and in that window six separate tenancy predicates
+    # independently grew a `workspace_id IS NULL` leg that reads as ALLOW
+    # (agents/api.py, harness/api.py x2, harness/services.py x2,
+    # harness/schedule_services.py, realtime/snapshot.py, agent_runs/api.py).
+    # Four were fixed one site at a time (PRs #378, #421, #423) before it was
+    # clear that the recurrence — not any single site — was the defect: a
+    # nullable tenant FK invites `if agent.workspace_id and <check>`, which
+    # short-circuits to "ungated" on exactly the row that has no tenant.
+    # Migration 0013 backfills + constrains so the fail-open state is
+    # unrepresentable rather than merely unpopulated. Do not re-nullable this.
     # --- Runtime registry (agent-runtime-registry design) ----------------
     # canopy-web is the entry point a runner asks "how do I run agent X?": it holds
     # the POINTER to the agent's repo (whose runtime.yaml is the declarative WHAT),

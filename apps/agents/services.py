@@ -27,8 +27,19 @@ def _aware(value):
 
 
 # ---- agents ----
-def upsert_agent(data) -> Agent:
-    """Create or update an agent by slug."""
+def upsert_agent(data, *, workspace) -> Agent:
+    """Create or update an agent by slug.
+
+    `workspace` is REQUIRED and keyword-only: `Agent.workspace` is NOT NULL
+    (agents/0013), so there is no such thing as creating an agent and homing it
+    afterwards. Making the caller supply the tenant up front is the point — the
+    old shape created the row unhomed and left the view to home it a few lines
+    later, which is how a workspace-less agent was ever representable.
+
+    It is applied on CREATE only (`create_defaults`), never on update: an
+    upsert must not silently move an existing agent between tenants. Moving one
+    is an explicit, membership-gated action in the view.
+    """
     defaults = {
         "name": data.name,
         "description": data.description,
@@ -44,7 +55,9 @@ def upsert_agent(data) -> Agent:
         value = getattr(data, field, None)
         if value is not None:
             defaults[field] = value
-    agent, _ = Agent.objects.update_or_create(slug=data.slug, defaults=defaults)
+    agent, _ = Agent.objects.update_or_create(
+        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace}
+    )
     return agent
 
 

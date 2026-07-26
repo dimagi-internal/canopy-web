@@ -58,17 +58,23 @@ def _duplicate_name(name: str) -> ProblemError:
     )
 
 
-def _visible_workspace_ids(request: HttpRequest) -> set:
+def _visible_workspace_ids(request: HttpRequest) -> set[str]:
     """The workspaces whose agents this caller may see — pinned to one (tenant
     URL) or spanning every membership (flat/personal). Built from wsvc
     primitives, NOT by importing agents.api._visible_agent_workspace_ids: a
     harness api module must not depend on the agents api module (the same rule
-    that duplicated _agent_or_404). None = legacy unhomed agents."""
+    that duplicated _agent_or_404).
+
+    The unpinned branch used to union in `{None}` ("legacy unhomed agents"),
+    which week_schedules turned into an allow-on-NULL leg — the same
+    anti-pattern `_visible_agent_workspace_ids` was fixed for in PR #421.
+    `Agent.workspace` is NOT NULL as of agents/0013, so the set is now purely
+    membership and there is no NULL to admit."""
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         return {ws}
-    return set(wsvc.user_workspace_slugs(request.user)) | {None}
+    return set(wsvc.user_workspace_slugs(request.user))
 
 
 # Route-ordering invariant: this literal "/schedules/week" route must stay

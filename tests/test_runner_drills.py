@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, RunnerDrill, Turn
+from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -23,7 +24,7 @@ def test_start_drill_endpoint_empty_agents_list_is_422(django_user_model):
     client.force_login(u)
     r = Runner.objects.create(name="s3", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a = Agent.objects.create(slug="echo3", name="echo3")
+    a = Agent.objects.create(slug="echo3", name="echo3", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
 
     resp = client.post(
@@ -38,7 +39,7 @@ def test_start_drill_endpoint_omitted_agents_drills_all_assigned(django_user_mod
     client.force_login(u)
     r = Runner.objects.create(name="s4", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a1, a2 = (Agent.objects.create(slug=s, name=s) for s in ("echo4", "ada4"))
+    a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo4", "ada4"))
     for i, a in enumerate((a1, a2)):
         RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
 
@@ -53,7 +54,7 @@ def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="standby", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a1, a2 = (Agent.objects.create(slug=s, name=s) for s in ("echo", "ada"))
+    a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo", "ada"))
     for i, a in enumerate((a1, a2)):
         RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
     drills = services.start_drill(r, [a1, a2])
@@ -67,7 +68,7 @@ def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
 def test_report_drill_resolves_outcome(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u)
-    a = Agent.objects.create(slug="echo", name="Echo")
+    a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     d = RunnerDrill.objects.create(runner=r, agent=a)
     services.report_drill(d, outcome="pass", summary="all checks green")
     d.refresh_from_db()
@@ -78,7 +79,7 @@ def test_failed_drill_turn_marks_drill_fail(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a = Agent.objects.create(slug="echo", name="Echo")
+    a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
     [d] = services.start_drill(r, [a])
     turn = Turn.objects.get(origin=Turn.ORIGIN_DRILL)
@@ -98,7 +99,7 @@ def test_lost_drill_turn_marks_drill_fail(django_user_model):
     u = django_user_model.objects.create_user(username="o5", password="x")
     r = Runner.objects.create(name="s5", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a = Agent.objects.create(slug="echo5", name="Echo5")
+    a = Agent.objects.create(slug="echo5", name="Echo5", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
     [d] = services.start_drill(r, [a])
     turn = Turn.objects.get(origin=Turn.ORIGIN_DRILL)
@@ -120,7 +121,7 @@ def test_redrill_resets_to_pending(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a = Agent.objects.create(slug="echo", name="Echo")
+    a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
     [d] = services.start_drill(r, [a])
     services.report_drill(d, outcome="pass", summary="ok")
@@ -138,7 +139,7 @@ def test_list_runners_includes_drill_rollup(django_user_model):
     client.force_login(u)
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
-    a1, a2 = (Agent.objects.create(slug=s, name=s) for s in ("echo", "ada"))
+    a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo", "ada"))
     for i, a in enumerate((a1, a2)):
         RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
     d1, d2 = services.start_drill(r, [a1, a2])

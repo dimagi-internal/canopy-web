@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def agent():
+def agent(default_workspace):
     ws = wsvc.ensure_default_workspace()
     return Agent.objects.create(slug="ada", name="Ada", workspace=ws)
 
