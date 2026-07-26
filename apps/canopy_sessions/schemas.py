@@ -110,3 +110,18 @@ class StreamStateOut(Schema):
 class BackfillStateOut(Schema):
     """ready = already server-full; requested = runner asked; unavailable = offline."""
     status: str
+
+
+class AttachmentOut(Schema):
+    """An uploaded attachment. Carries no URL — the client builds the content
+    path from the id, so there is no signed link to expire or leak."""
+
+    id: uuid.UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    message_id: str | None = None
+
+    @staticmethod
+    def resolve_message_id(obj) -> str | None:
+        return str(obj.message_id) if obj.message_id else None

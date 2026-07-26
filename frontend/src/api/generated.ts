@@ -2636,6 +2636,79 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/attachments": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload an attachment for this session
+         * @description Store the bytes and return an id the caller passes to /send.
+         *
+         *     UNBOUND on purpose (`message` null): the composer uploads while you are
+         *     still typing, so the message it belongs to does not exist yet. Sending binds
+         *     it. That ordering is also what lets the UI show a thumbnail before send.
+         */
+        readonly post: operations["apps_canopy_sessions_api_upload_attachment"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/attachments/{attachment_id}/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Stream an attachment's bytes
+         * @description The bytes, for both readers: the browser rendering a thumbnail and the
+         *     runner downloading into the agent's workspace (which authenticates with a
+         *     PAT, resolved upstream into request.user like any other caller).
+         *
+         *     Gated on session membership, not on who uploaded it — a session is
+         *     multiplayer, so a teammate must be able to see what was shared in it.
+         */
+        readonly get: operations["apps_canopy_sessions_api_attachment_content"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/attachments/{attachment_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete Attachment
+         * @description Remove an attachment you have not sent yet — the composer's "x" on a chip.
+         *
+         *     Only while UNBOUND. Once it is part of a sent message it is transcript, and
+         *     deleting it would leave the agent's reply referring to something nobody else
+         *     can see.
+         */
+        readonly delete: operations["apps_canopy_sessions_api_delete_attachment"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7081,6 +7154,26 @@ export interface components {
             /** Status */
             readonly status: string;
         };
+        /**
+         * AttachmentOut
+         * @description An uploaded attachment. Carries no URL — the client builds the content
+         *     path from the id, so there is no signed link to expire or leak.
+         */
+        readonly AttachmentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Filename */
+            readonly filename: string;
+            /** Content Type */
+            readonly content_type: string;
+            /** Size Bytes */
+            readonly size_bytes: number;
+            /** Message Id */
+            readonly message_id?: string | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -11275,6 +11368,78 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["BackfillStateOut"];
                 };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_upload_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_attachment_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_delete_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
