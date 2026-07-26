@@ -22,6 +22,7 @@ from apps.harness.models import Turn
 
 from . import attach
 from .models import Message, Session
+from .transcript_noise import is_system_noise
 
 # Ledger kinds we surface as transcript rows, and the Message role each maps to.
 _ROLE_FOR_KIND = {
@@ -250,6 +251,18 @@ def persist_transcript_rows(session, rows) -> int:
             if role not in _BACKFILL_ROLES:
                 continue
             text = str(row.get("text", ""))
+            # A Claude transcript records harness output (task notifications,
+            # system reminders, local command stdout) as `type: "user"`, so
+            # without this the machine's event stream renders on the HUMAN's side
+            # of the chat. Scoped to USER rows: the rule is about records
+            # masquerading as human input, and assistant text that happens to
+            # quote a marker is still the agent talking.
+            #
+            # The row is DROPPED, never renumbered — turn_index is the transcript
+            # ordinal that the live stream, catch-up and backfill all key on, so
+            # closing the gap would make one record arrive under two indices.
+            if role == Message.USER and is_system_noise(text):
+                continue
             index = row.get("index")
             index = -1 if index is None else int(index)
             if index < 0:
