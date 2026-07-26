@@ -24,8 +24,13 @@
 # CloudFormation declaring TaskDefinition + Service at all, so releases and
 # infrastructure have one writer each. Once that lands, delete this.
 #
-# Usage:  deploy/aws/apply-stack.sh [--yes]
-#         --yes   skip the confirmation prompt (CI / you already read the diff)
+# Usage:  deploy/aws/apply-stack.sh [--yes] [--no-wait]
+#         --yes       skip the confirmation prompt (CI / you already read the diff)
+#         --no-wait   execute and return immediately instead of blocking on the
+#                     rollout. A stack update takes minutes; an agent calling this
+#                     will hit its command timeout and be left unsure whether the
+#                     apply fired. It did — but "unsure" is the worst state to be
+#                     in against prod, so offer a mode that never gets there.
 set -euo pipefail
 
 PROFILE="${AWS_PROFILE:-labs}"
@@ -34,7 +39,15 @@ CLUSTER="${CLUSTER_NAME:-labs-jj-cluster}"
 SERVICE="${SERVICE_NAME:-labs-jj-canopy-web}"
 TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canopy-web.cfn.yaml"
 CHANGE_SET="apply-$(date +%Y%m%d-%H%M%S)"
-ASSUME_YES="${1:-}"
+ASSUME_YES=""
+NO_WAIT=""
+for arg in "$@"; do
+  case "$arg" in
+    --yes) ASSUME_YES=1 ;;
+    --no-wait) NO_WAIT=1 ;;
+    *) echo "unknown flag: $arg" >&2; exit 2 ;;
+  esac
+done
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
@@ -110,7 +123,7 @@ whenever container config changes — it means a rolling restart on the SAME ima
 pinned above. A `Remove` on Service is never routine: check it says Retain first.
 NOTE
 
-if [ "$ASSUME_YES" != "--yes" ]; then
+if [ -z "$ASSUME_YES" ]; then
   read -r -p $'\nExecute this change set? [y/N] ' reply
   if [ "$reply" != "y" ] && [ "$reply" != "Y" ]; then
     aws cloudformation delete-change-set --profile "$PROFILE" \
@@ -123,6 +136,18 @@ fi
 say "Executing…"
 aws cloudformation execute-change-set --profile "$PROFILE" \
   --stack-name "$STACK" --change-set-name "$CHANGE_SET"
+
+if [ -n "$NO_WAIT" ]; then
+  cat <<NOTE
+
+Executing in the background. The apply HAS fired. Watch it with:
+
+  aws cloudformation describe-stacks --profile $PROFILE --stack-name $STACK \
+    --query 'Stacks[0].StackStatus' --output text
+NOTE
+  exit 0
+fi
+
 aws cloudformation wait stack-update-complete --profile "$PROFILE" --stack-name "$STACK"
 
 say "Done. Stack status:"
