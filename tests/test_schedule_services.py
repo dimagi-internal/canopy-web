@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
+from apps.workspaces.testing import a_member, a_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -18,7 +19,7 @@ SLOT_B = dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC)
 
 @pytest.fixture()
 def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+    return Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
 
 
 @pytest.fixture()
@@ -156,6 +157,7 @@ def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
     runner = Runner.objects.create(
         name="mac-a", kind=Runner.EMDASH, host="mac-a", status=Runner.ONLINE,
         capabilities={"agents": ["echo"]}, last_heartbeat_at=timezone.now(),
+        paired_by=a_member(),  # a runner's tenant derives from its pairer
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
 

@@ -9,19 +9,29 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.workspaces.testing import a_member, a_workspace
 
 pytestmark = pytest.mark.django_db
 
 
 def _agent(slug="echo"):
-    return Agent.objects.create(slug=slug, name=slug.title())
+    # Homed: Agent.workspace is NOT NULL (agents/0013). This helper used to make
+    # a workspace-less agent, and claim routing carried an
+    # `agent__workspace_id__isnull=True` leg partly to keep this suite green —
+    # a fail-open tenancy rule held in place by a fixture.
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=a_workspace())
 
 
 def _runner(agent=None, **kw):
     """agent: when given, this runner is assigned rank 0 for that agent —
     agent turns route by RunnerAssignment now (spec 2026-07-24), not
     capabilities, so tests that need a claim to succeed must assign."""
-    defaults = dict(name="jj-mbp", kind=Runner.EMDASH, capabilities={"agents": ["echo"]})
+    # paired_by is REQUIRED for a claim: a runner's tenant is the workspaces of
+    # the human who paired it, and NULL fails closed (services.runner_tenant_slugs).
+    defaults = dict(
+        name="jj-mbp", kind=Runner.EMDASH, capabilities={"agents": ["echo"]},
+        paired_by=a_member(),
+    )
     defaults.update(kw)
     r = Runner.objects.create(**defaults)
     services.heartbeat(r, active_turn_ids=[])

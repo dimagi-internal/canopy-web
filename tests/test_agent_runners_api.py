@@ -263,16 +263,10 @@ def test_agent_runners_is_tenant_gated(client, workspace):
     assert _put(client, "secret-agent", []).status_code == 404
 
 
-def test_agent_runners_unhomed_agent_is_invisible_and_unwritable(client, runner_a):
-    """Security review 2026-07-26, hole A: `_visible_agent_workspace_ids` used
-    to include {None}, so ANY authenticated user could read AND write an
-    unhomed agent's routing assignments — strictly broader than the read-only
-    hole `_agent_or_404` (F1) closed in apps/harness. `PUT /runners` is exactly
-    the write surface the review called out. Fails closed now: an unhomed
-    agent's routing is unreachable, not universally editable."""
-    orphan = Agent.objects.create(slug="orphan", name="Orphan", workspace=None)
-
-    assert client.get(f"/api/agents/{orphan.slug}/runners").status_code == 404
-    r = _put(client, orphan.slug, [runner_a.id])
-    assert r.status_code == 404, r.content
-    assert RunnerAssignment.objects.filter(agent=orphan).count() == 0
+# The unhomed-agent counterpart of `test_agent_runners_is_tenant_gated` above
+# (security review 2026-07-26, hole A: `_visible_agent_workspace_ids` included
+# {None}, so ANY authenticated user could read AND write an unhomed agent's
+# routing assignments via `PUT /runners`) is gone with the row it needed:
+# Agent.workspace is NOT NULL as of agents/0013. See
+# tests/test_agent_workspace_not_null.py; the cross-tenant test above is the
+# live half of the same assertion.

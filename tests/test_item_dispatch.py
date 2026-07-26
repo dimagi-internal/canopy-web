@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def ws():
+def ws(default_workspace):
     return wsvc.ensure_default_workspace()
 
 

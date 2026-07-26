@@ -48,28 +48,30 @@ def test_agent_detail_serializes_workspace_slug(client, workspace):
     assert body["workspace"] == "canopy"
 
 
-def test_agent_with_no_workspace_is_invisible(client):
-    """Superseded by the security review (2026-07-26, hole A): this test used
-    to encode "an unhomed agent is visible on the flat compat-shim route" as
-    intentional migration safety. It was the mirror image of the bug
-    apps/harness/api.py::_agent_or_404 fixed as F1 — `_visible_agent_workspace_ids`
-    returned the caller's workspace ids **plus {None}**, so any authenticated
-    user (not just a workspace member) could see an unhomed agent across the
-    WHOLE agents surface: tasks, board commands (a write), work products,
-    skills, PUT /runners (a write), and GET /{slug}/turns/ (which serializes
-    AgentTurnOut.share_token — a public transcript link). That is read+write,
-    strictly broader than F1.
+def test_another_tenants_agent_is_invisible(client):
+    """`_visible_agent_workspace_ids` gates the WHOLE agents surface: tasks,
+    board commands (a write), work products, skills, PUT /runners (a write),
+    and GET /{slug}/turns/ (which serializes AgentTurnOut.share_token — a
+    public transcript link). Non-membership must be indistinguishable from
+    non-existence on every one of them.
 
-    Production carries zero agents with workspace_id IS NULL (verified at
-    review time), and the real creation path (upsert_agent) always homes a
-    new agent to a workspace — this is a legacy/pre-migration edge case, not
-    a live user-facing flow. `_visible_agent_workspace_ids` now fails CLOSED:
-    a workspace-less agent is unresolvable via this API until it's homed, not
-    universally visible."""
-    Agent.objects.create(slug="orphan", name="Orphan", workspace=None)
+    This used to build an UNHOMED agent, because `_visible_agent_workspace_ids`
+    returned the caller's workspace ids **plus {None}** and a workspace-less
+    agent was therefore visible to every authenticated user (security review
+    2026-07-26, hole A). The `{None}` leg is gone and so is the row it admitted
+    — an unhomed agent cannot be created at all (agents/0013; see
+    tests/test_agent_workspace_not_null.py). Cross-tenant is what is left to
+    prove."""
+    stranger_owner = User.objects.create_user("stranger", "stranger@dimagi.com", "pw")
+    # auto_join_domains=[] is load-bearing: the gate auto-joins the caller
+    # first, so a domain-matching workspace would silently admit them.
+    other = Workspace.objects.create(
+        slug="other", display_name="Other", created_by=stranger_owner, auto_join_domains=[]
+    )
+    Agent.objects.create(slug="secret", name="Secret", workspace=other)
 
     list_body = client.get("/api/agents/").json()
     items = list_body["items"] if "items" in list_body else list_body
-    assert not any(a["slug"] == "orphan" for a in items)
+    assert not any(a["slug"] == "secret" for a in items)
 
-    assert client.get("/api/agents/orphan/").status_code == 404
+    assert client.get("/api/agents/secret/").status_code == 404

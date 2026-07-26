@@ -3,12 +3,13 @@ from django.db import IntegrityError
 
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment, RunnerDrill, Turn
+from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
 
 def _agent(slug="echo"):
-    return Agent.objects.create(slug=slug, name=slug.title())
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=a_workspace())
 
 
 def _runner(name="r1", capabilities=None, **kw):

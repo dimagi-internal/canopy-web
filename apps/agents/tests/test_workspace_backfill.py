@@ -21,17 +21,25 @@ _backfill = importlib.import_module(
 
 
 def test_backfill_scopes_existing_agent_and_members(settings):
+    """The workspace + membership half of 0007.
+
+    Its agent-scoping half (`Agent.objects.filter(workspace__isnull=True)
+    .update(workspace=ws)`) can no longer be exercised this way: these tests run
+    the migration function against the LIVE models, and `Agent.workspace` is NOT
+    NULL as of 0013, so the unhomed row 0007 was written to fix is
+    unconstructible. That the column can never be NULL again is what
+    tests/test_agent_workspace_not_null.py pins; how a stray NULL would be
+    resolved if a restored snapshot had one is
+    apps/agents/tests/test_workspace_not_null_migration.py."""
     settings.AUTH_ALLOWED_EMAIL_DOMAIN = "dimagi.com"
     su = User.objects.create(username="su", email="su@dimagi.com", is_superuser=True)
     jj = User.objects.create(username="jj", email="jj@dimagi.com")  # Echo's PAT human
-    echo = Agent.objects.create(slug="echo", name="Echo")  # pre-scoping: no workspace
-    assert echo.workspace_id is None
 
     _backfill(global_apps, None)
 
     ws = Workspace.objects.get(slug="dimagi")
-    echo.refresh_from_db()
-    assert echo.workspace_id == ws.slug  # agent scoped
+    echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
+    assert echo.workspace_id == ws.slug
     assert WorkspaceMembership.objects.get(workspace=ws, user=su).role == "owner"
     assert WorkspaceMembership.objects.get(workspace=ws, user=jj).role == "editor"
 

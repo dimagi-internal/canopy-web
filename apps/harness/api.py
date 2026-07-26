@@ -878,32 +878,33 @@ def _runner_schedule_qs(runner: Runner):
     derives from paired_by AND _runner_or_404 pins the runner to request.user,
     so the row and the field are alike server-controlled.
 
-    claim_next_turn NOW DERIVES THE SAME WAY (agent.workspace ∈
-    workspaces(paired_by), or IS NULL), so the two rules AGREE: every schedule
-    this runner may fire produces a turn that same runner may claim.
+    claim_next_turn DERIVES FROM THE SAME TWO FUNCTIONS this does —
+    services.runner_tenant_slugs and services.agent_tenant_q — so the two rules
+    AGREE BY CONSTRUCTION: every schedule this runner may fire produces a turn
+    that same runner may claim. They are no longer two hand-written predicates
+    that happen to match; there is one predicate with two callers.
 
-    They briefly diverged, and the divergence was an outage, not a nicety.
-    claim_next_turn shipped scoped to the Runner.workspace FK while this
-    predicate derived from paired_by — so a runner homed to `alpha` whose pairer
-    also belongs to `beta` could SEE and FIRE beta's schedules here but could not
-    CLAIM the resulting turns, leaving them QUEUED forever. Because one laptop
-    runner serves a fleet that deliberately spans workspaces, that stopped 4 of 5
-    production agents from executing at all. The resolution was to converge the
-    CLAIM onto paired_by (this predicate's rule), NOT to narrow this one onto the
-    FK: the FK records where a runner lives, not who it may work for.
+    That matters because they briefly diverged, and the divergence was an
+    outage, not a nicety. claim_next_turn shipped scoped to the Runner.workspace
+    FK while this predicate derived from paired_by — so a runner homed to
+    `alpha` whose pairer also belongs to `beta` could SEE and FIRE beta's
+    schedules here but could not CLAIM the resulting turns, leaving them QUEUED
+    forever. Because one laptop runner serves a fleet that deliberately spans
+    workspaces, that stopped 4 of 5 production agents from executing at all. The
+    resolution was to converge the CLAIM onto paired_by (this predicate's rule),
+    NOT to narrow this one onto the FK: the FK records where a runner lives, not
+    who it may work for. tests/test_claim_schedule_parity.py fails if the two
+    ever disagree again.
 
-    NULL paired_by fails closed below (none()), which is stricter than
-    _runner_visibility_q's legacy-ungated allowance — an orphaned runner can be
-    operated, but can never sync or fire a schedule.
+    NULL paired_by fails closed inside runner_tenant_slugs (empty slug set →
+    `__in=set()` matches nothing), which is stricter than _runner_visibility_q's
+    legacy-ungated allowance — an orphaned runner can be operated, but can never
+    sync or fire a schedule. That used to be a separate `.none()` branch here; it
+    was folded into the shared helper so there is one mechanism, not two that
+    can drift.
     """
     qs = AgentSchedule.objects.filter(enabled=True).select_related("agent")
-    if runner.paired_by_id is None:
-        return qs.none()  # an orphaned runner has no identity to derive tenancy from
-    slugs = wsvc.user_workspace_slugs(runner.paired_by)
-    # Same-tenant agents, or legacy null-workspace agents (the pre-tenancy path
-    # the existing suite covers). claim_next_turn's predicate is now the same
-    # rule, deriving from the same paired_by — keep the two in step.
-    return qs.filter(Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True))
+    return qs.filter(services.agent_tenant_q(services.runner_tenant_slugs(runner)))
 
 
 @router.get("/schedules/", response=Page[ScheduleOut],
