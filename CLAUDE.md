@@ -139,6 +139,7 @@ The tenant that owns agents + runs. `Workspace` + members (owner / editor / view
 - `GET /api/workspaces/{slug}/` — Get a workspace (member-only)
 - `GET /api/workspaces/{slug}/members/` — List members (member-only)
 - `DELETE /api/workspaces/{slug}/members/{user_id}/` — Remove a member (owner-only)
+- `PATCH /api/workspaces/{slug}/members/{user_id}/` — Change a member's role (owner-only; body `{"role": "owner"|"editor"|"viewer"}`). Idempotent; rejects demoting the workspace's last owner (400), same guard `remove_member` uses (`services.is_last_owner`)
 - `POST /api/workspaces/{slug}/invites/` — Invite by email (owner-only)
 - `GET /api/workspaces/{slug}/invites/` — List invites (member-only)
 - `POST /api/workspaces/{slug}/invites/{invite_id}/revoke` — Revoke an invite (owner-only)

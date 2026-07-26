@@ -1622,7 +1622,8 @@ export interface paths {
         readonly delete: operations["apps_workspaces_api_remove_member"];
         readonly options?: never;
         readonly head?: never;
-        readonly patch?: never;
+        /** Change a member's role (owner-only) */
+        readonly patch: operations["apps_workspaces_api_set_member_role"];
         readonly trace?: never;
     };
     readonly "/api/workspaces/{slug}/invites/": {
@@ -6008,6 +6009,14 @@ export interface components {
              */
             readonly joined_at: string;
         };
+        /** MemberRoleUpdateIn */
+        readonly MemberRoleUpdateIn: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "owner" | "editor" | "viewer";
+        };
         /** InviteOut */
         readonly InviteOut: {
             /** Id */
@@ -9928,6 +9937,33 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_workspaces_api_set_member_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemberRoleUpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberOut"];
+                };
             };
         };
     };

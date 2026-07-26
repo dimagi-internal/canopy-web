@@ -59,6 +59,48 @@ def test_create_invite_reuses_live_pending_invite_for_same_workspace_and_email()
     assert WorkspaceInvite.objects.filter(workspace=ws, email="b@dimagi.com").count() == 1
 
 
+def test_create_invite_reusing_a_still_pending_row_at_a_different_role_updates_role_and_rotates_token():
+    """Regression: an owner invites b@ as owner, immediately realizes the
+    mistake, and re-invites b@ as editor. The prior behavior returned the
+    SAME row still holding role="owner" (only a lapsed/expired row got its
+    role rewritten on reuse) — so the owner would copy a link that still
+    reads "owner", and since accept is now upgrade-only, b (already an
+    editor) accepting it would be silently promoted to owner. A still-live
+    reuse at a genuinely different role must re-arm the row (fresh token,
+    fresh expiry, the newly-requested role) exactly like the lapsed-TTL path
+    does, so the copied link always reflects the LAST-requested role."""
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    first = create_invite(workspace=ws, email="b@dimagi.com", role="owner", invited_by=owner)
+    old_token = first.token
+
+    second = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    assert second.id == first.id  # still the same row, not a sibling
+    assert second.role == "editor"
+    assert second.token != old_token
+    assert second.is_pending()
+    # the stale (pre-rotation) token no longer resolves to anything live
+    with pytest.raises(InviteError) as exc_info:
+        accept_invite(token=old_token, user=_user("someone-else@dimagi.com"))
+    assert exc_info.value.code == "not_found"
+
+
+def test_create_invite_reusing_a_still_pending_row_at_the_same_role_is_a_true_no_op():
+    """The counterpart to the regression above: re-issuing an invite at the
+    SAME role it already holds must not rotate the token (no reason to
+    invalidate a link nothing about it actually changed)."""
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    first = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    second = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    assert second.id == first.id
+    assert second.token == first.token
+    assert second.role == "editor"
+
+
 def test_create_invite_after_expiry_reuses_row_with_fresh_token_and_is_pending_again():
     """Regression: an ordinary re-invite after the 14-day TTL lapses (never
     accepted, never revoked) must NOT try to create a sibling row — the
@@ -155,24 +197,60 @@ def test_accept_unknown_token_raises_not_found():
     assert exc_info.value.code == "not_found"
 
 
-def test_accept_when_already_member_at_different_role_keeps_existing_role_but_marks_accepted():
-    """Deliberate semantic: accept is get_or_create on membership. If the invitee
-    somehow already holds a DIFFERENT role in the workspace (e.g. an owner invited
-    to re-join as editor, or a second invite for a role bump landed late), acceptance
-    does NOT change their existing role — but the invite itself is still consumed
-    (marked accepted) so it can't be replayed."""
+def test_accept_when_invited_at_lower_role_than_existing_keeps_existing_role_but_marks_accepted():
+    """Deliberate semantic: accept is UPGRADE-ONLY on membership role (never a
+    demotion). If the invitee already holds a HIGHER role than the invite offers
+    (e.g. an owner invited to re-join as viewer, or a stray lower-role invite
+    landed late), acceptance does NOT change their existing role — but the
+    invite itself is still consumed (marked accepted) so it can't be replayed.
+    Explicit demotion is the owner-only PATCH `/members/{user_id}/`, never a
+    side effect of someone accepting an invite."""
     owner = _user("a@dimagi.com")
     ws = _ws(owner)
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
-    # owner already has role "owner" in ws; invite them at a different role ("viewer")
+    # owner already has role "owner" in ws; invite them at a LOWER role ("viewer")
     inv = create_invite(workspace=ws, email="a@dimagi.com", role="viewer", invited_by=owner)
 
     result_ws, role = accept_invite(token=inv.token, user=owner)
 
     assert result_ws == ws
-    # returned role reflects the EXISTING membership role, not the invite's role
+    # returned role reflects the EXISTING (higher) membership role, not the invite's role
     assert role == "owner"
     assert WorkspaceMembership.objects.get(workspace=ws, user=owner).role == "owner"
+    inv.refresh_from_db()
+    assert inv.accepted_at is not None
+
+
+def test_accept_when_invited_at_higher_role_than_existing_upgrades_role():
+    """The upgrade half of the same semantic: an existing viewer invited as
+    editor ends up an editor (upgrade), and the invite is marked accepted."""
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    viewer = _user("b@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=viewer, role=WorkspaceMembership.VIEWER)
+    inv = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    result_ws, role = accept_invite(token=inv.token, user=viewer)
+
+    assert result_ws == ws
+    assert role == "editor"
+    assert WorkspaceMembership.objects.get(workspace=ws, user=viewer).role == "editor"
+    inv.refresh_from_db()
+    assert inv.accepted_at is not None
+
+
+def test_accept_when_invited_at_same_role_as_existing_leaves_role_unchanged():
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    editor = _user("b@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=editor, role=WorkspaceMembership.EDITOR)
+    inv = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    result_ws, role = accept_invite(token=inv.token, user=editor)
+
+    assert result_ws == ws
+    assert role == "editor"
+    assert WorkspaceMembership.objects.get(workspace=ws, user=editor).role == "editor"
     inv.refresh_from_db()
     assert inv.accepted_at is not None
 

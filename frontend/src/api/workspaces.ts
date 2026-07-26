@@ -9,6 +9,7 @@ export type WorkspaceOut = components['schemas']['WorkspaceOut']
 export type MemberOut = components['schemas']['MemberOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
+export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
 
 // Every call below needs the HTTP status (404 for non-member, 403 for an
@@ -57,6 +58,17 @@ export async function removeMember(slug: string, userId: number): Promise<void> 
   if (!res.response.ok) {
     throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to remove member'))
   }
+}
+
+export async function setMemberRole(slug: string, userId: number, role: MemberRole): Promise<MemberOut> {
+  const res = await apiV2.PATCH('/api/workspaces/{slug}/members/{user_id}/', {
+    params: { path: { slug, user_id: userId } },
+    body: { role },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to change role'))
+  }
+  return res.data as unknown as MemberOut
 }
 
 export async function listInvites(slug: string): Promise<InviteOut[]> {

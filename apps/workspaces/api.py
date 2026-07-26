@@ -20,6 +20,7 @@ from .schemas import (
     InviteOut,
     InvitePreviewOut,
     MemberOut,
+    MemberRoleUpdateIn,
     WorkspaceCreateIn,
     WorkspaceOut,
 )
@@ -34,6 +35,28 @@ _INVITE_ERROR_STATUS = {
     "revoked": 410,
     "already_accepted": 410,
     "email_mismatch": 403,
+}
+
+# MemberError.code -> HTTP status.
+_MEMBER_ERROR_STATUS = {
+    "not_found": 404,
+    "last_owner": 400,
+    "invalid_role": 422,
+}
+
+# MemberError.code -> a human-readable message, PER ENDPOINT (the same code
+# reads differently depending on the verb that tripped it — "cannot remove"
+# vs "cannot demote" — so this is deliberately two small dicts, not one
+# shared across both routes). Never surface `exc.code` itself to a user: it's
+# a machine token for the status lookup above, not banner copy.
+_REMOVE_MEMBER_ERROR_MESSAGES = {
+    "not_found": "member not found",
+    "last_owner": "cannot remove the last owner",
+}
+_SET_MEMBER_ROLE_ERROR_MESSAGES = {
+    "not_found": "member not found",
+    "last_owner": "cannot demote the last owner",
+    "invalid_role": "unknown role",
 }
 
 
@@ -61,6 +84,10 @@ def _require_role(user, slug: str, *allowed: str) -> WorkspaceMembership:
     if m.role not in allowed:
         raise HttpError(403, f"requires one of roles {list(allowed)}")
     return m
+
+
+def _member_out(m: WorkspaceMembership) -> MemberOut:
+    return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at)
 
 
 def _invite_out(inv: WorkspaceInvite) -> InviteOut:
@@ -122,28 +149,29 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
         WorkspaceMembership.objects.filter(workspace_id=slug)
         .select_related("user").order_by("joined_at")
     )
-    return [
-        MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at)
-        for m in members
-    ]
+    return [_member_out(m) for m in members]
 
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},
                summary="Remove a member (owner-only)", openapi_extra={"x-mcp-expose": True})
 def remove_member(request: HttpRequest, slug: str, user_id: int):
-    _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
-        m = WorkspaceMembership.objects.get(workspace_id=slug, user_id=user_id)
-    except WorkspaceMembership.DoesNotExist:
-        raise HttpError(404, "member not found")
-    if m.role == WorkspaceMembership.OWNER and (
-        WorkspaceMembership.objects.filter(
-            workspace_id=slug, role=WorkspaceMembership.OWNER
-        ).count() == 1
-    ):
-        raise HttpError(400, "cannot remove the last owner")
-    m.delete()
+        services.remove_member(workspace=m.workspace, user_id=user_id)
+    except services.MemberError as exc:
+        raise HttpError(_MEMBER_ERROR_STATUS[exc.code], _REMOVE_MEMBER_ERROR_MESSAGES[exc.code])
     return Status(204, None)
+
+
+@router.patch("/{slug}/members/{user_id}/", response=MemberOut,
+              summary="Change a member's role (owner-only)", openapi_extra={"x-mcp-expose": True})
+def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: MemberRoleUpdateIn) -> MemberOut:
+    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    try:
+        updated = services.set_member_role(workspace=m.workspace, user_id=user_id, role=payload.role)
+    except services.MemberError as exc:
+        raise HttpError(_MEMBER_ERROR_STATUS[exc.code], _SET_MEMBER_ROLE_ERROR_MESSAGES[exc.code])
+    return _member_out(updated)
 
 
 # ---- invites ----

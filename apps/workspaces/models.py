@@ -54,6 +54,13 @@ class Workspace(models.Model):
 class WorkspaceMembership(models.Model):
     OWNER, EDITOR, VIEWER = "owner", "editor", "viewer"
     ROLE_CHOICES = [(OWNER, "Owner"), (EDITOR, "Editor"), (VIEWER, "Viewer")]
+    # Total order used to decide "higher" vs "lower" role — the single place
+    # role ORDERING lives (consumed by `accept_invite`'s upgrade-only
+    # semantic, and by `services.set_member_role` as the valid-role check
+    # via `role not in ROLE_RANK`). `is_last_owner`/`set_member_role`'s own
+    # role comparisons are plain `==`/`!=` — ROLE_RANK is only for "which of
+    # two roles outranks the other", not membership/equality checks.
+    ROLE_RANK = {VIEWER: 0, EDITOR: 1, OWNER: 2}
 
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="memberships"
