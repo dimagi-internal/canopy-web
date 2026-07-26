@@ -88,12 +88,28 @@ class AppCredential(models.Model):
     `provision_workspace` = no provisioning power (the historical behavior).
     The workspace is fixed on this server-side row — it is never client
     input, so an app can only ever provision into the tenant it was granted.
-    `provision_role` may never be `owner`: an app must never be able to mint
-    an administrator of a tenant (owners can invite/remove members and
-    change roles). Enforced both here (`create_credential`) and by a DB-level
-    CheckConstraint, so a shell caller bypassing `create_credential` (e.g.
-    `AppCredential.objects.create(...)`) is blocked too. See
-    docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md.
+    `provision_role` must be one of `PROVISION_ROLE_CHOICES` (viewer/editor) —
+    `owner` is deliberately excluded from the choices, since an app must never
+    be able to mint an administrator of a tenant (owners can invite/remove
+    members and change roles). This is an ALLOWLIST, not an owner-only
+    denylist: an unrecognized value ("Owner", "admin", a typo) is rejected
+    the same as `owner` — both here (`create_credential`) and by a DB-level
+    CheckConstraint (`provision_role__in=[...]`), so a shell caller bypassing
+    `create_credential` (e.g. `AppCredential.objects.create(...)`) is blocked
+    too, and nothing but a known-valid role can ever reach
+    `WorkspaceMembership.role` (which `ROLE_RANK[...]` would otherwise
+    KeyError on downstream, e.g. in `accept_invite`).
+
+    Ordering with domain-wide auto-join: the exchange applies this
+    credential's provisioning grant BEFORE `apps.workspaces.services
+    .auto_join_workspaces`, so if `provision_workspace` also happens to be
+    an auto-join workspace for the user's domain, the explicit
+    `provision_role` wins (creates the row first) and the later auto-join
+    call is a no-op against it (`ensure_member` is create-only). Without
+    this ordering, auto-join running first would silently create the row at
+    `editor` regardless of a `viewer` grant — `provision_role` would not be
+    a durable ceiling. See docs/superpowers/plans/
+    2026-07-26-tenant-scoped-provisioning.md (design + F3 fix).
     """
 
     PROVISION_ROLE_CHOICES = [
@@ -129,18 +145,22 @@ class AppCredential(models.Model):
         db_table = "app_credentials"
         constraints = [
             models.CheckConstraint(
-                condition=~models.Q(provision_role=WorkspaceMembership.OWNER),
-                name="app_credential_provision_role_not_owner",
+                condition=models.Q(
+                    provision_role__in=[WorkspaceMembership.VIEWER, WorkspaceMembership.EDITOR]
+                ),
+                name="app_credential_provision_role_valid",
             ),
         ]
 
     @classmethod
     def create_credential(cls, *, name, domains, created_by,
                           provision_workspace=None, provision_role=WorkspaceMembership.EDITOR):
-        if provision_role == WorkspaceMembership.OWNER:
+        valid_roles = dict(cls.PROVISION_ROLE_CHOICES)
+        if provision_role not in valid_roles:
             raise ValueError(
-                "AppCredential.provision_role may not be 'owner' — an app "
-                "credential must never mint an administrator of a workspace"
+                f"AppCredential.provision_role must be one of {sorted(valid_roles)} "
+                f"— got {provision_role!r}. An app credential must never mint a "
+                "workspace owner or an unrecognized role."
             )
         raw = secrets.token_urlsafe(32)
         cred = cls.objects.create(

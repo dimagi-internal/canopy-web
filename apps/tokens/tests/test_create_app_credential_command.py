@@ -58,3 +58,33 @@ def test_command_rejects_unknown_workspace():
             "--workspace", "does-not-exist",
         )
     assert not AppCredential.objects.filter(name="ghost-app").exists()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F7 (2026-07-26 security review): --role without --workspace previously
+# succeeded silently (the owner rejection was nested inside `if
+# workspace_slug:`) — must be an explicit error, not a no-op.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_command_rejects_role_without_workspace():
+    with pytest.raises(CommandError):
+        call_command(
+            "create_app_credential", "--name", "role-no-ws", "--domains", "dimagi.com",
+            "--role", "editor",
+        )
+    assert not AppCredential.objects.filter(name="role-no-ws").exists()
+
+
+@pytest.mark.django_db
+def test_command_rejects_owner_role_without_workspace_too():
+    """The dangerous case F7 calls out explicitly: `--role owner` alone
+    must not silently succeed just because there's no --workspace to
+    trigger the nested check."""
+    with pytest.raises(CommandError):
+        call_command(
+            "create_app_credential", "--name", "owner-no-ws", "--domains", "dimagi.com",
+            "--role", "owner",
+        )
+    assert not AppCredential.objects.filter(name="owner-no-ws").exists()

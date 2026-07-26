@@ -1,5 +1,8 @@
+import logging
+
 import pytest
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.tokens.models import AppCredential, DelegatedToken
@@ -17,6 +20,15 @@ def cred():
     raw, cred = AppCredential.create_credential(
         name="ace-web", domains=["dimagi.com"], created_by=admin)
     return raw, cred
+
+
+@pytest.fixture(autouse=True)
+def _clear_exchange_rate_limit_cache():
+    """F2's per-credential throttle is cache-backed (LocMemCache persists for
+    the whole test session) — isolate each test from the others' counters."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _post(raw_cred, email, **extra):
@@ -143,11 +155,14 @@ def test_exchange_provisions_membership_in_granted_workspace(cred):
     assert resp.json()["workspace"] == "connect"
 
     user = User.objects.get(email="newperson@dimagi.com")
-    memberships = WorkspaceMembership.objects.filter(user=user)
-    assert memberships.count() == 1
-    m = memberships.get()
-    assert m.workspace_id == "connect"
+    # Assert the GRANTED membership specifically (workspace + role), not a
+    # bare `.count() == 1` — that only "proves" confinement to one workspace
+    # because this test's DB happens to have no auto-join workspace. See
+    # test_exchange_provisioning_wins_over_auto_join_for_the_granted_workspace
+    # below for the case where an auto-join workspace is also present.
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
     assert m.role == WorkspaceMembership.EDITOR
+    assert m.provisioned_by_app_id == c.pk
 
 
 def test_exchange_without_provision_grants_no_membership(cred):
@@ -213,3 +228,152 @@ def test_exchange_inactive_user_provisions_nothing(cred):
     resp = _post(raw, "offboarded2@dimagi.com")
     assert resp.status_code == 403
     assert WorkspaceMembership.objects.filter(workspace=ws, user=user).count() == 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F1 (2026-07-26 security review): provisioned memberships must be
+# attributable (provisioned_by_app) and logged on actual creation — the
+# handler previously logged all three rejections but not the one action
+# that grants privilege.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_exchange_provisioned_membership_carries_provenance(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    resp = _post(raw, "provd@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    user = User.objects.get(email="provd@dimagi.com")
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    assert m.provisioned_by_app_id == c.pk
+
+
+def test_exchange_logs_on_provisioning_create(cred, caplog):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    with caplog.at_level(logging.INFO, logger="apps.tokens.exchange_api"):
+        resp = _post(raw, "logged@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    assert "token-exchange provisioned membership" in caplog.text
+    assert "ace-web" in caplog.text
+    assert "logged@dimagi.com" in caplog.text
+    assert "connect" in caplog.text
+
+
+def test_exchange_does_not_log_provisioning_when_already_a_member(cred, caplog):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+    user = User.objects.create_user("already", "already@dimagi.com", "pw")
+    wsvc.ensure_member(ws, user, WorkspaceMembership.VIEWER)
+
+    with caplog.at_level(logging.INFO, logger="apps.tokens.exchange_api"):
+        resp = _post(raw, "already@dimagi.com")
+    assert resp.status_code == 200, resp.content
+    assert "token-exchange provisioned membership" not in caplog.text
+
+
+def test_exchange_organic_membership_has_no_provisioning_provenance(cred):
+    """A membership created by something other than an app credential (e.g.
+    auto-join) must not carry provenance — only the exact grant this
+    credential made should ever be attributable to it."""
+    raw, c = cred
+    ws = Workspace.objects.create(
+        slug="autojoined", display_name="Autojoined", created_by=c.created_by,
+        auto_join_domains=["dimagi.com"],
+    )
+    # No provisioning grant on this credential — only auto-join applies.
+    resp = _post(raw, "organic@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    user = User.objects.get(email="organic@dimagi.com")
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    assert m.provisioned_by_app_id is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F2 (2026-07-26 security review): a now-privilege-granting `auth=None`
+# endpoint had no abuse bound. Per-credential throttle.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@override_settings(TOKEN_EXCHANGE_LIMIT=2, TOKEN_EXCHANGE_WINDOW_SECONDS=60)
+def test_exchange_rate_limited_per_credential(cred):
+    raw, _ = cred
+    assert _post(raw, "a1@dimagi.com").status_code == 200
+    assert _post(raw, "a2@dimagi.com").status_code == 200
+    resp = _post(raw, "a3@dimagi.com")
+    assert resp.status_code == 429
+
+
+@override_settings(TOKEN_EXCHANGE_LIMIT=1, TOKEN_EXCHANGE_WINDOW_SECONDS=60)
+def test_exchange_rate_limit_is_per_credential_not_global():
+    admin = User.objects.create_user("admin3", "admin3@dimagi.com", "pw")
+    raw1, _cred1 = AppCredential.create_credential(
+        name="app-one", domains=["dimagi.com"], created_by=admin)
+    raw2, _cred2 = AppCredential.create_credential(
+        name="app-two", domains=["dimagi.com"], created_by=admin)
+
+    assert _post(raw1, "x1@dimagi.com").status_code == 200
+    # app-one is now at its limit...
+    assert _post(raw1, "x2@dimagi.com").status_code == 429
+    # ...but app-two has its own, untouched budget.
+    assert _post(raw2, "x3@dimagi.com").status_code == 200
+
+
+# ──────────────────────────────────────────────────────────────────────
+# F3 (2026-07-26 security review): provisioning must run BEFORE the
+# domain-wide auto-join step, so an explicit provision_role grant isn't
+# silently overridden when the granted workspace is also an auto-join
+# workspace for this domain (auto-join always joins at editor).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_exchange_provisioning_wins_over_auto_join_for_the_granted_workspace(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(
+        slug="connect", display_name="Connect", created_by=c.created_by,
+        auto_join_domains=["dimagi.com"],
+    )
+    _grant(c, ws, WorkspaceMembership.VIEWER)
+
+    resp = _post(raw, "autojoin@dimagi.com")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["workspace"] == "connect"
+
+    user = User.objects.get(email="autojoin@dimagi.com")
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    # Without the fix this would be "editor" — auto-join running first would
+    # have created the row before the explicit viewer grant got a chance to.
+    assert m.role == WorkspaceMembership.VIEWER
+    assert m.provisioned_by_app_id == c.pk
+
+
+def test_exchange_auto_join_still_applies_to_other_domain_workspaces(cred):
+    """The reorder must not break auto-join for workspaces OTHER than the
+    granted one — only the granted workspace's role is protected."""
+    raw, c = cred
+    granted_ws = Workspace.objects.create(
+        slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, granted_ws, WorkspaceMembership.VIEWER)
+    other_ws = Workspace.objects.create(
+        slug="dimagi", display_name="Dimagi", created_by=c.created_by,
+        auto_join_domains=["dimagi.com"],
+    )
+
+    resp = _post(raw, "bothws@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    user = User.objects.get(email="bothws@dimagi.com")
+    assert WorkspaceMembership.objects.get(workspace=granted_ws, user=user).role == (
+        WorkspaceMembership.VIEWER
+    )
+    assert WorkspaceMembership.objects.get(workspace=other_ws, user=user).role == (
+        WorkspaceMembership.EDITOR
+    )

@@ -9,6 +9,7 @@ from datetime import datetime
 
 from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
@@ -17,6 +18,7 @@ from apps.common.auth_domains import allowed_email_domains
 from apps.workspaces import services as wsvc
 
 from .models import AppCredential, DelegatedToken
+from .rate_limit import ExchangeRateLimitError, check_exchange_limit
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,20 @@ def token_exchange(request, payload: TokenExchangeIn):
         )
         raise HttpError(401, "invalid app credential")
 
+    # F2 (2026-07-26 security review): this endpoint is `auth=None` and, since
+    # provisioning shipped, can mint a persistent membership row rather than
+    # just a revocable short-lived token — a leaked credential must not be
+    # able to hammer it unboundedly. Per-credential, so it can't be used to
+    # deny another app's traffic.
+    try:
+        check_exchange_limit(app.pk)
+    except ExchangeRateLimitError:
+        logger.warning(
+            "token-exchange rejected: rate limit exceeded (app=%s, ip=%s)",
+            app.name, request.META.get("REMOTE_ADDR"),
+        )
+        raise HttpError(429, "token-exchange rate limit exceeded")
+
     email = payload.acting_as_email.strip().lower()
     domain = email.rpartition("@")[2]
     app_domains = {d.lower() for d in app.allowed_delegation_domains}
@@ -84,26 +100,51 @@ def token_exchange(request, payload: TokenExchangeIn):
             app.name, email, request.META.get("REMOTE_ADDR"),
         )
         raise HttpError(403, "delegation not allowed for this account")
-    if user is None:
-        user = User.objects.create_user(username=email, email=email)
-        # Also create a verified allauth EmailAddress so a later real Google
-        # login for this same human connects to this JIT user instead of
-        # forking/blocking on allauth's duplicate-email path — see
-        # apps.common.auth_adapter.CustomSocialAccountAdapter.pre_social_login.
-        EmailAddress.objects.create(user=user, email=email, verified=True, primary=True)
-    wsvc.auto_join_workspaces(user)
-
-    # Tenant-scoped provisioning: the workspace comes ONLY from this
-    # credential's server-side row, never from the request — a rejected
-    # exchange (invalid credential / disallowed domain / inactive user) never
-    # reaches this line, so it can never leave a membership behind. create-only
-    # (`ensure_member` is get_or_create): an existing member's role is never
-    # raised or lowered by an app. See docs/superpowers/plans/
-    # 2026-07-26-tenant-scoped-provisioning.md.
+    # F6 (2026-07-26 security review): JIT user creation, provisioning, and
+    # auto-join are one all-or-nothing write — a failure partway through
+    # (e.g. the auto-join loop) must not leave a JIT user or a provisioned
+    # membership committed with nothing else to show for it.
     workspace_slug = None
-    if app.provision_workspace_id:
-        wsvc.ensure_member(app.provision_workspace, user, app.provision_role)
-        workspace_slug = app.provision_workspace_id
+    with transaction.atomic():
+        if user is None:
+            user = User.objects.create_user(username=email, email=email)
+            # Also create a verified allauth EmailAddress so a later real Google
+            # login for this same human connects to this JIT user instead of
+            # forking/blocking on allauth's duplicate-email path — see
+            # apps.common.auth_adapter.CustomSocialAccountAdapter.pre_social_login.
+            EmailAddress.objects.create(user=user, email=email, verified=True, primary=True)
+
+        # Tenant-scoped provisioning: the workspace comes ONLY from this
+        # credential's server-side row, never from the request — a rejected
+        # exchange (invalid credential / disallowed domain / inactive user)
+        # never reaches this line, so it can never leave a membership behind.
+        # create-only (`ensure_member` is get_or_create): an existing
+        # member's role is never raised or lowered by an app.
+        #
+        # Runs BEFORE auto_join_workspaces (F3): if `provision_workspace`
+        # also happens to be an auto-join workspace for this domain, the
+        # explicit `provision_role` grant must win — creating the row here
+        # first makes the later auto-join call a no-op against it, rather
+        # than auto-join silently creating it at `editor` first and making
+        # a `viewer` grant a no-op instead. See
+        # AppCredential's docstring and docs/superpowers/plans/
+        # 2026-07-26-tenant-scoped-provisioning.md.
+        if app.provision_workspace_id:
+            _membership, created = wsvc.ensure_member(
+                app.provision_workspace, user, app.provision_role, provisioned_by_app=app,
+            )
+            workspace_slug = app.provision_workspace_id
+            if created:
+                # F1: the one action here that GRANTS privilege must be
+                # detectable — the three rejection paths above already log;
+                # this was the missing fourth log line.
+                logger.info(
+                    "token-exchange provisioned membership (app=%s, email=%s, "
+                    "workspace=%s, role=%s)",
+                    app.name, email, workspace_slug, app.provision_role,
+                )
+
+        wsvc.auto_join_workspaces(user)
 
     AppCredential.objects.filter(pk=app.pk).update(last_used_at=timezone.now())
     raw_token, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl)
