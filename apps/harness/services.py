@@ -7,6 +7,7 @@ synchronous and transaction-safe.
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import logging
 import uuid
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from .models import (
     RunnerDrill,
     Turn,
     TurnEvent,
+    TurnTranscript,
 )
 
 logger = logging.getLogger(__name__)
@@ -515,6 +517,67 @@ def append_events(turn: Turn, events: list[dict]) -> int:
 
     transaction.on_commit(_fire_appended)
     return len(rows)
+
+
+def append_transcript(turn: Turn, raw_lines: list[str]) -> TurnTranscript:
+    """Accumulate raw `claude -p` JSONL lines onto a turn's retained transcript.
+
+    Idempotent-per-turn in the sense that repeated calls ACCUMULATE (a turn
+    streams in batches over its lifetime) — never replace. Lines are joined
+    with a bare "\\n" exactly as the CLI's own JSONL framing does; no
+    re-encoding, no reordering, no rewriting a line's content. canopy stores
+    bytes only and never parses this JSONL — that stays the consumer's job.
+    """
+    new_raw = "\n".join(raw_lines).encode("utf-8")
+    with transaction.atomic():
+        # Lock the turn row first so concurrent appenders to the same turn
+        # serialize (mirrors append_events — sqlite ignores select_for_update,
+        # Postgres serializes, which is the point).
+        Turn.objects.select_for_update().get(pk=turn.pk)
+        transcript = (
+            TurnTranscript.objects.select_for_update().filter(turn=turn).first()
+        )
+        if transcript is None:
+            combined = new_raw
+            line_count = len(raw_lines)
+        else:
+            existing = (
+                gzip.decompress(bytes(transcript.raw_jsonl_gz))
+                if transcript.raw_jsonl_gz
+                else b""
+            )
+            if existing and new_raw:
+                combined = existing + b"\n" + new_raw
+            else:
+                combined = existing + new_raw
+            line_count = transcript.line_count + len(raw_lines)
+
+        compressed = gzip.compress(combined)
+        if transcript is None:
+            transcript = TurnTranscript.objects.create(
+                turn=turn,
+                raw_jsonl_gz=compressed,
+                line_count=line_count,
+                bytes_raw=len(combined),
+            )
+        else:
+            transcript.raw_jsonl_gz = compressed
+            transcript.line_count = line_count
+            transcript.bytes_raw = len(combined)
+            transcript.save(
+                update_fields=["raw_jsonl_gz", "line_count", "bytes_raw", "updated_at"]
+            )
+        return transcript
+
+
+def read_transcript(turn: Turn) -> bytes:
+    """Decompressed raw JSONL for a turn, or b"" if nothing was ever appended
+    (a turn with no transcript is common — e.g. non-CLI turns — and must read
+    as empty rather than raise)."""
+    transcript = TurnTranscript.objects.filter(turn=turn).first()
+    if transcript is None or not transcript.raw_jsonl_gz:
+        return b""
+    return gzip.decompress(bytes(transcript.raw_jsonl_gz))
 
 
 def mark_running(turn: Turn, *, session_id: str = "") -> Turn:

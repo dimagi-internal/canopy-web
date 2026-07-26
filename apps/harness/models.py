@@ -347,6 +347,28 @@ class TurnEvent(models.Model):
         return f"evt:{self.turn_id}:{self.seq}:{self.kind}"
 
 
+class TurnTranscript(models.Model):
+    """The retained raw `claude -p` JSONL for one turn, gzipped.
+
+    Sibling of TurnEvent (append-only ledger), NOT a column on Turn — blobs
+    don't belong on the hot row. TurnEvent stays a deliberately reduced live
+    stream (assistant text, tool start/end); this is the durable artifact
+    cost/structure features re-derive from, so it must hold the CLI's output
+    byte-for-byte. canopy never parses this JSONL — that is the consumer's
+    business (see services.append_transcript / read_transcript).
+    """
+
+    turn = models.OneToOneField(Turn, on_delete=models.CASCADE, related_name="transcript")
+    raw_jsonl_gz = models.BinaryField()
+    line_count = models.PositiveIntegerField(default=0)
+    bytes_raw = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"transcript:{self.turn_id}:{self.line_count}L:{self.bytes_raw}B"
+
+
 def _default_notify() -> list:
     """Callable default — a mutable literal would be shared across rows."""
     return ["inbox"]
