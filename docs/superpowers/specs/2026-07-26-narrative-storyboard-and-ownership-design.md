@@ -190,6 +190,14 @@ Feedback
   resolved_in_version int | null
 ```
 
+**canopy-web is not an integration hub.** It owns what happens *in canopy-web* — the
+page, the store, the API. It runs no pollers, holds no third-party credentials, and has
+no inbound connectors. Email and Google-Doc feedback reach the pool because an **agent**
+reads them and POSTs; ACE already reads `ace@dimagi-ai.com` and already has Drive tools,
+so the integration lives where the credentials and the domain knowledge already are.
+This is what keeps `apps/feedback` framework-tier: a generic store over
+`(target, channel, source_ref)` with no knowledge of any channel's mechanics.
+
 - `POST /api/feedback/` — batch, idempotent per `(channel, source_ref)`. Share-token-gated
   for web submits; PAT for agent ingestion of email and doc comments.
 - `GET /api/feedback/?target=&state=&channel=` — the pool.
