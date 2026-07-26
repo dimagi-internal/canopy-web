@@ -201,7 +201,7 @@ async def test_snapshot_ships_tail_not_head():
 
     @database_sync_to_async
     def _fill():
-        for i in range(chat.SESSION_TAIL_DEFAULT + 15):  # 35 messages
+        for i in range(chat.SESSION_TAIL_DEFAULT + 15):
             Message.objects.create(
                 session=session, turn_index=i, role=Message.USER, plaintext=f"m{i}",
             )
@@ -214,7 +214,11 @@ async def test_snapshot_ships_tail_not_head():
     msgs = snap["data"]["messages"]
     assert len(msgs) == chat.SESSION_TAIL_DEFAULT
     # The LAST N, chronological — i.e. the tail, not messages[:200] (the head).
-    assert [m["turn_index"] for m in msgs] == list(range(15, 35))
+    # Derived from the constant so a retuned tail size can't silently stale it.
+    total = chat.SESSION_TAIL_DEFAULT + 15
+    assert [m["turn_index"] for m in msgs] == list(
+        range(total - chat.SESSION_TAIL_DEFAULT, total)
+    )
     await comm.disconnect()
 
 

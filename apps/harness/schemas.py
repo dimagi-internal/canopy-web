@@ -506,6 +506,10 @@ class BackfillMessageIn(Schema):
     # Transcript record ordinal. -1 = an old runner; the server then keeps the
     # legacy write-once contract (sequential, only into an empty session).
     index: int = -1
+    # Structured fields for a non-prose row — a tool_use's {id,name,input}, a
+    # tool_result's {tool_use_id,is_error}. Empty for plain text. Stored as the
+    # Message's content so history renders identically to the live stream.
+    content: dict = {}
 
 
 class SessionBackfillIn(Schema):

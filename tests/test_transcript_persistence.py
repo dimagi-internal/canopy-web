@@ -310,3 +310,68 @@ async def test_catch_up_fills_the_gap_and_both_transports_agree(monkeypatch):
     assert [(m["turn_index"], m["plaintext"]) for m in rest] == expected
     ws_rows = await _ws_messages(session, user)
     assert [(m["turn_index"], m["plaintext"]) for m in ws_rows] == expected
+
+
+# --- Ordinal scheme: rebuild rather than interleave ------------------------
+
+
+def test_rows_written_under_a_superseded_ordinal_scheme_are_rebuilt():
+    """turn_index is both the sort order and the paging cursor, so rows from two
+    ordinal schemes in one session render the conversation shuffled — and
+    get_or_create can't tell that an old row and a new one are the same record.
+    The first write under the current scheme drops the stale rows instead."""
+    _u, _ws, _r, s, _c = _ctx()
+    # Pre-existing rows keyed the old way (turn_index == raw record ordinal).
+    Message.objects.create(session=s, turn_index=0, role=Message.USER,
+                           plaintext="old q", content={"text": "old q"})
+    Message.objects.create(session=s, turn_index=1, role=Message.ASSISTANT,
+                           plaintext="old a", content={"text": "old a"})
+    assert s.ordinal_scheme == 0
+
+    services.persist_transcript_rows(s, [
+        {"index": 0, "role": "user", "text": "new q", "content": {"text": "new q"}},
+        {"index": 64, "role": "assistant", "text": "new a", "content": {"text": "new a"}},
+    ])
+
+    s.refresh_from_db()
+    assert s.ordinal_scheme == services.ORDINAL_SCHEME
+    assert _rows(s) == [(0, "user", "new q"), (64, "assistant", "new a")]
+
+
+def test_the_rebuild_happens_once_not_on_every_write():
+    """It is a scheme migration, not a truncate-on-write: the second batch must
+    add to the first, or a session would only ever hold its newest post."""
+    _u, _ws, _r, s, _c = _ctx()
+    services.persist_transcript_rows(s, [
+        {"index": 0, "role": "user", "text": "q", "content": {"text": "q"}},
+    ])
+    services.persist_transcript_rows(s, [
+        {"index": 64, "role": "assistant", "text": "a", "content": {"text": "a"}},
+    ])
+    assert _rows(s) == [(0, "user", "q"), (64, "assistant", "a")]
+
+
+def test_a_legacy_ordinal_less_payload_never_triggers_a_rebuild():
+    """An old runner that sends no ordinals says nothing about the scheme; wiping
+    a session's history on its say-so would be destructive for no reason."""
+    _u, _ws, _r, s, _c = _ctx()
+    Message.objects.create(session=s, turn_index=0, role=Message.USER,
+                           plaintext="kept", content={"text": "kept"})
+    services.persist_transcript_rows(s, [{"index": -1, "role": "assistant", "text": "next"}])
+    s.refresh_from_db()
+    assert s.ordinal_scheme == 0
+    assert [t for _i, _r2, t in _rows(s)] == ["kept", "next"]
+
+
+def test_tool_rows_persist_their_structured_content():
+    _u, _ws, _r, s, _c = _ctx()
+    services.persist_transcript_rows(s, [
+        {"index": 64, "role": "tool_use", "text": "",
+         "content": {"id": "t1", "name": "Read", "input": {"file_path": "/x"}}},
+        {"index": 128, "role": "tool_result", "text": "contents",
+         "content": {"tool_use_id": "t1", "is_error": False}},
+    ])
+    use = Message.objects.get(session=s, turn_index=64)
+    assert use.role == Message.TOOL_USE and use.content["name"] == "Read"
+    res = Message.objects.get(session=s, turn_index=128)
+    assert res.role == Message.TOOL_RESULT and res.content["tool_use_id"] == "t1"
