@@ -110,7 +110,7 @@ def _api(method: str, path: str, body: dict | None = None) -> tuple[int, dict | 
 def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
     """Renew this turn's claim lease for the duration of execution.
 
-    Both `_claim_and_run` (WS) and `run_over_rest`'s turn body block inside
+    Both `_claim_and_run_once` (WS) and `run_over_rest`'s turn body block inside
     `run_claude()` for the entire turn — no heartbeat happens while that call
     is running, and the idle heartbeats both loops send elsewhere carry
     `active_turn_ids: []`, which renews nothing (apps/harness/services.py::
@@ -492,11 +492,16 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     return None
 
 
-def _claim_and_run(ws, runner_id: str) -> None:
+def _claim_and_run_once(ws, runner_id: str) -> bool:
+    """Claim at most one turn and run it. Returns True if a turn was run.
+
+    The bool is what lets `_drain` loop until the queue is actually empty
+    instead of assuming one claim per trigger.
+    """
     res = _ws_request(ws, {"action": "claim"}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:
-        return
+        return False
     tid = turn["id"]
     _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS)")
     _ws_request(ws, {"action": "start", "turn_id": tid, "session_id": f"cloud-{tid[:8]}"}, "start.ack")
@@ -520,6 +525,34 @@ def _claim_and_run(ws, runner_id: str) -> None:
     _ws_request(ws, {"action": "finish", "turn_id": tid,
                      "status": "done" if ok else "failed", "result_note": text[:2000]}, "finish.ack")
     _log(f"finished turn {tid[:8]} (WS): {'done' if ok else 'failed'}")
+    return True
+
+
+def _drain(ws, runner_id: str, max_turns: int = 20) -> int:
+    """Claim and run queued turns until there are none left. Returns how many ran.
+
+    `_claim_and_run_once` takes at most ONE turn per call, which was the whole problem:
+    a drill wave enqueues one turn per agent at once, so five queued turns needed
+    five separate triggers. With claims driven only by connects and wakes, the
+    tail of a burst simply aged out — the last agent in every wave died as LOST
+    with "lease expired mid-drill".
+
+    `max_turns` is a runaway guard, not a throttle: it caps one drain pass so a
+    server that always returns a turn cannot spin here forever without ever
+    heartbeating. Whatever is left is picked up by the next poll tick.
+    """
+    ran = 0
+    while ran < max_turns and not _stop:
+        before = ran
+        try:
+            if _claim_and_run_once(ws, runner_id):
+                ran += 1
+        except Exception as exc:
+            _log(f"drain error: {exc}")
+            break
+        if ran == before:
+            break  # nothing claimed — queue is empty for us
+    return ran
 
 
 def run_over_ws(runner_id: str) -> bool:
@@ -558,7 +591,8 @@ def run_over_ws(runner_id: str) -> bool:
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
             last_beat = time.monotonic()
-            _claim_and_run(ws, runner_id)  # drain anything already queued (no wake for those)
+            _drain(ws, runner_id)  # anything already queued gets no wake
+            last_poll = time.monotonic()
             while not _stop:
                 try:
                     raw = ws.recv()
@@ -568,7 +602,7 @@ def run_over_ws(runner_id: str) -> bool:
                     msg = json.loads(raw)
                     mtype = msg.get("type")
                     if mtype == "wake":
-                        _claim_and_run(ws, runner_id)
+                        _drain(ws, runner_id)
                     elif mtype == "interject":
                         _log(f"interject turn={msg.get('turn_id')}: {msg.get('message')!r}")
                 elif raw == "":
@@ -576,6 +610,18 @@ def run_over_ws(runner_id: str) -> bool:
                 if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
                     _beat()
                     last_beat = time.monotonic()
+                # Safety net: claim on a wall clock too, never on wakes alone.
+                # Wake delivery is the ONLY other trigger, so a wake that is never
+                # sent (or is sent while this loop is blocked for minutes inside a
+                # turn) used to strand a queued turn indefinitely — on a healthy
+                # socket the runner sat idle while turns aged out to LOST. It was
+                # masked for months because the WS kept erroring and every
+                # reconnect drained one turn; a stable connection exposed it.
+                # The REST path (run_over_rest) has always polled — this brings
+                # the WS path to parity.
+                if time.monotonic() - last_poll >= POLL_SECONDS:
+                    _drain(ws, runner_id)
+                    last_poll = time.monotonic()
         except Exception as exc:
             _log(f"ws loop error: {exc}")
         finally:
