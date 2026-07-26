@@ -8,6 +8,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required for the merge queue: GitHub runs the required checks against the
+  # QUEUED merge result (this PR rebased onto the queue head), not the PR branch.
+  # Without this trigger those checks never report, every PR sits in the queue
+  # until it times out, and NOTHING can merge. Must land before the queue is
+  # switched on.
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
