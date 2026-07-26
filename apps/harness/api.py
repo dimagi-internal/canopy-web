@@ -550,8 +550,14 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # Ordinal-less events (an old runner) stay live-view-only: persisting
         # assistant rows without the user side would blank the tail fallback's
         # human half the moment any row exists.
+        # The payload IS the row's content (structured fields + "text"), stored
+        # verbatim — a tool_use's {id,name,input} and a tool_result's
+        # {tool_use_id,is_error} are what the client pairs and renders on, so
+        # flattening to text here would strip exactly the half that makes a tool
+        # call legible.
         chat_services.persist_transcript_rows(binding.session, [
-            {"index": e.index, "role": e.kind, "text": (e.payload or {}).get("text", "")}
+            {"index": e.index, "role": e.kind,
+             "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
             for e in payload.events if e.index >= 0
         ])
     sgroup = groups.session_group(payload.session_id)

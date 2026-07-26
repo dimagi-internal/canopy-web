@@ -3,6 +3,7 @@ messages when the server asks. Fake client + tmp transcript."""
 import json
 
 from canopy_runner import main as m
+from canopy_runner.chat_bridge import compose_index as _ix
 
 
 class _Cfg:
@@ -34,8 +35,9 @@ def _summary():
 
 
 def test_drains_backfill_and_ships_full_transcript_with_ordinals(tmp_path, monkeypatch):
-    """Every message carries its RAW record index (the leading summary record shifts
-    them), so the server can key rows on the same ordinals the live stream uses."""
+    """Every message carries its composite transcript ordinal (the leading summary
+    record shifts them), so the server keys backfilled rows on exactly the ordinals
+    the live stream uses — that identity is what makes the two idempotent."""
     p = tmp_path / "echo.jsonl"
     p.write_text(_summary() + _user("q1") + _asst("a1") + _user("q2") + _asst("a2"))
     monkeypatch.setattr(m.transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
@@ -47,7 +49,8 @@ def test_drains_backfill_and_ships_full_transcript_with_ordinals(tmp_path, monke
     sid, messages = c.shipped[0]
     assert sid == "s1"
     assert [(x["index"], x["role"], x["text"]) for x in messages] == [
-        (1, "user", "q1"), (2, "assistant", "a1"), (3, "user", "q2"), (4, "assistant", "a2"),
+        (_ix(1), "user", "q1"), (_ix(2), "assistant", "a1"),
+        (_ix(3), "user", "q2"), (_ix(4), "assistant", "a2"),
     ]
 
 

@@ -50,6 +50,14 @@ class Session(models.Model):
     # Continuity hint for the real subprocess runner (SP2b): the claude CLI
     # session to --resume. Unused by the stub.
     cli_session_id = models.CharField(max_length=64, blank=True, default="")
+    # Which transcript-ordinal scheme this session's Message rows were written
+    # under. 0 = the original "turn_index == raw .jsonl record ordinal"; 1 = the
+    # composite `record * BLOCK_STRIDE + block` that made a multi-block record's
+    # tool calls addressable. A session still on an older scheme is re-derived
+    # from its transcript on the next write (see _ensure_current_ordinal_scheme)
+    # — the rows are a cache of a file on the runner's disk, so a rebuild is the
+    # cheap, self-healing move, not a migration to hand-write.
+    ordinal_scheme = models.PositiveSmallIntegerField(default=0)
     # Opaque product linkage (e.g. {"opp_slug": "..."}) — never interpreted here.
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

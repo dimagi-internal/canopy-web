@@ -7061,6 +7061,13 @@ export interface components {
              * @default -1
              */
             readonly index: number;
+            /**
+             * Content
+             * @default {}
+             */
+            readonly content: {
+                readonly [key: string]: unknown;
+            };
         };
         /** SessionBackfillIn */
         readonly SessionBackfillIn: {

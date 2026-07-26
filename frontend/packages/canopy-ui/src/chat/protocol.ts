@@ -86,8 +86,11 @@ export type WsEvent =
   | { event: "session.title_updated"; data: { title: string } }
   | { event: "chat.stream_start"; data: { message_id: string; turn_index: number } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
-  | { event: "chat.tool_use"; data: { parent_message_id: string | null; tool_message_id: string; block: Record<string, unknown> } }
-  | { event: "chat.tool_result"; data: { parent_message_id: string | null; tool_message_id: string; block: Record<string, unknown> } }
+  // `turn_index` is the row's transcript ordinal — the same key the persisted
+  // Message carries, so a live tool row sorts into exactly the position it will
+  // occupy after a reload. Optional: an older server omits it.
+  | { event: "chat.tool_use"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown> } }
+  | { event: "chat.tool_result"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown> } }
   | { event: "chat.stream_complete"; data: { message_id: string; plaintext: string } }
   | { event: "chat.stream_error"; data: { message_id: string; detail: string } }
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }

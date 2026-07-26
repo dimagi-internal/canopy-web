@@ -66,3 +66,77 @@ def test_session_stream_rejects_unbound_runner():
         content_type="application/json",
     )
     assert resp.status_code == 404
+
+
+# --- Tool calls over the stream (tier 1 of live-execution visibility) --------
+
+
+def _post_stream(c, runner, session, events):
+    return c.post(
+        f"/api/harness/runners/{runner.id}/session-stream",
+        data={"session_id": str(session.id), "events": events},
+        content_type="application/json",
+    )
+
+
+def test_tool_rows_persist_with_the_identity_the_ui_pairs_on():
+    """The payload IS the stored content. Flattening it to text (the old
+    behaviour) stripped `id`/`name`/`input` and `tool_use_id` — i.e. exactly the
+    fields `pairToolMessages` needs to render a call and its result as one row."""
+    from apps.canopy_sessions.models import Message
+
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    _post_stream(c, runner, s, [
+        {"kind": "tool_use", "seq": 64, "index": 64,
+         "payload": {"id": "toolu_1", "name": "Bash",
+                     "input": {"command": "ls"}, "text": ""}},
+        {"kind": "tool_result", "seq": 128, "index": 128,
+         "payload": {"tool_use_id": "toolu_1", "is_error": False, "text": "a.txt"}},
+    ])
+
+    use = Message.objects.get(session=s, turn_index=64)
+    assert use.role == Message.TOOL_USE
+    assert use.content["id"] == "toolu_1"
+    assert use.content["name"] == "Bash"
+    assert use.content["input"] == {"command": "ls"}
+
+    result = Message.objects.get(session=s, turn_index=128)
+    assert result.role == Message.TOOL_RESULT
+    assert result.content["tool_use_id"] == "toolu_1"
+    assert result.plaintext == "a.txt"
+
+
+def test_tool_frames_reach_the_client_live(monkeypatch):
+    """A tool row is only useful while the agent is working, so it has to fan out
+    live — not merely persist for the next reload."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _post_stream(c, runner, s, [
+        {"kind": "tool_use", "seq": 64, "index": 64,
+         "payload": {"id": "toolu_1", "name": "Bash", "input": {}, "text": ""}},
+    ])
+    assert [m["event"]["kind"] for m in published] == ["tool_use"]
+
+
+def test_plain_text_rows_keep_their_legacy_content_shape():
+    """Back-compat: an older runner posts {"text": ...} and nothing else, and its
+    rows must still store the same content they always did."""
+    from apps.canopy_sessions.models import Message
+
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    _post_stream(c, runner, s, [
+        {"kind": "assistant", "seq": 64, "index": 64, "payload": {"text": "hello"}},
+    ])
+    msg = Message.objects.get(session=s, turn_index=64)
+    assert msg.content == {"text": "hello"}
+    assert msg.plaintext == "hello"

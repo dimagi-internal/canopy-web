@@ -26,14 +26,19 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             {"event": "chat.stream_start", "data": {"message_id": mid, "turn_index": seq}},
             {"event": "chat.stream_complete", "data": {"message_id": mid, "plaintext": payload.get("text", "")}},
         ]
-    if kind == "tool_start":
+    # "tool_start"/"tool_end" are the cloud runner's names for these; the laptop
+    # runner ships the transcript's own block types. Both reach the same frame —
+    # a renderer should never have to know which producer it was talking to.
+    if kind in ("tool_start", "tool_use"):
         mid = resolve_message_id(seq)
         return [{"event": "chat.tool_use",
-                 "data": {"parent_message_id": None, "tool_message_id": mid, "block": payload}}]
+                 "data": {"parent_message_id": None, "tool_message_id": mid,
+                          "turn_index": seq, "block": payload}}]
     if kind in ("tool_end", "tool_result"):
         mid = resolve_message_id(seq)
         return [{"event": "chat.tool_result",
-                 "data": {"parent_message_id": None, "tool_message_id": mid, "block": payload}}]
+                 "data": {"parent_message_id": None, "tool_message_id": mid,
+                          "turn_index": seq, "block": payload}}]
     if kind == "error":
         mid = resolve_message_id(seq)
         return [{"event": "chat.stream_error",
