@@ -396,6 +396,7 @@ export function ChatPage() {
           currentUserId={socket.state.current_user_id}
           onSend={socket.sendChat}
           onStop={socket.stopChat}
+          awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
           onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}
