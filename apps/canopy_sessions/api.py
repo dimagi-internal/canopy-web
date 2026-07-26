@@ -39,6 +39,9 @@ from .schemas import (
     SessionOut,
     StreamStateOut,
     TurnOutMinimal,
+    ResetIn,
+    ResetOut,
+    ResetSummaryOut,
 )
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -209,6 +212,29 @@ def list_sessions(
     return out[: clamp_limit(limit)]
 
 
+# Declared BEFORE /{session_id}: Django resolves in declaration order and
+# "reset" would otherwise match the session-id pattern and 405 on its GET-only
+# view. Any future collection-level route belongs above here too.
+@router.post("/reset", response=ResetSummaryOut, summary="Reset every visible session")
+def reset_sessions(request: HttpRequest, payload: ResetIn):
+    """Bulk reset, scoped to the workspaces the caller can see (and to the pinned
+    one on a tenant route). Use `dry_run` to see what would happen first.
+
+    `prune_ghosts` additionally DELETES runner-discovered sessions that have no
+    binding at all: they can neither be shown nor rebuilt, and the next session
+    report re-creates any whose task is still open. Chats a human started are
+    never pruned.
+    """
+    rows = (
+        Session.objects.select_related("runner_binding", "runner_binding__runner")
+        .filter(workspace_id__in=_visible_slugs(request))
+        .order_by("created_at")
+    )
+    return services.reset_sessions(
+        rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
+    )
+
+
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
     # Tail-first: never ship the whole transcript by default. The client gets the
@@ -254,6 +280,25 @@ def archive_session(request: HttpRequest, session_id: uuid.UUID):
     report it archived — and for force-retiring a row without touching emdash.
     Idempotent, and never destructive: /unarchive brings it straight back."""
     return _set_status(request, session_id, Session.ARCHIVED)
+
+
+@router.post("/{session_id}/reset", response=ResetOut, summary="Reset a session from its transcript")
+def reset_session(request: HttpRequest, session_id: uuid.UUID, dry_run: bool = False):
+    """Drop this session's derived messages and re-derive them from the runner's
+    transcript.
+
+    A first-class action, not a repair: once the transcript is the durable record,
+    these rows are a CACHE of a file on the runner's disk, so rebuilding them is
+    cheap and repeatable — the thing you reach for constantly while building, and
+    the way to pick up history the old per-turn projection could never capture.
+
+    Refuses (200 with ok=false + a reason) rather than erroring when there is
+    nothing to re-derive from: `no_binding` (no pointer to a transcript) or
+    `runner_unreachable` (its box is offline — try again when it's back). Turns
+    and their event ledger are never touched; nothing can rebuild those.
+    """
+    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    return services.reset_session(session, dry_run=dry_run)
 
 
 @router.post("/{session_id}/unarchive", response=SessionOut, summary="Unarchive a session")

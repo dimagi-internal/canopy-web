@@ -180,3 +180,19 @@ export function placeTurn(id: string, placement: string): Promise<TurnPlacementR
     body: JSON.stringify({ placement }),
   });
 }
+
+export type ResetResult = components["schemas"]["ResetOut"];
+
+/**
+ * Reset a session: drop canopy's derived messages and re-derive them from the
+ * runner's transcript. A first-class action, not a repair — these rows are a
+ * cache of a file on the runner's disk.
+ *
+ * Never throws on a refusal: a session with no binding, or whose runner is
+ * offline, comes back `ok: false` with a `reason` to render.
+ */
+export function resetSession(id: string): Promise<ResetResult> {
+  return request<ResetResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/reset`, {
+    method: "POST",
+  });
+}
