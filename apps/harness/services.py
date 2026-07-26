@@ -333,7 +333,19 @@ def unclaimable_queued_turns(user) -> list[dict]:
     )
     if not queued:
         return []
-    runners = list(Runner.objects.filter(paired_by=user).exclude(status=Runner.RETIRED))
+    # Candidate runners for "could ANY runner take this?" are the runners VISIBLE
+    # in the caller's tenant, not merely the ones the caller personally paired.
+    # Scoping to `paired_by=user` made every stuck turn read as `config` for
+    # anyone who didn't pair a runner themselves (a delegated identity, or a
+    # teammate in a workspace someone else's runner serves) — the workspace's
+    # runner could be sitting right there, offline, and the diagnosis would still
+    # say "no runner is assigned; fix your routing." Use the SAME tenancy rule as
+    # claim_next_turn (`runner_tenant_slugs`, paired_by-derived, NULL-fails-closed)
+    # so this warning can't disagree with what claiming actually does.
+    runners = [
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
+        if runner_tenant_slugs(r) & ws_slugs
+    ]
     ids = {t.id for t in queued}
 
     def _covered_by(rs) -> set:
