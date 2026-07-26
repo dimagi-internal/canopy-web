@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gzip
+import io
 import json
 import logging
 import uuid
@@ -679,33 +680,50 @@ def read_transcript(turn: Turn) -> bytes:
     as empty rather than raise).
 
     For in-process consumers only (e.g. a future cost-derivation job running
-    server-side). The HTTP read route does NOT call this — see
-    `read_transcript_gzipped`, which avoids materializing the whole
-    decompressed blob in a web worker's memory (security review 2026-07-26,
-    F3)."""
+    server-side, or anything that genuinely needs the whole blob at once).
+    The HTTP read route does NOT call this — see `iter_transcript`, which
+    streams bounded chunks instead of materializing the whole decompressed
+    blob in a web worker's memory (security review 2026-07-26, F3)."""
     transcript = TurnTranscript.objects.filter(turn=turn).first()
     if transcript is None or not transcript.raw_jsonl_gz:
         return b""
     return gzip.decompress(bytes(transcript.raw_jsonl_gz))
 
 
-def read_transcript_gzipped(turn: Turn) -> bytes:
-    """The STILL-COMPRESSED raw transcript bytes for a turn, or b"" if none.
+def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
+    """Yield a turn's DECOMPRESSED raw JSONL in bounded chunks, inflating
+    incrementally rather than materializing the whole decompressed blob at
+    once (security review 2026-07-26, F3; the sibling `/events` route caps
+    at 500 rows for the same underlying reason — nothing about this route
+    may scale with transcript size).
 
-    O(1) server memory regardless of transcript size: unlike `read_transcript`,
-    this never decompresses. The HTTP GET route serves this directly with
-    `Content-Encoding: gzip` and lets the CLIENT inflate it — a multi-hour
-    turn's full transcript would otherwise force the API worker to
-    materialize the entire decompressed blob (twice: once from
-    `gzip.decompress`, again when `HttpResponse` buffers it), which can spike
-    memory by ~2x the decompressed size and OOM the container serving
-    unrelated requests (security review 2026-07-26, F3 — the sibling
-    `/events` route caps at 500 rows for the same reason; this has no
-    cursor, so the whole blob must be handled without expanding it)."""
+    An EARLIER version of this fix instead served the STILL-GZIPPED bytes
+    directly with `Content-Encoding: gzip`, betting on the HTTP client to
+    inflate transparently. A follow-up review empirically falsified that:
+    `curl --compressed` and `httpx` both return only the FIRST gzip member
+    of a multi-member stream (Task 1's own on-disk format — see
+    `append_transcript`) — a 200 with silently TRUNCATED content, no error,
+    exactly the corrupted-derivation failure mode F5's idempotency work
+    exists to prevent. Worse, this repo's own runner client
+    (`packages/canopy_runner`, `urllib.request`) sends no `Accept-Encoding`
+    and does no decoding at all — it would treat raw gzip bytes as JSONL.
+    Streaming plaintext removes the wire-format gamble entirely: every
+    caller sees the same bytes `read_transcript` would return, with none of
+    read_transcript's all-at-once memory cost.
+
+    `gzip.GzipFile` transparently reassembles Task 1's concatenated
+    multi-member blob exactly as `gzip.decompress` does — this is just the
+    same decompression, read incrementally instead of all at once. Yields
+    nothing (an empty generator) when the turn has no transcript."""
     transcript = TurnTranscript.objects.filter(turn=turn).first()
     if transcript is None or not transcript.raw_jsonl_gz:
-        return b""
-    return bytes(transcript.raw_jsonl_gz)
+        return
+    with gzip.GzipFile(fileobj=io.BytesIO(bytes(transcript.raw_jsonl_gz))) as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 def mark_running(turn: Turn, *, session_id: str = "") -> Turn:

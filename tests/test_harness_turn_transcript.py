@@ -371,22 +371,59 @@ def test_omitting_batch_id_never_dedups():
     assert transcript.line_count == 2
 
 
-# F3 — the HTTP GET route serves the STILL-COMPRESSED bytes (Content-Encoding:
-# gzip) rather than decompressing server-side, to keep server memory O(1)
-# regardless of transcript size. read_transcript_gzipped is the service half
-# of that; read_transcript (decompressing) stays for in-process consumers.
+# F3 (revised) — the HTTP GET route streams `iter_transcript`, which inflates
+# the stored gzip INCREMENTALLY in bounded chunks, rather than either (a)
+# decompressing the whole blob at once (read_transcript's cost) or (b) an
+# earlier, since-abandoned approach of serving the still-gzipped bytes with
+# Content-Encoding: gzip — a follow-up review found that silently truncates
+# on curl --compressed / httpx (both return only the first gzip member of a
+# multi-member stream) and our own runner client does no decoding at all.
+# iter_transcript yields plain decompressed bytes; only the READ pattern
+# (chunked, not all-at-once) differs from read_transcript.
 
 
-def test_read_transcript_gzipped_round_trips_via_manual_decompression():
+def test_iter_transcript_concatenates_to_the_same_bytes_as_read_transcript():
     turn = _turn()
     services.append_transcript(turn, ["a", "b"])
 
-    raw_gz = services.read_transcript_gzipped(turn)
+    chunks = list(services.iter_transcript(turn))
 
-    assert raw_gz != b"a\nb"  # still compressed, not the plaintext
-    assert gzip.decompress(raw_gz) == b"a\nb"
+    assert b"".join(chunks) == services.read_transcript(turn) == b"a\nb"
 
 
-def test_read_transcript_gzipped_with_no_rows_returns_empty_bytes():
+def test_iter_transcript_with_no_rows_yields_nothing():
     turn = _turn()
-    assert services.read_transcript_gzipped(turn) == b""
+    assert list(services.iter_transcript(turn)) == []
+
+
+def test_iter_transcript_respects_a_small_chunk_size_and_still_round_trips():
+    """Pin the CHUNKING, not just the outcome: a chunk_size smaller than the
+    content must still produce more than one chunk, and concatenating them
+    must reproduce the exact original bytes — proves this doesn't secretly
+    decompress everything and split it after the fact."""
+    turn = _turn()
+    content = "x" * 100
+    services.append_transcript(turn, [content])
+
+    chunks = list(services.iter_transcript(turn, chunk_size=10))
+
+    assert len(chunks) > 1
+    assert all(len(c) <= 10 for c in chunks)
+    assert b"".join(chunks) == content.encode("utf-8")
+
+
+def test_iter_transcript_handles_the_legacy_single_member_format_too():
+    """gzip.GzipFile reassembles a concatenated multi-member blob exactly as
+    gzip.decompress does — this pins that the CHUNKED reader has the same
+    guarantee for a legacy single-member row (see
+    test_append_onto_a_legacy_single_member_row_still_round_trips)."""
+    turn = _turn()
+    legacy_content = b"foo\nbar"
+    TurnTranscript.objects.create(
+        turn=turn,
+        raw_jsonl_gz=gzip.compress(legacy_content),
+        line_count=2,
+        bytes_raw=len(legacy_content),
+    )
+
+    assert b"".join(services.iter_transcript(turn)) == legacy_content

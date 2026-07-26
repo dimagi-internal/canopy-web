@@ -2228,24 +2228,29 @@ export interface paths {
         };
         /**
          * Raw retained JSONL for a turn
-         * @description The byte-for-byte raw transcript — a turn with nothing ever appended
-         *     reads as an empty 200, not a 404; absence of a transcript is not absence
-         *     of a turn. No `response=` schema is declared so Ninja returns this
-         *     HttpResponse verbatim instead of trying to serialize it (mirrors
-         *     apps/canopy_sessions.api.attachment_content).
+         * @description The byte-for-byte raw transcript, streamed as plain JSONL bytes — a
+         *     turn with nothing ever appended reads as an empty 200, not a 404;
+         *     absence of a transcript is not absence of a turn. No `response=` schema
+         *     is declared so Ninja returns this StreamingHttpResponse verbatim instead
+         *     of trying to serialize it (mirrors apps/canopy_sessions.api's plain
+         *     HttpResponse for attachment_content).
          *
-         *     Serves the STILL-GZIPPED bytes with `Content-Encoding: gzip` rather than
-         *     decompressing server-side (security review 2026-07-26, F3): the sibling
-         *     `/events` route caps at 500 rows, but this route has no cursor, so a
-         *     multi-hour turn's full transcript would otherwise force this worker to
-         *     materialize the entire decompressed blob just to serve one request —
-         *     ~2x the decompressed size in memory (once from `gzip.decompress`, again
-         *     when `HttpResponse` buffers it), enough to OOM the container. A real
-         *     HTTP client (browser fetch, curl --compressed) transparently inflates
-         *     `Content-Encoding: gzip` — this is a transport optimization, not a format
-         *     change the caller needs to know about. The empty-transcript case omits
-         *     the header entirely: `gzip.decompress(b"")` raises on the client, and an
-         *     empty body doesn't need "encoding" to begin with.
+         *     Streams `services.iter_transcript`, which inflates the stored gzip
+         *     INCREMENTALLY in bounded chunks rather than decompressing the whole blob
+         *     into memory at once (security review 2026-07-26, F3 — the sibling
+         *     `/events` route caps at 500 rows for the same underlying reason).
+         *
+         *     A PRIOR version of this fix instead served the still-gzipped bytes
+         *     directly with `Content-Encoding: gzip`, betting the HTTP client would
+         *     inflate transparently — a follow-up review empirically falsified that:
+         *     `curl --compressed` and `httpx` both return only the FIRST gzip member
+         *     of Task 1's multi-member on-disk format, silently truncating the
+         *     transcript with a 200 and no error, and this repo's own runner client
+         *     (`packages/canopy_runner`, `urllib.request`) does no content-decoding at
+         *     all — it would have treated raw gzip bytes as JSONL. Streaming plaintext
+         *     here removes that wire-format gamble: every caller gets exactly the
+         *     bytes `services.read_transcript` would return, with none of its
+         *     all-at-once memory cost.
          */
         readonly get: operations["apps_harness_api_read_turn_transcript"];
         readonly put?: never;

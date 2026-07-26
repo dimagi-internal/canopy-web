@@ -10,7 +10,6 @@ and the security-review fix round (task-2-report.md) for F1-F8.
 """
 from __future__ import annotations
 
-import gzip
 import uuid
 
 import pytest
@@ -88,13 +87,12 @@ def _get(client, turn_id, url_prefix=""):
     return client.get(f"{url_prefix}/api/harness/turns/{turn_id}/transcript")
 
 
-def _decoded(response) -> bytes:
-    """A real HTTP client transparently inflates `Content-Encoding: gzip` —
-    the Django test client does not, so tests do it by hand to simulate what
-    the browser/curl --compressed would do."""
-    if response.get("Content-Encoding") == "gzip":
-        return gzip.decompress(response.content)
-    return response.content
+def _body(response) -> bytes:
+    """The route now streams a StreamingHttpResponse (security review
+    2026-07-26, F3 revised) — it has no `.content`, only `.streaming_content`
+    (a one-shot iterator of chunks). Tests just concatenate it; there is no
+    decoding step because the wire format is plain JSONL bytes, full stop."""
+    return b"".join(response.streaming_content)
 
 
 def test_append_then_read_back_exactly(owner_client, agent):
@@ -111,8 +109,11 @@ def test_append_then_read_back_exactly(owner_client, agent):
     read = _get(owner_client, turn_id)
     assert read.status_code == 200
     assert read["Content-Type"] == "application/x-ndjson"
-    assert read["Content-Encoding"] == "gzip"  # F3: served compressed, not inflated server-side
-    assert _decoded(read) == "\n".join(lines).encode("utf-8")
+    # Plaintext on the wire (security review 2026-07-26, F3 revised): no
+    # Content-Encoding, no client-side inflation required — _body(read) IS
+    # the transcript, not a compressed blob a caller must know to decode.
+    assert "Content-Encoding" not in read
+    assert _body(read) == "\n".join(lines).encode("utf-8")
 
 
 def test_append_accumulates_across_two_requests(owner_client, agent):
@@ -121,7 +122,7 @@ def test_append_accumulates_across_two_requests(owner_client, agent):
     _post_lines(owner_client, turn_id, ['{"a": 2}'])
 
     read = _get(owner_client, turn_id)
-    assert _decoded(read) == b'{"a": 1}\n{"a": 2}'
+    assert _body(read) == b'{"a": 1}\n{"a": 2}'
 
 
 def test_reading_a_turn_with_no_transcript_is_200_empty_not_404(owner_client, agent):
@@ -130,10 +131,7 @@ def test_reading_a_turn_with_no_transcript_is_200_empty_not_404(owner_client, ag
     resp = _get(owner_client, turn_id)
 
     assert resp.status_code == 200
-    assert resp.content == b""
-    # No Content-Encoding on a genuinely empty body — gzip.decompress(b"")
-    # raises on the client, and there's nothing to "encode" anyway.
-    assert "Content-Encoding" not in resp
+    assert _body(resp) == b""
 
 
 def test_unknown_turn_404s_on_both_routes(owner_client, agent):
@@ -228,7 +226,7 @@ def test_oversized_batch_is_422(owner_client, agent):
     assert resp.status_code == 422
     # Nothing was persisted from the rejected batch.
     read = _get(owner_client, turn_id)
-    assert read.content == b""
+    assert _body(read) == b""
 
 
 def test_append_to_a_terminal_turn_still_succeeds(owner_client, agent):
@@ -243,7 +241,7 @@ def test_append_to_a_terminal_turn_still_succeeds(owner_client, agent):
 
     assert resp.status_code == 200, resp.content
     read = _get(owner_client, turn_id)
-    assert _decoded(read) == b'{"type": "result"}'
+    assert _body(read) == b'{"type": "result"}'
 
 
 # --- F2: a per-turn ceiling never fails a live turn --------------------------
@@ -261,7 +259,7 @@ def test_crossing_the_per_turn_ceiling_still_200s_and_reports_truncated(owner_cl
     assert resp.status_code == 200, resp.content
     assert resp.json()["truncated"] is True
     read = _get(owner_client, turn_id)
-    assert b"way more than ten bytes" not in _decoded(read)
+    assert b"way more than ten bytes" not in _body(read)
 
 
 # --- F5: a replayed batch_id is a no-op, not a double-append ----------------
@@ -277,7 +275,7 @@ def test_replaying_the_same_batch_id_does_not_double_append(owner_client, agent)
 
     assert retry.status_code == 200, retry.content
     read = _get(owner_client, turn_id)
-    assert _decoded(read) == b"line one"  # not "line one\nline one"
+    assert _body(read) == b"line one"  # not "line one\nline one"
 
 
 def test_a_new_batch_id_still_appends_normally(owner_client, agent):
@@ -287,4 +285,4 @@ def test_a_new_batch_id_still_appends_normally(owner_client, agent):
     _post_lines(owner_client, turn_id, ["line two"], batch_id="b2")
 
     read = _get(owner_client, turn_id)
-    assert _decoded(read) == b"line one\nline two"
+    assert _body(read) == b"line one\nline two"

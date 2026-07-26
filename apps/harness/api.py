@@ -5,7 +5,7 @@ import uuid
 
 from django.db import models, transaction
 from django.db.models import Q
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -221,7 +221,13 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
-    if turn.workspace_id and not wsvc.is_member(request.user, turn.workspace_id):
+    # Fails CLOSED on a workspace-less project turn (security review
+    # 2026-07-26, adjacent to F1): `enqueue_turn` always assigns a real
+    # workspace to a project turn, so this is practically unreachable today —
+    # but matches the invariant F1 established for the agent-turn branch
+    # above, rather than leaving one fail-open gate three lines below a
+    # fail-closed one.
+    if not turn.workspace_id or not wsvc.is_member(request.user, turn.workspace_id):
         raise HttpError(404, "turn not found")
     return turn
 
@@ -748,31 +754,34 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
 
 @router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
 def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
-    """The byte-for-byte raw transcript — a turn with nothing ever appended
-    reads as an empty 200, not a 404; absence of a transcript is not absence
-    of a turn. No `response=` schema is declared so Ninja returns this
-    HttpResponse verbatim instead of trying to serialize it (mirrors
-    apps/canopy_sessions.api.attachment_content).
+    """The byte-for-byte raw transcript, streamed as plain JSONL bytes — a
+    turn with nothing ever appended reads as an empty 200, not a 404;
+    absence of a transcript is not absence of a turn. No `response=` schema
+    is declared so Ninja returns this StreamingHttpResponse verbatim instead
+    of trying to serialize it (mirrors apps/canopy_sessions.api's plain
+    HttpResponse for attachment_content).
 
-    Serves the STILL-GZIPPED bytes with `Content-Encoding: gzip` rather than
-    decompressing server-side (security review 2026-07-26, F3): the sibling
-    `/events` route caps at 500 rows, but this route has no cursor, so a
-    multi-hour turn's full transcript would otherwise force this worker to
-    materialize the entire decompressed blob just to serve one request —
-    ~2x the decompressed size in memory (once from `gzip.decompress`, again
-    when `HttpResponse` buffers it), enough to OOM the container. A real
-    HTTP client (browser fetch, curl --compressed) transparently inflates
-    `Content-Encoding: gzip` — this is a transport optimization, not a format
-    change the caller needs to know about. The empty-transcript case omits
-    the header entirely: `gzip.decompress(b"")` raises on the client, and an
-    empty body doesn't need "encoding" to begin with.
+    Streams `services.iter_transcript`, which inflates the stored gzip
+    INCREMENTALLY in bounded chunks rather than decompressing the whole blob
+    into memory at once (security review 2026-07-26, F3 — the sibling
+    `/events` route caps at 500 rows for the same underlying reason).
+
+    A PRIOR version of this fix instead served the still-gzipped bytes
+    directly with `Content-Encoding: gzip`, betting the HTTP client would
+    inflate transparently — a follow-up review empirically falsified that:
+    `curl --compressed` and `httpx` both return only the FIRST gzip member
+    of Task 1's multi-member on-disk format, silently truncating the
+    transcript with a 200 and no error, and this repo's own runner client
+    (`packages/canopy_runner`, `urllib.request`) does no content-decoding at
+    all — it would have treated raw gzip bytes as JSONL. Streaming plaintext
+    here removes that wire-format gamble: every caller gets exactly the
+    bytes `services.read_transcript` would return, with none of its
+    all-at-once memory cost.
     """
     turn = _turn_or_404(request, turn_id)
-    raw_gz = services.read_transcript_gzipped(turn)
-    response = HttpResponse(raw_gz, content_type="application/x-ndjson")
-    if raw_gz:
-        response["Content-Encoding"] = "gzip"
-    return response
+    return StreamingHttpResponse(
+        services.iter_transcript(turn), content_type="application/x-ndjson"
+    )
 
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)
