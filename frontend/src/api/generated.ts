@@ -1871,7 +1871,22 @@ export interface paths {
          * @description Retire a runner — a decommission, not a liveness state (see
          *     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
          *     retired runners, so retiring an already-retired runner 404s at lookup rather than
-         *     no-opping here. Reversible via /unretire.
+         *     no-opping here. Reversible via /unretire — but see the caveat below.
+         *
+         *     Deletes the runner's RunnerAssignment rows in the same transaction. A
+         *     retired runner is invisible to _runner_visibility_q, but its stale
+         *     assignment rows were NOT — GET /agents/{slug}/runners kept listing them,
+         *     and PUT /agents/{slug}/runners round-trips that same list to save any
+         *     unrelated change, so a lingering row 422'd every matrix save with "unknown
+         *     or retired runner id" (a prod incident 2026-07-25). Ranks of the
+         *     survivors need not be compacted — RunnerAssignment.rank is only ever
+         *     compared relatively (0 = first choice), never assumed contiguous.
+         *
+         *     CAVEAT: /unretire brings the runner back but does NOT restore these deleted
+         *     assignments — re-add it to the agents that should route to it via the
+         *     matrix (PUT /agents/{slug}/runners). Restoring the runner's identity keeps
+         *     its bindings/credentials; its routing membership is intentionally not
+         *     resurrected, since the fleet may have moved on while it was retired.
          */
         readonly post: operations["apps_harness_api_retire_runner"];
         readonly delete?: never;

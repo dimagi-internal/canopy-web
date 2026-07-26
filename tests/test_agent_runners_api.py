@@ -123,6 +123,34 @@ def test_put_agent_runners_rejects_retired_runner(client, agent, runner_a):
     assert RunnerAssignment.objects.filter(agent=agent).count() == 0
 
 
+def test_retire_runner_cascades_its_assignment_rows(client, agent, runner_a, runner_b):
+    """Prod incident 2026-07-25: retiring a runner left its RunnerAssignment
+    row behind. GET kept listing it (no status filter on
+    agent.runner_assignments), and the matrix UI round-trips a plain GET
+    straight back into PUT to save any unrelated change — so the stale row
+    422'd every subsequent save with "unknown or retired runner id" even
+    though the caller never asked to add the retired runner back. Retiring
+    must delete the row so GET (and a PUT of what GET showed) both come back
+    clean."""
+    RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
+    RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
+
+    resp = client.post(f"/api/harness/runners/{runner_a.id}/retire")
+    assert resp.status_code == 204, resp.content
+
+    # The retired runner's row is gone, not just invisible.
+    assert not RunnerAssignment.objects.filter(runner=runner_a).exists()
+    assert RunnerAssignment.objects.filter(agent=agent).count() == 1
+
+    got = client.get(f"/api/agents/{agent.slug}/runners").json()
+    assert [x["runner_id"] for x in got] == [str(runner_b.id)]
+
+    # The prod 422: PUT-ing back exactly what GET showed must succeed.
+    r = _put(client, agent.slug, [g["runner_id"] for g in got])
+    assert r.status_code == 200, r.content
+    assert [x["runner_name"] for x in r.json()] == [runner_b.name]
+
+
 def test_put_agent_runners_rejects_unknown_runner_id(client, agent):
     import uuid
 

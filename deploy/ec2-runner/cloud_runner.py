@@ -14,11 +14,18 @@ Config comes from the environment (see deploy/ec2-runner/README.md):
   RUNNER_AGENTS     comma-separated agent slugs this runner may drive (e.g. echo,ada)
   RUNNER_WORKSPACE  optional workspace slug (defaults to the token's default)
   CLAUDE_BIN        path to the claude binary (default: claude)
-  WORK_DIR          where claude runs (default: /tmp/canopy-runner-work)
+  WORK_DIR          scratch dir for project/session turns and clone-less agents
+                     (default: /tmp/canopy-runner-work)
+  AGENT_ROOT         where bootstrapped agent clones live (default: /opt/agents);
+                     an agent turn with a clone here runs IN it, not WORK_DIR
+  CANOPY_WEB_REPO_DIR/CANOPY_WEB_REPO_URL  where bootstrap_agent_fleet() clones/
+                     pulls canopy-web from, to run its bootstrap_agents.sh
   POLL_SECONDS      idle poll interval (default: 15)
   STATE_FILE        runner-id cache (default: ~/.canopy-cloud-runner.json)
 `claude` authenticates from CLAUDE_CODE_OAUTH_TOKEN (a dedicated setup-token from
-Secrets Manager, staged into the service env by cloud-init).
+Secrets Manager, staged into the service env by cloud-init). AGENT_SLUGS /
+AGENT_REPO_ORG / GITHUB_TOKEN / OP_SERVICE_ACCOUNT_TOKEN are consumed by
+bootstrap_agents.sh (see deploy/ec2-runner/README.md), not this file directly.
 """
 from __future__ import annotations
 
@@ -53,6 +60,11 @@ if _csv("RUNNER_AGENTS"):
 RUNNER_WORKSPACE = os.environ.get("RUNNER_WORKSPACE", "")
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 WORK_DIR = os.environ.get("WORK_DIR", "/tmp/canopy-runner-work")
+# Agent-fleet bootstrap (deploy/ec2-runner/bootstrap_agents.sh) — see
+# bootstrap_agent_fleet() below for why this runs from here and not cloud-init.
+AGENT_ROOT = os.environ.get("AGENT_ROOT", "/opt/agents")
+CANOPY_WEB_REPO_DIR = os.environ.get("CANOPY_WEB_REPO_DIR", "/opt/canopy-web")
+CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/jjackson/canopy-web.git")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "15"))
 # App-level heartbeat cadence (keeps the lease + status fresh).
 HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "20"))
@@ -146,10 +158,14 @@ def pair_or_load() -> str:
     return rid
 
 
-def run_claude(prompt: str, turn_id: str, emit) -> tuple[bool, str]:
+def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None) -> tuple[bool, str]:
     """Run `claude -p` on the prompt, streaming stream-json events via `emit`
-    (a callable taking a list of event dicts — WS or REST). Returns (ok, final_text)."""
-    workdir = pathlib.Path(WORK_DIR) / turn_id[:8]
+    (a callable taking a list of event dicts — WS or REST). Returns (ok, final_text).
+
+    `cwd` lets the caller run this IN an agent's real clone (see `_turn_cwd`)
+    instead of a throwaway scratch dir; None keeps the original scratch-dir
+    behavior (project/session turns, or an agent with no bootstrapped clone)."""
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [
         CLAUDE_BIN, "-p", prompt,
@@ -226,6 +242,103 @@ def _stage_github_token(token: str) -> None:
         _log(f"warn: could not stage github token: {exc}")
 
 
+def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
+    """Where claude should run for this turn (deploy/ec2-runner design spec §2:
+    'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
+    bootstrapped clone under AGENT_ROOT (bootstrap_agents.sh, run once per
+    service start — see bootstrap_agent_fleet) runs IN that clone, freshly
+    `git pull`ed here at claim, so it sees the agent's real repo — config,
+    skills, state — not an empty scratch dir. Everything else (project turns,
+    session turns, or an agent bootstrap hasn't reached yet) keeps the original
+    scratch-dir behavior. Best-effort: a pull failure logs and still uses the
+    clone as-is (stale beats absent).
+
+    Session turns are excluded explicitly: TurnOut surfaces agent_slug for an
+    agent-backed chat session too, but a live chat session is bridged, not run
+    from a repo checkout — so a chat turn must keep scratch-dir behavior even
+    once cloud sessions ship (this runner does not declare capabilities.sessions
+    today, so it is inert now, but the guard makes the intent explicit)."""
+    # A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
+    # session id in origin_ref — that, not a top-level field, is the session
+    # signal on TurnOut. A live chat is bridged, never run from a checkout.
+    is_session = bool((turn.get("origin_ref") or {}).get("chat_session_id"))
+    slug = turn.get("agent_slug") or ""
+    if slug and not is_session:
+        agent_dir = pathlib.Path(AGENT_ROOT) / slug
+        if (agent_dir / ".git").is_dir():
+            try:
+                subprocess.run(
+                    ["git", "-C", str(agent_dir), "pull", "--ff-only"],
+                    check=False, capture_output=True, timeout=60,
+                )
+            except Exception as exc:
+                _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
+            return agent_dir
+    return pathlib.Path(WORK_DIR) / turn_id[:8]
+
+
+def clone_or_pull_canopy_web() -> bool:
+    """canopy-web is PUBLIC (github.com/jjackson/canopy-web) — this needs no
+    credential, but it still runs from bootstrap_agent_fleet (after credential
+    staging), not cloud-init, purely to keep the whole bootstrap sequence in
+    one place with one log stream."""
+    repo_dir = pathlib.Path(CANOPY_WEB_REPO_DIR)
+    try:
+        if (repo_dir / ".git").is_dir():
+            subprocess.run(["git", "-C", str(repo_dir), "pull", "--ff-only"], check=True, timeout=120)
+        else:
+            repo_dir.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", CANOPY_WEB_REPO_URL, str(repo_dir)],
+                check=True, timeout=180,
+            )
+        return True
+    except Exception as exc:
+        _log(f"warn: could not clone/pull canopy-web ({CANOPY_WEB_REPO_URL}) for bootstrap: {exc}")
+        return False
+
+
+def bootstrap_agent_fleet() -> None:
+    """Clone/pull canopy-web to CANOPY_WEB_REPO_DIR and run its
+    deploy/ec2-runner/bootstrap_agents.sh — the agent-fleet provisioning step
+    (design spec §2). Runs once per service start, here in main(), and
+    DELIBERATELY NOT from the systemd unit's ExecStartPre / cloud-init:
+
+    bootstrap_agents.sh clones PRIVATE per-agent repos (needs the GITHUB_TOKEN
+    this process just staged into the git credential store) and runs `canopy
+    provision` (needs OP_SERVICE_ACCOUNT_TOKEN, which fetch_and_stage_credential
+    just put in os.environ). Neither exists until an operator has staged this
+    runner's credential bundle via wire.sh — which can only happen AFTER the
+    runner has paired and appeared in the fleet. An ExecStartPre fires on
+    EVERY service start, including the very first one (no credential yet), so
+    it would either wedge the unit waiting on a chicken-and-egg secret or
+    silently skip cloning the private repos — this call site is the earliest
+    point at which the credentials are guaranteed to exist.
+
+    Best-effort end to end: a failure here (network hiccup, one agent's
+    manifest broken) is logged loudly and the runner proceeds to claim turns
+    anyway — whatever DID bootstrap clean (canopy-web itself, other agents,
+    or just project/session turns with no agent clone at all) still works;
+    see bootstrap_agents.sh step 5 for the same policy one level down.
+    """
+    if not clone_or_pull_canopy_web():
+        return
+    script = pathlib.Path(CANOPY_WEB_REPO_DIR) / "deploy" / "ec2-runner" / "bootstrap_agents.sh"
+    if not script.exists():
+        _log(f"warn: {script} not found — skipping agent bootstrap")
+        return
+    env = dict(os.environ)
+    env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    _log(f"running {script}")
+    try:
+        # Inherits stdout/stderr (no PIPE capture) so its OK/WARN/FAIL lines land
+        # straight in `journalctl -u canopy-runner` alongside everything else.
+        proc = subprocess.run(["bash", str(script)], env=env, timeout=900)
+        _log(f"bootstrap_agents.sh exited {proc.returncode}")
+    except Exception as exc:
+        _log(f"warn: bootstrap_agents.sh failed to run: {exc}")
+
+
 def fetch_and_stage_credential(runner_id: str) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
@@ -263,6 +376,7 @@ def run_over_rest(runner_id: str) -> None:
         _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST)")
         _api("POST", f"/turns/{turn_id}/start", {"session_id": f"cloud-{turn_id[:8]}"})
         _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id]})
+        cwd = _turn_cwd(turn, turn_id)
 
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
@@ -270,7 +384,7 @@ def run_over_rest(runner_id: str) -> None:
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
-                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit)
+                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit, cwd=cwd)
             except Exception as exc:  # never let one turn kill the loop
                 ok, text = False, f"runner error: {exc}"
         finally:
@@ -325,6 +439,7 @@ def _claim_and_run(ws, runner_id: str) -> None:
     tid = turn["id"]
     _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS)")
     _ws_request(ws, {"action": "start", "turn_id": tid, "session_id": f"cloud-{tid[:8]}"}, "start.ack")
+    cwd = _turn_cwd(turn, tid)
 
     def emit(events, _tid=tid):
         _ws_request(ws, {"action": "event", "turn_id": _tid, "events": events}, "event.ack", timeout=60)
@@ -335,7 +450,7 @@ def _claim_and_run(ws, runner_id: str) -> None:
     lease_stop = _start_lease_renewal(runner_id, tid)
     try:
         try:
-            ok, text = run_claude(turn.get("prompt", ""), tid, emit)
+            ok, text = run_claude(turn.get("prompt", ""), tid, emit, cwd=cwd)
         except Exception as exc:
             ok, text = False, f"runner error: {exc}"
     finally:
@@ -418,6 +533,7 @@ def main() -> None:
     runner_id = pair_or_load()
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
+    bootstrap_agent_fleet()
     # Prefer the WS control channel; fall back to REST polling if it can't be used.
     if not run_over_ws(runner_id):
         run_over_rest(runner_id)

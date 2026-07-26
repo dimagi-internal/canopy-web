@@ -28,6 +28,16 @@ Parameters:
     Type: String
     Default: ''
     Description: Comma-separated agent slugs this runner may drive.
+  AgentSlugs:
+    Type: String
+    Default: 'ace,ada,echo,eva,hal'
+    Description: >
+      Comma-separated agent slugs to BOOTSTRAP on this box (clone + `canopy
+      provision` + gmail token) — deploy/ec2-runner/bootstrap_agents.sh's
+      AGENT_SLUGS. Distinct from RunnerAgents: this is what gets PROVISIONED
+      here; RunnerAgents is what this runner may CLAIM turns for. Usually the
+      same set, but a box can bootstrap the whole fleet while only claiming a
+      subset (or vice versa, if bootstrap fails for one agent).
   RunnerWorkspace:
     Type: String
     Default: dimagi
@@ -142,6 +152,7 @@ Resources:
                 RUNNER_AGENTS=${RunnerAgents}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
+                AGENT_SLUGS=${AgentSlugs}
                 ENV
                 chown ubuntu:ubuntu /opt/canopy-runner/runner.env
                 chmod 600 /opt/canopy-runner/runner.env
@@ -158,6 +169,15 @@ Resources:
                 # cloud-init's one-shot fetch) can't wedge the unit.
                 ExecStartPre=+/usr/local/bin/canopy-fetch-env
                 EnvironmentFile=-/opt/canopy-runner/runner.env
+                # ~/.local/bin so `uv tool install`-shipped binaries (the canopy
+                # CLI, and gog when it falls back off /usr/local/bin — see
+                # bootstrap_agents.sh install_gog()) are on PATH for
+                # cloud_runner.py's own subprocess calls (bootstrap_agents.sh,
+                # claude turns, git). No ExecStartPre here for the canopy-web
+                # clone / bootstrap_agents.sh run — see cloud_runner.py's
+                # bootstrap_agent_fleet() docstring for why that runs from
+                # inside main(), after credentials are staged, not here.
+                Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                 ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py
                 Restart=on-failure
                 RestartSec=10
@@ -165,6 +185,11 @@ Resources:
                 [Install]
                 WantedBy=multi-user.target
           runcmd:
+            # /opt is root:root 0755 by default — pre-create the two directories
+            # cloud_runner.py's bootstrap_agent_fleet() writes into (as `ubuntu`,
+            # the service user) so it never needs root just to mkdir. Harmless to
+            # run before credentials exist; both start empty.
+            - [ install, -d, -o, ubuntu, -g, ubuntu, /opt/canopy-web, /opt/agents ]
             - [ bash, -c, "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -" ]
             - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip gnupg python3-websocket" ]
             - [ bash, -c, "npm i -g @anthropic-ai/claude-code" ]

@@ -4,6 +4,9 @@
 #
 #   ./secrets.sh canopy path/to/pat.txt          # canopy-web PAT
 #   ./secrets.sh claude path/to/claude-token.txt # claude OAuth token
+#   ./secrets.sh op path/to/sa-token.txt         # 1Password service-account token
+#                                                 # (wire.sh stages it into the runner's
+#                                                 # credential bundle for bootstrap_agents.sh)
 #   echo -n "<token>" | ./secrets.sh claude -     # or via stdin
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -16,7 +19,8 @@ kind="${1:-}"; src="${2:-}"
 case "$kind" in
   canopy) SECRET=canopy/cloud-runner/canopy-pat ;;
   claude) SECRET=canopy/cloud-runner/claude-oauth-token ;;
-  *) echo "usage: ./secrets.sh {canopy|claude} <file|->" >&2; exit 1 ;;
+  op)     SECRET=canopy/cloud-runner/op-service-account-token ;;
+  *) echo "usage: ./secrets.sh {canopy|claude|op} <file|->" >&2; exit 1 ;;
 esac
 [[ -n "$src" ]] || { echo "give a file path or - for stdin" >&2; exit 1; }
 
