@@ -86,6 +86,43 @@ reached yet, keep the original `WORK_DIR` scratch-dir behavior.
 unlike `cloud_runner.py` itself (baked into UserData; see "Updating the runner
 code" below), it is NOT tied to the stack's cloud-init generation.
 
+## Per-agent canopy-web PAT (TODO — not yet provisioned)
+
+Every agent currently fails `canopy doctor`'s workbench-token check on this box.
+The check is being fixed to honor `CANOPY_WEB_PAT` (jjackson/canopy#400), because
+the file it wants can only be produced by `/canopy:canopy-web-pat-mint` — a
+browser loopback flow that cannot run on a headless host. But the box should also
+stop borrowing the runner's own `CANOPY_TOKEN` for agent work: agents are already
+their own canopy-web users, so a **per-agent PAT** gives per-agent attribution and
+per-agent revocation for free.
+
+This follows the normal fleet standard (`.env.tpl` + `op inject`) — no new auth
+primitive, and `bootstrap_agents.sh` already runs the injection successfully for
+all five agents. Three steps per agent, none of them automatable from a laptop
+(minting for another user needs a one-off task against prod):
+
+```bash
+# 1. Mint on labs, one per agent. 180d is the default; use --ttl-days 0 for a
+#    non-expiring token (see canopy-web PR #412 for the expiry model).
+uv run python manage.py create_token \
+  --email <slug>@dimagi-ai.com --label "cloud-ec2-1" --create-user
+
+# 2. Store the raw value in that agent's vault as item `canopy-pat`, field
+#    `credential` (kebab-case — item names with spaces/parens do NOT parse in
+#    an op:// reference).
+
+# 3. Add ONE line to the agent repo's tracked .env.tpl:
+#      CANOPY_WEB_PAT=op://<vault>/<item>/<field>
+#    op inject materializes it into ~/.<slug>/.env on the next bootstrap.
+```
+
+`canopy_web.resolve_pat()` already reads `CANOPY_WEB_PAT` ahead of the token file,
+so nothing else has to change once the line is there.
+
+> **Do not put a literal `op://vault/item/field` in a comment.** `op inject`
+> resolves references anywhere in the file, comments included, and the resolved
+> secret can leak to stdout. Use angle-bracket placeholders, as above.
+
 ## Vault standard
 
 Agent secrets manifests (`config/secrets.yaml` in each agent repo) reference

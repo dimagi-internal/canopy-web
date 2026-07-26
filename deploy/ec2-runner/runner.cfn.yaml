@@ -4,8 +4,8 @@ Description: >
   kind=cloud runner with canopy-web, claims harness Turns in its capabilities, and
   runs `claude -p` on each. Secrets (the claude OAuth token + the canopy PAT) are
   read from Secrets Manager by the instance role at boot — never baked into the
-  template. cloud_runner.py is spliced in as base64 by up.sh (single source of truth
-  is deploy/ec2-runner/cloud_runner.py).
+  template. cloud_runner.py is ALSO delivered via Secrets Manager (up.sh publishes it
+  there); single source of truth is deploy/ec2-runner/cloud_runner.py.
 
 Parameters:
   SshCidr:
@@ -55,6 +55,18 @@ Parameters:
     Type: String
     Default: canopy/cloud-runner/canopy-pat
     Description: Secrets Manager id holding the canopy-web PAT.
+  RunnerCodeSecret:
+    Type: String
+    Default: canopy/cloud-runner/runner-code
+    Description: >
+      Secrets Manager id holding cloud_runner.py as a single-line gzip+base64
+      blob, published by up.sh on every deploy. The code does NOT live in
+      UserData: EC2 caps UserData at 16 KB and the gz+b64 runner alone is ~12 KB,
+      which (plus the rest of this cloud-config) blew the cap and made the stack
+      undeployable — CREATE_FAILED "User data is limited to 16384 bytes". Keeping
+      it in Secrets Manager also means the runner code is re-fetched by
+      canopy-fetch-env on every service start, so `./up.sh && systemctl restart
+      canopy-runner` ships new runner bytes without recycling the instance.
 
 Resources:
   KeyPair:
@@ -115,35 +127,39 @@ Resources:
       Tags:
         - { Key: Name, Value: !Ref AWS::StackName }
         - { Key: purpose, Value: canopy-cloud-runner }
-      # DEPLOY GAP: CFN applies a UserData change as a stop/start of the SAME
-      # instance, which does NOT re-run cloud-init (cloud-init only runs its
-      # write_files/runcmd modules on first boot of a given instance id). So
-      # editing cloud_runner.py (or anything else baked in here) and just
-      # redeploying the stack does NOT ship the new code to a running box —
-      # the old bytes stay on disk and the service keeps running them. Until
-      # there's a real re-provisioning mechanism, you MUST recycle the stack
-      # to pick up runner-code changes: `./down.sh && ./up.sh` (see README.md
-      # "Updating the runner code").
+      # DEPLOY GAP (still real for THIS block): CFN applies a UserData change as a
+      # stop/start of the SAME instance, which does NOT re-run cloud-init
+      # (cloud-init only runs write_files/runcmd on an instance's first boot). So
+      # editing anything baked in below and redeploying does NOT ship it to a
+      # running box — recycle the stack (`./down.sh && ./up.sh`) to pick it up.
+      # cloud_runner.py is EXEMPT: it comes from Secrets Manager and is re-fetched
+      # by canopy-fetch-env on every start, so a runner-code change ships with
+      # `./up.sh && systemctl restart canopy-runner`. Keep this block small — the
+      # whole rendered UserData must stay under EC2's hard 16 KB cap.
       UserData:
         Fn::Base64: !Sub |
           #cloud-config
           write_files:
-            - path: /opt/canopy-runner/cloud_runner.py
-              encoding: gz+b64
-              permissions: '0755'
-              content: CLOUD_RUNNER_PY_B64_PLACEHOLDER
             - path: /usr/local/bin/canopy-fetch-env
               permissions: '0755'
               content: |
                 #!/usr/bin/env bash
-                # Re-materialize the runner env + claude credentials from Secrets
-                # Manager on every start, so a rotated secret is picked up on
-                # `systemctl restart` with no redeploy.
+                # Re-materialize the runner env + claude credentials + the runner
+                # CODE from Secrets Manager on every start, so a rotated secret or a
+                # freshly-published cloud_runner.py is picked up on `systemctl
+                # restart` with no redeploy.
                 set -euo pipefail
                 R="${AWS::Region}"
                 secret() { aws --region "$R" secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text; }
                 umask 077
                 install -d -o ubuntu -g ubuntu /opt/canopy-runner
+                # cloud_runner.py lives in Secrets Manager, not UserData (16 KB cap).
+                # Decode to a temp file and mv into place so a failed fetch can never
+                # leave a truncated script that systemd would then try to exec.
+                secret ${RunnerCodeSecret} | base64 -d | gunzip > /opt/canopy-runner/cloud_runner.py.new
+                chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new
+                chmod 0755 /opt/canopy-runner/cloud_runner.py.new
+                mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
                 cat > /opt/canopy-runner/runner.env <<ENV
                 CANOPY_BASE_URL=${CanopyBaseUrl}
                 CANOPY_TOKEN=$(secret ${CanopyTokenSecret})
