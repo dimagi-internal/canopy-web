@@ -11,7 +11,7 @@ import datetime as dt
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .models import Workspace, WorkspaceInvite, WorkspaceMembership, generate_invite_token
@@ -158,6 +158,124 @@ def current_workspace(user, explicit: str | None = None) -> Workspace:
     return ws
 
 
+# ---- members ----
+
+
+class MemberError(Exception):
+    """Raised by `set_member_role` / `remove_member` for any reason a member
+    mutation can't proceed.
+
+    `.code` is a closed set (`not_found`, `last_owner`, `invalid_role`) an
+    HTTP layer maps to a status — same shape as `InviteError` below.
+    """
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def is_last_owner(m: WorkspaceMembership) -> bool:
+    """True iff `m` is an owner membership and the only owner left in its
+    workspace. Shared by `remove_member` and `set_member_role` below so the
+    "can't strand a workspace without an owner" guard lives in exactly one
+    place. Must only be called from inside `_guarded_owner_mutation`'s
+    transaction — see its docstring for why an un-locked call here is a
+    TOCTOU hazard."""
+    return m.role == WorkspaceMembership.OWNER and (
+        WorkspaceMembership.objects.filter(
+            workspace_id=m.workspace_id, role=WorkspaceMembership.OWNER
+        ).count()
+        == 1
+    )
+
+
+def _guarded_owner_mutation(*, workspace: Workspace, user_id, mutate):
+    """The single choke point for any mutation that can remove a workspace's
+    last owner (a role change OR a removal) — both `set_member_role` and
+    `remove_member` go through this so the "never zero owners" guard has
+    exactly one transaction + lock boundary instead of two independent
+    check-then-act windows.
+
+    TOCTOU this closes: workspace with owners A and B. A demotes/removes B
+    while B (in a truly concurrent request) demotes/removes A. Un-guarded,
+    both read count(owner)==2, both pass `is_last_owner`, both commit — zero
+    owners, workspace permanently unmanageable via the API. Locking every
+    currently-OWNER row of the workspace (`select_for_update`) BEFORE
+    fetching the target row means the second transaction blocks on the
+    first's commit; Postgres then re-evaluates the WHERE clause against the
+    post-commit row versions (EvalPlanQual), so by the time it proceeds the
+    now-demoted-from-owner row no longer matches `role=OWNER` and the count
+    correctly reads 1 — the second mutation is correctly rejected instead of
+    both racing through. (sqlite — this repo's test DB — has no row locking;
+    `has_select_for_update` is False so Django silently drops the FOR UPDATE
+    clause. See test_member_roles.py's TOCTOU tests for what can and can't be
+    proven against that backend.)
+
+    `mutate(m)` does the actual role-change/delete once the target row (and,
+    if it's currently an owner, the lock) is in hand; it may raise
+    `MemberError('last_owner')` itself via `is_last_owner`.
+    """
+    with transaction.atomic():
+        # Lock every currently-OWNER row of this workspace first, before even
+        # fetching the target — this is what makes a concurrent mutation on a
+        # DIFFERENT owner of the same workspace serialize against this one.
+        list(
+            WorkspaceMembership.objects.select_for_update().filter(
+                workspace_id=workspace.pk, role=WorkspaceMembership.OWNER
+            )
+        )
+        try:
+            m = WorkspaceMembership.objects.select_related("user").get(
+                workspace=workspace, user_id=user_id
+            )
+        except WorkspaceMembership.DoesNotExist:
+            raise MemberError("not_found")
+        return mutate(m)
+
+
+def set_member_role(*, workspace: Workspace, user_id, role: str) -> WorkspaceMembership:
+    """Change a member's role. Idempotent: setting the role a member already
+    holds succeeds as a no-op (and, deliberately, never trips the last-owner
+    guard — see `test_set_member_role_is_idempotent`). Raises
+    `MemberError('invalid_role')` if `role` isn't one `ROLE_RANK` knows (a
+    caller that bypassed the HTTP schema's `Literal`, e.g. a shell/MCP call —
+    `.save()` doesn't enforce Django `choices`, and an unranked role would
+    later KeyError inside `accept_invite`), `MemberError('not_found')` if
+    `user_id` isn't a member of `workspace`, or `MemberError('last_owner')`
+    if this would demote the workspace's only remaining owner. See
+    `_guarded_owner_mutation` for the transaction/lock this runs inside.
+    """
+    if role not in WorkspaceMembership.ROLE_RANK:
+        raise MemberError("invalid_role")
+
+    def _mutate(m: WorkspaceMembership) -> WorkspaceMembership:
+        if role != m.role:
+            if is_last_owner(m):
+                raise MemberError("last_owner")
+            m.role = role
+            m.save(update_fields=["role"])
+        return m
+
+    return _guarded_owner_mutation(workspace=workspace, user_id=user_id, mutate=_mutate)
+
+
+def remove_member(*, workspace: Workspace, user_id) -> None:
+    """Remove a member. Raises `MemberError('not_found')` if `user_id` isn't
+    a member of `workspace`, or `MemberError('last_owner')` if this would
+    remove the workspace's only remaining owner. See `_guarded_owner_mutation`
+    for the transaction/lock this runs inside — moved here (out of the API
+    view) so it shares that boundary with `set_member_role` instead of each
+    route running its own independent, unlocked check-then-act.
+    """
+
+    def _mutate(m: WorkspaceMembership) -> None:
+        if is_last_owner(m):
+            raise MemberError("last_owner")
+        m.delete()
+
+    _guarded_owner_mutation(workspace=workspace, user_id=user_id, mutate=_mutate)
+
+
 # ---- invites ----
 
 
@@ -184,12 +302,24 @@ def create_invite(
     partial unique constraint treats as live (its condition doesn't consider
     `expires_at`), so an ordinary re-invite after a lapsed 14-day TTL must
     re-arm that same row rather than try to create a sibling and collide with
-    it. Reuse refreshes the row in place: a fresh token, a fresh expiry, and
-    the newly-requested role (unlike reusing a still-pending invite, where
-    the existing role/token/expiry stand as-is). Email is normalized to
-    lowercase. Belt-and-braces: if a genuinely concurrent call still races
-    past the `existing` check, the `.create()` IntegrityError is caught and
-    the winning row is re-fetched and returned instead of raising.
+    it. Reuse re-arms the row in place (fresh token, fresh expiry, the
+    newly-requested role) whenever anything about the request actually
+    changed: the TTL lapsed, OR the requested role differs from what the row
+    already holds. That second case is not cosmetic — it closes a real
+    integrity bug: without it, re-inviting someone at a DIFFERENT role while
+    their first invite is still pending returned the *same* row still
+    carrying the FIRST role (e.g. an owner invites b@ as owner, immediately
+    corrects it to editor — the still-live row kept reading "owner"). The
+    owner then hands out a link that promotes b@ to owner regardless of what
+    the UI most recently showed, and since `accept_invite` is upgrade-only,
+    an already-lower-privileged b@ accepting it is a real, silent promotion —
+    not the harmless no-op it used to be under the old get_or_create accept
+    semantic. A request that changes nothing (same role, still pending) is a
+    true no-op: the token is NOT rotated, so an already-shared link keeps
+    working. Email is normalized to lowercase. Belt-and-braces: if a
+    genuinely concurrent call still races past the `existing` check, the
+    `.create()` IntegrityError is caught and the winning row is re-fetched
+    and returned instead of raising.
     """
     email = (email or "").strip().lower()
     existing = (
@@ -200,7 +330,9 @@ def create_invite(
         .first()
     )
     if existing is not None:
-        if not existing.is_pending():  # never actioned, but its TTL lapsed — re-arm it
+        stale = not existing.is_pending()  # never actioned, but its TTL lapsed
+        role_changed = existing.role != role
+        if stale or role_changed:
             existing.token = generate_invite_token()
             existing.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
             existing.role = role
@@ -225,10 +357,16 @@ def create_invite(
 def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
     """Accept an invite by token on behalf of `user`.
 
-    Returns (workspace, role) — role is the user's resulting membership role,
-    which is their EXISTING role if they were already a member at a different
-    role (get_or_create semantics: acceptance never changes an existing role).
-    Raises InviteError on any invalid state; never mutates on failure.
+    Returns (workspace, role) — role is the user's resulting membership role.
+    UPGRADE-ONLY semantic: if the user is already a member, acceptance moves
+    their role to the HIGHER of their existing role and the invite's role
+    (`WorkspaceMembership.ROLE_RANK`), and never demotes — a stray invite at a
+    lower role than someone already holds must not be able to strip access.
+    Explicit demotion is the owner-only PATCH `/members/{user_id}/`
+    (`set_member_role`), never a side effect of accepting an invite. The
+    invite itself is always consumed (marked accepted) on success, whether or
+    not the role actually changed. Raises InviteError on any invalid state;
+    never mutates on failure.
     """
     try:
         inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
@@ -242,10 +380,13 @@ def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
         raise InviteError("expired")
     if inv.email and (getattr(user, "email", "") or "").lower() != inv.email.lower():
         raise InviteError("email_mismatch")
-    m, _ = WorkspaceMembership.objects.get_or_create(
+    m, created = WorkspaceMembership.objects.get_or_create(
         workspace=inv.workspace, user=user,
         defaults={"role": inv.role, "invited_by": inv.invited_by},
     )
+    if not created and WorkspaceMembership.ROLE_RANK[inv.role] > WorkspaceMembership.ROLE_RANK[m.role]:
+        m.role = inv.role
+        m.save(update_fields=["role"])
     inv.accepted_at = timezone.now()
     inv.save(update_fields=["accepted_at"])
     return inv.workspace, m.role
