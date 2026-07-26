@@ -62,18 +62,20 @@ def test_report_is_wholesale_and_upserts_a_binding_for_continue():
     assert binding.thread_key == "emdash:cloud-runner"
     assert binding.host == runner.host
 
-    # A re-report with one session gone clears its live binding (durable, not deleted).
+    # A re-report with one session gone stops its liveness clock (durable, not deleted,
+    # and it still knows its runner).
     r2 = _report(c, runner.id, [
         {"emdash_task": "cloud-runner", "project": "canopy-web", "status": "in_progress",
          "last_interacted_at": "2026-07-16T15:59:00Z"},
     ])
     assert r2.status_code == 200
-    live_tasks = set(
-        RunnerBinding.objects.filter(runner=runner).values_list("session_key", flat=True)
-    )
-    assert live_tasks == {"cloud-runner"}
+    still_reported = RunnerBinding.objects.get(runner=runner, session_key="cloud-runner")
     dropped = RunnerBinding.objects.get(session_key="ddd")
-    assert dropped.runner_id is None  # live pointer cleared, session kept
+    # Both keep their runner: identity is durable. Only the liveness CLOCK diverges —
+    # the re-reported one is bumped, the dropped one is frozen and will age out of
+    # `state=active` once it passes SESSION_LIVE_WINDOW.
+    assert dropped.runner_id == runner.id
+    assert dropped.live_seen_at < still_reported.live_seen_at
     assert Session.objects.filter(runner_binding=dropped).exists()
 
 

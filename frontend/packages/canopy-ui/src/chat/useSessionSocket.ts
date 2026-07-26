@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Message, SessionState, WsEvent } from "./protocol";
+import { shouldSyncDraftLive } from "./drafts";
 import { prependHistory } from "./history";
 import { sessionReducer } from "./sessionReducer";
 
@@ -183,20 +184,24 @@ export function useSessionSocket({
   }, [connect]);
 
   const sendChat = useCallback(() => {
-    // Flush any pending debounced update first so the committed draft
-    // carries the latest local body.
+    // Flush the local body BEFORE committing. `chat.send` commits the SERVER's
+    // draft, so this is the moment the body has to exist there — and when
+    // live sync is off (single-player) it is the ONLY time it is sent.
+    //
+    // Unconditional on purpose: keying this off a pending debounce timer meant
+    // nothing was flushed when there was no timer, which is now the normal case.
     if (draftDebounceRef.current != null) {
       window.clearTimeout(draftDebounceRef.current);
       draftDebounceRef.current = null;
-      if (pendingDraftBodyRef.current != null && stateRef.current.active_draft) {
-        send({
-          action: "draft.update",
-          data: {
-            version: stateRef.current.active_draft.version,
-            body: pendingDraftBodyRef.current,
-          },
-        });
-      }
+    }
+    if (pendingDraftBodyRef.current != null && stateRef.current.active_draft) {
+      send({
+        action: "draft.update",
+        data: {
+          version: stateRef.current.active_draft.version,
+          body: pendingDraftBodyRef.current,
+        },
+      });
     }
     pendingDraftBodyRef.current = null;
     send({ action: "chat.send", data: {} });
@@ -218,6 +223,17 @@ export function useSessionSocket({
           : prev,
       );
       pendingDraftBodyRef.current = body;
+      // Alone in the session? Don't mirror keystrokes at all. The body is
+      // flushed once by sendChat, which is the only moment the server actually
+      // needs it. This is what makes single-player typing purely local — no
+      // round trip, no echo, no version to disagree about.
+      if (!shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
+        if (draftDebounceRef.current != null) {
+          window.clearTimeout(draftDebounceRef.current);
+          draftDebounceRef.current = null;
+        }
+        return;
+      }
       if (draftDebounceRef.current != null) {
         window.clearTimeout(draftDebounceRef.current);
       }
@@ -225,8 +241,11 @@ export function useSessionSocket({
         draftDebounceRef.current = null;
         const current = stateRef.current.active_draft;
         const pending = pendingDraftBodyRef.current;
-        pendingDraftBodyRef.current = null;
         if (current != null && pending != null) {
+          // Only consumed once it has actually gone out. Clearing it
+          // unconditionally dropped anything typed before session.state
+          // arrived (no draft yet ⇒ nothing sent, body forgotten).
+          pendingDraftBodyRef.current = null;
           send({
             action: "draft.update",
             data: { version: current.version, body: pending },
@@ -244,6 +263,23 @@ export function useSessionSocket({
   const discardDraft = useCallback(() => {
     send({ action: "draft.discard", data: {} });
   }, [send]);
+
+  // Someone joining mid-compose must see what is ALREADY typed. Nothing was
+  // mirrored while we were alone, so without this one catch-up flush their view
+  // would sit empty until the next keystroke. Closes the only gap that skipping
+  // live sync opens up.
+  const liveSync = shouldSyncDraftLive(state.presence_user_ids);
+  useEffect(() => {
+    if (!liveSync) return;
+    const pending = pendingDraftBodyRef.current;
+    const current = stateRef.current.active_draft;
+    if (pending == null || current == null) return;
+    pendingDraftBodyRef.current = null;
+    send({
+      action: "draft.update",
+      data: { version: current.version, body: pending },
+    });
+  }, [liveSync, send]);
 
   const prependMessages = useCallback((older: Message[]) => {
     // Apply a REST "Load earlier" page into the live socket state. A later

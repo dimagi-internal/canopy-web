@@ -124,6 +124,7 @@ export function ChatPanel({
       </div>
       <SendBox
         draft={state.active_draft}
+        connected={connected}
         currentUserId={currentUserId}
         holderIsPresent={holderIsPresent}
         isStreaming={inFlightMessage != null}

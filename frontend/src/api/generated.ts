@@ -1660,6 +1660,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/invites/{token}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Preview an invite before login (pre-auth, minimal disclosure) */
+        readonly get: operations["apps_workspaces_api_preview_invite"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/invites/{token}/accept": {
         readonly parameters: {
             readonly query?: never;
@@ -1851,10 +1868,10 @@ export interface paths {
         readonly put?: never;
         /**
          * Retire Runner
-         * @description Retire a runner — permanent, not a liveness state (see Runner.live_status).
-         *     Idempotent by construction: _runner_or_404 already excludes retired runners,
-         *     so retiring an already-retired runner 404s at lookup rather than no-opping
-         *     here.
+         * @description Retire a runner — a decommission, not a liveness state (see
+         *     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
+         *     retired runners, so retiring an already-retired runner 404s at lookup rather than
+         *     no-opping here. Reversible via /unretire — but see the caveat below.
          *
          *     Deletes the runner's RunnerAssignment rows in the same transaction. A
          *     retired runner is invisible to _runner_visibility_q, but its stale
@@ -1864,8 +1881,47 @@ export interface paths {
          *     or retired runner id" (a prod incident 2026-07-25). Ranks of the
          *     survivors need not be compacted — RunnerAssignment.rank is only ever
          *     compared relatively (0 = first choice), never assumed contiguous.
+         *
+         *     CAVEAT: /unretire brings the runner back but does NOT restore these deleted
+         *     assignments — re-add it to the agents that should route to it via the
+         *     matrix (PUT /agents/{slug}/runners). Restoring the runner's identity keeps
+         *     its bindings/credentials; its routing membership is intentionally not
+         *     resurrected, since the fleet may have moved on while it was retired.
          */
         readonly post: operations["apps_harness_api_retire_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/unretire": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Unretire Runner
+         * @description Bring a retired runner back, keeping its identity — and therefore every
+         *     RunnerBinding, assignment and session that points at it.
+         *
+         *     Retirement used to be a ONE-WAY DOOR, which made it a trap rather than a
+         *     decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
+         *     claim and session-report calls all fail forever once retired; and `pair_runner`
+         *     unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
+         *     id and orphaned the old one's bindings. Retiring a laptop you were logged out of
+         *     therefore silently destroyed its sessions' identity the moment you brought it
+         *     back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+         *
+         *     Restores DISCONNECTED, not ONLINE: liveness is observed, never asserted — the
+         *     next heartbeat is what makes it online (Runner.live_status). Idempotent for an
+         *     already-live runner.
+         */
+        readonly post: operations["apps_harness_api_unretire_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4365,6 +4421,8 @@ export interface components {
             readonly runner_name?: string | null;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Runner Online */
+            readonly runner_online?: boolean | null;
             /**
              * Session Key
              * @default
@@ -5935,8 +5993,6 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
-            /** Auto Join Domains */
-            readonly auto_join_domains?: readonly string[];
         };
         /** MemberOut */
         readonly MemberOut: {
@@ -5974,7 +6030,10 @@ export interface components {
         };
         /** InviteCreateIn */
         readonly InviteCreateIn: {
-            /** Email */
+            /**
+             * Email
+             * Format: email
+             */
             readonly email: string;
             /**
              * Role
@@ -5982,6 +6041,28 @@ export interface components {
              * @enum {string}
              */
             readonly role: "owner" | "editor" | "viewer";
+        };
+        /**
+         * InvitePreviewOut
+         * @description Pre-auth invite preview — deliberately minimal disclosure. For any
+         *     non-pending status, workspace_slug/workspace_display_name/role stay None:
+         *     someone holding a dead token (forwarded, pasted into Slack, ...) learns
+         *     only that it's dead, never which tenant it pointed at.
+         */
+        readonly InvitePreviewOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "expired" | "revoked" | "accepted";
+            /** Email Hint */
+            readonly email_hint: string;
+            /** Workspace Slug */
+            readonly workspace_slug?: string | null;
+            /** Workspace Display Name */
+            readonly workspace_display_name?: string | null;
+            /** Role */
+            readonly role?: string | null;
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
@@ -6872,6 +6953,8 @@ export interface components {
             readonly runner_name?: string | null;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Runner Online */
+            readonly runner_online?: boolean | null;
             /**
              * Session Key
              * @default
@@ -9917,6 +10000,28 @@ export interface operations {
             };
         };
     };
+    readonly apps_workspaces_api_preview_invite: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InvitePreviewOut"];
+                };
+            };
+        };
+    };
     readonly apps_workspaces_api_accept_invite: {
         readonly parameters: {
             readonly query?: never;
@@ -10163,6 +10268,28 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_harness_api_unretire_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
             };
         };
     };
@@ -10837,6 +10964,7 @@ export interface operations {
                 readonly source?: string;
                 readonly opp_slug?: string;
                 readonly opp_run_id?: string;
+                readonly origin_key?: string;
             };
             readonly header?: never;
             readonly path?: never;

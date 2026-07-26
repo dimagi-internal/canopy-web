@@ -133,6 +133,10 @@ def _make_social_login(email: str) -> Mock:
     sociallogin = Mock()
     sociallogin.account = Mock()
     sociallogin.account.extra_data = {"email": email}
+    # Real allauth SocialLogin always populates `.email_addresses` (possibly
+    # empty) by the time `pre_social_login` runs; default to none-verified so
+    # a bare double never accidentally exercises the invite-admission branch.
+    sociallogin.email_addresses = []
     return sociallogin
 
 
@@ -146,7 +150,7 @@ def test_adapter_accepts_dimagi_email(rf):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_adapter_rejects_other_email(rf):
+def test_adapter_rejects_other_email(rf, db):
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
     sociallogin = _make_social_login("mallory@gmail.com")
@@ -156,7 +160,7 @@ def test_adapter_rejects_other_email(rf):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_adapter_rejects_substring_match(rf):
+def test_adapter_rejects_substring_match(rf, db):
     """Someone@evildimagi.com must not be treated as dimagi.com."""
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
@@ -271,8 +275,205 @@ def test_adapter_skips_connect_on_no_matching_user(db):
     sociallogin.connect.assert_not_called()
 
 
+def _make_invite(email, *, workspace_slug="acme", expired=False, revoked=False, accepted=False):
+    """A live (or not-so-live) WorkspaceInvite addressed to `email`, for
+    exercising the invite-aware login gate directly against the DB."""
+    import datetime as dt
+
+    from django.contrib.auth import get_user_model
+    from django.utils import timezone
+
+    from apps.workspaces.models import Workspace
+    from apps.workspaces.services import accept_invite, create_invite, revoke_invite
+
+    User = get_user_model()
+    owner = User.objects.create_user(username="owner@dimagi.com", email="owner@dimagi.com")
+    ws, _ = Workspace.objects.get_or_create(
+        slug=workspace_slug, defaults={"display_name": workspace_slug.title(), "created_by": owner}
+    )
+    inv = create_invite(workspace=ws, email=email, role="editor", invited_by=owner)
+    if expired:
+        inv.expires_at = timezone.now() - dt.timedelta(days=1)
+        inv.save(update_fields=["expires_at"])
+    elif revoked:
+        revoke_invite(invite=inv)
+    elif accepted:
+        invitee = User.objects.create_user(username=f"{email}-invitee", email=email)
+        accept_invite(token=inv.token, user=invitee)
+        inv.refresh_from_db()
+    return inv
+
+
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_rejection_page_shows_email_domain_and_contact(rf):
+def test_adapter_admits_outside_domain_email_with_pending_invite(db):
+    """The security-sensitive case this task exists for: a non-Dimagi email
+    with a live workspace invite must be admitted past the domain gate."""
+    _make_invite("guest@external.com")
+
+    adapter = CustomSocialAccountAdapter()
+    request = Mock()
+    sociallogin = _make_jit_social_login("guest@external.com")
+
+    # Should not raise ImmediateHttpResponse(403) despite the domain mismatch.
+    adapter.pre_social_login(request, sociallogin)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_login_does_not_consume_the_invite(db):
+    """Logging in must NOT accept/consume the invite — only the explicit
+    accept-invite call may do that. The invite stays pending after login."""
+    inv = _make_invite("guest@external.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com")
+    adapter.pre_social_login(Mock(), sociallogin)
+
+    inv.refresh_from_db()
+    assert inv.accepted_at is None
+    assert inv.is_pending()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_outside_domain_email_with_expired_invite(db):
+    """Uses a PROVIDER-verified claim (jit social login) so this isolates the
+    invite-state check itself, not F2's separate verified-email requirement."""
+    _make_invite("guest@external.com", expired=True)
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com")
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(Mock(), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_outside_domain_email_with_revoked_invite(db):
+    _make_invite("guest@external.com", revoked=True)
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com")
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(Mock(), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_admits_accepted_invitee_on_next_login(db):
+    """F4: `pending_invite_for_email` alone would 403 an accepted invitee on
+    their very NEXT login (accepting clears `pending`) — the right check is
+    member-OR-pending-invite. Confirm the login is admitted via the
+    resulting WorkspaceMembership even though no pending invite remains."""
+    from apps.workspaces.services import pending_invite_for_email
+
+    inv = _make_invite("guest@external.com", accepted=True)
+    assert inv.accepted_at is not None
+    assert pending_invite_for_email("guest@external.com") is None  # sanity: truly consumed
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com")
+    # Should not raise despite there being no pending invite anymore.
+    adapter.pre_social_login(Mock(), sociallogin)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_after_last_membership_removed(db):
+    """F4's other half: admission is derived from CURRENT membership, not a
+    one-time fact — removing a member's last WorkspaceMembership must revoke
+    their standing on their NEXT login (though not an already-open session,
+    which this login-time gate cannot reach)."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    inv = _make_invite("guest@external.com", accepted=True)
+    WorkspaceMembership.objects.filter(
+        workspace=inv.workspace, user__email__iexact="guest@external.com"
+    ).delete()
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com")
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(Mock(), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_outside_domain_email_with_no_invite_at_all(db):
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("nobody@external.com")
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(Mock(), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_unverified_claim_even_with_pending_invite(db):
+    """F2: the raw, self-asserted `extra_data["email"]` claim is not proof of
+    control — only a PROVIDER-verified email may ride an invite/membership
+    past the domain gate. An unverified claim matching a live invite must
+    still be rejected, or anyone could assert an address they don't control."""
+    _make_invite("guest@external.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("guest@external.com", verified=False)
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(Mock(), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_does_not_connect_invite_admitted_login_to_existing_user(db):
+    """F3: an invite-admitted login must NEVER run the JIT-identity merge —
+    it would connect to ANY existing local User sharing that email,
+    including a non-allowlisted machine/service account (e.g. one minted by
+    `manage.py create_token --create-user --email ...`) that may hold
+    unrelated, more-privileged WorkspaceMemberships or PAT-minting rights.
+    Simulate inviting an address that already has such a bare local User."""
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    machine_user = User.objects.create_user(
+        username="agent@external.com", email="agent@external.com"
+    )
+    _make_invite("agent@external.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_jit_social_login("agent@external.com")
+    adapter.pre_social_login(Mock(), sociallogin)
+
+    sociallogin.connect.assert_not_called()
+    # And no membership/state on the machine user was touched as a side effect.
+    assert User.objects.get(pk=machine_user.pk).email == "agent@external.com"
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_allowlisted_domain_login_unaffected_by_invite_check(db):
+    """F7: an allowlisted-domain login must not even CONSULT
+    `email_admitted_outside_domain` — prove it directly (not just via the
+    observable "did not raise" behavior), since the correct implementation
+    short-circuits before ever reaching the invite/membership lookup."""
+    from unittest.mock import patch
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_social_login("alice@dimagi.com")
+    with patch("apps.common.auth_adapter.email_admitted_outside_domain") as mocked:
+        adapter.pre_social_login(Mock(), sociallogin)  # should not raise
+    mocked.assert_not_called()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_rejects_missing_email_even_with_invite_table_populated(db):
+    """A blank email must still be rejected — `email_admitted_outside_domain`
+    must never be treated as a match on a blank lookup (guards against a bug
+    where an empty string somehow matches an unrelated row)."""
+    _make_invite("someone@external.com")
+
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_social_login("")
+    with pytest.raises(ImmediateHttpResponse):
+        adapter.pre_social_login(Mock(), sociallogin)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_rejection_page_shows_email_domain_and_contact(rf, db):
     """The rejection response must tell the user their email, the allowed
     domain, and a way to request access — otherwise it's a dead end."""
     adapter = CustomSocialAccountAdapter()

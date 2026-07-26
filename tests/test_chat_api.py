@@ -245,6 +245,30 @@ def test_list_sessions_filters_by_metadata(client, ctx):
     assert len(r.json()) == 3
 
 
+def test_list_sessions_scopes_by_origin_key(client, ctx):
+    """An embedder whose own product is multi-tenant stamps its tenant into
+    metadata.origin_key; filtering on it keeps two of ITS tenants that share one
+    canopy workspace out of each other's lists."""
+    user, ws, _agent = ctx
+    Session.objects.create(
+        workspace=ws, created_by=user,
+        metadata={"source": "ace-web", "origin_key": "ace-web:team-a"},
+    )
+    Session.objects.create(
+        workspace=ws, created_by=user,
+        metadata={"source": "ace-web", "origin_key": "ace-web:team-b"},
+    )
+
+    r = client.get("/api/canopy-sessions/?source=ace-web&origin_key=ace-web:team-a")
+    assert r.status_code == 200, r.content
+    rows = r.json()
+    assert len(rows) == 1
+
+    # Unscoped still sees both — the filter is opt-in, never implicit.
+    r = client.get("/api/canopy-sessions/?source=ace-web")
+    assert len(r.json()) == 2
+
+
 # --- Task 11 fix wave: title vs bound session_key in _out --------------------
 
 
@@ -327,3 +351,34 @@ def test_stop_with_nothing_to_cancel_returns_false(client):
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json() == {"cancelled": False}
+
+
+# --- runner_online: liveness an embedder's delegated user can actually read ---
+
+
+def test_runner_online_reflects_binding_liveness(client, ctx):
+    """A delegated embedder user cannot list runners (harness scopes that to the
+    pairer), so the session payload must carry its bound runner's liveness —
+    otherwise a stalled chat is indistinguishable from a slow one."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    user, ws, _agent = ctx
+    session = Session.objects.create(workspace=ws, created_by=user)
+
+    # No binding -> None (nothing to be offline).
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is None
+
+    runner = Runner.objects.create(
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True},
+        paired_by=user, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key=str(session.id))
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is True
+
+    # Heartbeat older than the online window -> offline.
+    Runner.objects.filter(pk=runner.pk).update(
+        last_heartbeat_at=timezone.now() - dt.timedelta(hours=2)
+    )
+    assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is False

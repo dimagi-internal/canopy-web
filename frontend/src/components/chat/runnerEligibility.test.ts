@@ -75,7 +75,21 @@ describe("isBoundRunnerOffline", () => {
     expect(isBoundRunnerOffline("Beta", fleet)).toBe(true);
   });
 
-  it("fails quiet (false) when the name has no match in the fleet list", () => {
-    expect(isBoundRunnerOffline("Unknown Runner", fleet)).toBe(false);
+  it("fails quiet (false) when the fleet list has not loaded", () => {
+    expect(isBoundRunnerOffline("Unknown Runner", [])).toBe(false);
+  });
+
+  it("is true when a LOADED fleet does not contain the bound runner", () => {
+    // GET /runners/ omits retired runners, so absence from a loaded fleet means
+    // the runner can never claim again — the banner must offer placement rather
+    // than leaving the send queued forever.
+    expect(isBoundRunnerOffline("Retired Runner", fleet)).toBe(true);
+  });
+
+  it("prefers the server's runner_online over the fleet heuristic", () => {
+    // Authoritative: no name matching, no fleet fetch, no staleness.
+    expect(isBoundRunnerOffline("Alpha", fleet, false)).toBe(true);
+    expect(isBoundRunnerOffline("Retired Runner", fleet, true)).toBe(false);
+    expect(isBoundRunnerOffline("Beta", [], true)).toBe(false);
   });
 });
