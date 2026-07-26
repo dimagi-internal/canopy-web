@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
+import { useAuth } from '@/auth/AuthProvider'
 import {
   createInvite,
   listInvites,
@@ -38,8 +39,10 @@ function inviteLink(token: string): string {
 export function WorkspaceMembersPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const navigate = useNavigate()
-  const { workspaces } = useWorkspace()
+  const { workspaces, refresh: refreshWorkspaces } = useWorkspace()
   const isOwner = workspaces.find((w) => w.slug === slug)?.role === 'owner'
+  const auth = useAuth()
+  const myEmail = auth.status === 'authenticated' ? auth.user.email.toLowerCase() : null
 
   const [members, setMembers] = useState<MemberOut[] | null>(null)
   const [invites, setInvites] = useState<InviteOut[] | null>(null)
@@ -91,6 +94,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     try {
       const updated = await setMemberRole(slug, userId, role)
       setMembers((prev) => (prev ?? []).map((m) => (m.user_id === userId ? updated : m)))
+      // The cached workspace list (header switcher, this page's own `isOwner`)
+      // is fetched once and otherwise never invalidated — if I just changed
+      // MY OWN role, refresh it now so `isOwner` reflects reality immediately
+      // instead of continuing to render owner-only controls I can no longer
+      // use until a full page reload (see WorkspaceProvider.refresh's docstring).
+      if (myEmail && updated.email.toLowerCase() === myEmail) {
+        void refreshWorkspaces()
+      }
     } catch (e) {
       setRowError(e instanceof Error ? e.message : 'Failed to change role')
     } finally {
@@ -177,24 +188,34 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                   <TableCell className="whitespace-normal text-foreground">{m.email}</TableCell>
                   <TableCell className="capitalize">
                     {isOwner ? (
-                      <select
-                        aria-label={`Change role for ${m.email}`}
-                        value={m.role}
-                        disabled={isSoleOwner || savingRoleFor === m.user_id}
-                        title={
-                          isSoleOwner
-                            ? 'Every workspace needs at least one owner — promote another member before demoting this one'
-                            : undefined
-                        }
-                        onChange={(e) => void handleRoleChange(m.user_id, e.target.value as MemberRole)}
-                        className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground capitalize disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r} className="capitalize">
-                            {r}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-col gap-0.5">
+                        <select
+                          aria-label={`Change role for ${m.email}`}
+                          aria-describedby={isSoleOwner ? `sole-owner-hint-${m.user_id}` : undefined}
+                          value={m.role}
+                          disabled={isSoleOwner || savingRoleFor === m.user_id}
+                          onChange={(e) => void handleRoleChange(m.user_id, e.target.value as MemberRole)}
+                          className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground capitalize disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {ROLES.map((r) => (
+                            <option key={r} value={r} className="capitalize">
+                              {r}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Visible, not just a `title` tooltip — a disabled
+                            <select> isn't focusable, so a hover-only
+                            explanation is invisible to screen readers and
+                            touch. */}
+                        {isSoleOwner && (
+                          <span
+                            id={`sole-owner-hint-${m.user_id}`}
+                            className="text-[11px] normal-case text-muted-foreground"
+                          >
+                            Only owner — promote someone else first
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       m.role
                     )}

@@ -35,11 +35,24 @@ vi.mock('@/api/workspaces', () => ({
 }))
 
 let mockRole: string | undefined = 'owner'
+const mockRefresh = vi.fn<() => Promise<void>>()
 vi.mock('@/workspace/WorkspaceProvider', () => ({
   useWorkspace: () => ({
     workspaces: mockRole ? [{ slug: 'acme', display_name: 'Acme', role: mockRole }] : [],
     active: 'acme',
     loading: false,
+    refresh: mockRefresh,
+  }),
+}))
+
+// The page needs to know "is the row I just changed MY OWN membership" to
+// decide whether to refresh the (otherwise-stale) cached workspace list —
+// see the self-demotion test below. `alice@dimagi.com` is the default
+// `member()` fixture's email, so it doubles as "the signed-in user" here.
+vi.mock('@/auth/AuthProvider', () => ({
+  useAuth: () => ({
+    status: 'authenticated',
+    user: { email: 'alice@dimagi.com', name: 'Alice', avatar_url: '' },
   }),
 }))
 
@@ -224,7 +237,7 @@ describe('WorkspaceMembersPage', () => {
     expect(screen.getByText('viewer')).toBeTruthy()
   })
 
-  it('the sole owner\'s role select is disabled (cannot self-demote to strand the workspace)', async () => {
+  it('the sole owner\'s role select is disabled with a VISIBLE explanation (not mouse/hover-only)', async () => {
     mockRole = 'owner'
     listMembers.mockResolvedValue([member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' })])
     listInvites.mockResolvedValue([])
@@ -234,6 +247,51 @@ describe('WorkspaceMembersPage', () => {
 
     const select = screen.getByLabelText(/change role for alice@dimagi.com/i) as HTMLSelectElement
     expect(select.disabled).toBe(true)
+    // A `title` attribute alone is mouse/hover-only — invisible to screen
+    // readers and touch. There must be plain visible text explaining why,
+    // wired to the control via aria-describedby.
+    expect(screen.getByText(/only owner/i)).toBeTruthy()
+    const describedBy = select.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    expect(document.getElementById(describedBy as string)?.textContent).toMatch(/only owner/i)
+  })
+
+  it("refreshes the cached workspace list when the signed-in owner changes their OWN role (avoids a stale isOwner)", async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([
+      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
+      member({ user_id: 2, email: 'bob@dimagi.com', role: 'owner' }),
+    ])
+    listInvites.mockResolvedValue([])
+    setMemberRole.mockResolvedValue(member({ user_id: 1, email: 'alice@dimagi.com', role: 'editor' }))
+
+    renderPage()
+    await screen.findByText('alice@dimagi.com')
+
+    const select = screen.getByLabelText(/change role for alice@dimagi.com/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'editor' } })
+
+    await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('acme', 1, 'editor'))
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalled())
+  })
+
+  it("does not refresh the cached workspace list when changing SOMEONE ELSE's role", async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([
+      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
+      member({ user_id: 2, email: 'bob@dimagi.com', role: 'owner' }),
+    ])
+    listInvites.mockResolvedValue([])
+    setMemberRole.mockResolvedValue(member({ user_id: 2, email: 'bob@dimagi.com', role: 'editor' }))
+
+    renderPage()
+    await screen.findByText('bob@dimagi.com')
+
+    const select = screen.getByLabelText(/change role for bob@dimagi.com/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'editor' } })
+
+    await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('acme', 2, 'editor'))
+    expect(mockRefresh).not.toHaveBeenCalled()
   })
 
   it('a role-change failure surfaces an error and leaves the row unchanged', async () => {

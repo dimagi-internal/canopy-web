@@ -59,6 +59,48 @@ def test_create_invite_reuses_live_pending_invite_for_same_workspace_and_email()
     assert WorkspaceInvite.objects.filter(workspace=ws, email="b@dimagi.com").count() == 1
 
 
+def test_create_invite_reusing_a_still_pending_row_at_a_different_role_updates_role_and_rotates_token():
+    """Regression: an owner invites b@ as owner, immediately realizes the
+    mistake, and re-invites b@ as editor. The prior behavior returned the
+    SAME row still holding role="owner" (only a lapsed/expired row got its
+    role rewritten on reuse) — so the owner would copy a link that still
+    reads "owner", and since accept is now upgrade-only, b (already an
+    editor) accepting it would be silently promoted to owner. A still-live
+    reuse at a genuinely different role must re-arm the row (fresh token,
+    fresh expiry, the newly-requested role) exactly like the lapsed-TTL path
+    does, so the copied link always reflects the LAST-requested role."""
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    first = create_invite(workspace=ws, email="b@dimagi.com", role="owner", invited_by=owner)
+    old_token = first.token
+
+    second = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    assert second.id == first.id  # still the same row, not a sibling
+    assert second.role == "editor"
+    assert second.token != old_token
+    assert second.is_pending()
+    # the stale (pre-rotation) token no longer resolves to anything live
+    with pytest.raises(InviteError) as exc_info:
+        accept_invite(token=old_token, user=_user("someone-else@dimagi.com"))
+    assert exc_info.value.code == "not_found"
+
+
+def test_create_invite_reusing_a_still_pending_row_at_the_same_role_is_a_true_no_op():
+    """The counterpart to the regression above: re-issuing an invite at the
+    SAME role it already holds must not rotate the token (no reason to
+    invalidate a link nothing about it actually changed)."""
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    first = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    second = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+
+    assert second.id == first.id
+    assert second.token == first.token
+    assert second.role == "editor"
+
+
 def test_create_invite_after_expiry_reuses_row_with_fresh_token_and_is_pending_again():
     """Regression: an ordinary re-invite after the 14-day TTL lapses (never
     accepted, never revoked) must NOT try to create a sibling row — the

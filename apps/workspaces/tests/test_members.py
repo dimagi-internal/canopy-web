@@ -103,8 +103,10 @@ def test_remove_member_owner_only_and_protects_last_owner():
     assert _client(b).delete(f"/api/workspaces/acme/members/{a.id}/").status_code == 403
     # the owner can remove the editor
     assert _client(a).delete(f"/api/workspaces/acme/members/{b.id}/").status_code == 204
-    # the last owner can't be removed
-    assert _client(a).delete(f"/api/workspaces/acme/members/{a.id}/").status_code == 400
+    # the last owner can't be removed — human-readable message, never the raw code
+    r = _client(a).delete(f"/api/workspaces/acme/members/{a.id}/")
+    assert r.status_code == 400
+    assert r.json()["detail"] == "cannot remove the last owner"
 
 
 def test_set_member_role_owner_only():
@@ -141,6 +143,9 @@ def test_set_member_role_cannot_demote_the_last_owner():
     _ws(a)
     r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "editor"})
     assert r.status_code == 400
+    # human-readable, and distinct from the sibling DELETE's message — never
+    # the raw MemberError code ("last_owner") leaking into a user-facing banner
+    assert r.json()["detail"] == "cannot demote the last owner"
     assert WorkspaceMembership.objects.get(workspace_id="acme", user=a).role == "owner"
 
 
