@@ -245,3 +245,115 @@ describe("SendBox — cancelling a queued turn", () => {
     expect(onStop).toHaveBeenCalledWith("m1");
   });
 });
+
+describe("SendBox — attaching files", () => {
+  const attachProps = {
+    draft: draft(),
+    connected: true,
+    currentUserId: ME,
+    holderIsPresent: false,
+    isStreaming: false,
+    streamingMessageId: null,
+    onUpdate: vi.fn(),
+    onSend: vi.fn(),
+    onStop: vi.fn(),
+    onTakeOver: vi.fn(),
+  };
+
+  it("hides attaching entirely when the host provides no handler", () => {
+    // The kit must stay usable by a host with no upload endpoint.
+    render(<SendBox {...attachProps} />);
+    expect(screen.queryByRole("button", { name: /attach/i })).toBeNull();
+  });
+
+  it("hands picked files to the host", () => {
+    const onAttach = vi.fn();
+    render(<SendBox {...attachProps} onAttach={onAttach} />);
+
+    const input = screen.getByTestId("attachment-input") as HTMLInputElement;
+    const file = new File(["x"], "shot.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(onAttach).toHaveBeenCalledWith([file]);
+  });
+
+  it("takes a pasted screenshot", () => {
+    // The point on desktop: a screenshot is already on the clipboard, and
+    // making people save it to disk first is most of the friction.
+    const onAttach = vi.fn();
+    render(<SendBox {...attachProps} onAttach={onAttach} />);
+
+    const file = new File(["x"], "clip.png", { type: "image/png" });
+    fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { files: [file] } });
+
+    expect(onAttach).toHaveBeenCalledWith([file]);
+  });
+
+  it("renders a chip per staged file, and marks one still uploading", () => {
+    render(
+      <SendBox
+        {...attachProps}
+        onAttach={vi.fn()}
+        attachments={[
+          { id: "a1", filename: "done.png" },
+          { id: "a2", filename: "slow.png", uploading: true },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("done.png")).toBeTruthy();
+    expect(screen.getByText("slow.png")).toBeTruthy();
+    expect(screen.getByText(/uploading/)).toBeTruthy();
+  });
+
+  it("cannot remove a chip that is still uploading", () => {
+    // There is no server-side id to remove yet.
+    render(
+      <SendBox
+        {...attachProps}
+        onAttach={vi.fn()}
+        onRemoveAttachment={vi.fn()}
+        attachments={[{ id: "a2", filename: "slow.png", uploading: true }]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /remove slow.png/i })).toBeNull();
+  });
+
+  it("removes a staged file on request", () => {
+    const onRemoveAttachment = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        onAttach={vi.fn()}
+        onRemoveAttachment={onRemoveAttachment}
+        attachments={[{ id: "a1", filename: "done.png" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /remove done.png/i }));
+    expect(onRemoveAttachment).toHaveBeenCalledWith("a1");
+  });
+
+  it("shows why an upload failed instead of dropping it silently", () => {
+    render(
+      <SendBox
+        {...attachProps}
+        onAttach={vi.fn()}
+        attachments={[{ id: "a3", filename: "huge.png", error: "file is larger than the 10MB limit" }]}
+      />,
+    );
+    expect(screen.getByText(/10MB limit/)).toBeTruthy();
+  });
+
+  it("does not offer attaching while a teammate holds the draft", () => {
+    render(
+      <SendBox
+        {...attachProps}
+        draft={draft({ last_editor: THEM })}
+        holderIsPresent
+        onAttach={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /attach/i })).toBeNull();
+  });
+});

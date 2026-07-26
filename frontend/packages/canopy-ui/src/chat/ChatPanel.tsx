@@ -5,7 +5,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
-import { SendBox } from "./SendBox";
+import { SendBox, type PendingAttachment } from "./SendBox";
 import { isDraftIdle, msUntilDraftIdle } from "./drafts";
 import { useStickyBottom } from "./useStickyBottom";
 
@@ -18,6 +18,10 @@ export interface ChatPanelProps {
   /** A send is outstanding but no reply has begun — the turn is queued,
    *  waiting for a runner to claim it. Keeps Stop reachable in that window. */
   awaitingReply?: boolean;
+  /** Files staged for the next send; omit to hide attaching entirely. */
+  attachments?: PendingAttachment[];
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
   onUpdateDraft: (body: string) => void;
   onTakeOver: () => void;
   onDiscard: () => void;
@@ -45,6 +49,9 @@ export function ChatPanel({
   onSend,
   onStop,
   awaitingReply = false,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
   onUpdateDraft,
   onTakeOver,
   onDiscard,
@@ -139,6 +146,9 @@ export function ChatPanel({
         onTakeOver={onTakeOver}
         banner={banner}
         disabledReason={disabledReason}
+        attachments={attachments}
+        onAttach={onAttach}
+        onRemoveAttachment={onRemoveAttachment}
       />
     </div>
   );
