@@ -193,3 +193,55 @@ describe("SendBox — sending is gated on the socket", () => {
     expect(textarea().value).toBe("composed offline");
   });
 });
+
+describe("SendBox — cancelling a queued turn", () => {
+  it("offers stop while a send is outstanding, before any reply exists", () => {
+    // The gap this closes: between send and the first token there is NO
+    // assistant message, so `inFlightMessage` is null and the stop button never
+    // rendered — exactly the window where you most want out, because a queued
+    // turn means no runner has picked it up (offline, or busy with another).
+    // The server has always handled it: chat.stop cancels every non-terminal
+    // turn and ignores message_id.
+    const onStop = vi.fn();
+    render(
+      <SendBox
+        draft={draft()}
+        connected
+        currentUserId={ME}
+        holderIsPresent={false}
+        isStreaming
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={onStop}
+        onTakeOver={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /stop/i }));
+
+    expect(onStop).toHaveBeenCalledWith(null);
+  });
+
+  it("passes the message id through once a reply is streaming", () => {
+    const onStop = vi.fn();
+    render(
+      <SendBox
+        draft={draft()}
+        connected
+        currentUserId={ME}
+        holderIsPresent={false}
+        isStreaming
+        streamingMessageId="m1"
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={onStop}
+        onTakeOver={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /stop/i }));
+
+    expect(onStop).toHaveBeenCalledWith("m1");
+  });
+});
