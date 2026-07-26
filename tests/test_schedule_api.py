@@ -24,8 +24,11 @@ def client():
 
 
 @pytest.fixture()
-def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+def agent(default_workspace):
+    # Homed to the default workspace, whose auto_join_domains covers the
+    # @dimagi.com `client` user above — so the membership gate passes for the
+    # legitimate caller and these tests keep exercising CRUD, not tenancy.
+    return Agent.objects.create(slug="echo", name="Echo", workspace=default_workspace)
 
 
 def _create(client, **over):
@@ -240,10 +243,10 @@ def test_preview_rejects_a_bad_cron_without_saving_anything(client, agent):
 
 # --- tenancy: _agent_or_404's membership branch --------------------------
 #
-# Every fixture above creates `Agent(workspace=None)`, which short-circuits
-# `if agent.workspace_id and not wsvc.is_member(...)` before the membership
-# check ever runs. These tests give the agent a REAL workspace with
-# `auto_join_domains=[]` (load-bearing: `_agent_or_404` calls
+# The fixtures above home their agent in the DEFAULT workspace, whose
+# auto_join_domains admits any @dimagi.com caller — fine for exercising CRUD,
+# useless for exercising the gate. These tests give the agent a REAL workspace
+# with `auto_join_domains=[]` (load-bearing: `_agent_or_404` calls
 # `wsvc.auto_join_workspaces(request.user)` first, so a nonempty
 # auto_join_domains matching the outsider's email domain would silently make
 # them a member and the "non-member" test would pass while testing nothing)

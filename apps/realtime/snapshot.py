@@ -27,11 +27,12 @@ def supervisor_snapshot(user) -> dict:
     wsvc.auto_join_workspaces(user)
     slugs = set(wsvc.user_workspace_slugs(user))
 
-    agents = [
-        a
-        for a in agent_services.list_agents()
-        if a.workspace_id in slugs or a.workspace_id is None
-    ]
+    # Membership is the whole rule. This used to also admit `a.workspace_id is
+    # None` ("legacy unhomed agents"), which pushed an unhomed agent's slug and
+    # open-item count to EVERY connected supervisor socket regardless of tenant —
+    # the same allow-on-NULL leg the REST surfaces were fixed for. Unrepresentable
+    # since agents/0013 made Agent.workspace NOT NULL.
+    agents = [a for a in agent_services.list_agents() if a.workspace_id in slugs]
     # Waiting = open items on the agent — the inbox is a pure Item query now.
     waiting = {
         a.slug: Item.objects.filter(agent=a, state=Item.OPEN).count() for a in agents

@@ -66,10 +66,10 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     including AgentTurnOut.share_token, a public transcript link) AND writes
     (board commands, PUT /runners). Strictly broader than the read-only hole
     `_agent_or_404` (apps/harness/api.py, F1) closed for the same
-    workspace-less-agent case. Latent today — production carries zero agents
-    with workspace_id IS NULL, and the real creation path (upsert_agent
-    below) always homes a new agent — but an unhomed agent must be
-    unresolvable via this API, not universally visible."""
+    workspace-less-agent case. An unhomed agent must be unresolvable via this
+    API, not universally visible. Since agents/0013 made `Agent.workspace` NOT
+    NULL the case is unrepresentable rather than merely unpopulated, so this
+    reads as a plain membership check with nothing to special-case."""
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
@@ -105,30 +105,31 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",
              openapi_extra={"x-mcp-expose": True})
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
-    agent = services.upsert_agent(payload)
+    # The tenant is resolved BEFORE the row is written, because Agent.workspace is
+    # NOT NULL (agents/0013) — an agent is never briefly unhomed. Scope to the
+    # request's workspace (from the /w/{ws} prefix or the compat shim's default),
+    # falling back to the org default so an unchanged register() (e.g. Echo's)
+    # keeps working.
+    wsvc.auto_join_workspaces(request.user)
+    pinned = getattr(request, "workspace_slug", None)
+    home = (
+        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
+    ) or wsvc.ensure_default_workspace()
+    if home is None:
+        # Only reachable on a DB with no users at all, which an authenticated
+        # request cannot be. Fail with a real message rather than an IntegrityError.
+        raise HttpError(422, "no workspace available to home this agent in")
+    agent = services.upsert_agent(payload, workspace=home)
     explicit = (payload.workspace or "").strip()
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. Membership-gated; a
         # missing workspace and a non-member get the same 404 (no existence leak).
-        wsvc.auto_join_workspaces(request.user)
         ws = wsvc.Workspace.objects.filter(slug=explicit).first()
         if ws is None or not wsvc.is_member(request.user, explicit):
             raise HttpError(404, f"workspace '{explicit}' not found")
         agent.workspace = ws
         agent.save(update_fields=["workspace"])
-    elif agent.workspace_id is None:
-        # Scope to the request's workspace (from the /w/{ws} prefix or the compat
-        # shim's default); fall back to the org default so an unchanged register()
-        # (e.g. Echo's) keeps working.
-        pinned = getattr(request, "workspace_slug", None)
-        ws = (
-            wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-        ) or wsvc.ensure_default_workspace()
-        if ws is not None:
-            agent.workspace = ws
-            agent.save(update_fields=["workspace"])
-    if agent.workspace_id:
-        wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
+    wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
     return Status(201, AgentOut.model_validate(agent))
 
 

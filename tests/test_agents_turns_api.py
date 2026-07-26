@@ -30,19 +30,14 @@ def authed_client(client, authed_user):
 
 
 def _echo(workspace: Workspace) -> Agent:
-    # services.upsert_agent (the low-level service) does NOT home an agent — only
-    # the API view (apps.agents.api.upsert_agent) does that, on the request's
-    # pinned/default workspace. Home it explicitly here so these turns-endpoint
-    # tests don't accidentally exercise the fail-open unhomed-agent path that
-    # apps.agents.api._visible_agent_workspace_ids closed (security review
-    # 2026-07-26, hole A) — an unhomed agent is invisible now, not ungated.
+    # `workspace` is a required keyword on the service now: Agent.workspace is
+    # NOT NULL (agents/0013), so the tenant is chosen before the row is written
+    # rather than patched on afterwards.
     from types import SimpleNamespace
-    agent = services.upsert_agent(
-        SimpleNamespace(slug="echo", name="Echo", description="", persona="", email="", avatar_url="")
+    return services.upsert_agent(
+        SimpleNamespace(slug="echo", name="Echo", description="", persona="", email="", avatar_url=""),
+        workspace=workspace,
     )
-    agent.workspace = workspace
-    agent.save(update_fields=["workspace"])
-    return agent
 
 
 def test_list_turns_empty(authed_client, workspace):
@@ -66,16 +61,24 @@ def test_post_then_list_turn(authed_client, workspace):
     assert resp2.json()["items"][0]["task_ext_ids"] == ["t1"]
 
 
-def test_turns_are_invisible_for_an_unhomed_agent(authed_client):
-    """Security review 2026-07-26, hole A: an unhomed agent used to be visible
-    to ANY authenticated caller across the whole /api/agents surface — including
-    this endpoint, whose AgentTurnOut serializes `share_token`, a public
-    `/share/<token>` transcript link. `_get_agent_or_404` (via
-    `_visible_agent_workspace_ids`) now fails CLOSED: an agent with no
-    workspace is unresolvable, not universally readable."""
+def test_turns_are_invisible_for_another_tenants_agent(authed_client):
+    """Security review 2026-07-26, hole A: this endpoint's AgentTurnOut
+    serializes `share_token`, a public `/share/<token>` transcript link, so
+    `_get_agent_or_404` must fail CLOSED for an agent the caller cannot see.
+
+    This used to construct an UNHOMED agent, because that was the strongest
+    version of "cannot see" the model allowed. It no longer is — an unhomed
+    agent cannot exist (agents/0013; see tests/test_agent_workspace_not_null.py)
+    — so the case with something left to prove is the cross-tenant one."""
     from types import SimpleNamespace
+
+    from apps.workspaces.testing import a_workspace
+
     services.upsert_agent(
-        SimpleNamespace(slug="orphan", name="Orphan", description="", persona="", email="", avatar_url="")
+        SimpleNamespace(slug="secret", name="Secret", description="", persona="", email="", avatar_url=""),
+        # auto_join_domains=[] is load-bearing: _get_agent_or_404 auto-joins the
+        # caller first, so a domain-matching workspace would silently admit them.
+        workspace=a_workspace("other-tenant", auto_join_domains=[]),
     )
-    resp = authed_client.get("/api/agents/orphan/turns/?limit=10")
+    resp = authed_client.get("/api/agents/secret/turns/?limit=10")
     assert resp.status_code == 404

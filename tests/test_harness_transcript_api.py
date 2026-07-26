@@ -174,20 +174,14 @@ def test_stranger_gets_404_on_a_session_turn_transcript(owner, stranger_client, 
 
 
 # --- F1: a workspace-less agent must fail CLOSED, not fall open -------------
-
-
-def test_null_workspace_agent_transcript_404s_for_any_authenticated_user(owner_client):
-    """A pre-tenancy agent with workspace=None used to be silently ungated —
-    ANY authenticated user (not just a member of its workspace, since it has
-    none) could act on it. For a transcript that would mean handing a
-    stranger an agent's full raw `claude -p` output. _agent_or_404 now fails
-    closed on a null workspace, so this 404s even for `owner_client`, who
-    belongs to a workspace but not to THIS agent's (nonexistent) one."""
-    legacy = Agent.objects.create(slug="legacy", name="Legacy")  # no workspace
-    turn = Turn.objects.create(agent=legacy, prompt="hi")
-
-    assert _post_lines(owner_client, turn.id, ["x"]).status_code == 404
-    assert _get(owner_client, turn.id).status_code == 404
+#
+# The test that lived here built an agent with workspace=None and proved
+# _agent_or_404 404s it rather than falling open — handing a stranger the
+# agent's full raw `claude -p` output. It is gone with the row it needed:
+# Agent.workspace is NOT NULL as of agents/0013, so the ungated state is
+# unrepresentable rather than merely refused. See
+# tests/test_agent_workspace_not_null.py. The cross-tenant transcript gates
+# above and below are unaffected and still the live assertions.
 
 
 # --- F7: the tenant-prefixed /api/w/{ws}/... form is gated too --------------

@@ -7,6 +7,10 @@
 #   ./secrets.sh op path/to/sa-token.txt         # 1Password service-account token
 #                                                 # (wire.sh stages it into the runner's
 #                                                 # credential bundle for bootstrap_agents.sh)
+#   ./secrets.sh gog path/to/keyring-pw.txt      # password for gog's `file` keyring
+#                                                 # backend; without it every
+#                                                 # `gog auth tokens import` fails on a
+#                                                 # headless box (no TTY for the prompt)
 #   echo -n "<token>" | ./secrets.sh claude -     # or via stdin
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -20,7 +24,8 @@ case "$kind" in
   canopy) SECRET=canopy/cloud-runner/canopy-pat ;;
   claude) SECRET=canopy/cloud-runner/claude-oauth-token ;;
   op)     SECRET=canopy/cloud-runner/op-service-account-token ;;
-  *) echo "usage: ./secrets.sh {canopy|claude|op} <file|->" >&2; exit 1 ;;
+  gog)    SECRET=canopy/cloud-runner/gog-keyring-password ;;
+  *) echo "usage: ./secrets.sh {canopy|claude|op|gog} <file|->" >&2; exit 1 ;;
 esac
 [[ -n "$src" ]] || { echo "give a file path or - for stdin" >&2; exit 1; }
 

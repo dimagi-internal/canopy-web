@@ -17,6 +17,7 @@ from django.test import Client
 
 from apps.agent_runs.models import AgentRun, AgentRunStep
 from apps.agents.models import Agent
+from apps.workspaces.models import Workspace
 
 User = get_user_model()
 
@@ -39,8 +40,26 @@ def _post(client, url, data):
 
 
 @pytest.fixture
-def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+def workspace():
+    # apps.agent_runs.api._get_agent_or_404 now fails CLOSED on an unhomed
+    # agent (an agent.workspace_id IS NULL used to short-circuit the tenant
+    # check to "allow" — see the fix's commit for the full story), so the
+    # `agent` fixture below must be homed like a real agent. Every test user
+    # here is @dimagi.com, so homing to the "dimagi" auto-join workspace means
+    # each fresh test user is auto-joined as a member with no extra fixture
+    # wiring per test.
+    bootstrap = User.objects.create_user(
+        username="workspace-bootstrap", email="bootstrap@dimagi.com", password="pw"
+    )
+    return Workspace.objects.create(
+        slug="dimagi", display_name="Dimagi", created_by=bootstrap,
+        auto_join_domains=["dimagi.com"],
+    )
+
+
+@pytest.fixture
+def agent(workspace):
+    return Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
 
 
 def _base(slug="echo"):
