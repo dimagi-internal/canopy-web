@@ -53,6 +53,43 @@ Resources:
       RepositoryName: labs-jj-canopy-web
       ImageScanningConfiguration: { ScanOnPush: true }
 
+  # Chat attachment bytes (apps/canopy_sessions). Private: nothing is ever served
+  # from S3 directly — the Django app streams the bytes so one place enforces
+  # "is this session yours to read", and there is no CORS rule or presigned-URL
+  # expiry to reason about.
+  AttachmentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub labs-jj-canopy-web-attachments-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  # Access is granted by a BUCKET policy rather than an IAM policy on the task
+  # role, because that role belongs to the shared labs platform and reaches this
+  # stack only as the TaskRoleArn *parameter* — we cannot attach to a role we do
+  # not own. A resource policy gets us there with no change to the shared stack
+  # and no coordination with whoever owns it.
+  AttachmentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AttachmentsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Ref TaskRoleArn }
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/*"
+
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -166,6 +203,7 @@ Resources:
             # GCP deploy. The matching SA key is the CANOPY_DRIVE_SA_KEY_JSON
             # secret below.
             - { Name: CANOPY_DRIVE_ROOT_FOLDER_ID, Value: 1cUv7wQXOvVwuZ86PdhkxpFcuB4Lm9fPz }
+            - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: !Ref AttachmentsBucket }
             # Web Push (VAPID). The public key is not a secret — it ships in the
             # JS bundle so the browser can subscribe with it; it is the other
             # half of the VapidPrivateKey secret below and the two must match.

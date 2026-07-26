@@ -222,3 +222,49 @@ class RunnerBinding(models.Model):
             and self.host
             and self.host == runner.host
         )
+
+
+class Attachment(models.Model):
+    """A file a human attached to a chat — today, a screenshot they want the agent
+    to look at.
+
+    Bytes live in S3 (`storage_key`), never in the row: they are handed to the
+    browser to render inline AND downloaded by the runner into the agent's
+    workspace, so both readers stream from one place.
+
+    The lifecycle is upload-then-bind. An attachment is created UNBOUND
+    (`message` null) the moment the file lands, because the composer uploads
+    while you are still typing — the message it belongs to does not exist yet.
+    Sending binds it. An unbound attachment is therefore either in-flight or
+    abandoned (you attached, then closed the tab); it is scoped to its session so
+    it can never leak into another conversation, and is safe to sweep.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        Session, on_delete=models.CASCADE, related_name="attachments"
+    )
+    # SET_NULL, not CASCADE: losing the message must not silently destroy bytes
+    # the agent may still be reading. The row becomes unbound and sweepable.
+    message = models.ForeignKey(
+        Message, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="attachments",
+    )
+    uploaded_by = models.ForeignKey(
+        "auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="chat_attachments",
+    )
+    filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    size_bytes = models.PositiveIntegerField()
+    # Where the bytes are in the bucket. Stored rather than derived so the key
+    # scheme can change without orphaning everything written under the old one.
+    storage_key = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["session", "message"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"attachment:{str(self.id)[:8]}:{self.filename}"
