@@ -41,7 +41,15 @@ CARRY_ENV = {"AWS_REGION", "PORT"}
 
 # Sanity floor + must-haves for the fail-loud guard.
 MIN_PLAIN_ENV = 6
-REQUIRED_ENV = {"DJANGO_SETTINGS_MODULE", "AUTH_ALLOWED_EMAIL_DOMAIN"}
+REQUIRED_ENV = {
+    "DJANGO_SETTINGS_MODULE",
+    "AUTH_ALLOWED_EMAIL_DOMAIN",
+    # Added after nearly shipping it as `!Ref AttachmentsBucket`, which this
+    # script drops silently (intrinsics are not str) — the deploy would have
+    # reported success while every upload 503'd. Listing it here turns that
+    # whole class of mistake into a failed deploy instead of a quiet no-op.
+    "CANOPY_ATTACHMENTS_BUCKET",
+}
 
 # Read-only fields register-task-definition rejects.
 READONLY_FIELDS = (
