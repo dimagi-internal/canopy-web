@@ -233,9 +233,12 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    // Generous timeouts: the menu contents render only after the mocked
-    // listSlugs/listRunners promises resolve, and CI runners have blown the
-    // 1s findBy default here (observed once at 1021ms).
+    // The per-await budgets below are 5s EACH, but vitest's default per-TEST
+    // timeout is also 5s — so the test died at 5s before any of them could be
+    // used, making them decorative. Observed failing at exactly 5006ms on CI
+    // (#391) while passing locally. The test timeout (3rd arg to `it`) is what
+    // actually has to be raised; this matters more under a merge queue, where a
+    // flake ejects the PR from the queue rather than just asking for a re-run.
     fireEvent.click(await screen.findByText('New chat', {}, { timeout: 5000 }))
     fireEvent.click(await screen.findByText('Acme', {}, { timeout: 5000 }))
 
@@ -245,5 +248,5 @@ describe('ChatSessionsPanel — Run on picker', () => {
       () => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
       { timeout: 5000 },
     )
-  })
+  }, 20_000)
 })

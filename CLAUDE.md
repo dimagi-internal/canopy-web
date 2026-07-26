@@ -67,6 +67,21 @@ cd frontend && npm run build                     # Frontend type check + build
 cd frontend && npm run gen:api                   # Regenerate TypeScript types from OpenAPI schema
 ```
 
+**Always open PRs with auto-merge armed: `gh pr merge <n> --auto --squash`.** Many agents
+ship in parallel here, so `main` moves constantly and a PR goes stale within minutes of
+being opened. With auto-merge on, GitHub brings the branch up to date, re-runs CI against
+the merged result, and lands it — no human rebase loop. Without it you will hand-rebase
+the same PR several times (observed: three times in one afternoon).
+
+Branch protection lives in ONE place: the `main protection` **ruleset** (requires a PR,
+both CI checks, `strict` so a branch must be current, and blocks deletion/force-push).
+There is deliberately no classic branch protection — having both meant two contradictory
+`strict` settings where the stricter silently won. `strict: true` is load-bearing, not
+bureaucracy: it is what makes auto-merge update a stale branch and re-test before landing,
+which is the only thing standing between parallel agents and a semantically broken `main`
+(no human reviews these). A merge queue was considered and rejected as redundant at this
+volume — revisit it if PRs start queueing behind each other's CI re-runs.
+
 CI (`.github/workflows/ci.yml`) runs both on every PR and on push to main. Deploy is a separate manual job in the same workflow — trigger it from the Actions tab via "Run workflow"; the deploy step waits for the test jobs to pass before shipping. Walkthrough QA spec at `docs/walkthroughs/project-workbench.yaml` (run via `/walkthrough project-workbench`).
 
 ## Key URLs

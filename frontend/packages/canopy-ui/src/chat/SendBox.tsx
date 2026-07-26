@@ -20,7 +20,10 @@ interface Props {
   streamingMessageId: string | null;
   onUpdate: (body: string) => void;
   onSend: () => void;
-  onStop: (messageId: string) => void;
+  /** messageId is null when the turn is still QUEUED — no reply exists yet.
+   *  The server cancels every non-terminal turn regardless, so a null id is
+   *  a valid cancel, not a no-op. */
+  onStop: (messageId: string | null) => void;
   onTakeOver: () => void;
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
@@ -134,7 +137,9 @@ export function SendBox({
   };
 
   const handleStopClick = () => {
-    if (streamingMessageId != null) onStop(streamingMessageId);
+    // Fires even with no streamingMessageId: while a turn sits QUEUED there is
+    // no assistant message to name, and that is exactly when you want out.
+    onStop(streamingMessageId);
   };
 
   const placeholder = blocked

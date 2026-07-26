@@ -37,8 +37,13 @@ export interface UseSessionSocketOptions {
 export interface UseSessionSocketResult {
   state: SessionState;
   connected: boolean;
+  /** A send is outstanding with no reply yet — the turn is QUEUED, waiting for
+   *  a runner. Nothing in `state` can express this (there is no assistant
+   *  message until the first token), and it is what keeps Stop reachable while
+   *  a turn is stuck. */
+  awaitingReply: boolean;
   sendChat: () => void;
-  stopChat: (messageId: string) => void;
+  stopChat: (messageId: string | null) => void;
   updateDraft: (body: string) => void;
   takeOverDraft: () => void;
   discardDraft: () => void;
@@ -54,6 +59,11 @@ export function useSessionSocket({
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  // A send has gone out but no reply has begun — i.e. the turn is QUEUED,
+  // waiting for a runner to claim it. There is no assistant message during
+  // this window, so nothing else in the state can express it, and without it
+  // the Stop control is unreachable exactly when the turn is stuck.
+  const [awaitingReply, setAwaitingReply] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<SessionState>(INITIAL_STATE);
@@ -91,6 +101,17 @@ export function useSessionSocket({
   }, []);
 
   const applyEvent = useCallback((frame: WsEvent) => {
+    // Any of these means the queued window is over: the reply began, ended,
+    // was cancelled, or the send failed outright.
+    if (
+      frame.event === "chat.stream_start" ||
+      frame.event === "chat.stream_complete" ||
+      frame.event === "chat.stream_error" ||
+      frame.event === "chat.stream_cancelled" ||
+      frame.event === "session.error"
+    ) {
+      setAwaitingReply(false);
+    }
     // Side-effect events: handle BEFORE setState so React strict-mode's
     // double-invocation of the updater doesn't double-fire the effect.
     if (frame.event === "session.title_updated") {
@@ -204,11 +225,16 @@ export function useSessionSocket({
       });
     }
     pendingDraftBodyRef.current = null;
+    setAwaitingReply(true);
     send({ action: "chat.send", data: {} });
   }, [send]);
 
   const stopChat = useCallback(
-    (messageId: string) => {
+    (messageId: string | null) => {
+      // messageId is null when the turn is still queued. The server's
+      // chat.stop cancels every non-terminal turn on the session and only
+      // echoes the id back, so a null one cancels just as effectively.
+      setAwaitingReply(false);
       send({ action: "chat.stop", data: { message_id: messageId } });
     },
     [send],
@@ -294,6 +320,7 @@ export function useSessionSocket({
   return {
     state,
     connected,
+    awaitingReply,
     sendChat,
     stopChat,
     updateDraft,

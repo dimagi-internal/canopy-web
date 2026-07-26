@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { bootstrapCsrf } from '@/api/csrf'
-import { noteAuthSucceeded } from '@/api/client.v2'
+import { isLoginBounceInFlight, noteAuthSucceeded } from '@/api/client.v2'
 import { getMe, type MeOut as MeResponse } from '@/api/me'
 
 type AuthState =
@@ -73,6 +73,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   if (state.status === 'anonymous' && !isPublicLinkRoute()) {
+    // A 401 on /api/me has already committed us to a full-page bounce to Google
+    // (the onResponse middleware runs before the fetch promise resolves, so this
+    // is settled by the time we render). Painting the login card here would show
+    // a Sign-in button for the few hundred ms before the browser leaves — the
+    // flicker from our button to Google's. Show continuity instead; the card is
+    // still what renders when the loop guard declines to bounce, which is the
+    // case where the user genuinely does need to drive it by hand.
+    if (isLoginBounceInFlight()) {
+      return (
+        <div className="min-h-screen bg-background text-muted-foreground flex items-center justify-center text-sm">
+          Signing in…
+        </div>
+      )
+    }
     return <LoginPrompt />
   }
 

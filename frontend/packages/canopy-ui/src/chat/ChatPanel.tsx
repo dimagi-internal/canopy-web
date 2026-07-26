@@ -14,7 +14,10 @@ export interface ChatPanelProps {
   connected: boolean;
   currentUserId: number;
   onSend: () => void;
-  onStop: (messageId: string) => void;
+  onStop: (messageId: string | null) => void;
+  /** A send is outstanding but no reply has begun — the turn is queued,
+   *  waiting for a runner to claim it. Keeps Stop reachable in that window. */
+  awaitingReply?: boolean;
   onUpdateDraft: (body: string) => void;
   onTakeOver: () => void;
   onDiscard: () => void;
@@ -41,6 +44,7 @@ export function ChatPanel({
   currentUserId,
   onSend,
   onStop,
+  awaitingReply = false,
   onUpdateDraft,
   onTakeOver,
   onDiscard,
@@ -127,7 +131,7 @@ export function ChatPanel({
         connected={connected}
         currentUserId={currentUserId}
         holderIsPresent={holderIsPresent}
-        isStreaming={inFlightMessage != null}
+        isStreaming={inFlightMessage != null || awaitingReply}
         streamingMessageId={inFlightMessage?.id ?? null}
         onUpdate={onUpdateDraft}
         onSend={onSend}
