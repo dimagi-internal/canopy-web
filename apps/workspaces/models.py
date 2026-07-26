@@ -87,9 +87,16 @@ class WorkspaceMembership(models.Model):
     # circular). Lets a leaked-credential incident be found and bulk-reverted
     # by app rather than being indistinguishable from an organic join — see
     # docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md (F1).
+    # Which embedding app created this membership (null = a human joined, was
+    # invited, or auto-joined). PROTECT, not SET_NULL: this is an audit field,
+    # and deleting the credential would otherwise silently erase provenance on
+    # exactly the rows an incident responder needs — the ones a leaked
+    # credential created. Retire a credential by setting `revoked_at` (which
+    # keeps the row and the trail); deleting one is blocked while it still has
+    # provisioned memberships to answer for.
     provisioned_by_app = models.ForeignKey(
         "tokens.AppCredential",
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="provisioned_memberships",

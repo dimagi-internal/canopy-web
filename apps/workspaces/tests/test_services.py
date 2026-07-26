@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from apps.workspaces import services
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -101,3 +102,34 @@ def test_ensure_member_organic_join_has_no_provisioning_app():
 
     m, _created = services.ensure_member(ws, user, WorkspaceMembership.EDITOR)
     assert m.provisioned_by_app_id is None
+
+
+def test_provisioned_membership_protects_its_credential_from_deletion(db):
+    """The provenance FK is an audit field: deleting an AppCredential must not
+    silently erase the trail on the memberships it created. Retire a credential
+    with `revoked_at` (row kept, trail intact) — deletion is blocked while it
+    still has provisioned memberships to answer for."""
+    from django.contrib.auth import get_user_model
+    from django.db.models import ProtectedError
+
+    from apps.tokens.models import AppCredential
+    from apps.workspaces.models import Workspace, WorkspaceMembership
+    from apps.workspaces.services import ensure_member
+
+    User = get_user_model()
+    admin = User.objects.create_user("prov-admin", "prov-admin@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="prov-ws", display_name="Prov", created_by=admin)
+    _raw, cred = AppCredential.create_credential(
+        name="prov-app", domains=["dimagi.com"], created_by=admin
+    )
+    user = User.objects.create_user("prov-u", "prov-u@dimagi.com", "pw")
+    ensure_member(ws, user, WorkspaceMembership.EDITOR, provisioned_by_app=cred)
+
+    with pytest.raises(ProtectedError):
+        cred.delete()
+
+    # Revoking is the supported retirement path and keeps the trail readable.
+    cred.revoked_at = timezone.now()
+    cred.save(update_fields=["revoked_at"])
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    assert m.provisioned_by_app_id == cred.pk
