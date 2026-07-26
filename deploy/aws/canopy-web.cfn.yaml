@@ -287,6 +287,23 @@ Resources:
         - TargetGroupArn: !Ref TargetGroup
           ContainerName: canopy-web
           ContainerPort: !Ref ContainerPort
+      DeploymentConfiguration:
+        # Zero-downtime rolling replace: bring a second task up, wait for it to
+        # pass the target-group check, THEN drain the old one. (Already the live
+        # behaviour; stated here so the template stops being silent about it.)
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        # Auto-revert a deploy whose new task never goes healthy. Without this
+        # ECS retries forever: a broken image leaves the service wedged mid-deploy
+        # instead of falling back to the last good task definition. That matters
+        # most for the deploys nobody is watching — which, here, is most of them.
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      # Django has to boot, connect to Postgres and start serving before the ALB
+      # check counts against it. At 0 a slow start is a killed task and a restart
+      # loop; 60s is enough headroom without meaningfully delaying a real failure.
+      HealthCheckGracePeriodSeconds: 60
 
 Outputs:
   EcrRepoUri:
