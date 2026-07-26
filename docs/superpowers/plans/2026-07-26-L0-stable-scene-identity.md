@@ -26,13 +26,16 @@
 ### Task 1: `Scene.id` and the `_scene_id` helper
 
 **Files:**
+- Create: `scripts/ddd/identity.py`
 - Modify: `scripts/narrative/models.py:490-580` (the `Scene` model)
-- Modify: `scripts/ddd/narrative.py:187-195` (next to `_title_slug`)
+- Modify: `scripts/ddd/narrative.py:187-195` (re-export from `identity`)
 - Test: `tests/ddd/test_narrative.py`
 
 **Interfaces:**
-- Consumes: `_title_slug(title: str) -> str` (existing, unchanged)
-- Produces: `Scene.id: str` (defaults `""`), and `_scene_id(scene: "Scene | dict") -> str` — used by every later task as the single scene-identity function.
+- Consumes: nothing.
+- Produces: `slugify(text: str) -> str` and `scene_id(scene: "Scene | dict") -> str` in a **dependency-free** `scripts/ddd/identity.py`; `Scene.id: str` (defaults `""`); `narrative.py` re-exports both as `_title_slug` / `_scene_id` so existing call sites and tests keep working.
+
+**Why a new module rather than putting these in `narrative.py`:** `validate.py` needs `scene_id` (Task 3b), and `narrative.py` imports `scripts.ddd.review`, which does network. Making the validator depend on the network layer to learn what a scene is called would be a real coupling for no reason. `identity.py` imports nothing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -98,12 +101,38 @@ In `scripts/narrative/models.py`, immediately above `persona: str` in `class Sce
     """
 ```
 
-- [ ] **Step 4: Add the `_scene_id` helper**
+- [ ] **Step 4: Create `scripts/ddd/identity.py` and re-export from `narrative.py`**
 
-In `scripts/ddd/narrative.py`, directly beneath `_title_slug` (after line 195):
+Create `scripts/ddd/identity.py`:
 
 ```python
-def _scene_id(scene) -> str:
+"""Scene identity — the one place a DDD scene's name is derived.
+
+Deliberately dependency-free: the validator, the narrative gate, the spec
+composer and the renderer all need to agree on what a scene is called, and
+none of them should have to import the network layer to find out.
+
+Before this module the same slug expression was written out three times
+(narrative.py twice, validate.py once), which is how `build_order` came to be
+validated against title-derived slugs while it was being GENERATED from scene
+ids — two spellings of "identity" that silently disagreed.
+"""
+from __future__ import annotations
+
+import re
+
+
+def slugify(text: str) -> str:
+    """Lowercase, hyphen-separated, alphanumeric-only.
+
+    Examples:
+        "Area Selection"   -> "area-selection"
+        "Sample Gen (v2)"  -> "sample-gen-v2"
+    """
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+
+
+def scene_id(scene) -> str:
     """The stable identity of a scene — explicit ``id``, else the title slug.
 
     Accepts either a ``Scene`` model or the raw dict form used by the
@@ -119,8 +148,16 @@ def _scene_id(scene) -> str:
     else:
         explicit = (getattr(scene, "id", "") or "").strip()
         title = getattr(scene, "title", "") or ""
-    return explicit or _title_slug(title)
+    return explicit or slugify(title)
 ```
+
+Then in `scripts/ddd/narrative.py`, replace the body of `_title_slug` (`:187-195`) with a re-export so every existing caller and test keeps working:
+
+```python
+from scripts.ddd.identity import scene_id as _scene_id, slugify as _title_slug  # noqa: F401
+```
+
+Place it with the other imports and delete the old `_title_slug` definition. Keep the module-level docstring reference intact.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -385,6 +422,127 @@ Expected: all pass
 ```bash
 git add scripts/ddd/narrative.py tests/ddd/test_narrative.py
 git commit -m "fix(ddd): apply_narrative_edits matches scenes on stable id"
+```
+
+---
+
+### Task 3b: `validate.py` stops re-deriving scene identity
+
+**Files:**
+- Modify: `scripts/ddd/validate.py:137-153`
+- Test: `tests/ddd/test_validate_build_order.py` (create)
+
+**Interfaces:**
+- Consumes: `scene_id` from `scripts.ddd.identity` (Task 1).
+- Produces: `build_order` validated against stable scene ids.
+
+**This is a live break, not a cleanup.** `validate.py:139` builds the set of legal `build_order` entries by re-deriving a slug from each scene's *title*, while Task 2 makes `build_order` **generated from scene ids**. The moment a scene has `id: the-goal` and any title that doesn't slugify to `the-goal`, every spec fails validation with *"build_order references unknown scene slug"*. Without this task, L0 Task 8's verification fails across all 12 live specs.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/ddd/test_validate_build_order.py`:
+
+```python
+"""build_order validates against stable scene ids, not title slugs (L0)."""
+from __future__ import annotations
+
+import yaml
+
+from scripts.ddd.validate import validate
+
+
+def _spec(tmp_path, build_order):
+    raw = {
+        "name": "demo",
+        "narrative": "The goal. The proof.",
+        "base_url": "http://localhost:8000",
+        "personas": {"maya": {"name": "Maya", "role": "PM"}},
+        "build_order": build_order,
+        "scenes": [
+            {"id": "the-goal", "persona": "maya",
+             "title": "A title that does not slugify to the id",
+             "show": "x", "concept_claim": "The dashboard loads in under two seconds.",
+             "provenance": "S1", "role": "overview"},
+            {"id": "the-proof", "persona": "maya",
+             "title": "Another unrelated title", "show": "y",
+             "concept_claim": "Each round shows a confidence interval.",
+             "provenance": "S2", "role": "overview"},
+        ],
+    }
+    p = tmp_path / "demo.yaml"
+    p.write_text(yaml.dump(raw))
+    return p
+
+
+def test_build_order_of_scene_ids_is_valid(tmp_path):
+    ok, problems = validate("unified_spec", _spec(tmp_path, ["the-goal", "the-proof"]))
+    assert not [p for p in problems if "build_order" in p], problems
+
+
+def test_build_order_of_title_slugs_is_now_rejected(tmp_path):
+    ok, problems = validate(
+        "unified_spec",
+        _spec(tmp_path, ["a-title-that-does-not-slugify-to-the-id"]),
+    )
+    assert [p for p in problems if "build_order" in p]
+
+
+def test_duplicate_build_order_entries_still_rejected(tmp_path):
+    ok, problems = validate("unified_spec", _spec(tmp_path, ["the-goal", "the-goal"]))
+    assert [p for p in problems if "duplicate" in p]
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/ddd/test_validate_build_order.py -v`
+Expected: FAIL on the first two — ids are rejected as unknown, title slugs are wrongly accepted
+
+- [ ] **Step 3: Use the shared identity function**
+
+`scripts/ddd/validate.py:137-141`:
+
+```python
+    if obj.build_order:
+        # Scene identity comes from scripts.ddd.identity — the SAME function
+        # that generates build_order in build_narrative_review_request. These
+        # were two separate slug expressions and they disagreed the moment a
+        # scene carried an explicit id.
+        scene_slugs: set[str] = {scene_id(scene) for scene in obj.scenes}
+```
+
+Add `from scripts.ddd.identity import scene_id` to the imports, and update the error message at `:151-153`:
+
+```python
+                problems.append(
+                    f"build_order references unknown scene id '{slug}' "
+                    "(no scene declares this id)"
+                )
+```
+
+- [ ] **Step 4: Remove the now-dead `re` usage if it was only for this**
+
+Run: `grep -n "re\." scripts/ddd/validate.py`
+If no uses remain, drop `import re`.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `uv run pytest tests/ddd/test_validate_build_order.py -v`
+Expected: 3 passed
+
+- [ ] **Step 6: Run the full suite**
+
+Run: `uv run pytest tests/ -v`
+Expected: all pass
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add scripts/ddd/validate.py tests/ddd/test_validate_build_order.py
+git commit -m "fix(ddd): validate build_order against scene ids, not re-derived title slugs
+
+build_order is GENERATED from scene ids but was VALIDATED against slugs
+re-derived from titles — two spellings of identity that agreed only while
+no scene carried an explicit id. Both now call scripts.ddd.identity."
 ```
 
 ---
