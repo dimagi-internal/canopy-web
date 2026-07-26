@@ -52,6 +52,7 @@ env:
   ECR_REPO: labs-jj-canopy-web
   TASK_FAMILY: labs-jj-canopy-web
   CONTAINER_NAME: canopy-web
+  CFN_STACK: canopy-web
 
 permissions:
   id-token: write
@@ -157,35 +158,44 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register new task definition revision (image + env from template)
+      - name: Register migration task definition (image swap only)
         id: register-task
         run: |
-          # Start from the live, CFN-provisioned task def (source of truth for
-          # secrets, roles, cpu/memory, log config — CFN-resolved values updated
-          # via a stack update), then render it: swap the image AND re-assert the
-          # NON-SECRET environment from the committed CloudFormation template
-          # (deploy/aws/canopy-web.cfn.yaml). Env is therefore owned by git and
-          # can't silently drift from the template — the bug that let
-          # AUTH_ALLOWED_EMAIL_DOMAIN go unset in prod while the template said it
-          # was allowed. See deploy/aws/render_taskdef.py for exactly what comes
-          # from where (it fail-loud-exits rather than register a broken def).
-          pip install --quiet 'pyyaml>=6' || pip3 install --quiet 'pyyaml>=6'
-
+          # A THROWAWAY task def used only to run migrations. The real one is
+          # registered by CloudFormation in the deploy step below, which owns it.
+          #
+          # Why this exists at all: CFN's Service references its TaskDefinition, so
+          # a stack update rolls BOTH atomically — there is no seam left to migrate
+          # in. This gives us one: new code (image swapped) against the current
+          # schema, before any traffic moves.
+          #
+          # Built from the LIVE task def, not the template: no YAML parsing, so the
+          # class of bug where a CloudFormation intrinsic silently renders away
+          # cannot exist here. The trade is that its ENV is one deploy stale — it
+          # is whatever CFN set last time. That only matters if a deploy changes an
+          # env var AND a migration in the SAME deploy reads it; migrations operate
+          # on schema and essentially never read settings. If it ever happens,
+          # deploy twice.
           aws ecs describe-task-definition --task-definition "${{ env.TASK_FAMILY }}" \
-            --query 'taskDefinition' --output json > /tmp/current.json
+            --query 'taskDefinition' --output json > /tmp/live.json
 
-          python3 deploy/aws/render_taskdef.py \
-            --live /tmp/current.json \
-            --template deploy/aws/canopy-web.cfn.yaml \
-            --image "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" \
-            --container "${{ env.CONTAINER_NAME }}" \
-            --out /tmp/new.json
+          python3 - <<'PY' > /tmp/migrate-taskdef.json
+          import json
+          d = json.load(open("/tmp/live.json"))
+          for f in ("taskDefinitionArn", "revision", "status", "requiresAttributes",
+                    "compatibilities", "registeredAt", "registeredBy"):
+              d.pop(f, None)
+          for c in d["containerDefinitions"]:
+              if c["name"] == "${{ env.CONTAINER_NAME }}":
+                  c["image"] = "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}"
+          print(json.dumps(d))
+          PY
 
           NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file:///tmp/new.json \
+            --cli-input-json file:///tmp/migrate-taskdef.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "task-def-arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
-          echo "::notice::Registered $NEW_ARN"
+          echo "::notice::Migration task def $NEW_ARN"
 
       - name: Run database migrations
         if: ${{ inputs.skip_migrations != true }}
@@ -222,15 +232,26 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy (rolling update)
+      - name: Deploy (CloudFormation owns the task definition + service)
         run: |
-          aws ecs update-service \
-            --cluster "${{ env.ECS_CLUSTER }}" \
-            --service "${{ env.ECS_SERVICE }}" \
-            --task-definition "${{ steps.register-task.outputs.task-def-arn }}" \
-            --force-new-deployment --output text > /dev/null
-          echo "Waiting for rollout (so 'done' means new code is serving)..."
-          aws ecs wait services-stable --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}"
+          # CloudFormation registers the real task definition and rolls the
+          # service. It is the ONLY writer of both, so the stack can never drift
+          # from what is running and a later `cloudformation deploy` can never
+          # roll prod back to a stale ImageTag — the trap this replaces.
+          #
+          # Intrinsics (!Ref, !Sub) resolve natively here, which is why the
+          # template no longer has to be readable by a script and
+          # render_taskdef.py is gone.
+          #
+          # CFN's own overhead is ~10s; the rest is the ECS rollout that
+          # update-service waited for anyway (measured 2026-07-26: TaskDefinition
+          # 6s, Service 5m53s).
+          aws cloudformation deploy \
+            --stack-name "${{ env.CFN_STACK }}" \
+            --template-file deploy/aws/canopy-web.cfn.yaml \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides ImageTag="${{ github.sha }}"
           echo "Rollout complete — new tasks running and healthy."
 
       - name: Deployment summary
