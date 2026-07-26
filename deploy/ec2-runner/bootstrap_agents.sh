@@ -254,10 +254,18 @@ bootstrap_one_agent() {
     log "$slug: gmail token not live — importing from op://${vault}/gog-token/credential"
     local tokfile; tokfile="$(mktemp)"
     if op read "op://${vault}/gog-token/credential" >"$tokfile" 2>/dev/null && [[ -s "$tokfile" ]]; then
-      if gog auth tokens import "$tokfile" >/dev/null 2>&1; then
+      # Capture stderr instead of discarding it. Swallowing it here is what hid a
+      # fleet-wide failure for weeks: the `file` keyring backend wants a password
+      # it can only PROMPT for, so on this TTY-less box EVERY import died with
+      # "no TTY available ... set GOG_KEYRING_PASSWORD" and all anyone ever saw
+      # was a bare "import failed".
+      local importerr
+      if importerr="$(gog auth tokens import "$tokfile" 2>&1 >/dev/null)"; then
         ok "$slug: gmail token imported"
       else
-        warn "$slug: gog auth tokens import failed"
+        warn "$slug: gog auth tokens import failed: ${importerr:-(no output)}"
+        [[ -n "${GOG_KEYRING_PASSWORD:-}" ]] || \
+          warn "$slug: GOG_KEYRING_PASSWORD is unset — stage it with ./secrets.sh gog"
       fi
     else
       warn "$slug: op read op://${vault}/gog-token/credential failed — is the item staged for this vault?"
