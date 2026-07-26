@@ -291,6 +291,19 @@ ATTACHMENT_ALLOWED_CONTENT_TYPES = env.list(
     default=["image/png", "image/jpeg", "image/gif", "image/webp"],
 )
 
+# Pinned explicitly (security review 2026-07-26, F8) rather than left to
+# Django's own default (2.5MB as of 5.2, but not a documented-stable
+# contract). apps/harness/api.py's TRANSCRIPT_APPEND_MAX_BYTES (1MB per
+# transcript-append request) deliberately sits well under this: a request
+# whose JSON-encoded body exceeds THIS ceiling never reaches the Ninja view
+# at all — request.body raises RequestDataTooBig as an unhandled 500 before
+# our own 422 check runs. Pinning the value here means that relationship
+# holds regardless of any future Django default change, instead of being
+# incidental to whatever ships upstream.
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
+    "DATA_UPLOAD_MAX_MEMORY_SIZE", default=2_621_440,  # Django's current default (2.5MB)
+)
+
 # --- Agent-run Drive backing (apps/agent_runs) -----------------------
 # Drive-as-truth run store for agents whose runs live in a Google Drive
 # tree (e.g. ACE opps under ACE/<slug>/runs/<run-id>/). All knobs are

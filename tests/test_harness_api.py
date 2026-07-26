@@ -29,8 +29,13 @@ def client():
 
 
 @pytest.fixture()
-def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+def agent(client):
+    # Homed to the same "dimagi" workspace `client`'s user owns (see that
+    # fixture) — a workspace-less agent now 404s at _agent_or_404 (security
+    # review 2026-07-26, F1: that gate fails closed), so every test in this
+    # file that drives the agent through `client` needs it actually homed,
+    # not the old ungated-by-omission default.
+    return Agent.objects.create(slug="echo", name="Echo", workspace_id="dimagi")
 
 
 def _pair(client) -> str:
