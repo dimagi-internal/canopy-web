@@ -19,7 +19,7 @@
 - `_title_slug` is **never deleted** — it remains the migration fallback and the backfill's slug generator.
 - Scene ids are permanent. Renaming an id is deleting a scene and adding another, and must read that way in the diff. (The lock-based enforcement of this lands in L1; L0 only enforces presence, uniqueness, and shape.)
 - `concept_claim` is **local-owned** as of this plan. It is never transmitted to canopy-web (`NarrationItem` has no such field) and must never again be written from a pull.
-- Existing canopy-web narration ids for all 13 live narratives already equal the current title slugs, so backfilling `id: <title-slug>` makes history line up. Do not reword any scene title until Task 8 has landed.
+- Existing canopy-web narration ids for all 13 live narratives already equal the current title slugs, so backfilling `id: <title-slug>` makes history line up for free. **Take the freebie, don't defend it** — per the spec's standing constraint, only the latest version of each narrative matters, so if an id diverges from what an old version stored, the only casualty is the before/after view of a version nobody reads.
 
 ---
 
@@ -993,4 +993,4 @@ Against one already-synced narrative (`verified-monitoring`), run the existing `
 
 **Type consistency.** `_scene_id` takes `Scene | dict` and returns `str` in every task. `_NARRATIVE_SCENE_FIELDS` is a 6-tuple from Task 4 onward and both Task 4 and Task 5 use that shape. `backfill` returns `{"added", "rehashed", "skipped"}` in both the test and the implementation.
 
-**Known sharp edge.** Task 4 changes what `narrative_content_hash` covers, which invalidates every stored `narrative_synced_hash`. Task 7 re-stamps and Task 8 Step 6 verifies. If Tasks 1-7 ship without Task 8, the next `pull` on each live narrative returns `refuse_local_newer` — recoverable (`pull --force`) but noisy. Land Task 8 promptly.
+**Known sharp edge.** Task 4 changes what `narrative_content_hash` covers, which invalidates every stored `narrative_synced_hash`. Task 7 re-stamps and Task 8 Step 6 verifies. If Tasks 1-7 ship without Task 8, the next `pull` on each live narrative returns `refuse_local_newer` — recoverable with `pull --force`, and per the standing constraint force-pulling the latest version is an acceptable outcome, not a data-loss event. Don't build a reconciliation path for it.

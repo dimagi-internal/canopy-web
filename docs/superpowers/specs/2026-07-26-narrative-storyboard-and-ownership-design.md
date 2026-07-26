@@ -28,6 +28,22 @@ diff a domain expert reads.
 So: fix identity, split the ownership, then build the sharing surface on top. In that
 order, because each step shrinks the next.
 
+## Standing constraint: history is disposable
+
+**Only the latest version of each narrative matters.** Prior versions are not an asset
+worth carrying migration complexity for. Where preserving lineage is free, keep it; the
+moment it costs a merge step, a compatibility shim, or a careful backfill, drop it and
+take the latest version as ground truth.
+
+This is load-bearing in three places:
+- the L0 backfill wants ids that line up with stored history, but if they diverge the
+  only casualty is the before/after view of *old* versions, which nobody reads;
+- the L1 lockfile does **not** need to reproduce old versions, so it is justified by PR
+  legibility and offline renders alone;
+- the L1 migration may **regenerate** a narrative from its current version rather than
+  carefully splitting the existing file, and a narrative that resists migration may
+  simply be reset.
+
 ## Current state (verified)
 
 ### Confirmed defects
