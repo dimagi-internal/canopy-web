@@ -1096,51 +1096,38 @@ uv run --project ~/emdash/repositories/canopy python -m scripts.ddd.backfill_sce
 
 Expected: one line per spec. `.why_brief.yaml` files report `+0 ids`.
 
-- [ ] **Step 2b: Handle the two drifted specs (MEASURED 2026-07-26 — do not skip)**
+- [ ] **Step 2b: The narrative to keep is canopy-web's, not any local file (MEASURED 2026-07-26)**
 
-A dry run of the backfill against all 12 live specs, compared against canopy-web's
-stored narration ids, found the "ids line up for free" assumption holds for most but
-**not all** specs:
+A dry run of the backfill against all 12 live specs, compared to canopy-web's stored
+narration ids, then widened to **every copy on both user accounts**, found this:
 
-| narrative | web version | result |
-|---|---|---|
-| `verified-monitoring` | v17 | ids match exactly |
-| `microplans-study-groups` | v14 | ids match exactly |
-| `campaign-utility-tool` | v4 | ids match exactly |
-| `program-admin-report` | v3 | all 14 web ids match; local carries 1 extra scene |
-| `create-survey-solicitation` | v12 | **only 4 of 9 ids overlap — genuinely diverged** |
+| narrative | canopy-web | local copies | distinct versions | match web |
+|---|---|---|---|---|
+| `verified-monitoring` | v17, 6 scenes | 26 | **6** | 16 |
+| `microplans-study-groups` | v14, 8 scenes | 26 | **3** | 16 |
+| `create-survey-solicitation` | v12, 9 scenes | 16 | 1 | **0** |
 
-`create-survey-solicitation`'s local titles and its web narrative have drifted (web:
-*"AI drafts the scoring rubric and Maya publishes the call"*; local: *"Maya generates
-the scoring criteria with AI"*). Backfilling that spec from local titles mints ids
-canopy-web has never seen, so the first pull orphans all eight local scenes and writes
-empty `show` recipes — the exact D1 failure this work exists to prevent.
+Sixty-eight copies of three narratives, in ten distinct states. Every worktree created
+since June carried a copy forward and every edit forked another. For
+`create-survey-solicitation`, **not one of sixteen local copies matches the narrative
+that produced Sophie's video** — local content froze on 2026-06-25 (`19a5314e`, 8
+scenes) while canopy-web went to 9 scenes on 07-02 and was revised again at v12 on
+07-23, which carries its own video (`d64cdeae…`). No local run state survives from July
+on either account: `.canopy/ddd/runs` holds only June.
 
-**Fix it by hand before pulling, for that one spec only.** Fetch the current narration
-ids and write them onto the matching local scenes:
+**So there is nothing local to reconcile.** canopy-web v12 / v14 / v17 (all 2026-07-23)
+are the narratives; every local copy is a fork of a superseded version. Let the backfill
+write local ids as normal and let the first `pull` replace the narrative outright. Web
+beats with no local recipe are DDD build backlog — an unbuilt beat to film, not
+migration damage.
 
-```bash
-TOKEN=$(cat ~/.claude/canopy/workbench-token)
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "https://labs.connect.dimagi.com/canopy/api/ddd/narratives/create-survey-solicitation/" \
-  | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-v=max((v for v in d['versions'] if v.get('narration')), key=lambda x: x['version'])
-for n in v['narration']:
-    print(n['id'], '|', n.get('title'))
-"
-```
-
-Then set each local scene's `id:` to the web id for the beat it films. A local scene
-with no counterpart on the web keeps a locally-minted id and will be dropped by the
-first pull (web owns the scene list) — that is correct, and is why this is a manual
-5-minute reconciliation rather than a tool. `program-admin-report`'s extra scene is the
-same situation and needs no action.
-
-Deliberately NOT automated: this is a one-time, two-file problem, and a
-`--ids-from-web` flag would put a network dependency into a migration tool to save one
-manual pass.
+**This is the evidence for the whole design, and the failure it must prevent.** The
+narrative forked six ways because it lived in a file that every worktree copies and
+every agent may edit, reconciled only by a content hash. After L1 it cannot happen: the
+narrative is not in the worktree at all, so creating a worktree cannot fork it. The
+recipe stays in git — forking *that* per branch is correct, it is code — and the lock is
+generated, committed, and CI-checked against its recipe. One writer per field is not a
+tidiness argument; it is the difference between three narratives and ten.
 
 - [ ] **Step 3: Verify every scene now has an id**
 
