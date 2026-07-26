@@ -138,6 +138,12 @@ WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
 LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
 
+# Bound on reaping the claude subprocess in run_claude's cleanup (review N1) —
+# a bare, untimed proc.wait() can hang the RUNNER forever if the child is still
+# alive with an undrained stdout pipe (a mid-loop exception leaves exactly that
+# state). Always kill/close before waiting, and never wait unboundedly.
+PROC_REAP_TIMEOUT_SECONDS = 15.0
+
 # The server caps a single POST /turns/{id}/transcript body at 1 MiB of line bytes
 # (apps/harness/api.py::TRANSCRIPT_APPEND_MAX_BYTES) and 422s over it — batch well
 # under that so this runner never has to handle (or silently drop on) that error.
@@ -458,38 +464,69 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     transcript_bytes = 0
     transcript_seq = 0
     transcript_stopped = False  # latched True once the server reports `truncated`
-    # Guards transcript_buf/transcript_bytes/transcript_seq/transcript_stopped,
-    # which the main read loop AND the periodic flush thread below both touch.
+    # Guards transcript_buf/transcript_bytes/transcript_seq/transcript_stopped —
+    # held only for FAST, non-blocking mutations (list swap, int increment).
+    # Never held across network I/O (review N2): the read loop's per-line
+    # append takes this lock on every single line, so if it also covered the
+    # POST it would stall stdout-draining for as long as canopy-web is slow —
+    # the same full-pipe-stall failure mode N1 fixes, just caused by a slow
+    # server instead of a raised exception.
     transcript_lock = threading.Lock()
+    # Separate lock serializing actual POSTING order across the two producers
+    # (the read loop's own byte-triggered flush, and the periodic thread
+    # below) — held ACROSS the network call, unlike transcript_lock. Without
+    # this, two concurrent flushes could swap out their content in order but
+    # POST in the opposite order if the earlier one is slower (e.g. retrying
+    # a 500), corrupting the transcript's byte ordering. Acquired for the
+    # whole of one flush_transcript() call (swap included), so at most one
+    # flush is ever "in flight" — this is where the backpressure N2 flags
+    # actually still exists (flush vs. flush), which is fine: it only ever
+    # blocks ANOTHER FLUSH, never the read loop's line-by-line appending.
+    transcript_post_lock = threading.Lock()
     transcript_flush_stop = threading.Event()
 
     def flush():
+        # Swap BEFORE calling emit (same pattern as flush_transcript's swap-
+        # before-post): if `emit` raises, `batch` must already be empty, or
+        # the `finally` block's own `flush()` call (see below) would re-emit
+        # the identical batch a second time — a duplicate-events bug this
+        # test suite caught while building a genuine mid-loop-exception case
+        # for N1 (a raising `emit` left `batch` non-empty under the old
+        # emit-then-clear order).
         nonlocal batch
-        if batch:
-            emit(batch)
-            batch = []
+        if not batch:
+            return
+        pending = batch
+        batch = []
+        emit(pending)
 
     def flush_transcript():
-        # Swap-and-clear happens under the lock (short critical section); the
-        # actual chunking + network POSTs run with the lock HELD too (simpler
-        # and race-free, at the cost of some backpressure on a concurrent
-        # appender — the same tradeoff `emit()` already carries elsewhere in
-        # this file). `nonlocal` writes inside a `with` block are fine: the
-        # lock only serializes callers, it doesn't scope the names.
+        # transcript_post_lock is held for the WHOLE call (swap through the
+        # last POST) so at most one flush is ever in flight and posts land in
+        # swap order — but transcript_lock (the one the read loop's per-line
+        # append also needs) is only ever held for the swap itself and for
+        # each seq allocation, never across `_post_transcript_batch`'s network
+        # call (review N2 — see the lock declarations above for why).
         nonlocal transcript_buf, transcript_bytes, transcript_seq, transcript_stopped
-        with transcript_lock:
-            if not transcript_buf or transcript_stopped:
+        with transcript_post_lock:
+            with transcript_lock:
+                if not transcript_buf or transcript_stopped:
+                    transcript_buf = []
+                    transcript_bytes = 0
+                    return
+                pending = transcript_buf
                 transcript_buf = []
                 transcript_bytes = 0
-                return
-            pending = transcript_buf
-            transcript_buf = []
-            transcript_bytes = 0
             for chunk in _chunk_transcript_lines(pending):
-                transcript_seq += 1
-                if not _post_transcript_batch(turn_id, attempt_id, transcript_seq, chunk):
-                    transcript_stopped = True
-                    break
+                with transcript_lock:
+                    if transcript_stopped:
+                        return
+                    transcript_seq += 1
+                    seq = transcript_seq
+                if not _post_transcript_batch(turn_id, attempt_id, seq, chunk):
+                    with transcript_lock:
+                        transcript_stopped = True
+                    return
 
     def _periodic_flush() -> None:
         # The byte-size flush trigger below only runs when a NEW line arrives,
@@ -551,10 +588,45 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # no try/finally at all, so an exception mid-loop — e.g. the WS `emit`
         # breaking on a dropped socket — dropped every buffered line/event).
         transcript_flush_stop.set()
+        # KILL (AND CLOSE STDOUT) BEFORE REAPING — unconditionally, regardless
+        # of whether the loop reached EOF (review N1). On a mid-loop exception
+        # `claude` can still be RUNNING with its stdout pipe no longer drained;
+        # once the 64KB pipe buffer fills, the child blocks on write and a
+        # bare `proc.wait()` NEVER RETURNS. That doesn't just fail this turn —
+        # it means run_claude() itself never returns, so the caller's own
+        # `finally: lease_stop.set()` never runs, the lease-renewal thread
+        # keeps heartbeating this turn EXECUTING forever, and
+        # one_executing_turn_per_agent wedges the whole agent permanently
+        # (the exact "wedged-but-heartbeating runner" pathology CLAUDE.md
+        # documents) — worse than the turn simply failing.
+        #
+        # Closing stdout first unblocks any pending write (the read end going
+        # away delivers SIGPIPE/EPIPE to the writer); kill() on a process that
+        # already exited cleanly (the ordinary happy path, where the loop
+        # already reached EOF) is a harmless no-op signal to a reapable
+        # zombie — Python's Popen doesn't guard against re-signaling because
+        # nothing here has called wait()/poll() yet to know it's dead.
         try:
-            proc.wait()
-        except Exception:  # noqa: BLE001 — best-effort reap; loop_error already captured
+            proc.stdout.close()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001 — best-effort; still try to kill below
             pass
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001 — best-effort; still try to wait below
+            pass
+        # The wait itself is ALSO bounded — never unconditional — because a
+        # kill() can still leave a zombie the OS is slow to reap, and this
+        # runner must never block on that either.
+        try:
+            proc.wait(timeout=PROC_REAP_TIMEOUT_SECONDS)
+        except Exception:  # noqa: BLE001 — subprocess.TimeoutExpired or worse
+            try:
+                proc.kill()
+                proc.wait(timeout=PROC_REAP_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 — truly never block cleanup on this
+                _log(f"warn: turn {turn_id[:8]}: could not reap the claude "
+                     "subprocess (pid may be leaked) — continuing rather than "
+                     "blocking the runner")
         stderr_file.close()
         try:
             flush()  # calls the caller-supplied `emit` — can itself raise (e.g. a dead WS)

@@ -617,18 +617,76 @@ def test_run_claude_periodic_flush_fires_during_a_quiet_stdout(cloud_runner, mon
     assert len(transcript_calls) >= 2
 
 
-def test_run_claude_finally_flushes_on_mid_loop_exception(cloud_runner, monkeypatch, tmp_path):
-    """review I3: an exception mid-loop (e.g. a broken WS emit) must not drop
-    buffered transcript lines — the finally block must still flush them, and
-    a cli_session_id already captured must still be returned."""
-    lines = [
-        json.dumps({"type": "system", "subtype": "init", "session_id": "sess-crash"}) + "\n",
-        json.dumps({
+class _HangingFakeProc:
+    """Simulates claude STILL ALIVE and blocked on a full, undrained stdout
+    pipe at the moment the read loop exits early via an exception (review
+    N1's exact scenario) — `_FakeProc`'s plain list-iterator stdout cannot
+    represent this, because iterating it to exhaustion is what "the loop
+    reached EOF" means; this fake is deliberately never exhausted.
+
+    Rather than literally hanging (which would hang the test suite on a
+    regression), `wait()` FAILS THE TEST LOUDLY if called before the process
+    was killed/its stdout closed, or without a bounded timeout — the two
+    preconditions the fix must establish. That makes this test deterministic
+    AND diagnostic: run against the pre-fix code (bare `proc.wait()`, no
+    kill, no timeout), it fails immediately with an assertion naming exactly
+    what's missing, instead of hanging pytest.
+    """
+
+    def __init__(self, lines):
+        self._iter = iter(lines)
+        self.returncode = None
+        self.killed = False
+        self.stdout_closed = False
+
+    @property
+    def stdout(self):
+        return self  # so both `for line in proc.stdout` and `proc.stdout.close()` work
+
+    def __iter__(self):
+        return self._iter
+
+    def close(self):
+        self.stdout_closed = True
+
+    def kill(self):
+        self.killed = True
+        if self.returncode is None:
+            self.returncode = -9
+
+    def wait(self, timeout=None):
+        if not (self.killed or self.stdout_closed):
+            raise AssertionError(
+                "wait() called on a still-alive/still-piped process — this is exactly "
+                "the pipe-deadlock regression (review N1): kill/close must happen BEFORE wait()"
+            )
+        if timeout is None:
+            raise AssertionError(
+                "wait() called with no timeout — an unbounded wait can hang the runner forever"
+            )
+        return self.returncode if self.returncode is not None else 0
+
+
+def test_run_claude_finally_reaps_safely_on_genuine_mid_loop_exception(
+    cloud_runner, monkeypatch, tmp_path,
+):
+    """review N1 (and the rewrite of the old, misnamed I3 test): the raise must
+    happen while claude is STILL RUNNING and stdout is STILL UNDRAINED — more
+    than TRANSCRIPT batch-worth of events queued so `flush()` fires INSIDE the
+    loop (not just in the `finally`), and the underlying iterator still has
+    unconsumed lines when it raises, proving the loop genuinely exited early.
+    """
+    # 11 tool_use events: the 10th triggers the in-loop `flush()` (batch >= 10),
+    # which is where `emit` raises — with a further (unconsumed) line still
+    # queued behind it in the fake's iterator.
+    lines = [json.dumps({"type": "system", "subtype": "init", "session_id": "sess-crash"}) + "\n"]
+    for i in range(11):
+        lines.append(json.dumps({
             "type": "assistant", "session_id": "sess-crash",
-            "message": {"content": [{"type": "tool_use", "name": "Bash"}]},
-        }) + "\n",
-    ]
-    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, returncode=0))
+            "message": {"content": [{"type": "tool_use", "name": f"Bash{i}"}]},
+        }) + "\n")
+    fake_proc = _HangingFakeProc(lines)
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: fake_proc)
 
     transcript_calls = []
 
@@ -640,14 +698,209 @@ def test_run_claude_finally_flushes_on_mid_loop_exception(cloud_runner, monkeypa
 
     monkeypatch.setattr(cloud_runner, "_api", fake_api)
 
-    def crashing_emit(_batch):
+    emitted = []
+
+    def crashing_emit(batch):
+        emitted.append(batch)
         raise RuntimeError("socket dropped")
 
     ok, text, cli_session_id = cloud_runner.run_claude(
         "hi", "turn-crash", crashing_emit, cwd=tmp_path,
     )
+
+    # The crash genuinely happened mid-loop: at least one line was still
+    # unconsumed in the fake's stdout iterator when `emit` raised — proving
+    # early exit, not a full drain (the defect the old, misnamed test missed).
+    remaining = list(fake_proc._iter)
+    assert len(remaining) > 0, "loop must exit before exhausting stdout to be a genuine mid-loop case"
+    assert len(emitted) == 1  # flush() ran exactly once, from inside the loop
+    # The fix's contract, proven via _HangingFakeProc's own assertions: kill()
+    # or stdout.close() happened, and wait() was given a bounded timeout —
+    # otherwise the fake itself would have raised inside run_claude and this
+    # call would have propagated an AssertionError instead of returning.
+    assert fake_proc.killed or fake_proc.stdout_closed
     assert ok is False
     assert "socket dropped" in text
     assert cli_session_id == "sess-crash"  # captured before the crash, not lost
+    # Whatever WAS buffered before the crash made it to the transcript, in
+    # order, as an exact PREFIX of the full stream (the trailing lines never
+    # read off stdout are correctly absent — this loop crashed, it didn't
+    # invent content it never saw).
     shipped = [line for call in transcript_calls for line in call["lines"]]
-    assert shipped == [line.strip() for line in lines]  # nothing buffered was dropped
+    all_stripped = [line.strip() for line in lines]
+    assert shipped, "the finally's flush_transcript() must have shipped something"
+    assert shipped == all_stripped[: len(shipped)]
+    assert len(shipped) < len(all_stripped), "some lines must remain unshipped — a genuine early exit"
+
+
+# ── genuine concurrency tests (review: "two real concurrency tests over ─────
+# thirteen structural ones") ─────────────────────────────────────────────────
+
+def test_run_claude_concurrent_flushes_never_reorder_duplicate_or_drop(cloud_runner, monkeypatch, tmp_path):
+    """Drives the READ LOOP's own byte-triggered flush and the PERIODIC
+    background thread's flush against each other for real: a tiny
+    TRANSCRIPT_FLUSH_SECONDS makes the periodic thread fire almost
+    continuously while a fast-yielding fake stdout keeps crossing the byte
+    threshold too, so both producers of flush_transcript() genuinely race for
+    the same buffer across ~40 lines. Asserts the property the locking is
+    FOR: every line reaches the server in original order, exactly once, and
+    batch_ids are unique (no accidental re-post) with the seq component
+    strictly increasing across the whole run — i.e. no reorder, no
+    duplication, no loss, even though two threads are contending for the
+    buffer and the post-serialization lock throughout."""
+    monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_SECONDS", 0.01)
+    monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_BYTES", 200)  # small: forces many flushes
+
+    n = 40
+    lines = [
+        json.dumps({
+            "type": "assistant", "session_id": "sess-race",
+            "message": {"content": [{"type": "text", "text": f"line-{i:03d}-" + ("x" * 30)}]},
+        }) + "\n"
+        for i in range(n)
+    ]
+    lines.append(json.dumps({"type": "result", "session_id": "sess-race", "result": "done", "is_error": False}) + "\n")
+
+    class _RealisticSlowStdout:
+        """A real generator (unlike a bare list) so the periodic thread gets
+        genuine wall-clock windows to race against the read loop — a tiny
+        sleep per line lets the 0.01s periodic timer fire multiple times
+        while lines are still arriving, without making the test slow."""
+        def __init__(self, src):
+            self._src = src
+
+        def __iter__(self):
+            for line in self._src:
+                time.sleep(0.002)
+                yield line
+
+    class _FakeProcRealistic:
+        def __init__(self, src):
+            self.stdout = _RealisticSlowStdout(src)
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProcRealistic(lines))
+
+    transcript_calls = []
+    calls_lock = threading.Lock()
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/transcript"):
+            with calls_lock:
+                transcript_calls.append(body)
+            return 200, {}
+        raise AssertionError(f"unexpected call {method} {path}")
+
+    monkeypatch.setattr(cloud_runner, "_api", fake_api)
+
+    ok, _text, _sid = cloud_runner.run_claude(
+        "hi", "turn-race", lambda batch: None, cwd=tmp_path,
+    )
+    assert ok is True
+
+    # No loss, no reorder, no duplication: the concatenation of every batch's
+    # lines, IN THE ORDER THE FAKE SERVER RECEIVED THEM, must equal the
+    # original stream exactly.
+    shipped = [line for call in transcript_calls for line in call["lines"]]
+    assert shipped == [line.strip() for line in lines]
+
+    # batch_ids: all unique (no duplicate posts), all sharing one attempt id,
+    # and seq strictly increasing in RECEIPT order (proves posts landed in
+    # swap order despite two threads producing them).
+    batch_ids = [call["batch_id"] for call in transcript_calls]
+    assert len(batch_ids) == len(set(batch_ids)), "a batch_id repeated — duplicate/racy post"
+    parsed = [bid.split(":") for bid in batch_ids]
+    assert len({p[1] for p in parsed}) == 1, "attempt id must be stable across the whole run"
+    seqs = [int(p[2]) for p in parsed]
+    assert seqs == sorted(seqs) == list(range(1, len(seqs) + 1)), "seq must be gap-free and in receipt order"
+    assert len(transcript_calls) > 1, "expected genuine contention to produce more than one flush"
+
+
+def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, monkeypatch, tmp_path):
+    """review N2: before the fix, every per-line append held `transcript_lock`
+    for the ENTIRE duration of a flush's network POST (including retries).
+    This drives a slow POST specifically from the PERIODIC thread while the
+    read loop keeps appending fresh lines on the main thread, and asserts the
+    read loop was NOT stalled behind it: total wall-clock time stays close to
+    the (short) time it takes to feed the lines, not to
+    (slow POST duration + line-feed duration) as it would if a per-line
+    append had to wait for the in-flight POST to finish."""
+    monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_SECONDS", 0.02)
+    monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_BYTES", 10**9)  # never byte-trigger; isolate the timer
+
+    SLOW_POST_SECONDS = 0.4
+    LINE_DELAY_SECONDS = 0.01
+    N_LINES = 20  # ~0.2s of line-feeding if unblocked; << SLOW_POST_SECONDS
+
+    lines = [
+        json.dumps({
+            "type": "assistant", "session_id": "sess-slow-post",
+            "message": {"content": [{"type": "text", "text": f"l{i}"}]},
+        }) + "\n"
+        for i in range(N_LINES)
+    ]
+    lines.append(json.dumps(
+        {"type": "result", "session_id": "sess-slow-post", "result": "done", "is_error": False}
+    ) + "\n")
+
+    class _SlowLineStdout:
+        def __iter__(self):
+            for line in lines:
+                time.sleep(LINE_DELAY_SECONDS)
+                yield line
+
+    class _FakeProcSlowLines:
+        def __init__(self):
+            self.stdout = _SlowLineStdout()
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProcSlowLines())
+
+    first_post_started = threading.Event()
+    call_count = [0]
+    calls_lock = threading.Lock()
+
+    def fake_api(method, path, body=None):
+        if path.endswith("/transcript"):
+            with calls_lock:
+                call_count[0] += 1
+                is_first = call_count[0] == 1
+            if is_first:
+                first_post_started.set()
+                time.sleep(SLOW_POST_SECONDS)  # simulate a slow/struggling canopy-web
+            return 200, {}
+        raise AssertionError(f"unexpected call {method} {path}")
+
+    monkeypatch.setattr(cloud_runner, "_api", fake_api)
+
+    start = time.monotonic()
+    ok, _text, _sid = cloud_runner.run_claude(
+        "hi", "turn-slow-post", lambda batch: None, cwd=tmp_path,
+    )
+    elapsed = time.monotonic() - start
+
+    assert ok is True
+    assert first_post_started.is_set(), "the periodic flush never fired a POST to slow down"
+    # If per-line appends were blocked behind the slow POST (the pre-N2
+    # behavior), elapsed would be at least SLOW_POST_SECONDS PLUS the line
+    # feed time serialized after it. Unblocked, the line-feeding (bounded by
+    # N_LINES * LINE_DELAY_SECONDS) overlaps the slow POST almost entirely, so
+    # total time stays close to SLOW_POST_SECONDS with generous headroom —
+    # nowhere near the fully-serialized sum.
+    serialized_lower_bound = SLOW_POST_SECONDS + (N_LINES * LINE_DELAY_SECONDS)
+    assert elapsed < serialized_lower_bound - 0.1, (
+        f"elapsed={elapsed:.3f}s is too close to the fully-serialized bound "
+        f"({serialized_lower_bound:.3f}s) — appends look blocked on the slow POST"
+    )
