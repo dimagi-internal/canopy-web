@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import uuid
 
-from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -110,10 +109,7 @@ def list_fleet_items(request: HttpRequest, state: str = Item.OPEN, kind: str = "
     explicit state to widen. Authz reuses the single agent-visibility predicate, so
     it can never show an item whose agent the agents list would hide."""
     visible = _visible_agent_workspace_ids(request)
-    q = Q(agent__workspace_id__in=[w for w in visible if w is not None])
-    if None in visible:
-        q |= Q(agent__workspace_id__isnull=True)
-    qs = Item.objects.filter(q).select_related("agent")
+    qs = Item.objects.filter(agent__workspace_id__in=visible).select_related("agent")
     if state:
         qs = qs.filter(state=state)
     if kind:

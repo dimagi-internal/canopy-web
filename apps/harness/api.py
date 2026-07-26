@@ -681,9 +681,31 @@ def list_turns(
         qs = qs.filter(agent__slug=agent)
     if status:
         qs = qs.filter(status__in=status.split(","))
-    # Tenant filter: a turn's tenant is its agent's. Null-workspace agents stay
-    # visible (ungated, per the migration-safety rule).
-    qs = qs.filter(Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True))
+    # Tenant filter, split by target kind (agent / project / session) — mirrors
+    # claim_next_turn's tenant_q (services.py) and _turn_or_404 (this module).
+    #
+    # Security review 2026-07-26, hole B: this used to be one clause,
+    # `Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True)`,
+    # with two independent problems. (1) The isnull leg left an unhomed
+    # agent's turns (TurnOut: prompt, origin_ref, session_id) visible to ANY
+    # authenticated caller — more permissive than `_agent_or_404`'s fail-closed
+    # gate, recreating the exact list-vs-gate drift `_runner_visibility_q`'s
+    # docstring warns about (a turn the list shows, then 404s on every
+    # action). (2) `agent__workspace_id` traverses a nullable FK: for a
+    # PROJECT or SESSION turn (agent_id IS NULL), the LEFT JOIN makes
+    # `agent__workspace_id__isnull=True` true unconditionally — so that one
+    # clause also leaked every tenant's project/session turns to every
+    # authenticated user, regardless of the turn's own workspace. (Confirmed
+    # empirically pre-fix: an unrelated stranger's GET returned another
+    # tenant's project turn.) Both close by gating each target kind on its
+    # own workspace source, with no null-workspace escape hatch anywhere in
+    # this list — unlike claim_next_turn, which keeps one for agent turns
+    # specifically as a documented, claim-routing-only exception.
+    qs = qs.filter(
+        (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
+        | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
+        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
+    )
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     return list(qs[:limit])  # filter BEFORE slicing — a sliced queryset cannot be filtered
 

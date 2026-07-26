@@ -315,6 +315,53 @@ def test_null_workspace_agent_now_fails_closed(owner_client):
     assert _enqueue(owner_client, slug="legacy", key="k-legacy").status_code == 404
 
 
+def test_list_turns_excludes_unhomed_agent_turns(owner_client):
+    """Security review 2026-07-26, hole B: list_turns unconditionally OR'd in
+    Q(agent__workspace_id__isnull=True), so ANY authenticated caller saw every
+    unhomed agent's turns — TurnOut leaks `prompt`, `origin_ref`, `session_id`.
+    That is strictly more permissive than `_agent_or_404` (F1 above), which
+    already 404s a workspace-less agent for everyone: a turn could be listed
+    here and then 404 on every single-turn action, the exact list-vs-gate
+    drift `_runner_visibility_q`'s docstring warns about. Fails closed to
+    match: an unhomed agent's turns are invisible in the list too.
+
+    Enqueueing via the API is itself fail-closed now, so build the turn
+    directly (mirrors the legacy/pre-migration row this models)."""
+    orphan = Agent.objects.create(slug="orphan", name="Orphan")
+    Turn.objects.create(
+        agent=orphan, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-orphan",
+        prompt="/echo:turn",
+    )
+    resp = owner_client.get("/api/harness/turns/")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_turns_excludes_other_tenants_project_and_session_turns(owner_client, stranger_client, workspace):
+    """Found while fixing hole B, broader than that hole's own description: the
+    old single clause `Q(agent__workspace_id__isnull=True)` traverses a
+    nullable FK, so for a PROJECT or SESSION turn (agent_id IS NULL) it was
+    unconditionally true regardless of the turn's OWN workspace — every
+    tenant's project/session turns (prompt, origin_ref, session_id) leaked to
+    every authenticated caller, not just the unhomed-agent case. Verified
+    empirically pre-fix with a throwaway repro before writing this test.
+    Mirrors the same split-by-target-kind fix `claim_next_turn`
+    (apps/harness/services.py) already applies to its own tenant_q."""
+    Turn.objects.create(
+        project="secret-repo", workspace=workspace, origin=Turn.ORIGIN_MANUAL,
+        idempotency_key="p-secret", prompt="secret project prompt",
+    )
+    resp = stranger_client.get("/api/harness/turns/")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # The owner (an actual member of the turn's workspace) still sees it —
+    # this is a tenant filter, not a blanket lockout.
+    owner_resp = owner_client.get("/api/harness/turns/")
+    assert owner_resp.status_code == 200
+    assert len(owner_resp.json()) == 1
+
+
 # --- pair_runner workspace-assignment branches (Task 2, uncovered) ---------
 
 
