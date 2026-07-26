@@ -135,55 +135,110 @@ def test_a_transcript_sourced_send_writes_no_row_but_keeps_the_text(settings):
     assert turn.status == Turn.QUEUED
 
 
-def test_convert_command_refuses_a_session_with_no_transcript(settings):
-    """Refuse rather than delete rows we could not replace."""
-    from django.core.management import call_command
-    from django.core.management.base import CommandError
+# --- reset_chat_state: the derived view is a cache, so resetting it is cheap ----
 
+
+def _reset(**kw):
+    from io import StringIO
+
+    from django.core.management import call_command
+    out = StringIO()
+    call_command("reset_chat_state", stdout=out, **kw)
+    return out.getvalue()
+
+
+def _bound_session(ws, user, runner, *, key="canopy-web-1"):
+    session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
+    RunnerBinding.objects.create(
+        session=session, runner=runner, session_key=key, host="jj@mbp",
+    )
+    return session
+
+
+def test_reset_drops_derived_rows_and_asks_the_runner_to_re_derive(settings):
+    settings.CHAT_STUB_EXECUTOR = True          # created legacy / ledger-sourced
+    user, ws, runner = _ctx()
+    session = _bound_session(ws, user, runner)
+    services.persist_transcript_rows(session, [
+        {"index": 2, "role": "user", "text": "hi"},
+        {"index": 3, "role": "assistant", "text": "hello"},
+    ])
+    assert session.messages.count() == 2
+
+    out = _reset()
+
+    session.refresh_from_db()
+    assert "reset 1 session" in out
+    assert session.messages.count() == 0, "the cache is dropped..."
+    assert services.transcript_sourced(session), "...and re-derives from the transcript"
+    assert RunnerBinding.objects.get(session=session).backfill_requested is True
+
+
+def test_reset_dry_run_changes_nothing(settings):
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, runner = _ctx()
+    session = _bound_session(ws, user, runner)
+    services.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
+    out = _reset(dry_run=True)
+    session.refresh_from_db()
+    assert "would reset 1 session" in out
+    assert session.messages.count() == 1
+    assert not services.transcript_sourced(session)
+
+
+def test_reset_skips_a_session_no_live_runner_can_serve(settings):
+    """The one thing that is NOT a cache: with no runner reporting it, canopy's
+    copy is the only copy, so it is left alone rather than dropped."""
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
     _msg, turn = services.send_message(session=session, text="hi", user=user)
     services.project_events(turn, list(turn.events.all()))
     before = session.messages.count()
-    with pytest.raises(CommandError, match="no runner binding"):
-        call_command("convert_chat_to_transcript", str(session.id))
-    assert session.messages.count() == before, "nothing was deleted"
+
+    out = _reset()
+
+    assert "skip" in out and "no runner binding" in out
+    assert session.messages.count() == before
+    assert Session.objects.filter(pk=session.pk).exists()
 
 
-def test_convert_command_swaps_a_legacy_chat_onto_its_transcript(settings):
-    from django.core.management import call_command
-
-    settings.CHAT_STUB_EXECUTOR = True          # created legacy (ledger-sourced)
-    user, ws, runner = _ctx()
-    session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
-    services.project_events(turn, list(turn.events.all()))
-    assert session.messages.count() > 0
-    RunnerBinding.objects.create(
-        session=session, runner=runner, session_key="canopy-web-1", host="jj@mbp",
+def test_reset_prunes_only_runner_origin_ghosts(settings):
+    """A discovered session no runner reports is a zombie — the next report
+    re-materializes it if the task still exists. A web chat is never pruned: it
+    has no other home."""
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, _runner = _ctx()
+    ghost = Session.objects.create(
+        workspace=ws, origin=Session.ORIGIN_RUNNER, project="canopy-web", title="zombie",
     )
-    call_command("convert_chat_to_transcript", str(session.id))
-    session.refresh_from_db()
-    assert services.transcript_sourced(session)
-    assert session.messages.count() == 0, "dense rows dropped; the transcript replaces them"
-    binding = RunnerBinding.objects.get(session=session)
-    assert binding.backfill_requested is True
+    web = services.create_session(workspace=ws, created_by=user, project="canopy-web")
+
+    _reset(prune_ghosts=True)
+
+    assert not Session.objects.filter(pk=ghost.pk).exists()
+    assert Session.objects.filter(pk=web.pk).exists()
 
 
-def test_convert_command_dry_run_changes_nothing(settings):
-    from django.core.management import call_command
-
+def test_reset_can_be_scoped_to_one_session_or_workspace(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
-    session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
+    a = _bound_session(ws, user, runner, key="task-a")
+    b = _bound_session(ws, user, runner, key="task-b")
+    for s in (a, b):
+        services.persist_transcript_rows(s, [{"index": 2, "role": "user", "text": "hi"}])
+
+    _reset(session=str(a.id))
+
+    assert a.messages.count() == 0
+    assert b.messages.count() == 1, "untouched — the scope was one session"
+
+
+def test_reset_never_touches_turns(settings):
+    """Turns are canopy's own record of what it ran; nothing can re-derive them."""
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, runner = _ctx()
+    session = _bound_session(ws, user, runner)
     _msg, turn = services.send_message(session=session, text="hi", user=user)
-    services.project_events(turn, list(turn.events.all()))
-    RunnerBinding.objects.create(
-        session=session, runner=runner, session_key="canopy-web-1", host="jj@mbp",
-    )
-    before = session.messages.count()
-    call_command("convert_chat_to_transcript", str(session.id), "--dry-run")
-    session.refresh_from_db()
-    assert session.messages.count() == before
-    assert not services.transcript_sourced(session)
+    _reset()
+    assert Turn.objects.filter(pk=turn.pk).exists()
