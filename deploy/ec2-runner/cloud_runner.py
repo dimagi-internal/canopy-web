@@ -479,9 +479,22 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     # POST in the opposite order if the earlier one is slower (e.g. retrying
     # a 500), corrupting the transcript's byte ordering. Acquired for the
     # whole of one flush_transcript() call (swap included), so at most one
-    # flush is ever "in flight" — this is where the backpressure N2 flags
-    # actually still exists (flush vs. flush), which is fine: it only ever
-    # blocks ANOTHER FLUSH, never the read loop's line-by-line appending.
+    # flush is ever "in flight".
+    #
+    # Documented residual (measured, review N2 round 2): this fixes the
+    # COMMON case — a turn that stays under TRANSCRIPT_FLUSH_BYTES is never
+    # stalled by a slow/failing canopy-web, because the periodic thread is
+    # the only thing ever waiting on a POST and the read loop's per-line
+    # append only ever touches the fast `transcript_lock`. But if a turn
+    # CROSSES the byte trigger WHILE the periodic thread's flush is already
+    # mid-POST, the read loop's OWN inline `flush_transcript()` call (below)
+    # blocks acquiring `transcript_post_lock` for that entire POST (up to
+    # ~182s across retries) before it can even swap its new content out —
+    # i.e. the read loop genuinely stalls in that narrower case, not just
+    # "another flush". Bounded and rarer than the pre-fix behavior (which
+    # stalled on EVERY line, not just a threshold-crossing one), and
+    # correctness (never posting out of order) is worth that residual — but
+    # it is a real stall on the read loop, not merely a flush-vs-flush one.
     transcript_post_lock = threading.Lock()
     transcript_flush_stop = threading.Event()
 
@@ -556,6 +569,15 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 transcript_buf.append(line)
                 transcript_bytes += len(line.encode("utf-8"))
                 should_flush = transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
+            # `flush_transcript()` is called AFTER the `with` block exits, on
+            # purpose: this is the one line the whole deadlock-freedom
+            # argument rests on. flush_transcript() itself acquires
+            # transcript_post_lock THEN transcript_lock (L2 -> L1) — calling
+            # it while still holding transcript_lock here would attempt the
+            # inverse order (L1 already held, then try to take L2 inside),
+            # which is exactly the shape of an AB/BA deadlock the moment two
+            # threads do it in opposite orders. Releasing L1 first keeps
+            # every acquisition in this file on the single L2 -> L1 order.
             if should_flush:
                 flush_transcript()
             try:
@@ -588,38 +610,42 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # no try/finally at all, so an exception mid-loop — e.g. the WS `emit`
         # breaking on a dropped socket — dropped every buffered line/event).
         transcript_flush_stop.set()
-        # KILL (AND CLOSE STDOUT) BEFORE REAPING — unconditionally, regardless
-        # of whether the loop reached EOF (review N1). On a mid-loop exception
-        # `claude` can still be RUNNING with its stdout pipe no longer drained;
-        # once the 64KB pipe buffer fills, the child blocks on write and a
-        # bare `proc.wait()` NEVER RETURNS. That doesn't just fail this turn —
-        # it means run_claude() itself never returns, so the caller's own
+        # CLOSE STDOUT BEFORE REAPING, unconditionally, regardless of whether
+        # the loop reached EOF (review N1). On a mid-loop exception `claude`
+        # can still be RUNNING with its stdout pipe no longer drained; once
+        # the 64KB pipe buffer fills, the child blocks on write and a bare
+        # `proc.wait()` NEVER RETURNS. That doesn't just fail this turn — it
+        # means run_claude() itself never returns, so the caller's own
         # `finally: lease_stop.set()` never runs, the lease-renewal thread
         # keeps heartbeating this turn EXECUTING forever, and
         # one_executing_turn_per_agent wedges the whole agent permanently
         # (the exact "wedged-but-heartbeating runner" pathology CLAUDE.md
-        # documents) — worse than the turn simply failing.
+        # documents) — worse than the turn simply failing. Closing the read
+        # end delivers EPIPE/SIGPIPE to a child still blocked writing, which
+        # is what actually unblocks it — kill() alone would not (a blocked
+        # write doesn't unblock just because the process received SIGKILL any
+        # sooner than it would have anyway; closing the pipe is what matters).
         #
-        # Closing stdout first unblocks any pending write (the read end going
-        # away delivers SIGPIPE/EPIPE to the writer); kill() on a process that
-        # already exited cleanly (the ordinary happy path, where the loop
-        # already reached EOF) is a harmless no-op signal to a reapable
-        # zombie — Python's Popen doesn't guard against re-signaling because
-        # nothing here has called wait()/poll() yet to know it's dead.
+        # KILL ONLY IF A BOUNDED WAIT TIMES OUT (review N4) — never
+        # unconditionally. `claude` finishing normally often does a little
+        # work AFTER its last stream-json line (whatever it takes to close
+        # out its own `~/.claude/projects/<enc>/<id>.jsonl` transcript — the
+        # very file this PR's `--resume`/I1/C2 depend on); an unconditional
+        # SIGKILL the instant stdout EOFs was measured to hit that window and
+        # both flip a clean turn's outcome to `ok=False` AND risk truncating
+        # that transcript file. `Popen.kill()` on an already-exited process is
+        # in fact safe on its own terms (`send_signal` polls `self.poll()`
+        # first and no-ops on a dead process, Python 3.9+/bpo-38630) — but
+        # "safe to call" was never the point; calling it on a process that
+        # was about to exit cleanly, before giving it the chance to, is the
+        # bug. Wait first; escalate only on a genuine timeout.
         try:
             proc.stdout.close()  # type: ignore[union-attr]
-        except Exception:  # noqa: BLE001 — best-effort; still try to kill below
-            pass
-        try:
-            proc.kill()
         except Exception:  # noqa: BLE001 — best-effort; still try to wait below
             pass
-        # The wait itself is ALSO bounded — never unconditional — because a
-        # kill() can still leave a zombie the OS is slow to reap, and this
-        # runner must never block on that either.
         try:
             proc.wait(timeout=PROC_REAP_TIMEOUT_SECONDS)
-        except Exception:  # noqa: BLE001 — subprocess.TimeoutExpired or worse
+        except Exception:  # noqa: BLE001 — subprocess.TimeoutExpired or worse: escalate
             try:
                 proc.kill()
                 proc.wait(timeout=PROC_REAP_TIMEOUT_SECONDS)

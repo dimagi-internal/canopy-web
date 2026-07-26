@@ -10,6 +10,18 @@ import json
 import threading
 import time
 
+import pytest
+
+# review N7: a lock-ordering regression in run_claude's threading
+# (transcript_lock / transcript_post_lock) can DEADLOCK rather than raise or
+# fail an assertion — verified in review by reintroducing an inverse
+# acquisition order, which hung these tests until a manual --timeout stopped
+# them. Without a per-test bound, that hang stalls the whole CI job instead
+# of failing it. Applied to every test that drives run_claude's locking
+# machinery (not just the two dedicated concurrency tests), since any of them
+# could in principle hang on the same regression.
+LOCK_REGRESSION_TIMEOUT = pytest.mark.timeout(20)
+
 ENV_KEYS = (
     "RUNNER_SESSIONS", "RUNNER_HOST", "RUNNER_NAME", "RUNNER_PROJECTS",
     "RUNNER_AGENTS", "RUNNER_WORKSPACE",
@@ -378,9 +390,19 @@ class _FakeProc:
     def __init__(self, lines, returncode: int = 0):
         self.stdout = iter(lines)
         self.returncode = returncode
+        self.killed = False
 
-    def wait(self):
+    def wait(self, timeout=None):
+        # Accepting (and ignoring) `timeout` matters: without it, EVERY test
+        # using this fake would hit a TypeError on run_claude's real
+        # `proc.wait(timeout=...)` call, silently masked by the `finally`
+        # block's broad `except Exception`, and would never actually
+        # exercise the real reap path (review N4's regression lived exactly
+        # in that path).
         return self.returncode
+
+    def kill(self):
+        self.killed = True
 
 
 def _stream_json_lines(session_id: str, text: str) -> list[str]:
@@ -433,6 +455,43 @@ def test_run_claude_captures_session_id_and_forwards_transcript(cloud_runner, mo
     seqs = [int(p[2]) for p in parsed]
     assert seqs == sorted(seqs) == list(range(1, len(seqs) + 1))
     assert any(e["kind"] == "assistant" for e in events)
+    # review N4: a clean turn that reached EOF on its own must never be
+    # killed — only a genuinely hung child (bounded wait times out) may be.
+    assert fake_proc.killed is False
+
+
+def test_run_claude_clean_turn_without_result_event_is_not_killed_or_marked_failed(
+    cloud_runner, monkeypatch, tmp_path,
+):
+    """review N4: the regression's exact precondition — claude ends its
+    stdout stream (no more stream-json lines, i.e. the loop reaches EOF)
+    WITHOUT ever emitting a `result` event, then exits 0 (e.g. real `claude`
+    doing a little housekeeping — closing out its own transcript file, the
+    very file I1/C2's --resume depends on — after its last visible line).
+    An unconditional kill()-before-wait() at EOF would SIGKILL a process
+    that was already exiting cleanly, flipping this turn's outcome to a
+    stderr-tail failure even though nothing went wrong. Must stay ok=True,
+    and kill() must never be called for this shape."""
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "sess-clean"}) + "\n",
+        json.dumps({
+            "type": "assistant", "session_id": "sess-clean",
+            "message": {"content": [{"type": "text", "text": "all done"}]},
+        }) + "\n",
+        # No `result` line — the loop still reaches EOF (proc.stdout is
+        # exhausted) and the process is about to exit 0 on its own.
+    ]
+    fake_proc = _FakeProc(lines, returncode=0)
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: fake_proc)
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, {}))
+
+    ok, _text, cli_session_id = cloud_runner.run_claude(
+        "hi", "turn-clean-no-result", lambda batch: None, cwd=tmp_path,
+    )
+
+    assert fake_proc.killed is False
+    assert ok is True
+    assert cli_session_id == "sess-clean"
 
 
 def test_run_claude_transcript_failure_does_not_fail_turn(cloud_runner, monkeypatch, tmp_path):
@@ -533,6 +592,7 @@ def test_run_claude_genuine_failure_after_output_does_not_retry(cloud_runner, mo
     assert cli_session_id == "resumed-1"
 
 
+@LOCK_REGRESSION_TIMEOUT
 def test_run_claude_production_batching_crosses_flush_threshold(cloud_runner, monkeypatch, tmp_path):
     """Drives run_claude's OWN byte-threshold flush logic (not just the pure
     _chunk_transcript_lines helper) — review coverage gap: feed enough bytes
@@ -568,6 +628,7 @@ def test_run_claude_production_batching_crosses_flush_threshold(cloud_runner, mo
     assert shipped == [line.strip() for line in lines]
 
 
+@LOCK_REGRESSION_TIMEOUT
 def test_run_claude_periodic_flush_fires_during_a_quiet_stdout(cloud_runner, monkeypatch, tmp_path):
     """review I2: the byte/size flush only runs when a NEW line arrives, so a
     long-quiet stdout (a multi-minute tool call) must not sit on unflushed
@@ -667,6 +728,7 @@ class _HangingFakeProc:
         return self.returncode if self.returncode is not None else 0
 
 
+@LOCK_REGRESSION_TIMEOUT
 def test_run_claude_finally_reaps_safely_on_genuine_mid_loop_exception(
     cloud_runner, monkeypatch, tmp_path,
 ):
@@ -736,6 +798,7 @@ def test_run_claude_finally_reaps_safely_on_genuine_mid_loop_exception(
 # ── genuine concurrency tests (review: "two real concurrency tests over ─────
 # thirteen structural ones") ─────────────────────────────────────────────────
 
+@LOCK_REGRESSION_TIMEOUT
 def test_run_claude_concurrent_flushes_never_reorder_duplicate_or_drop(cloud_runner, monkeypatch, tmp_path):
     """Drives the READ LOOP's own byte-triggered flush and the PERIODIC
     background thread's flush against each other for real: a tiny
@@ -792,6 +855,18 @@ def test_run_claude_concurrent_flushes_never_reorder_duplicate_or_drop(cloud_run
 
     def fake_api(method, path, body=None):
         if path.endswith("/transcript"):
+            # Jitter (review N6): without this, the fake server returns so
+            # fast that the window between seq-allocation and the call being
+            # RECORDED is nanoseconds — a real reorder essentially never
+            # materializes even with transcript_post_lock deleted entirely
+            # (verified: that mutant passed this test 5/5 before this jitter
+            # was added). Delaying every other (odd-seq) call gives a missing
+            # lock a real chance to let a later, even-seq call's POST land
+            # and get recorded FIRST — turning "no lock" into an actually
+            # observable, not just theoretical, failure.
+            seq = int(body["batch_id"].split(":")[2])
+            if seq % 2:
+                time.sleep(0.02)
             with calls_lock:
                 transcript_calls.append(body)
             return 200, {}
@@ -822,15 +897,25 @@ def test_run_claude_concurrent_flushes_never_reorder_duplicate_or_drop(cloud_run
     assert len(transcript_calls) > 1, "expected genuine contention to produce more than one flush"
 
 
+@LOCK_REGRESSION_TIMEOUT
 def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, monkeypatch, tmp_path):
-    """review N2: before the fix, every per-line append held `transcript_lock`
-    for the ENTIRE duration of a flush's network POST (including retries).
-    This drives a slow POST specifically from the PERIODIC thread while the
-    read loop keeps appending fresh lines on the main thread, and asserts the
-    read loop was NOT stalled behind it: total wall-clock time stays close to
-    the (short) time it takes to feed the lines, not to
-    (slow POST duration + line-feed duration) as it would if a per-line
-    append had to wait for the in-flight POST to finish."""
+    """review N2 (hardened per round-2 N7): before the fix, every per-line
+    append held `transcript_lock` for the ENTIRE duration of a flush's
+    network POST (including retries). This drives a slow POST specifically
+    from the PERIODIC thread while the read loop keeps consuming fresh lines
+    on the main thread.
+
+    Asserts STRUCTURALLY rather than on total elapsed wall-clock time (a
+    round-2 finding: a 0.43-0.44s vs. 0.5s bound is only ~13% headroom, thin
+    enough to flake on a loaded/shared CI runner): records the timestamp each
+    line is CONSUMED off stdout, and requires the LAST one to land before the
+    slow POST returns. If per-line appends were blocked behind the in-flight
+    POST, no further line could be consumed until it finished, so the last
+    line's timestamp would fall AFTER the POST's return — this cannot flake
+    on system load the way a total-duration bound can, because it compares
+    two events on the SAME timeline rather than an absolute duration against
+    a fixed constant.
+    """
     monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(cloud_runner, "TRANSCRIPT_FLUSH_BYTES", 10**9)  # never byte-trigger; isolate the timer
 
@@ -849,10 +934,13 @@ def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, m
         {"type": "result", "session_id": "sess-slow-post", "result": "done", "is_error": False}
     ) + "\n")
 
+    line_consumed_at: list[float] = []
+
     class _SlowLineStdout:
         def __iter__(self):
             for line in lines:
                 time.sleep(LINE_DELAY_SECONDS)
+                line_consumed_at.append(time.monotonic())
                 yield line
 
     class _FakeProcSlowLines:
@@ -869,6 +957,7 @@ def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, m
     monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProcSlowLines())
 
     first_post_started = threading.Event()
+    post_finished_at: list[float] = []
     call_count = [0]
     calls_lock = threading.Lock()
 
@@ -880,27 +969,21 @@ def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, m
             if is_first:
                 first_post_started.set()
                 time.sleep(SLOW_POST_SECONDS)  # simulate a slow/struggling canopy-web
+                post_finished_at.append(time.monotonic())
             return 200, {}
         raise AssertionError(f"unexpected call {method} {path}")
 
     monkeypatch.setattr(cloud_runner, "_api", fake_api)
 
-    start = time.monotonic()
     ok, _text, _sid = cloud_runner.run_claude(
         "hi", "turn-slow-post", lambda batch: None, cwd=tmp_path,
     )
-    elapsed = time.monotonic() - start
 
     assert ok is True
     assert first_post_started.is_set(), "the periodic flush never fired a POST to slow down"
-    # If per-line appends were blocked behind the slow POST (the pre-N2
-    # behavior), elapsed would be at least SLOW_POST_SECONDS PLUS the line
-    # feed time serialized after it. Unblocked, the line-feeding (bounded by
-    # N_LINES * LINE_DELAY_SECONDS) overlaps the slow POST almost entirely, so
-    # total time stays close to SLOW_POST_SECONDS with generous headroom —
-    # nowhere near the fully-serialized sum.
-    serialized_lower_bound = SLOW_POST_SECONDS + (N_LINES * LINE_DELAY_SECONDS)
-    assert elapsed < serialized_lower_bound - 0.1, (
-        f"elapsed={elapsed:.3f}s is too close to the fully-serialized bound "
-        f"({serialized_lower_bound:.3f}s) — appends look blocked on the slow POST"
+    assert post_finished_at, "the slow POST never returned"
+    assert line_consumed_at, "no lines were consumed"
+    assert line_consumed_at[-1] < post_finished_at[0], (
+        "the LAST line was only consumed AFTER the slow POST returned — "
+        "the read loop looks blocked behind it (review N2)"
     )
