@@ -3507,6 +3507,8 @@ export interface components {
              * Format: date-time
              */
             readonly expires_at: string;
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /** TokenExchangeIn */
         readonly TokenExchangeIn: {

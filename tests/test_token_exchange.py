@@ -3,6 +3,8 @@ from django.contrib.auth.models import User
 from django.test import Client, override_settings
 
 from apps.tokens.models import AppCredential, DelegatedToken
+from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
@@ -114,3 +116,100 @@ def test_exchange_rejects_domain_absent_from_oauth_allowlist():
         name="partner-app", domains=["partner.org"], created_by=admin)
     resp = _post(raw, "someone@partner.org")
     assert resp.status_code == 403
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Tenant-scoped provisioning: AppCredential.provision_workspace /
+# provision_role. The workspace is never client input — it comes only
+# from the credential row (see docs/superpowers/plans/
+# 2026-07-26-tenant-scoped-provisioning.md, Task 1).
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _grant(cred, ws, role=WorkspaceMembership.EDITOR):
+    cred.provision_workspace = ws
+    cred.provision_role = role
+    cred.save(update_fields=["provision_workspace", "provision_role"])
+    return cred
+
+
+def test_exchange_provisions_membership_in_granted_workspace(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    resp = _post(raw, "newperson@dimagi.com")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["workspace"] == "connect"
+
+    user = User.objects.get(email="newperson@dimagi.com")
+    memberships = WorkspaceMembership.objects.filter(user=user)
+    assert memberships.count() == 1
+    m = memberships.get()
+    assert m.workspace_id == "connect"
+    assert m.role == WorkspaceMembership.EDITOR
+
+
+def test_exchange_without_provision_grants_no_membership(cred):
+    raw, _ = cred
+    resp = _post(raw, "noworkspace@dimagi.com")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["workspace"] is None
+
+    user = User.objects.get(email="noworkspace@dimagi.com")
+    assert WorkspaceMembership.objects.filter(user=user).count() == 0
+
+
+def test_exchange_provisioning_never_raises_an_existing_members_role(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    user = User.objects.create_user("existing", "existing@dimagi.com", "pw")
+    wsvc.ensure_member(ws, user, WorkspaceMembership.VIEWER)
+
+    resp = _post(raw, "existing@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    assert m.role == WorkspaceMembership.VIEWER  # not raised to editor
+
+
+def test_exchange_provisioning_never_lowers_an_existing_members_role(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.VIEWER)
+
+    user = User.objects.create_user("existing2", "existing2@dimagi.com", "pw")
+    wsvc.ensure_member(ws, user, WorkspaceMembership.OWNER)
+
+    resp = _post(raw, "existing2@dimagi.com")
+    assert resp.status_code == 200, resp.content
+
+    m = WorkspaceMembership.objects.get(workspace=ws, user=user)
+    assert m.role == WorkspaceMembership.OWNER  # not lowered to viewer
+
+
+def test_exchange_rejected_domain_provisions_nothing(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    resp = _post(raw, "evil@attacker.org")
+    assert resp.status_code == 403
+    assert not User.objects.filter(email="evil@attacker.org").exists()
+    assert WorkspaceMembership.objects.filter(workspace=ws).count() == 0
+
+
+def test_exchange_inactive_user_provisions_nothing(cred):
+    raw, c = cred
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
+    _grant(c, ws, WorkspaceMembership.EDITOR)
+
+    user = User.objects.create_user("offboarded2", "offboarded2@dimagi.com", "pw")
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    resp = _post(raw, "offboarded2@dimagi.com")
+    assert resp.status_code == 403
+    assert WorkspaceMembership.objects.filter(workspace=ws, user=user).count() == 0

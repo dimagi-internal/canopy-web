@@ -33,6 +33,7 @@ class TokenExchangeIn(Schema):
 class TokenExchangeOut(Schema):
     token: str
     expires_at: datetime
+    workspace: str | None = None
 
 
 def _allowed_login_domains() -> set[str]:
@@ -91,6 +92,19 @@ def token_exchange(request, payload: TokenExchangeIn):
         # apps.common.auth_adapter.CustomSocialAccountAdapter.pre_social_login.
         EmailAddress.objects.create(user=user, email=email, verified=True, primary=True)
     wsvc.auto_join_workspaces(user)
+
+    # Tenant-scoped provisioning: the workspace comes ONLY from this
+    # credential's server-side row, never from the request — a rejected
+    # exchange (invalid credential / disallowed domain / inactive user) never
+    # reaches this line, so it can never leave a membership behind. create-only
+    # (`ensure_member` is get_or_create): an existing member's role is never
+    # raised or lowered by an app. See docs/superpowers/plans/
+    # 2026-07-26-tenant-scoped-provisioning.md.
+    workspace_slug = None
+    if app.provision_workspace_id:
+        wsvc.ensure_member(app.provision_workspace, user, app.provision_role)
+        workspace_slug = app.provision_workspace_id
+
     AppCredential.objects.filter(pk=app.pk).update(last_used_at=timezone.now())
     raw_token, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl)
-    return {"token": raw_token, "expires_at": token.expires_at}
+    return {"token": raw_token, "expires_at": token.expires_at, "workspace": workspace_slug}
