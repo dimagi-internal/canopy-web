@@ -46,7 +46,7 @@ export { ChatPanel, type ChatPanelProps } from "./ChatPanel";
 export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";
-export { SendBox } from "./SendBox";
+export { SendBox, type PendingAttachment } from "./SendBox";
 export { PresenceChips } from "./PresenceChips";
 export { ConnectionStatus } from "./ConnectionStatus";
 export {

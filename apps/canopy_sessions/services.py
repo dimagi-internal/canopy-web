@@ -545,6 +545,34 @@ def _resolve_placement(session: Session, placement: str | None):
     return None
 
 
+
+def claim_pending_attachments(session, message=None) -> list[dict]:
+    """Mark this session's un-sent attachments as sent, and describe them for the
+    runner.
+
+    Swept off the SESSION rather than passed by id, so the WebSocket `chat.send`
+    frame needs no new field and REST and WS behave identically. It also matches
+    the draft model: the draft is co-edited and shared, so anything attached to
+    it belongs to the send whoever presses the button.
+
+    `message` is None for a runner-origin session, which writes no user Message
+    row — hence the sent_at stamp, without which those rows would ride along on
+    every later send too.
+    """
+    from .models import Attachment
+
+    pending = list(Attachment.objects.filter(session=session, sent_at__isnull=True))
+    if not pending:
+        return []
+    now = timezone.now()
+    Attachment.objects.filter(pk__in=[a.pk for a in pending]).update(
+        sent_at=now, **({"message": message} if message is not None else {})
+    )
+    return [
+        {"id": str(a.id), "filename": a.filename, "content_type": a.content_type}
+        for a in pending
+    ]
+
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
 ) -> tuple[Message, Turn]:
@@ -605,12 +633,16 @@ def send_message(
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
+        origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+        attachments = claim_pending_attachments(session, message)
+        if attachments:
+            origin_ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
-            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+            origin_ref=origin_ref,
             pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
@@ -683,12 +715,18 @@ def _send_transcript_sourced_message(
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
+    origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+    # message=None: this path writes no durable user row, so the sent_at stamp is
+    # the only thing stopping these attachments riding along on every later send.
+    attachments = claim_pending_attachments(session, None)
+    if attachments:
+        origin_ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=Turn.ORIGIN_API,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
-        origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+        origin_ref=origin_ref,
         pinned_runner=pinned,
     )
     _maybe_interject(session, message)

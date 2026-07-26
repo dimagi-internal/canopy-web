@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChatPanel, PlacementBanner, useSessionSocket, type PlacementRunner } from 'canopy-ui/chat'
+import {
+  ChatPanel,
+  PlacementBanner,
+  useSessionSocket,
+  type PendingAttachment,
+  type PlacementRunner,
+} from 'canopy-ui/chat'
 import { Markdown } from '@/components/Markdown'
 import { wsUrl } from '@/lib/wsUrl'
 import {
@@ -13,6 +19,8 @@ import {
   placeTurn,
   ChatApiError,
   type ChatSessionDetail,
+  uploadAttachment,
+  deleteAttachment,
 } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { isBoundRunnerOffline, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
@@ -55,6 +63,48 @@ export function ChatPage() {
   // matching that name against the fleet-wide runner list.
   const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>([])
   const [placing, setPlacing] = useState(false)
+  // Staged attachments. Uploaded eagerly on pick/paste/drop so the file is on
+  // the server before you press send — sending then sweeps up whatever the
+  // session is holding, which is why no ids need to cross the WebSocket.
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+
+  const handleAttach = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        // Optimistic chip keyed on a temp id, swapped for the server's id on
+        // success. Without it a large paste looks like nothing happened.
+        const tempId = `pending:${file.name}:${Date.now()}:${Math.random()}`
+        setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: true }])
+        uploadAttachment(id!, file)
+          .then((saved) =>
+            setAttachments((prev) =>
+              prev.map((a) => (a.id === tempId ? { id: saved.id, filename: saved.filename } : a)),
+            ),
+          )
+          .catch((err: unknown) =>
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === tempId
+                  ? { ...a, uploading: false, error: err instanceof Error ? err.message : 'failed' }
+                  : a,
+              ),
+            ),
+          )
+      }
+    },
+    [id],
+  )
+
+  const handleRemoveAttachment = useCallback((attachmentId: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
+    // A failed upload has no server row (its id is still the temp one), so only
+    // ask the server to forget the ones it actually knows about.
+    if (!attachmentId.startsWith('pending:')) {
+      deleteAttachment(attachmentId).catch(() => {
+        /* the chip is already gone from the UI; a stray row is swept server-side */
+      })
+    }
+  }, [])
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
 
@@ -394,9 +444,18 @@ export function ChatPage() {
           state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={socket.sendChat}
+          onSend={() => {
+            // The server consumes whatever the session is holding, so the chips
+            // are spent the moment we send — leaving them would imply they will
+            // ride along again on the next message.
+            setAttachments([])
+            socket.sendChat()
+          }}
           onStop={socket.stopChat}
           awaitingReply={socket.awaitingReply}
+          attachments={attachments}
+          onAttach={handleAttach}
+          onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
           onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}
