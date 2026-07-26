@@ -150,6 +150,7 @@ from apps.workspaces.api import router as workspaces_router  # noqa: E402
 from apps.timeline.api import router as timeline_router  # noqa: E402
 from apps.system.api import router as system_router  # noqa: E402
 from apps.harness.api import router as harness_router  # noqa: E402
+from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.items_api import (  # noqa: E402
     agent_items_router,
@@ -167,6 +168,7 @@ api.add_router("", common_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
+api.add_router("/feedback", feedback_router)
 api.add_router("/auth", exchange_router)
 api.add_router("/reviews", reviews_router)
 api.add_router("/ddd", runs_router)
