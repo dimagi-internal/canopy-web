@@ -6,7 +6,10 @@ capabilities, runs `claude -p` on the turn's prompt, streams the assistant/tool
 output into the `TurnEvent` ledger, and finishes the turn. As of the
 **cloud-agent-bootstrap** milestone it is agent-ready — a real third standby, not
 just a `canopy-web` repo runner — see
-`docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+`docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`. As of
+**run-convergence PR2** it is also **session-capable**: it also posts the raw
+transcript for every turn and can `--resume` a claude CLI session across turns —
+see "Session-capable, transcript-posting, resumable" below.
 
 Everything is declared in **`runner.cfn.yaml`** (CloudFormation, matching
 `deploy/aws/canopy-web.cfn.yaml`): the instance, security group, IAM role, and a
@@ -85,6 +88,86 @@ reached yet, keep the original `WORK_DIR` scratch-dir behavior.
 `systemctl restart canopy-runner` on the box (or just wait for the next restart) —
 unlike `cloud_runner.py` itself (baked into UserData; see "Updating the runner
 code" below), it is NOT tied to the stack's cloud-init generation.
+
+## Session-capable, transcript-posting, resumable (run-convergence PR2)
+
+The runner declares **`capabilities.sessions: true`** by default (env
+`RUNNER_SESSIONS`, "0"/"false"/"no" to opt a specific box out) — this is what makes
+it eligible to claim chat/session-targeted `Turn`s at all (`claim_next_turn` gates
+those on `Runner.session_capable()`, apps/harness/models.py). It is **not yet a
+CloudFormation parameter** (`runner.cfn.yaml` only templates
+`RUNNER_PROJECTS`/`RUNNER_AGENTS`/`RUNNER_WORKSPACE`/`RUNNER_NAME` into
+`runner.env`); since the default is on, no template change is needed to enable it —
+to disable it on a specific box, add `RUNNER_SESSIONS=0` to `/opt/canopy-runner/runner.env`
+by hand and restart the service. Capabilities are re-synced on every restart
+(`pair_or_load` now `PATCH`es an already-paired runner's capabilities in place, via
+`PATCH /api/harness/runners/{id}`), so flipping the env on an existing box takes
+effect on the next restart without re-pairing (which would otherwise orphan its
+`RunnerBinding`s).
+
+**Raw transcript, forwarded verbatim.** Every raw `claude -p --output-format
+stream-json` line — whether or not it parses as JSON — is ALSO forwarded to
+`POST /api/harness/turns/{id}/transcript`, in addition to the reduced
+`assistant`/`tool_start`/`tool_end` `TurnEvent`s already streamed for the live UI.
+This is the durable, re-derivable artifact cost/structure aggregators read from
+(apps/harness's `TurnTranscript` model); the ledger stays a live, lossy stream on
+purpose. Batching is **by bytes, not line count** — the server caps a single
+request at 1 MiB of line bytes (`TRANSCRIPT_APPEND_MAX_BYTES` in
+`apps/harness/api.py`) and 422s over it, since a single large tool result can
+exceed a naive per-N-lines batch — `cloud_runner.py` flushes at 512 KiB
+(`TRANSCRIPT_FLUSH_BYTES`) or every 10s (`TRANSCRIPT_FLUSH_SECONDS`), whichever
+comes first, well under the server's cap, and always flushes whatever remains at
+the end of the turn. Every batch carries a unique `batch_id` scoped to
+`(turn, attempt, seq)` so a resume-fallback retry (see below) can never collide
+with — and silently no-op-drop — an earlier attempt's batch. A transcript POST
+failure is logged and swallowed: **it never fails the turn.**
+
+**Real `--resume` continuity.** A session turn's CLI session id is captured from
+the first stream-json line that carries one (normally `system`/`init`, which fires
+before any other output) and round-tripped through the EXISTING
+resolve-session/record-session RPCs (`POST /api/harness/runners/{id}/resolve-session`
+/ `record-session`) so a later turn on the same canopy `Session` can pass it back as
+`--resume <id>` instead of cold-starting. Concretely: `_session_resume_plan` asks
+resolve-session for a reusable handle before running claude; `_record_session_resume`
+reports the fresh (or reused) session id back after the turn. This reuses
+`RunnerBinding.session_key` — documented as "engine-agnostic ... was emdash_task" —
+rather than the newer `Session.cli_session_id` column
+(`apps/canopy_sessions/models.py`), which the docstring says is unwired for exactly
+this purpose but which nothing in `apps/harness/services.py` actually persists yet
+(`record_session`'s `session_id` param is accepted for wire-compat and currently
+discarded). `cloud_runner.py` sends BOTH fields on every record-session call, so
+wiring that column server-side later needs zero runner-side changes. Reuse is
+additionally gated on a stable `RUNNER_HOST` value (new env var, defaults to
+`RUNNER_NAME`) sent on every heartbeat/pairing call — `RunnerBinding.reusable_by`
+requires the runner id AND host to match the ones that recorded the binding, so a
+brand-new EC2 instance (a new `RUNNER_HOST`, since `RUNNER_NAME` defaults from the
+hostname) correctly cannot "resume" a session it never actually ran, and falls back
+to a fresh spawn instead.
+
+If `--resume <id>` yields **nothing** — the CLI exits non-zero having emitted no
+stream-json lines at all, its behavior when the resume target no longer exists —
+`run_claude` retries **once** as a fresh spawn (no `--resume`), mirroring the
+reuse-then-fall-back-to-create pattern `packages/canopy_runner/execute.py` already
+uses for emdash sessions. A failure that happens AFTER real output was produced
+under a resumed session is treated as a genuine task failure and is never retried
+(retrying would silently duplicate work under a new session).
+
+**What was and was not verified.** There is no live cloud runner instance running
+today (the EC2 stack is down), so none of this has been exercised against a real
+`claude` binary or a real canopy-web deployment. What IS covered, by unit tests
+under `deploy/ec2-runner/tests/` (mocking `subprocess.Popen` and the runner's own
+`_api` helper — see the test file for exactly what's stubbed): capability
+env-gating and the pair-time `PATCH`-in-place sync; byte-bounded transcript
+batching (`_chunk_transcript_lines`); `--resume` argv construction; the
+resolve-session/record-session request shapes (including the agentless-and-
+projectless-session degrade-to-fresh-spawn case); and `run_claude`'s session-id
+capture, transcript forwarding, and the resume-fails-then-falls-back-to-fresh-spawn
+behavior (and that a genuine post-resume failure does NOT retry). Not verified:
+the real `claude -p --output-format stream-json` event shape (the `system`/`init`
+event carrying `session_id` is documented CLI behavior, not something captured
+from a live run here), real network behavior against `apps/harness`'s actual
+endpoints, and end-to-end resume against a real, previously-`--resume`d Claude
+session.
 
 ## Per-agent canopy-web PAT (TODO — not yet provisioned)
 

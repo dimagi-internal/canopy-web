@@ -6,12 +6,29 @@ drives a GUI over CDP, which is wrong for a headless box. This pairs a cloud run
 claims harness Turns, runs `claude -p` (stream-json) on the turn's prompt, streams
 the assistant/tool output into the TurnEvent ledger, and finishes the turn.
 
+SESSION-CAPABLE (RC/run-convergence PR2): this runner declares `capabilities.sessions`
+(RUNNER_SESSIONS, default on) so it is eligible to claim chat/session-targeted Turns —
+see Runner.session_capable() in apps/harness/models.py. Every raw stream-json line the
+CLI emits is ALSO forwarded verbatim to POST /turns/{id}/transcript (batched by bytes;
+see deploy/ec2-runner/README.md), in addition to the reduced TurnEvents. And a session
+turn's CLI session id is captured from the stream and round-tripped through the
+existing resolve-session/record-session RPCs so a later turn on the same canopy
+Session can `--resume` it instead of cold-starting — see _session_resume_plan /
+_record_session_resume below for exactly which field carries that id and why.
+
 Config comes from the environment (see deploy/ec2-runner/README.md):
   CANOPY_BASE_URL   e.g. https://labs.connect.dimagi.com/canopy
   CANOPY_TOKEN      a canopy-web Personal Access Token (Bearer)
   RUNNER_NAME       display name (default: this hostname)
   RUNNER_PROJECTS   comma-separated repo names this runner may drive (e.g. canopy-web)
   RUNNER_AGENTS     comma-separated agent slugs this runner may drive (e.g. echo,ada)
+  RUNNER_SESSIONS   whether this runner claims chat/session turns (default: on; "0"/
+                     "false"/"no" to disable)
+  RUNNER_HOST       stable identity for session-reuse gating (default: RUNNER_NAME).
+                     Analogous to emdash's per-macOS-account host, but for a headless
+                     box it just needs to be STABLE across process restarts on the
+                     SAME instance — a new EC2 instance getting a new value is the
+                     correct behavior (see _session_resume_plan).
   RUNNER_WORKSPACE  optional workspace slug (defaults to the token's default)
   CLAUDE_BIN        path to the claude binary (default: claude)
   WORK_DIR          scratch dir for project/session turns and clone-less agents
@@ -40,6 +57,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 BASE_URL = os.environ.get("CANOPY_BASE_URL", "").rstrip("/")
 TOKEN = os.environ.get("CANOPY_TOKEN", "")
@@ -50,14 +68,38 @@ def _csv(name: str) -> list[str]:
     return [x.strip() for x in (os.environ.get(name, "") or "").split(",") if x.strip()]
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    """A tri-state env flag: unset -> `default`; anything else -> its truthiness,
+    with the obvious falsy spellings ("0"/"false"/"no"/"") honored regardless of
+    case. Same env-var-only philosophy as _csv (no JSON in the env file)."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() not in ("0", "false", "no", "")
+
+
 # Capabilities as plain comma-separated env vars — no JSON in the env file, which
 # bash `source` and systemd EnvironmentFile both mangle (they strip the quotes).
-RUNNER_CAPS: dict[str, list[str]] = {}
+RUNNER_CAPS: dict[str, object] = {}
 if _csv("RUNNER_PROJECTS"):
     RUNNER_CAPS["projects"] = _csv("RUNNER_PROJECTS")
 if _csv("RUNNER_AGENTS"):
     RUNNER_CAPS["agents"] = _csv("RUNNER_AGENTS")
+# Default ON: this runner kind (headless, `claude -p` subprocess) is exactly the
+# session-capable executor SP2b anticipated (apps/canopy_sessions/models.py's
+# Session.cli_session_id docstring: "continuity for the real subprocess runner").
+# Opt out per-box with RUNNER_SESSIONS=0 if a particular instance should stay
+# agent/project-only.
+RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", True)
+if RUNNER_SESSIONS:
+    RUNNER_CAPS["sessions"] = True
 RUNNER_WORKSPACE = os.environ.get("RUNNER_WORKSPACE", "")
+# A stable identity for THIS process/instance, load-bearing for session-reuse
+# gating (RunnerBinding.reusable_by requires host to match — see
+# _session_resume_plan). Unlike emdash's per-macOS-account host, a headless box
+# has no account concept; RUNNER_NAME (which defaults to the hostname) is a fine
+# stand-in as long as it is stable across restarts of the SAME instance.
+RUNNER_HOST = os.environ.get("RUNNER_HOST") or RUNNER_NAME
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 WORK_DIR = os.environ.get("WORK_DIR", "/tmp/canopy-runner-work")
 # Agent-fleet bootstrap (deploy/ec2-runner/bootstrap_agents.sh) — see
@@ -80,6 +122,16 @@ WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
 # apps/harness/services.py) or a long turn gets swept LOST mid-execution.
 LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
+
+# The server caps a single POST /turns/{id}/transcript body at 1 MiB of line bytes
+# (apps/harness/api.py::TRANSCRIPT_APPEND_MAX_BYTES) and 422s over it — batch well
+# under that so this runner never has to handle (or silently drop on) that error.
+TRANSCRIPT_APPEND_MAX_BYTES = 900 * 1024
+# Flush the accumulated raw-line buffer once it reaches this many bytes...
+TRANSCRIPT_FLUSH_BYTES = 512 * 1024
+# ...or this many seconds have passed since the last flush, whichever comes first —
+# a quiet turn (waiting on a long tool call) must not sit on unflushed lines forever.
+TRANSCRIPT_FLUSH_SECONDS = 10.0
 
 _stop = False
 
@@ -107,6 +159,44 @@ def _api(method: str, path: str, body: dict | None = None) -> tuple[int, dict | 
         return 0, None
 
 
+def _chunk_transcript_lines(
+    lines: list[str], max_bytes: int = TRANSCRIPT_APPEND_MAX_BYTES
+) -> list[list[str]]:
+    """Split raw JSONL lines into batches whose UTF-8-encoded total stays at or
+    under `max_bytes` — the server enforces a hard per-request byte cap, not a
+    line count, so a single giant tool-result line would blow past a count-based
+    batch. A single line that itself exceeds `max_bytes` still ships alone rather
+    than being dropped (the server's own 100MB per-turn ceiling, not this client,
+    is the backstop for that pathological case)."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_bytes = 0
+    for line in lines:
+        n = len(line.encode("utf-8"))
+        if current and current_bytes + n > max_bytes:
+            batches.append(current)
+            current = []
+            current_bytes = 0
+        current.append(line)
+        current_bytes += n
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
+    """The `claude -p` argv for one invocation. Split out from `run_claude` so the
+    `--resume` wiring is unit-testable without touching subprocess."""
+    cmd = [
+        CLAUDE_BIN, "-p", prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--dangerously-skip-permissions",
+    ]
+    if resume_session_id:
+        cmd += ["--resume", resume_session_id]
+    return cmd
+
+
 def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
     """Renew this turn's claim lease for the duration of execution.
 
@@ -130,7 +220,8 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
     def _loop() -> None:
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
-            _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id]})
+            _api("POST", f"/runners/{runner_id}/heartbeat",
+                 {"active_turn_ids": [turn_id], "host": RUNNER_HOST})
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -141,11 +232,19 @@ def pair_or_load() -> str:
         rid = json.loads(STATE_FILE.read_text()).get("runner_id")
         if rid:
             # Confirm it still exists (a heartbeat 404 means it was retired).
-            status, _ = _api("POST", f"/runners/{rid}/heartbeat", {"active_turn_ids": []})
+            status, _ = _api("POST", f"/runners/{rid}/heartbeat",
+                              {"active_turn_ids": [], "host": RUNNER_HOST})
             if status == 200:
                 _log(f"reusing runner {rid}")
+                # Capabilities were historically fixed at pairing time; re-pairing
+                # to pick up a changed env var (e.g. RUNNER_SESSIONS flipped on for
+                # a box paired before this feature existed) would mint a NEW runner
+                # id and orphan this one's RunnerBindings. PATCH in place instead
+                # (apps/harness/api.py::update_runner_capabilities) so a redeploy
+                # with a new env always reflects the CURRENT declared capabilities.
+                _api("PATCH", f"/runners/{rid}", {"capabilities": RUNNER_CAPS})
                 return rid
-    body = {"name": RUNNER_NAME, "kind": "cloud", "capabilities": RUNNER_CAPS}
+    body = {"name": RUNNER_NAME, "kind": "cloud", "capabilities": RUNNER_CAPS, "host": RUNNER_HOST}
     if RUNNER_WORKSPACE:
         body["workspace"] = RUNNER_WORKSPACE
     status, payload = _api("POST", "/runners/", body)
@@ -201,23 +300,68 @@ def _agent_env(slug: str | None) -> dict:
     return env
 
 
+def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[str]) -> None:
+    """Ship one already-byte-bounded batch. Best-effort: per the transcript
+    contract (deploy/ec2-runner/README.md), a transcript failure must never fail
+    the turn, so every error is logged and swallowed here, never raised.
+
+    `batch_id` is scoped to (turn, attempt, seq) rather than just (turn, seq): a
+    resume-fallback retry (see `run_claude`) re-invokes this whole function with
+    seq restarting at 1, and reusing a bare `f"{turn_id}:{seq}"` id would collide
+    with the FIRST (failed-resume) attempt's batch 1 — the server's dedup treats
+    a repeated batch_id as a lost-ack retry and silently no-ops it, which would
+    drop the fresh attempt's transcript rather than the intended duplicate."""
+    if not lines:
+        return
+    batch_id = f"{turn_id}:{attempt_id}:{seq}"
+    try:
+        status, _ = _api(
+            "POST", f"/turns/{turn_id}/transcript", {"lines": lines, "batch_id": batch_id}
+        )
+        if status != 200:
+            _log(f"transcript POST turn={turn_id[:8]} batch={seq} -> {status}")
+    except Exception as exc:  # noqa: BLE001 — a transcript hiccup must never fail the turn
+        _log(f"transcript POST turn={turn_id[:8]} batch={seq} raised: {exc}")
+
+
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
-               agent_slug: str | None = None) -> tuple[bool, str]:
+               agent_slug: str | None = None, resume_session_id: str | None = None,
+               _resume_retried: bool = False) -> tuple[bool, str, str]:
     """Run `claude -p` on the prompt, streaming stream-json events via `emit`
-    (a callable taking a list of event dicts — WS or REST). Returns (ok, final_text).
+    (a callable taking a list of event dicts — WS or REST). Returns
+    (ok, final_text, cli_session_id).
 
     `cwd` lets the caller run this IN an agent's real clone (see `_turn_cwd`)
     instead of a throwaway scratch dir; None keeps the original scratch-dir
     behavior (project/session turns, or an agent with no bootstrapped clone).
-    `agent_slug` layers that agent's provisioned env on top (see `_agent_env`)."""
+    `agent_slug` layers that agent's provisioned env on top (see `_agent_env`).
+
+    Every raw stream-json line the CLI emits — regardless of whether it parses —
+    is ALSO forwarded verbatim to POST /turns/{id}/transcript, batched by bytes
+    (never held entirely in memory) and flushed periodically and at the end; see
+    `_post_transcript_batch` / TRANSCRIPT_FLUSH_*. This is IN ADDITION to the
+    reduced TurnEvents `emit` carries for the live UI — the transcript is the
+    durable, re-derivable artifact (cost/structure), the ledger stays the live
+    stream (docs/superpowers/specs/2026-07-26-run-execution-convergence-design.md).
+
+    `cli_session_id` is the CLI's own session id, captured from the first event
+    that carries one (normally `system`/`init`, fired before any other output) —
+    the caller round-trips it through record-session so a LATER turn on the same
+    canopy Session can pass it back as `resume_session_id` here.
+
+    `resume_session_id`, if given, is passed as `--resume <id>`. If that yields
+    NOTHING — the process exits non-zero having emitted no stream-json lines at
+    all, the CLI's behavior when a resume target no longer exists — this retries
+    ONCE as a fresh spawn (`_resume_retried` guards against looping), mirroring
+    the reuse-then-fall-back-to-create pattern packages/canopy_runner/execute.py
+    already uses for emdash sessions: never assume continuity works, always have
+    a cold-start fallback.
+    """
     workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
     workdir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        CLAUDE_BIN, "-p", prompt,
-        "--output-format", "stream-json", "--verbose",
-        "--dangerously-skip-permissions",
-    ]
-    _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}")
+    cmd = _claude_cmd(prompt, resume_session_id)
+    _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}"
+         + (f" --resume {resume_session_id}" if resume_session_id else ""))
     # stderr goes to a file, not PIPE: a chatty claude can fill the 64KB pipe buffer
     # while we're only reading stdout, deadlocking the process. A file has no such
     # limit; we tail it for the failure path below.
@@ -228,8 +372,15 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         env=_agent_env(agent_slug),
     )
     final_text = ""
+    cli_session_id = ""
     ok = True
+    lines_seen = 0
     batch: list[dict] = []
+    attempt_id = uuid.uuid4().hex[:8]
+    transcript_buf: list[str] = []
+    transcript_bytes = 0
+    transcript_seq = 0
+    last_transcript_flush = time.monotonic()
 
     def flush():
         nonlocal batch
@@ -237,14 +388,31 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             emit(batch)
             batch = []
 
+    def flush_transcript():
+        nonlocal transcript_buf, transcript_bytes, transcript_seq, last_transcript_flush
+        for chunk in _chunk_transcript_lines(transcript_buf):
+            transcript_seq += 1
+            _post_transcript_batch(turn_id, attempt_id, transcript_seq, chunk)
+        transcript_buf = []
+        transcript_bytes = 0
+        last_transcript_flush = time.monotonic()
+
     for line in proc.stdout:  # type: ignore[union-attr]
         line = line.strip()
         if not line:
             continue
+        lines_seen += 1
+        transcript_buf.append(line)
+        transcript_bytes += len(line.encode("utf-8"))
+        if (transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
+                or time.monotonic() - last_transcript_flush >= TRANSCRIPT_FLUSH_SECONDS):
+            flush_transcript()
         try:
             evt = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if evt.get("session_id"):
+            cli_session_id = evt["session_id"]
         etype = evt.get("type")
         if etype == "assistant":
             for block in (evt.get("message", {}).get("content") or []):
@@ -264,6 +432,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     proc.wait()
     stderr_file.close()
     flush()
+    flush_transcript()
     if proc.returncode != 0 and not final_text:
         ok = False
         try:
@@ -271,7 +440,17 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         except OSError:
             tail = ""
         final_text = tail[-500:]
-    return ok, final_text
+    if resume_session_id and not _resume_retried and lines_seen == 0 and proc.returncode != 0:
+        # The CLI emitted NOTHING at all before exiting — the resume target is
+        # gone (expired/evicted), not a genuine task failure. Fall back to a
+        # fresh spawn rather than surfacing a cold "resume failed" as the turn's
+        # result. A failure AFTER real output happened is a genuine task failure
+        # and must not retry (that would silently duplicate work/tokens).
+        _log(f"resume of session {resume_session_id!r} yielded nothing "
+             f"(turn {turn_id[:8]}); falling back to a fresh spawn")
+        return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                           resume_session_id=None, _resume_retried=True)
+    return ok, final_text, cli_session_id
 
 
 def _stage_github_token(token: str) -> None:
@@ -315,10 +494,12 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     clone as-is (stale beats absent).
 
     Session turns are excluded explicitly: TurnOut surfaces agent_slug for an
-    agent-backed chat session too, but a live chat session is bridged, not run
-    from a repo checkout — so a chat turn must keep scratch-dir behavior even
-    once cloud sessions ship (this runner does not declare capabilities.sessions
-    today, so it is inert now, but the guard makes the intent explicit)."""
+    agent-backed chat session too, but a session turn's "prompt" is one message
+    in an ongoing conversation, not "go work in this repo" — scratch-dir is the
+    right default whether or not the session happens to have an agent identity.
+    (This runner now DOES declare capabilities.sessions and executes session
+    turns directly via `claude -p --resume` — see run_claude/_session_resume_plan
+    — so this is live, not merely anticipatory.)"""
     # A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
     # session id in origin_ref — that, not a top-level field, is the session
     # signal on TurnOut. A live chat is bridged, never run from a checkout.
@@ -423,19 +604,111 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
     return False
 
 
+# ── session continuity (resolve-session / record-session round-trip) ───────
+def _session_thread_key(turn: dict) -> str:
+    """The chat_session id for a SESSION-targeted turn, or "" for an agent/project
+    turn. apps/canopy_sessions/services.py always stamps BOTH `thread_key` and
+    `chat_session_id` together on a chat send's origin_ref — `chat_session_id`'s
+    presence is the reliable "this is a session turn" signal (mirrors
+    `_turn_agent_slug` above); `thread_key` is what resolve/record-session key on."""
+    ref = turn.get("origin_ref") or {}
+    if not ref.get("chat_session_id"):
+        return ""
+    return ref.get("thread_key") or ref["chat_session_id"]
+
+
+def _session_resume_plan(runner_id: str, turn: dict) -> str:
+    """Ask the server whether a PRIOR turn on this same canopy Session left a CLI
+    session id this runner can `--resume`. Returns that id, or "" for a fresh
+    spawn (brand new thread, a different runner/host owns the hint, or the turn
+    is not a session turn at all).
+
+    Reuses the existing resolve-session RPC (apps/harness/api.py) rather than a
+    new endpoint — `RunnerBinding.session_key` is documented as "engine-agnostic
+    ... was emdash_task", so a raw claude CLI session id is exactly the kind of
+    handle it was generalized to carry. `Session.cli_session_id` (the column
+    SP2b's docstring names for this) stays unwired by this PR — see the PR2
+    report for why that's a deliberate, small, separately-tracked gap rather
+    than blocking this on a schema/service change.
+
+    An agentless AND projectless session (legal per the Session model, but not
+    something resolve-session's tenant gate accepts today) degrades silently to
+    fresh-per-turn here rather than failing the turn.
+    """
+    thread_key = _session_thread_key(turn)
+    if not thread_key:
+        return ""
+    agent_slug = turn.get("agent_slug") or ""
+    project = turn.get("project") or ""
+    if not agent_slug and not project:
+        return ""
+    body: dict = {"thread_key": thread_key}
+    if project:
+        body["project"] = project
+        body["workspace"] = turn.get("workspace_slug") or ""
+    else:
+        body["agent_slug"] = agent_slug
+    status, plan = _api("POST", f"/runners/{runner_id}/resolve-session", body)
+    if status != 200 or not plan:
+        return ""
+    if plan.get("reuse") and plan.get("emdash_task_id"):
+        return plan["emdash_task_id"]
+    return ""
+
+
+def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> None:
+    """Persist this turn's real CLI session id as the thread's engine handle, so
+    a LATER turn on the same canopy Session can `--resume` it (see
+    `_session_resume_plan`). Best-effort: a failure here only degrades the NEXT
+    turn to a fresh spawn, never this one — logged, never raised.
+
+    Sends BOTH `emdash_task_id` (what's actually read back today, via
+    RunnerBinding.session_key) and `session_id` (the wire-compat field already
+    threaded through RecordSessionIn -> services.record_session, currently a
+    documented no-op) — the moment the server wires that param through to
+    `Session.cli_session_id`, this call starts populating it with zero runner-
+    side changes.
+    """
+    thread_key = _session_thread_key(turn)
+    if not thread_key or not cli_session_id:
+        return
+    agent_slug = turn.get("agent_slug") or ""
+    project = turn.get("project") or ""
+    if not agent_slug and not project:
+        return
+    body: dict = {
+        "thread_key": thread_key,
+        "emdash_task_id": cli_session_id,
+        "session_id": cli_session_id,
+    }
+    if project:
+        body["project"] = project
+        body["workspace"] = turn.get("workspace_slug") or ""
+    else:
+        body["agent_slug"] = agent_slug
+    try:
+        status, _ = _api("POST", f"/runners/{runner_id}/record-session", body)
+        if status != 200:
+            _log(f"record-session turn={str(turn.get('id', ''))[:8]} -> {status}")
+    except Exception as exc:  # noqa: BLE001 — never let this fail the turn
+        _log(f"record-session turn={str(turn.get('id', ''))[:8]} raised: {exc}")
+
+
 # ── REST fallback loop (poll) ───────────────────────────────────────────────
 def run_over_rest(runner_id: str) -> None:
     _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback)")
     while not _stop:
-        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": []})
+        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [], "host": RUNNER_HOST})
         status, turn = _api("POST", f"/runners/{runner_id}/claim")
         if status != 200 or not turn:
             time.sleep(POLL_SECONDS)
             continue
         turn_id = turn["id"]
         _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST)")
-        _api("POST", f"/turns/{turn_id}/start", {"session_id": f"cloud-{turn_id[:8]}"})
-        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id]})
+        resume_id = _session_resume_plan(runner_id, turn)
+        _api("POST", f"/turns/{turn_id}/start",
+             {"session_id": resume_id or f"cloud-{turn_id[:8]}"})
+        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id], "host": RUNNER_HOST})
         cwd = _turn_cwd(turn, turn_id)
 
         def emit(events, _tid=turn_id):
@@ -444,12 +717,16 @@ def run_over_rest(runner_id: str) -> None:
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
-                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit, cwd=cwd,
-                                  agent_slug=_turn_agent_slug(turn))
+                ok, text, cli_session_id = run_claude(
+                    turn.get("prompt", ""), turn_id, emit, cwd=cwd,
+                    agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id or None,
+                )
             except Exception as exc:  # never let one turn kill the loop
-                ok, text = False, f"runner error: {exc}"
+                ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
+        if cli_session_id:
+            _record_session_resume(runner_id, turn, cli_session_id)
         finish = "done" if ok else "failed"
         _api("POST", f"/turns/{turn_id}/finish", {"status": finish, "result_note": text[:2000]})
         _log(f"finished turn {turn_id[:8]}: {finish}")
@@ -504,7 +781,9 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
         return False
     tid = turn["id"]
     _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS)")
-    _ws_request(ws, {"action": "start", "turn_id": tid, "session_id": f"cloud-{tid[:8]}"}, "start.ack")
+    resume_id = _session_resume_plan(runner_id, turn)
+    _ws_request(ws, {"action": "start", "turn_id": tid,
+                     "session_id": resume_id or f"cloud-{tid[:8]}"}, "start.ack")
     cwd = _turn_cwd(turn, tid)
 
     def emit(events, _tid=tid):
@@ -516,12 +795,16 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     lease_stop = _start_lease_renewal(runner_id, tid)
     try:
         try:
-            ok, text = run_claude(turn.get("prompt", ""), tid, emit, cwd=cwd,
-                                  agent_slug=_turn_agent_slug(turn))
+            ok, text, cli_session_id = run_claude(
+                turn.get("prompt", ""), tid, emit, cwd=cwd,
+                agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id or None,
+            )
         except Exception as exc:
-            ok, text = False, f"runner error: {exc}"
+            ok, text, cli_session_id = False, f"runner error: {exc}", ""
     finally:
         lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
+    if cli_session_id:
+        _record_session_resume(runner_id, turn, cli_session_id)
     _ws_request(ws, {"action": "finish", "turn_id": tid,
                      "status": "done" if ok else "failed", "result_note": text[:2000]}, "finish.ack")
     _log(f"finished turn {tid[:8]} (WS): {'done' if ok else 'failed'}")
