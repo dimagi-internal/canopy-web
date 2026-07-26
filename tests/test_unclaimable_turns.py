@@ -174,3 +174,53 @@ def test_assignment_with_offline_runner_reports_OFFLINE():
     _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka2", prompt="hi")[0])
     rows = services.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["offline"]
+
+
+# ── Tenant scope for "could ANY runner take this?" ─────────────────────────
+# Regression: scoping candidate runners to `paired_by=user` made every stuck
+# turn read CONFIG for anyone who didn't personally pair a runner — a
+# delegated identity, or a teammate in a workspace someone ELSE's runner
+# serves. The candidate set must match the tenancy rule the rest of this file
+# already uses elsewhere (`runner_tenant_slugs`, paired_by-derived).
+
+
+def test_teammates_runner_counts_even_if_caller_paired_none():
+    """user2 paired no runners at all, but shares a workspace with user1 who
+    paired one (currently offline, assigned to the agent). The turn must read
+    OFFLINE — "a runner could take this, wait" — not CONFIG — "no runner is
+    assigned, fix your routing"."""
+    from apps.agents.models import Agent as _Agent
+    from apps.harness.models import RunnerAssignment
+
+    user1 = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    user2 = User.objects.create_user("teammate", "teammate@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user1)
+    WorkspaceMembership.objects.create(user=user1, workspace=ws, role=WorkspaceMembership.OWNER)
+    WorkspaceMembership.objects.create(user=user2, workspace=ws, role=WorkspaceMembership.EDITOR)
+    runner = Runner.objects.create(
+        name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=user1, host="jj@mbp",
+        status=Runner.DISCONNECTED, last_heartbeat_at=None,
+        capabilities={"agents": [], "projects": [], "sessions": False},
+    )
+    ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
+    RunnerAssignment.objects.create(agent=ace, runner=runner, rank=0)
+    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="kteam", prompt="hi")[0])
+
+    rows = services.unclaimable_queued_turns(user2)
+    assert [r["kind"] for r in rows] == ["offline"]
+
+
+def test_genuinely_no_runner_in_the_tenant_still_reports_CONFIG():
+    """Sanity check the other direction: if nothing in the caller's tenant
+    could EVER take the turn, it's still CONFIG, not spuriously OFFLINE just
+    because the tenant scope widened."""
+    from apps.agents.models import Agent as _Agent
+
+    user = User.objects.create_user("solo", "solo@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    ghost = _Agent.objects.create(slug="ghost2", name="Ghost2", workspace=ws)
+    _age(services.enqueue_turn(agent=ghost, origin=Turn.ORIGIN_API, idempotency_key="ksolo", prompt="hi")[0])
+
+    rows = services.unclaimable_queued_turns(user)
+    assert [r["kind"] for r in rows] == ["config"]

@@ -53,7 +53,15 @@ We still enrich the events modestly — `tool_start`/`tool_end` gain a correlati
 ## Shape of the work
 
 1. **canopy — raw transcript retention.** A gzipped raw-JSONL store keyed to the turn, written by the runner, readable by the turn's tenant. Cheap, additive, no change to existing consumers.
-2. **canopy — cloud runner becomes session-capable**: declare `capabilities.sessions`, claim session turns, run in the right cwd, and capture the CLI's `system/init` session id into the already-modeled-but-unwired `Session.cli_session_id` so `--resume` works across turns.
+2. **canopy — cloud runner becomes session-capable**: declare `capabilities.sessions`, claim session turns, run in the right cwd, and capture the CLI's `system/init` session id (via `RunnerBinding.session_key`) so `--resume` works across turns.
+
+   > **Amended 2026-07-26 after implementation (#426). Declaring the capability is NOT sufficient, and turning it on without the rest is a data-loss bug.**
+   >
+   > A session's durable record does not come from the `TurnEvent` ledger. `create_session` stamps `transcript_sourced` on every session at birth whenever `CHAT_STUB_EXECUTOR=False` — i.e. always, on labs — and `project_events` then returns 0 for it. The only durable path is `persist_transcript_rows`, fed by `POST /runners/{id}/session-stream`, which **only `packages/canopy_runner` implements**.
+   >
+   > So a runner that declares `capabilities.sessions` without that path becomes eligible to claim real chat turns whose record it can never write: the reply streams perfectly, and on reload the conversation is empty — including the user's own message. `/api/canopy-sessions/{id}/reset` cannot rebuild it either, because there is no backfill.
+   >
+   > #426 therefore ships the capability **opt-in and defaulted OFF** (`RUNNER_SESSIONS`). Flipping the default on requires first implementing the durable-record path for this runner. It now posts the raw transcript per turn, so deriving session `Message` rows server-side from that is the natural way to close it — but it is unbuilt work, not a config change.
 3. **canopy — `tool_use_id` correlation** on `tool_start`/`tool_end`.
 4. **ace-web — enqueue instead of spawn.** `seeded_run`, `resume_run`, `resume_interrupted`, `drive_turn` create/reuse a canopy Session per opp-run and enqueue a Turn. `turn_driver`'s subprocess path is retired only once all callers are migrated.
 5. **ace-web — cost/structure read the retained transcript** from canopy instead of local `IngestUpload`.
@@ -63,6 +71,12 @@ We still enrich the events modestly — `tool_start`/`tool_end` gain a correlati
 
 Standing up an always-on cloud runner fleet. The software is built to degrade visibly without one; provisioning EC2 is a separate cost/ops decision.
 
-## Flagged, unresolved
+## Flagged, unresolved — RESOLVED 2026-07-26
 
 The Slack run path (`apps/slack/run_starter.py`) creates a `Session` and a user `Message` but no call to `start_turn_subprocess` could be found in `apps/slack/**` — Slack-triggered runs may already be latent or broken independent of this migration. Confirm before migrating that caller.
+
+> **Answer: it was never wired.** `/ace run <existing-slug>` is latent; `/ace new` and `/ace run <pdd-link>` are broken. `run_starter.py:126-144` creates the Session and one completed `role="user"` Message and returns — no assistant placeholder, no `turn_driver` import, and the repo has no signals, no Celery, no custom `Message.save()`, and a deleted WS consumer, so nothing executes it. The post-deploy sweep cannot rescue it either: `resumable_after_deploy`/`interrupted` both require an *assistant* row.
+>
+> `git log --follow` shows the birth commit already ending at `return slug, run_id` — the wiring never existed. The claim came from a design doc and was transcribed into the docstring. Every Slack test mocks `start_run_from_slack`, which is why CI stayed green since May.
+>
+> Consequence for this migration: **that caller is not migrated, it is repaired** — separately, and last. Separately again, `run_starter.py:93` passes `settings.ACE_DRIVE_SA_KEY_JSON` (a `str`) to `GoogleDriveClient`, which requires a credentials object.

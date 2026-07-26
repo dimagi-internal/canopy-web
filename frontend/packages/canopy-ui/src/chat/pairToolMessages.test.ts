@@ -118,6 +118,110 @@ describe("pairToolMessages", () => {
     );
     expect(pending).toHaveLength(2);
   });
+
+  // The case this feature exists for: two tool calls in flight at once (Claude
+  // does this routinely). Their tool_start events land back-to-back, both
+  // still open, before either tool_end arrives — a flat order-based pairing
+  // would have no way to tell which result belongs to which call. The
+  // results also arrive OUT OF ORDER (second call finishes first), which
+  // order-based pairing would get flatly wrong.
+  it("pairs overlapping (parallel) tool calls by id, including out-of-order results", () => {
+    const rows = pairToolMessages([
+      msg({
+        id: "1", role: "tool_use",
+        content: { id: "call-a", name: "Bash", input: { command: "sleep 10" } },
+      }),
+      msg({
+        id: "2", role: "tool_use",
+        content: { id: "call-b", name: "Read", input: { file_path: "/x" } },
+      }),
+      // call-b finishes first even though call-a started first.
+      msg({ id: "3", role: "tool_result", content: { tool_use_id: "call-b" }, plaintext: "file contents" }),
+      msg({ id: "4", role: "tool_result", content: { tool_use_id: "call-a" }, plaintext: "done sleeping" }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].kind).toBe("tool_pair");
+    expect(rows[1].kind).toBe("tool_pair");
+    if (rows[0].kind === "tool_pair" && rows[1].kind === "tool_pair") {
+      expect(rows[0].use.id).toBe("1");
+      expect(rows[0].result?.id).toBe("4"); // call-a's result, not the earlier-arriving one
+      expect(rows[1].use.id).toBe("2");
+      expect(rows[1].result?.id).toBe("3"); // call-b's result
+    }
+  });
+
+  // Two overlapping calls to the SAME tool name — order/name matching alone
+  // is ambiguous here (that's the whole point of the id); only tool_use_id
+  // disambiguates which result goes with which call.
+  it("pairs two overlapping calls with the same tool name by id", () => {
+    const rows = pairToolMessages([
+      msg({
+        id: "1", role: "tool_use",
+        content: { id: "call-1", name: "Bash", input: { command: "echo one" } },
+      }),
+      msg({
+        id: "2", role: "tool_use",
+        content: { id: "call-2", name: "Bash", input: { command: "echo two" } },
+      }),
+      msg({ id: "3", role: "tool_result", content: { tool_use_id: "call-2" }, plaintext: "two" }),
+      msg({ id: "4", role: "tool_result", content: { tool_use_id: "call-1" }, plaintext: "one" }),
+    ]);
+    expect(rows).toHaveLength(2);
+    if (rows[0].kind === "tool_pair" && rows[1].kind === "tool_pair") {
+      expect(rows[0].use.id).toBe("1");
+      expect(rows[0].result?.id).toBe("4");
+      expect(rows[0].result?.plaintext).toBe("one");
+      expect(rows[1].use.id).toBe("2");
+      expect(rows[1].result?.id).toBe("3");
+      expect(rows[1].result?.plaintext).toBe("two");
+    }
+  });
+
+  // Backward compatibility: events with no correlation id at all (older
+  // ledger rows, or a runner that hasn't been updated yet) must still pair —
+  // falling back to the pre-id FIFO order heuristic.
+  it("falls back to FIFO order pairing when neither side carries an id", () => {
+    const rows = pairToolMessages([
+      msg({ id: "1", role: "tool_use", content: { name: "Bash" } }),
+      msg({ id: "2", role: "tool_use", content: { name: "Read" } }),
+      msg({ id: "3", role: "tool_result", plaintext: "first result" }),
+      msg({ id: "4", role: "tool_result", plaintext: "second result" }),
+    ]);
+    expect(rows).toHaveLength(2);
+    if (rows[0].kind === "tool_pair" && rows[1].kind === "tool_pair") {
+      expect(rows[0].use.id).toBe("1");
+      expect(rows[0].result?.id).toBe("3");
+      expect(rows[1].use.id).toBe("2");
+      expect(rows[1].result?.id).toBe("4");
+    }
+  });
+
+  // The real production shape: a session whose earlier turns predate the
+  // tool_use_id field (no ids) followed by a later turn from an updated
+  // producer (has ids) — both must pair correctly, and the id-less fallback
+  // queue must not accidentally absorb an id-tagged result or vice versa.
+  it("pairs correctly across a mixed stream (legacy no-id turn followed by an id-tagged turn)", () => {
+    const rows = pairToolMessages([
+      // Legacy turn: no ids at all.
+      msg({ id: "1", role: "tool_use", content: { name: "Bash" } }),
+      msg({ id: "2", role: "tool_result", plaintext: "legacy result" }),
+      // Newer turn: two parallel calls, correlated by id.
+      msg({ id: "3", role: "tool_use", content: { id: "new-a", name: "Bash" } }),
+      msg({ id: "4", role: "tool_use", content: { id: "new-b", name: "Bash" } }),
+      msg({ id: "5", role: "tool_result", content: { tool_use_id: "new-b" }, plaintext: "b done" }),
+      msg({ id: "6", role: "tool_result", content: { tool_use_id: "new-a" }, plaintext: "a done" }),
+    ]);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.kind === "tool_pair")).toBe(true);
+    if (rows[0].kind === "tool_pair" && rows[1].kind === "tool_pair" && rows[2].kind === "tool_pair") {
+      expect(rows[0].use.id).toBe("1");
+      expect(rows[0].result?.id).toBe("2");
+      expect(rows[1].use.id).toBe("3");
+      expect(rows[1].result?.id).toBe("6"); // new-a's result
+      expect(rows[2].use.id).toBe("4");
+      expect(rows[2].result?.id).toBe("5"); // new-b's result
+    }
+  });
 });
 
 describe("deriveToolStatus", () => {

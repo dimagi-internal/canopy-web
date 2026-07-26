@@ -36,8 +36,8 @@ def _open_nags(agent) -> list[Item]:
 
 
 @pytest.fixture()
-def agent():
-    return Agent.objects.create(slug="eva", name="Eva")
+def agent(default_workspace):
+    return Agent.objects.create(slug="eva", name="Eva", workspace=default_workspace)
 
 
 @pytest.fixture()

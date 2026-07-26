@@ -7,12 +7,14 @@ from django.db import IntegrityError
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Runner, Turn, TurnEvent
+from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
 
 def _agent(slug="echo"):
-    return Agent.objects.create(slug=slug, name=slug.title())
+    # Homed: Agent.workspace is NOT NULL (agents/0013).
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=a_workspace())
 
 
 def _runner(**kw):
@@ -67,7 +69,7 @@ def test_turn_event_seq_unique_per_turn():
 
 def test_finish_turn_accepts_missed():
     """MISSED is a terminal status distinct from LOST (infra failure)."""
-    agent = Agent.objects.create(slug="eva", name="Eva")
+    agent = Agent.objects.create(slug="eva", name="Eva", workspace=a_workspace())
     turn = Turn.objects.create(
         agent=agent, origin=Turn.ORIGIN_CRON, idempotency_key="k1", status=Turn.RUNNING
     )

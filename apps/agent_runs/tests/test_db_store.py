@@ -19,8 +19,8 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+def agent(default_workspace):
+    return Agent.objects.create(slug="echo", name="Echo", workspace=default_workspace)
 
 
 @pytest.fixture

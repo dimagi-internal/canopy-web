@@ -55,6 +55,14 @@ Parameters:
     Type: String
     Default: canopy/cloud-runner/canopy-pat
     Description: Secrets Manager id holding the canopy-web PAT.
+  GogKeyringSecret:
+    Type: String
+    Default: canopy/cloud-runner/gog-keyring-password
+    Description: >
+      Secrets Manager id holding the password for gog's `file` keyring backend
+      (exported as GOG_KEYRING_PASSWORD). Optional — if the secret is absent the
+      runner still boots, but every `gog auth tokens import` fails and the fleet
+      has no Gmail/Drive auth. Stage it with `./secrets.sh gog <file|->`.
   RunnerCodeSecret:
     Type: String
     Default: canopy/cloud-runner/runner-code
@@ -160,7 +168,19 @@ Resources:
                 chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new
                 chmod 0755 /opt/canopy-runner/cloud_runner.py.new
                 mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
+                # gog's `file` keyring backend (the only option on a headless box —
+                # there is no OS keychain) encrypts with a password it PROMPTS for.
+                # With no TTY the prompt is impossible, so every `gog auth tokens
+                # import` died with "no TTY available for keyring file backend
+                # password prompt; set GOG_KEYRING_PASSWORD" and the whole fleet had
+                # zero Gmail/Drive auth. It has to live in the runner's own env, not
+                # just bootstrap's: gog needs the password to READ tokens too, so
+                # every agent turn (which inherits this env) needs it as well.
+                # Optional — an absent secret must not wedge the service, so this
+                # tolerates failure and simply leaves gog unusable, as before.
+                GOG_PW=$(secret ${GogKeyringSecret} 2>/dev/null || true)
                 cat > /opt/canopy-runner/runner.env <<ENV
+                GOG_KEYRING_PASSWORD=$GOG_PW
                 CANOPY_BASE_URL=${CanopyBaseUrl}
                 CANOPY_TOKEN=$(secret ${CanopyTokenSecret})
                 CLAUDE_CODE_OAUTH_TOKEN=$(secret ${ClaudeTokenSecret})

@@ -14,7 +14,9 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -29,7 +31,14 @@ def _user(name=None):
     if name is None:
         _user_seq += 1
         name = f"user{_user_seq}"
-    return User.objects.create_user(username=name, email=f"{name}@dimagi.com")
+    user = User.objects.create_user(username=name, email=f"{name}@dimagi.com")
+    # A member of the default workspace, which is where _agent() homes agents
+    # that name no tenant of their own. A runner's tenant is the workspaces of
+    # its pairer (services.runner_tenant_slugs), so a pairer who belongs
+    # nowhere can claim nothing — the cascade tests below would all read as
+    # "correctly refused" for entirely the wrong reason.
+    wsvc.ensure_member(a_workspace(), user)
+    return user
 
 
 def _ws(slug, owner):
@@ -53,7 +62,11 @@ _online_runner = _runner
 
 
 def _agent(slug="echo", workspace=None):
-    return Agent.objects.create(slug=slug, name=slug.title(), workspace=workspace)
+    # Agent.workspace is NOT NULL (agents/0013) — an agent naming no tenant of
+    # its own goes to the default workspace, not to "no tenant, visible to all".
+    return Agent.objects.create(
+        slug=slug, name=slug.title(), workspace=workspace or a_workspace()
+    )
 
 
 def _assign(agent, runner, rank, enabled=True):
