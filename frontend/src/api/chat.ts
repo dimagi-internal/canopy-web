@@ -180,3 +180,69 @@ export function placeTurn(id: string, placement: string): Promise<TurnPlacementR
     body: JSON.stringify({ placement }),
   });
 }
+
+export type ResetResult = components["schemas"]["ResetOut"];
+
+/**
+ * Reset a session: drop canopy's derived messages and re-derive them from the
+ * runner's transcript. A first-class action, not a repair — these rows are a
+ * cache of a file on the runner's disk.
+ *
+ * Never throws on a refusal: a session with no binding, or whose runner is
+ * offline, comes back `ok: false` with a `reason` to render.
+ */
+export function resetSession(id: string): Promise<ResetResult> {
+  return request<ResetResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/reset`, {
+    method: "POST",
+  });
+}
+
+export type Attachment = components["schemas"]["AttachmentOut"];
+
+/**
+ * Upload a file to a session. Multipart, so it deliberately does NOT go through
+ * `request()` — that one sets a JSON content-type, and the browser must be left
+ * to set its own multipart boundary.
+ *
+ * Returns before the message exists: the composer uploads while you are still
+ * typing, and sending sweeps up whatever is attached to the session.
+ */
+export async function uploadAttachment(sessionId: string, file: File): Promise<Attachment> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch(apiUrl(`/api/canopy-sessions/${sessionId}/attachments`), {
+    method: "POST",
+    credentials: "include",
+    headers: { "X-CSRFToken": getCsrfToken() },
+    body,
+  });
+  if (!res.ok) {
+    // The server's 422s are the useful ones (wrong type, too large) — surface
+    // the detail rather than a bare status, since the user can act on it.
+    let detail = `upload failed (${res.status})`;
+    try {
+      const problem = await res.json();
+      if (problem?.detail) detail = problem.detail;
+    } catch {
+      /* non-JSON error body; keep the status text */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+/** Discard an attachment that has not been sent yet (the chip's "x"). */
+export async function deleteAttachment(attachmentId: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/canopy-sessions/attachments/${attachmentId}`), {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "X-CSRFToken": getCsrfToken() },
+  });
+  if (!res.ok && res.status !== 404) throw new Error(`delete failed (${res.status})`);
+}
+
+/** Where to render an attachment from. No signed URL to expire or leak — the
+ *  server streams the bytes and gates on session membership. */
+export function attachmentUrl(attachmentId: string): string {
+  return apiUrl(`/api/canopy-sessions/attachments/${attachmentId}/content`);
+}

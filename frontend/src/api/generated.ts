@@ -2456,6 +2456,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset every visible session
+         * @description Bulk reset, scoped to the workspaces the caller can see (and to the pinned
+         *     one on a tenant route). Use `dry_run` to see what would happen first.
+         *
+         *     `prune_ghosts` additionally DELETES runner-discovered sessions that have no
+         *     binding at all: they can neither be shown nor rebuilt, and the next session
+         *     report re-creates any whose task is still open. Chats a human started are
+         *     never pruned.
+         */
+        readonly post: operations["apps_canopy_sessions_api_reset_sessions"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -2506,6 +2532,37 @@ export interface paths {
          *     Idempotent, and never destructive: /unarchive brings it straight back.
          */
         readonly post: operations["apps_canopy_sessions_api_archive_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset a session from its transcript
+         * @description Drop this session's derived messages and re-derive them from the runner's
+         *     transcript.
+         *
+         *     A first-class action, not a repair: once the transcript is the durable record,
+         *     these rows are a CACHE of a file on the runner's disk, so rebuilding them is
+         *     cheap and repeatable — the thing you reach for constantly while building, and
+         *     the way to pick up history the old per-turn projection could never capture.
+         *
+         *     Refuses (200 with ok=false + a reason) rather than erroring when there is
+         *     nothing to re-derive from: `no_binding` (no pointer to a transcript) or
+         *     `runner_unreachable` (its box is offline — try again when it's back). Turns
+         *     and their event ledger are never touched; nothing can rebuild those.
+         */
+        readonly post: operations["apps_canopy_sessions_api_reset_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2631,6 +2688,79 @@ export interface paths {
         /** Request full history from the runner */
         readonly post: operations["apps_canopy_sessions_api_request_backfill"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/attachments": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload an attachment for this session
+         * @description Store the bytes and return an id the caller passes to /send.
+         *
+         *     UNBOUND on purpose (`message` null): the composer uploads while you are
+         *     still typing, so the message it belongs to does not exist yet. Sending binds
+         *     it. That ordering is also what lets the UI show a thumbnail before send.
+         */
+        readonly post: operations["apps_canopy_sessions_api_upload_attachment"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/attachments/{attachment_id}/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Stream an attachment's bytes
+         * @description The bytes, for both readers: the browser rendering a thumbnail and the
+         *     runner downloading into the agent's workspace (which authenticates with a
+         *     PAT, resolved upstream into request.user like any other caller).
+         *
+         *     Gated on session membership, not on who uploaded it — a session is
+         *     multiplayer, so a teammate must be able to see what was shared in it.
+         */
+        readonly get: operations["apps_canopy_sessions_api_attachment_content"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/attachments/{attachment_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete Attachment
+         * @description Remove an attachment you have not sent yet — the composer's "x" on a chip.
+         *
+         *     Only while UNBOUND. Once it is part of a sent message it is transcript, and
+         *     deleting it would leave the agent's reply referring to something nobody else
+         *     can see.
+         */
+        readonly delete: operations["apps_canopy_sessions_api_delete_attachment"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3507,6 +3637,8 @@ export interface components {
              * Format: date-time
              */
             readonly expires_at: string;
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /** TokenExchangeIn */
         readonly TokenExchangeIn: {
@@ -6994,6 +7126,57 @@ export interface components {
             /** Runner Id */
             readonly runner_id?: string | null;
         };
+        /**
+         * ResetOut
+         * @description One session's reset outcome. `reason` is `ok` | `no_binding` |
+         *     `runner_unreachable` — stable strings the UI renders as the refusal.
+         */
+        readonly ResetOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Ok */
+            readonly ok: boolean;
+            /** Reason */
+            readonly reason: string;
+            /** Rows Dropped */
+            readonly rows_dropped: number;
+            /** Runner */
+            readonly runner: string;
+        };
+        /** ResetSummaryOut */
+        readonly ResetSummaryOut: {
+            /** Dry Run */
+            readonly dry_run: boolean;
+            /** Reset */
+            readonly reset: readonly components["schemas"]["ResetOut"][];
+            /** Skipped */
+            readonly skipped: readonly components["schemas"]["ResetOut"][];
+            /** Pruned */
+            readonly pruned: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Rows Dropped */
+            readonly rows_dropped: number;
+        };
+        /**
+         * ResetIn
+         * @description Bulk reset scope. Empty body = every session the caller can see, in the
+         *     workspace the request resolved to.
+         */
+        readonly ResetIn: {
+            /**
+             * Prune Ghosts
+             * @default false
+             */
+            readonly prune_ghosts: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
+        };
         /** MessageOut */
         readonly MessageOut: {
             /** Turn Index */
@@ -7080,6 +7263,26 @@ export interface components {
         readonly BackfillStateOut: {
             /** Status */
             readonly status: string;
+        };
+        /**
+         * AttachmentOut
+         * @description An uploaded attachment. Carries no URL — the client builds the content
+         *     path from the id, so there is no signed link to expire or leak.
+         */
+        readonly AttachmentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Filename */
+            readonly filename: string;
+            /** Content Type */
+            readonly content_type: string;
+            /** Size Bytes */
+            readonly size_bytes: number;
+            /** Message Id */
+            readonly message_id?: string | null;
         };
     };
     responses: never;
@@ -11043,6 +11246,30 @@ export interface operations {
             };
         };
     };
+    readonly apps_canopy_sessions_api_reset_sessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
     readonly apps_canopy_sessions_api_get_session: {
         readonly parameters: {
             readonly query?: {
@@ -11110,6 +11337,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_reset_session: {
+        readonly parameters: {
+            readonly query?: {
+                readonly dry_run?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResetOut"];
                 };
             };
         };
@@ -11275,6 +11526,78 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["BackfillStateOut"];
                 };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_upload_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_attachment_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_delete_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -73,7 +73,12 @@
       (<a href="https://accounts.google.com/Logout" target="_blank" rel="noopener">accounts.google.com/Logout</a>),
       then click below.
     </p>
-    <a class="btn" href="/accounts/google/login/">Try another account</a>
+    {% comment %}
+      {% url %}, not a literal path: canopy is mounted at /canopy on a hostname
+      it shares with connect-labs (root) and ace (/ace), so a hardcoded
+      /accounts/… href sent the user into a sibling tenant's auth surface.
+    {% endcomment %}
+    <a class="btn" href="{% url 'google_login' %}">Try another account</a>
     <div class="contact">
       <p class="muted">
         Need access? Email

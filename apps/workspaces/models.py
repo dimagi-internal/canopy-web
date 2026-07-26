@@ -78,6 +78,29 @@ class WorkspaceMembership(models.Model):
         blank=True,
         related_name="+",
     )
+    # Provenance for a row created by an AppCredential's token-exchange
+    # provisioning grant (apps.tokens.models.AppCredential.provision_workspace)
+    # rather than an organic human join/invite. Null for every other row.
+    # A string ref ("tokens.AppCredential") avoids a hard Python import from
+    # workspaces -> tokens (tokens already imports workspaces for
+    # WorkspaceMembership's role constants, so a direct import back would be
+    # circular). Lets a leaked-credential incident be found and bulk-reverted
+    # by app rather than being indistinguishable from an organic join — see
+    # docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md (F1).
+    # Which embedding app created this membership (null = a human joined, was
+    # invited, or auto-joined). PROTECT, not SET_NULL: this is an audit field,
+    # and deleting the credential would otherwise silently erase provenance on
+    # exactly the rows an incident responder needs — the ones a leaked
+    # credential created. Retire a credential by setting `revoked_at` (which
+    # keeps the row and the trail); deleting one is blocked while it still has
+    # provisioned memberships to answer for.
+    provisioned_by_app = models.ForeignKey(
+        "tokens.AppCredential",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="provisioned_memberships",
+    )
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

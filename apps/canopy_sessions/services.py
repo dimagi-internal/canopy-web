@@ -338,13 +338,148 @@ def create_session(*, workspace, created_by, agent=None, project: str = "", titl
     from .models import SessionParticipant
     from .participants import ensure_participant
 
+    meta = dict(metadata or {})
+    # A real runner will drive this session in emdash, so its transcript is the
+    # record — stamped at birth, never inferred later, so a session can't change
+    # its mind about where its history lives (see `transcript_sourced`). Under the
+    # dev stub there is no emdash session and no transcript, so the ledger stays
+    # the source.
+    if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
+        meta.setdefault(TRANSCRIPT_SOURCED, True)
     with transaction.atomic():
         session = Session.objects.create(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
-            title=title, metadata=metadata or {},
+            title=title, metadata=meta,
         )
         ensure_participant(session, created_by, SessionParticipant.OWNER)
     return session
+
+
+# Marks a session whose DURABLE record is its Claude transcript, keyed on each
+# record's ordinal — as opposed to the ledger projection, which only ever captures
+# what happened inside a Turn. Stamped at creation when a real runner will execute
+# the session (see `create_session`); runner-discovered sessions qualify by
+# construction. See `transcript_sourced`.
+TRANSCRIPT_SOURCED = "transcript_sourced"
+
+
+def transcript_sourced(session) -> bool:
+    """True when this session's durable messages come from its transcript.
+
+    ONE rule for both kinds of session — where a conversation ORIGINATED (a phone
+    composer vs a task discovered in emdash) says nothing about where its record
+    should live, and treating it as if it did is what split the two paths:
+
+      - transcript-sourced: every record in the emdash session becomes a Message,
+        keyed on its transcript ordinal, whether or not a Turn was open. Covers
+        text you type directly in emdash and text the agent writes after handing
+        the floor back (a background job finishing), neither of which sits inside
+        a turn.
+      - ledger-sourced (the fallback): Messages are projected from a Turn's events.
+        Only for sessions no runner will ever execute — the dev stub, where there
+        IS no transcript to read.
+
+    Sessions created before the unification carry no flag and stay ledger-sourced
+    until reset: their rows are numbered by a dense counter (0,1,2…) which would
+    collide with transcript ordinals in the same `turn_index` column, so nothing
+    switches one implicitly. `manage.py reset_chat_state` moves them over in bulk —
+    cheap, because for a bound session these rows are a CACHE of the transcript,
+    not an archive.
+    """
+    if session.origin == Session.ORIGIN_RUNNER:
+        return True  # discovered in emdash: the transcript is all there ever was
+    return bool((session.metadata or {}).get(TRANSCRIPT_SOURCED))
+
+
+# Why a reset can be refused. The UI renders these, so they are stable strings.
+RESET_OK = "ok"
+RESET_NO_BINDING = "no_binding"            # nothing knows which box/worktree it came from
+RESET_RUNNER_UNREACHABLE = "runner_unreachable"   # transient: retry when it's back
+
+
+def _reset_blocker(session) -> tuple[str, object]:
+    """(reason, binding) — RESET_OK when this session's rows can be re-derived.
+
+    Deliberately NOT "is the emdash task still open?". A backfill resolves the
+    transcript by WORKTREE PATH under ~/.claude/projects, never by asking emdash,
+    and Claude Code never deletes those files — so a task emdash deleted months
+    ago still ships its full history (verified against the live fleet 2026-07-26:
+    tasks absent from emdash's DB entirely, transcripts resolved, 545 and 607
+    records). Falling off the session report ends a session's LISTING, not its
+    recoverability; conflating the two is what made this look dangerous.
+
+    What actually blocks a reset is having no pointer to a transcript at all (no
+    binding), or no live runner to read it (offline/retired — transient).
+    """
+    from apps.harness.models import Runner
+
+    binding = getattr(session, "runner_binding", None)
+    if binding is None or binding.runner_id is None:
+        return RESET_NO_BINDING, None
+    # Reachable is enough to READ A FILE — mirrors request_backfill, which never
+    # needs emdash's CDP port.
+    if binding.runner.live_status not in (Runner.ONLINE, Runner.DEGRADED):
+        return RESET_RUNNER_UNREACHABLE, binding
+    return RESET_OK, binding
+
+
+def reset_session(session, *, dry_run: bool = False) -> dict:
+    """Drop one session's derived rows and re-derive them from its transcript.
+
+    The rows are a CACHE of a file on the runner's disk, so this is cheap and
+    repeatable — the operation you want constantly while building, not a migration
+    to be performed once with ceremony. Returns a result dict rather than raising,
+    so a bulk caller can report per-session outcomes.
+    """
+    reason, binding = _reset_blocker(session)
+    rows = Message.objects.filter(session=session).count()
+    out = {
+        "session_id": str(session.id),
+        "title": session.title,
+        "ok": reason == RESET_OK,
+        "reason": reason,
+        "rows_dropped": rows if reason == RESET_OK else 0,
+        "runner": binding.runner.name if (binding and binding.runner_id) else "",
+    }
+    if reason != RESET_OK or dry_run:
+        return out
+    Message.objects.filter(session=session).delete()
+    session.metadata = {**(session.metadata or {}), TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata", "updated_at"])
+    request_backfill(session)
+    return out
+
+
+def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = False) -> dict:
+    """Bulk reset. `sessions` is any Session iterable/queryset already scoped by
+    the caller (a workspace, a tenant, one id) — this never widens it.
+
+    `prune_ghosts` DELETES runner-origin sessions that have no binding: a
+    discovered session with no pointer to a transcript can't be shown or rebuilt,
+    and the next session report re-creates it if its task is still open. Web
+    sessions are never pruned — a chat you started is not something to garbage
+    collect.
+    """
+    results, pruned = [], []
+    for session in sessions:
+        result = reset_session(session, dry_run=dry_run)
+        if (
+            prune_ghosts
+            and result["reason"] == RESET_NO_BINDING
+            and session.origin == Session.ORIGIN_RUNNER
+        ):
+            pruned.append({"session_id": str(session.id), "title": session.title})
+            if not dry_run:
+                session.delete()
+            continue
+        results.append(result)
+    return {
+        "dry_run": dry_run,
+        "reset": [r for r in results if r["ok"]],
+        "skipped": [r for r in results if not r["ok"]],
+        "pruned": pruned,
+        "rows_dropped": sum(r["rows_dropped"] for r in results),
+    }
 
 
 def _next_index(session: Session) -> int:
@@ -410,6 +545,34 @@ def _resolve_placement(session: Session, placement: str | None):
     return None
 
 
+
+def claim_pending_attachments(session, message=None) -> list[dict]:
+    """Mark this session's un-sent attachments as sent, and describe them for the
+    runner.
+
+    Swept off the SESSION rather than passed by id, so the WebSocket `chat.send`
+    frame needs no new field and REST and WS behave identically. It also matches
+    the draft model: the draft is co-edited and shared, so anything attached to
+    it belongs to the send whoever presses the button.
+
+    `message` is None for a runner-origin session, which writes no user Message
+    row — hence the sent_at stamp, without which those rows would ride along on
+    every later send too.
+    """
+    from .models import Attachment
+
+    pending = list(Attachment.objects.filter(session=session, sent_at__isnull=True))
+    if not pending:
+        return []
+    now = timezone.now()
+    Attachment.objects.filter(pk__in=[a.pk for a in pending]).update(
+        sent_at=now, **({"message": message} if message is not None else {})
+    )
+    return [
+        {"id": str(a.id), "filename": a.filename, "content_type": a.content_type}
+        for a in pending
+    ]
+
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
 ) -> tuple[Message, Turn]:
@@ -434,8 +597,8 @@ def send_message(
     send, so this path writes no row — the frontend already echoes the message
     optimistically (draft.committed), and a transient Message keeps the contract.
     """
-    if session.origin == Session.ORIGIN_RUNNER:
-        return _send_runner_message(
+    if transcript_sourced(session):
+        return _send_transcript_sourced_message(
             session=session, text=text, client_id=client_id, placement=placement
         )
     with transaction.atomic():
@@ -470,12 +633,16 @@ def send_message(
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
+        origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+        attachments = claim_pending_attachments(session, message)
+        if attachments:
+            origin_ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
-            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+            origin_ref=origin_ref,
             pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
@@ -518,10 +685,16 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
     return turn
 
 
-def _send_runner_message(
+def _send_transcript_sourced_message(
     *, session: Session, text: str, client_id: str = "", placement: str | None = None
 ) -> tuple[Message, Turn]:
-    """The runner-session send path: enqueue the Turn, author NO durable user row.
+    """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
+
+    Your words become durable when the runner ships the transcript record they
+    became — the same line the agent actually read — rather than a second copy
+    written here at a different index. Until then they live in `Turn.prompt` and
+    the client's optimistic echo, so a send that waits for an offline runner shows
+    locally and becomes durable the moment the turn is executed.
 
     The returned Message is transient (never saved): MessageOut serializes it for
     the REST response and the WS handler broadcasts str(pk) as user_message_id, so
@@ -542,12 +715,18 @@ def _send_runner_message(
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
+    origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+    # message=None: this path writes no durable user row, so the sent_at stamp is
+    # the only thing stopping these attachments riding along on every later send.
+    attachments = claim_pending_attachments(session, None)
+    if attachments:
+        origin_ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=Turn.ORIGIN_API,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
-        origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+        origin_ref=origin_ref,
         pinned_runner=pinned,
     )
     _maybe_interject(session, message)
@@ -606,7 +785,7 @@ def project_events(turn: Turn, rows) -> int:
     index space. The ledger frames still stream to the live client unchanged."""
     if not turn.chat_session_id:
         return 0
-    if turn.chat_session.origin == Session.ORIGIN_RUNNER:
+    if transcript_sourced(turn.chat_session):
         return 0
     created = 0
     with transaction.atomic():

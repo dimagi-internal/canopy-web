@@ -10,10 +10,12 @@ import uuid
 
 from django.db.models import Max
 
-from django.http import HttpRequest
+from django.conf import settings
+from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
-from ninja import Router
+from ninja import File, Router
 from ninja.errors import HttpError
+from ninja.files import UploadedFile
 
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
@@ -22,9 +24,10 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
-from . import services
-from .models import Session
+from . import attachment_storage, services
+from .models import Attachment, Session
 from .schemas import (
+    AttachmentOut,
     BackfillStateOut,
     MessageOut,
     MessagePageOut,
@@ -36,6 +39,9 @@ from .schemas import (
     SessionOut,
     StreamStateOut,
     TurnOutMinimal,
+    ResetIn,
+    ResetOut,
+    ResetSummaryOut,
 )
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -206,6 +212,29 @@ def list_sessions(
     return out[: clamp_limit(limit)]
 
 
+# Declared BEFORE /{session_id}: Django resolves in declaration order and
+# "reset" would otherwise match the session-id pattern and 405 on its GET-only
+# view. Any future collection-level route belongs above here too.
+@router.post("/reset", response=ResetSummaryOut, summary="Reset every visible session")
+def reset_sessions(request: HttpRequest, payload: ResetIn):
+    """Bulk reset, scoped to the workspaces the caller can see (and to the pinned
+    one on a tenant route). Use `dry_run` to see what would happen first.
+
+    `prune_ghosts` additionally DELETES runner-discovered sessions that have no
+    binding at all: they can neither be shown nor rebuilt, and the next session
+    report re-creates any whose task is still open. Chats a human started are
+    never pruned.
+    """
+    rows = (
+        Session.objects.select_related("runner_binding", "runner_binding__runner")
+        .filter(workspace_id__in=_visible_slugs(request))
+        .order_by("created_at")
+    )
+    return services.reset_sessions(
+        rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
+    )
+
+
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
     # Tail-first: never ship the whole transcript by default. The client gets the
@@ -251,6 +280,25 @@ def archive_session(request: HttpRequest, session_id: uuid.UUID):
     report it archived — and for force-retiring a row without touching emdash.
     Idempotent, and never destructive: /unarchive brings it straight back."""
     return _set_status(request, session_id, Session.ARCHIVED)
+
+
+@router.post("/{session_id}/reset", response=ResetOut, summary="Reset a session from its transcript")
+def reset_session(request: HttpRequest, session_id: uuid.UUID, dry_run: bool = False):
+    """Drop this session's derived messages and re-derive them from the runner's
+    transcript.
+
+    A first-class action, not a repair: once the transcript is the durable record,
+    these rows are a CACHE of a file on the runner's disk, so rebuilding them is
+    cheap and repeatable — the thing you reach for constantly while building, and
+    the way to pick up history the old per-turn projection could never capture.
+
+    Refuses (200 with ok=false + a reason) rather than erroring when there is
+    nothing to re-derive from: `no_binding` (no pointer to a transcript) or
+    `runner_unreachable` (its box is offline — try again when it's back). Turns
+    and their event ledger are never touched; nothing can rebuild those.
+    """
+    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    return services.reset_session(session, dry_run=dry_run)
 
 
 @router.post("/{session_id}/unarchive", response=SessionOut, summary="Unarchive a session")
@@ -328,3 +376,100 @@ def detach_session(request: HttpRequest, session_id: uuid.UUID):
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     return {"status": services.request_backfill(session)}
+
+
+@router.post(
+    "/{session_id}/attachments",
+    response={201: AttachmentOut},
+    summary="Upload an attachment for this session",
+)
+def upload_attachment(
+    request: HttpRequest, session_id: uuid.UUID, file: UploadedFile = File(...)
+):
+    """Store the bytes and return an id the caller passes to /send.
+
+    UNBOUND on purpose (`message` null): the composer uploads while you are
+    still typing, so the message it belongs to does not exist yet. Sending binds
+    it. That ordering is also what lets the UI show a thumbnail before send.
+    """
+    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    if not attachment_storage.is_configured():
+        raise HttpError(503, "attachments are not configured on this deployment")
+
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    allowed = settings.ATTACHMENT_ALLOWED_CONTENT_TYPES
+    if content_type not in allowed:
+        # An allowlist: these bytes get opened by an agent and rendered inline by
+        # a browser, so anything not explicitly understood is refused.
+        raise HttpError(422, f"unsupported file type '{content_type or 'unknown'}'")
+    if file.size is None or file.size <= 0:
+        raise HttpError(422, "file is empty")
+    if file.size > settings.ATTACHMENT_MAX_UPLOAD_BYTES:
+        limit_mb = settings.ATTACHMENT_MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise HttpError(422, f"file is larger than the {limit_mb}MB limit")
+
+    attachment = Attachment(
+        session=session,
+        uploaded_by=request.user,
+        filename=attachment_storage.safe_filename(file.name),
+        content_type=content_type,
+        size_bytes=file.size,
+    )
+    attachment.storage_key = attachment_storage.storage_key(
+        session.id, attachment.id, attachment.filename
+    )
+    # Bytes FIRST, row second: a row whose object is missing is a broken
+    # thumbnail and a runner download that 500s, while an orphaned object is
+    # invisible and sweepable. Fail in the harmless direction.
+    attachment_storage.put(attachment.storage_key, file.read(), content_type)
+    attachment.save()
+    return 201, attachment
+
+
+@router.get(
+    "/attachments/{attachment_id}/content",
+    summary="Stream an attachment's bytes",
+)
+def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
+    """The bytes, for both readers: the browser rendering a thumbnail and the
+    runner downloading into the agent's workspace (which authenticates with a
+    PAT, resolved upstream into request.user like any other caller).
+
+    Gated on session membership, not on who uploaded it — a session is
+    multiplayer, so a teammate must be able to see what was shared in it.
+    """
+    attachment = get_object_or_404(
+        Attachment.objects.select_related("session"), pk=attachment_id
+    )
+    if attachment.session.workspace_id not in _visible_slugs(request):
+        raise HttpError(404, "attachment not found")  # wrong tenant / non-member
+    if not attachment_storage.is_configured():
+        raise HttpError(503, "attachments are not configured on this deployment")
+
+    stored = attachment_storage.get(attachment.storage_key)
+    response = HttpResponse(stored.body, content_type=stored.content_type)
+    # inline: the browser renders it rather than downloading. filename is already
+    # sanitised at upload, so it is safe in the header.
+    response["Content-Disposition"] = f'inline; filename="{attachment.filename}"'
+    return response
+
+
+@router.delete("/attachments/{attachment_id}", response={204: None})
+def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
+    """Remove an attachment you have not sent yet — the composer's "x" on a chip.
+
+    Only while UNBOUND. Once it is part of a sent message it is transcript, and
+    deleting it would leave the agent's reply referring to something nobody else
+    can see.
+    """
+    attachment = get_object_or_404(
+        Attachment.objects.select_related("session"), pk=attachment_id
+    )
+    if attachment.session.workspace_id not in _visible_slugs(request):
+        raise HttpError(404, "attachment not found")
+    if attachment.message_id is not None:
+        raise HttpError(409, "this attachment has already been sent")
+    if attachment_storage.is_configured():
+        attachment_storage.delete(attachment.storage_key)
+    attachment.delete()
+    return 204, None

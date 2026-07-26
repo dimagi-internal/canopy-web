@@ -110,3 +110,46 @@ class StreamStateOut(Schema):
 class BackfillStateOut(Schema):
     """ready = already server-full; requested = runner asked; unavailable = offline."""
     status: str
+
+
+class AttachmentOut(Schema):
+    """An uploaded attachment. Carries no URL — the client builds the content
+    path from the id, so there is no signed link to expire or leak."""
+
+    id: uuid.UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    message_id: str | None = None
+
+    @staticmethod
+    def resolve_message_id(obj) -> str | None:
+        return str(obj.message_id) if obj.message_id else None
+
+
+class ResetOut(Schema):
+    """One session's reset outcome. `reason` is `ok` | `no_binding` |
+    `runner_unreachable` — stable strings the UI renders as the refusal."""
+
+    session_id: str
+    title: str
+    ok: bool
+    reason: str
+    rows_dropped: int
+    runner: str
+
+
+class ResetIn(Schema):
+    """Bulk reset scope. Empty body = every session the caller can see, in the
+    workspace the request resolved to."""
+
+    prune_ghosts: bool = False
+    dry_run: bool = False
+
+
+class ResetSummaryOut(Schema):
+    dry_run: bool
+    reset: list[ResetOut]
+    skipped: list[ResetOut]
+    pruned: list[dict]
+    rows_dropped: int

@@ -258,6 +258,32 @@ WALKTHROUGH_MAX_UPLOAD_BYTES = env.int(
     "WALKTHROUGH_MAX_UPLOAD_BYTES", default=75 * 1024 * 1024,
 )
 
+# --- Chat attachments (apps/canopy_sessions) -------------------------
+# S3 bucket holding chat attachment bytes. Empty string disables the feature
+# entirely: uploads 503 with code="attachments-not-configured" rather than
+# half-working, so a dev box without AWS credentials fails loudly instead of
+# writing rows that point at bytes which do not exist.
+#
+# Access is granted by a BUCKET policy naming the ECS task role, not by an IAM
+# policy on that role: the task role (labs-jj-ecs-task-role) belongs to the
+# shared labs platform and is only a *parameter* to our CloudFormation stack, so
+# we cannot attach to it. See deploy/aws/canopy-web.cfn.yaml.
+CANOPY_ATTACHMENTS_BUCKET = env("CANOPY_ATTACHMENTS_BUCKET", default="")
+
+# Max bytes for one attachment. Deliberately far below the walkthrough cap: this
+# is the phone-screenshot path, and the bytes stream through the web dyno.
+ATTACHMENT_MAX_UPLOAD_BYTES = env.int(
+    "ATTACHMENT_MAX_UPLOAD_BYTES", default=10 * 1024 * 1024,
+)
+
+# An allowlist, never a denylist: the bytes are handed to an agent that will
+# open them, and the browser renders them inline. Images only for now — the
+# stated use case is "show the agent a screenshot".
+ATTACHMENT_ALLOWED_CONTENT_TYPES = env.list(
+    "ATTACHMENT_ALLOWED_CONTENT_TYPES",
+    default=["image/png", "image/jpeg", "image/gif", "image/webp"],
+)
+
 # --- Agent-run Drive backing (apps/agent_runs) -----------------------
 # Drive-as-truth run store for agents whose runs live in a Google Drive
 # tree (e.g. ACE opps under ACE/<slug>/runs/<run-id>/). All knobs are
@@ -331,4 +357,48 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost
 # CORS
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
+
+# --- Logging ---
+# There was no LOGGING config at all, so anything our code logged fell through to
+# Python's `lastResort` handler: WARNING+ to stderr, with no timestamp, level or
+# logger name. Combined with allauth rendering a failed OAuth callback as HTTP
+# 200, that left the container emitting uvicorn access lines and essentially
+# nothing else — the 2026-07-26 labs auth incident had to be reconstructed from
+# status codes and a repeated query param.
+#
+# `disable_existing_loggers: False` is load-bearing: uvicorn configures its own
+# loggers (including the access log this deployment is read through), and Django
+# applies this dictConfig at settings load. Setting it True would silence them.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        # Our own code. WARNING by default; DJANGO_LOG_LEVEL=DEBUG turns the
+        # volume up without a code change when something needs watching live.
+        "apps": {
+            "handlers": ["console"],
+            "level": env("DJANGO_LOG_LEVEL", default="WARNING"),
+            "propagate": False,
+        },
+        # allauth's own complaints about the auth cycle, which we otherwise
+        # never see (see CustomSocialAccountAdapter.on_authentication_error).
+        "allauth": {
+            "handlers": ["console"],
+            "level": env("DJANGO_LOG_LEVEL", default="WARNING"),
+            "propagate": False,
+        },
+    },
+}
 
