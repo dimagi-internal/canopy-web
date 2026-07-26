@@ -48,17 +48,28 @@ def test_agent_detail_serializes_workspace_slug(client, workspace):
     assert body["workspace"] == "canopy"
 
 
-def test_agent_with_no_workspace_serializes_null(client):
-    # A pre-tenancy agent (workspace nullable for migration safety). The flat
-    # /api/agents/ compat-shim route resolves no pinned tenant, so an
-    # unhomed agent is still visible there — the nullable path must survive,
-    # not error.
+def test_agent_with_no_workspace_is_invisible(client):
+    """Superseded by the security review (2026-07-26, hole A): this test used
+    to encode "an unhomed agent is visible on the flat compat-shim route" as
+    intentional migration safety. It was the mirror image of the bug
+    apps/harness/api.py::_agent_or_404 fixed as F1 — `_visible_agent_workspace_ids`
+    returned the caller's workspace ids **plus {None}**, so any authenticated
+    user (not just a workspace member) could see an unhomed agent across the
+    WHOLE agents surface: tasks, board commands (a write), work products,
+    skills, PUT /runners (a write), and GET /{slug}/turns/ (which serializes
+    AgentTurnOut.share_token — a public transcript link). That is read+write,
+    strictly broader than F1.
+
+    Production carries zero agents with workspace_id IS NULL (verified at
+    review time), and the real creation path (upsert_agent) always homes a
+    new agent to a workspace — this is a legacy/pre-migration edge case, not
+    a live user-facing flow. `_visible_agent_workspace_ids` now fails CLOSED:
+    a workspace-less agent is unresolvable via this API until it's homed, not
+    universally visible."""
     Agent.objects.create(slug="orphan", name="Orphan", workspace=None)
 
     list_body = client.get("/api/agents/").json()
     items = list_body["items"] if "items" in list_body else list_body
-    orphan = next(a for a in items if a["slug"] == "orphan")
-    assert orphan["workspace"] is None
+    assert not any(a["slug"] == "orphan" for a in items)
 
-    detail_body = client.get("/api/agents/orphan/").json()
-    assert detail_body["workspace"] is None
+    assert client.get("/api/agents/orphan/").status_code == 404

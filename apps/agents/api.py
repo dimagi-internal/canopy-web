@@ -43,27 +43,38 @@ from .schemas import (
 router = Router(auth=session_auth, tags=["agents"])
 
 
-def _visible_agent_workspace_ids(request: HttpRequest) -> set[str | None]:
+def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     """The single definition of 'agent workspaces this caller can see'. A
-    workspace_id (or None, for an unhomed agent) is visible if the caller is
-    pinned to it, or — unpinned — the caller is a member of it, or it's
-    unhomed. _get_agent_or_404, list_agents, and the fleet items query MUST
-    build from this: they used to hand-copy this predicate three times, which is
-    exactly the failure apps/harness/api.py's _runner_visibility_q docstring
-    describes (a runner the list showed but every action 404'd on) — see that
-    docstring for the full story.
+    workspace_id is visible if the caller is pinned to it, or — unpinned —
+    the caller is a member of it. _get_agent_or_404, list_agents, and the
+    fleet items query MUST build from this: they used to hand-copy this
+    predicate three times, which is exactly the failure apps/harness/api.py's
+    _runner_visibility_q docstring describes (a runner the list showed but
+    every action 404'd on) — see that docstring for the full story.
 
     Tenant-pinned (request.workspace_slug truthy): exactly that workspace —
     no separate membership check needed; WorkspaceResolveMiddleware already
     gated membership of the pinned workspace before setting workspace_slug.
 
     Not pinned (flat /api/agents/... callers): any workspace the caller is a
-    member of, plus None (the legacy-ungated unhomed-agent case)."""
+    member of.
+
+    Fails CLOSED on an unhomed agent (security review 2026-07-26, hole A):
+    this used to return the caller's workspace ids **plus {None}**, so an
+    agent with no workspace was visible to ANY authenticated user across the
+    whole agents surface — reads (tasks, work products, skills, turns,
+    including AgentTurnOut.share_token, a public transcript link) AND writes
+    (board commands, PUT /runners). Strictly broader than the read-only hole
+    `_agent_or_404` (apps/harness/api.py, F1) closed for the same
+    workspace-less-agent case. Latent today — production carries zero agents
+    with workspace_id IS NULL, and the real creation path (upsert_agent
+    below) always homes a new agent — but an unhomed agent must be
+    unresolvable via this API, not universally visible."""
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         return {ws}
-    return set(wsvc.user_workspace_slugs(request.user)) | {None}
+    return set(wsvc.user_workspace_slugs(request.user))
 
 
 def _get_agent_or_404(request: HttpRequest, slug: str):
