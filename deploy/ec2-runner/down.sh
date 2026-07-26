@@ -16,7 +16,7 @@ rm -f "./${STACK}-key.pem"
 echo "==> stack deleted."
 
 if [[ "${1:-}" == "--purge-secrets" ]]; then
-  for s in canopy/cloud-runner/canopy-pat canopy/cloud-runner/claude-oauth-token canopy/cloud-runner/op-service-account-token; do
+  for s in canopy/cloud-runner/canopy-pat canopy/cloud-runner/claude-oauth-token canopy/cloud-runner/op-service-account-token canopy/cloud-runner/runner-code; do
     echo ">> deleting secret $s"
     "${AWS[@]}" secretsmanager delete-secret --secret-id "$s" --force-delete-without-recovery || true
   done
