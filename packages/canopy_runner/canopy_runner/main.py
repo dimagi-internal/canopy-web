@@ -9,9 +9,12 @@ One iteration (run_once):
   4. claim at most one queued turn and route it to an emdash session (reuse or
      create) via execute.execute_turn
 
-Turns finish synchronously — the runner owns the routing lifecycle; the work
-continues in the visible emdash session — so there is NO injection state to track
-and NO emdash-DB write. The only emdash-DB access is the two READ-ONLY queries in
+Agent/project turns finish synchronously — the runner owns the routing lifecycle;
+the work continues in the visible emdash session — so there is NO injection state to
+track and NO emdash-DB write. CHAT turns are the exception: they stay EXECUTING while
+the agent works and are pumped tick by tick (_pump_chat_bridges), because their reply
+has to be carried back into the ledger and an agent turn lasts minutes, which is far
+longer than a tick may block. The only emdash-DB access is the two READ-ONLY queries in
 `emdash.py` (task_state, list_open_sessions), whose column dependencies are
 verified out-of-band by `canopy_runner verify-emdash`.
 """
@@ -297,6 +300,82 @@ def _maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -
         logger.debug("session report failed (non-fatal)", exc_info=True)
 
 
+def _finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note: str) -> None:
+    """Retire one in-flight bridge: drop it from the registry FIRST (so a failing
+    finish can't leave it pumping forever), interrupt the live session on a cancel,
+    then tell the server. Best-effort — a client hiccup must not wedge the loop."""
+    from . import cdp_control
+
+    chat_bridge.IN_FLIGHT.pop(bridge.turn_id, None)
+    CANCELLED_TURNS.discard(bridge.turn_id)
+    if status == "cancelled":
+        try:
+            cdp_control.interrupt(bridge.task, port=cfg.cdp_port)
+        except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
+            logger.warning("chat turn=%s: interrupt failed: %s", bridge.turn_id, exc)
+    try:
+        client.finish(bridge.turn_id, note=note, status=status)
+    except Exception:  # noqa: BLE001
+        logger.warning("chat turn=%s: finish failed", bridge.turn_id, exc_info=True)
+    logger.info("chat turn=%s %s (task=%s): %s", bridge.turn_id, status, bridge.task, note)
+
+
+def _pump_chat_bridges(cfg: Config, client: Client) -> None:
+    """Advance every in-flight chat turn by one tick: ship whatever the agent has
+    written since the last tick, and finish the turn once the transcript says it
+    handed the floor back (see chat_bridge.hands_back_to_human).
+
+    This is why a chat turn no longer blocks the loop. It used to run inline inside
+    execute_chat_turn, which was only survivable because it gave up after 3 seconds
+    of transcript silence — and giving up after 3s is exactly what truncated every
+    answer that involved a tool call. Pumping it here buys the correct completion
+    rule without holding the tick: the heartbeat, claims and session reports all
+    keep running while an agent works.
+    """
+    for turn_id, bridge in list(chat_bridge.IN_FLIGHT.items()):
+        if turn_id in CANCELLED_TURNS:
+            _finish_chat_bridge(cfg, client, bridge, status="cancelled", note="cancelled by user")
+            continue
+        try:
+            new_records = bridge.reader.read_new()
+        except Exception:  # noqa: BLE001 — an unreadable transcript is a quiet tick
+            logger.debug("chat turn=%s: transcript read failed", turn_id, exc_info=True)
+            new_records = []
+        bridge.step(new_records)
+        if bridge.pending:
+            events = [{"kind": "assistant", "payload": {"text": t}} for t in bridge.pending]
+            try:
+                client.post_events(turn_id, events)
+                bridge.pending.clear()   # only drop text the server has actually taken
+            except Exception:  # noqa: BLE001 — keep it queued and retry next tick
+                logger.debug("chat turn=%s: event post failed, retrying", turn_id, exc_info=True)
+        if bridge.finished:
+            _finish_chat_bridge(cfg, client, bridge, status="done", note=bridge.note)
+
+
+def _drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
+                        max_seconds: float = 3600.0) -> None:
+    """Pump to completion, for the ONE-SHOT modes (--once / --drain-one) that exit
+    when they return. The daemon never calls this — it pumps on its own ticks. The
+    process would otherwise leave the turn EXECUTING until the server's lease sweep
+    reclaimed it, so a `--drain-one` chat turn would never deliver its reply."""
+    deadline = time.monotonic() + max_seconds
+    last_hb = time.monotonic()
+    while chat_bridge.IN_FLIGHT and time.monotonic() < deadline:
+        _pump_chat_bridges(cfg, client)
+        if not chat_bridge.IN_FLIGHT:
+            return
+        if time.monotonic() - last_hb >= 60:
+            # Renew the turn lease: nothing else heartbeats in a one-shot run, and a
+            # long reply would otherwise outlive it and be swept mid-answer.
+            try:
+                client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT))
+            except Exception:  # noqa: BLE001
+                logger.debug("drain heartbeat failed (non-fatal)", exc_info=True)
+            last_hb = time.monotonic()
+        time.sleep(poll)
+
+
 def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
     """Ship conversational rows as live events. seq == index (the transcript
     ordinal): monotonic per session forever, so the WS-derived `seq:<n>` message
@@ -411,9 +490,11 @@ def _drain_backfills(cfg: Config, client: Client) -> None:
 
 def run_once(cfg: Config, client: Client) -> str:
     """One loop iteration: preflight emdash's CDP health → heartbeat (with macOS host, for
-    reuse ownership) → claim one turn → route it to an emdash session (reuse or create).
-    Turns finish synchronously (the runner owns the routing lifecycle; work continues in
-    the visible session), so there is no injection state to track or schema to guard.
+    reuse ownership) → pump in-flight chat replies → claim one turn → route it to an
+    emdash session (reuse or create). Agent/project turns finish synchronously (the
+    runner owns the routing lifecycle; work continues in the visible session); a chat
+    turn is registered with the pump and finishes on a later tick, when its transcript
+    says the agent handed the floor back.
 
     Self-heal: the runner CONNECTS to emdash, it never launches it, so a closed/crashed
     emdash (or one launched without --remote-debugging-port) can't run work. If we claimed
@@ -434,14 +515,16 @@ def run_once(cfg: Config, client: Client) -> str:
                         cfg.cdp_port, _cdp_down_ticks)
         _reset_cdp_health_state()
         _ready, _rnote = readiness.compute(cfg)
-        client.heartbeat(cfg.runner_id, [], host=host, ready=_ready, ready_note=_rnote,
-                         code_branch=_code_branch())
+        # Report in-flight chat turns so the server renews their lease: a bridged
+        # turn now outlives the tick that started it, and an unrenewed lease is swept.
+        client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
+                         ready=_ready, ready_note=_rnote, code_branch=_code_branch())
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
         # control plane + menu-bar app read ("alive but can't execute"). It's a status field,
         # overwritten each tick, so it is not spam.
-        client.heartbeat(cfg.runner_id, [], degraded=True,
+        client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
                          note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
                          host=host, ready=False,
                          ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
@@ -455,6 +538,10 @@ def run_once(cfg: Config, client: Client) -> str:
                 cfg.cdp_port, _cdp_down_ticks, cfg.cdp_port)
             _cdp_down_signalled = True
 
+    # Before the reports: an in-flight reply is the freshest thing on this box, and
+    # finishing a turn here frees the session for the next message. Runs even while
+    # CDP is down — the transcript keeps growing whether or not we can drive emdash.
+    _pump_chat_bridges(cfg, client)
     _maybe_report_sessions(cfg, client)
     _sync_session_streams(cfg, client)
     _drain_backfills(cfg, client)
@@ -496,7 +583,9 @@ def drain_one(cfg: Config, client: Client) -> str:
         return "cdp_down"
     _ready, _rnote = readiness.compute(cfg)
     client.heartbeat(cfg.runner_id, [], host=host_id(), ready=_ready, ready_note=_rnote)
-    return _claim_and_execute(cfg, client, _paused_agents(cfg))
+    action = _claim_and_execute(cfg, client, _paused_agents(cfg))
+    _drain_chat_bridges(cfg, client)  # one-shot: pump the reply out before exiting
+    return action
 
 
 def verify_emdash(cfg_path: Path) -> int:
@@ -584,7 +673,9 @@ def main() -> None:
         print(drain_one(cfg, client))
         return
     if args.once:
-        print(run_once(cfg, client))
+        action = run_once(cfg, client)
+        _drain_chat_bridges(cfg, client)  # one-shot: don't exit mid-reply
+        print(action)
         return
 
     # Startup banner — the log opens with exactly what this runner is configured to
@@ -660,10 +751,15 @@ def main() -> None:
                                pause_file)
                 paused = True
             try:
-                client.heartbeat(cfg.runner_id, [], note="paused", host=host,
+                client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT),
+                                 note="paused", host=host,
                                  code_branch=_code_branch())
             except Exception:  # noqa: BLE001
                 pass
+            # Pause stops STARTING work, it doesn't abandon work already running: a
+            # reply mid-flight when the sentinel dropped still gets carried back and
+            # its turn closed, instead of hanging EXECUTING until the pause lifts.
+            _pump_chat_bridges(cfg, client)
             time.sleep(cfg.poll_seconds)
             continue
         if paused:

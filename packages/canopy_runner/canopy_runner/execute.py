@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from . import cdp_control, chat_bridge, dialog, emdash, readiness, transcript
+from .tail import TailReader
 
 logger = logging.getLogger("canopy_runner.execute")
 
@@ -173,16 +174,17 @@ def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll:
 
 def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
-    then BRIDGE the assistant reply back into the ledger — unlike agent/project turns,
-    which fire-and-continue in the visible emdash session. The chat SessionConsumer turns
-    the bridged assistant events into chat.stream_* so the website streams the reply.
+    and REGISTER a bridge that carries the assistant reply back into the ledger — unlike
+    agent/project turns, which fire-and-continue in the visible emdash session. The chat
+    SessionConsumer turns the bridged assistant events into chat.stream_* so the website
+    streams the reply.
 
-    `cancel_check`, when given, is `lambda turn_id: bool` (main.py wires it to
-    `turn_id in CANCELLED_TURNS`). Threaded into the bridge as `should_stop` so a user
-    cancel ends the poll immediately rather than waiting out the idle window; once the
-    bridge exits on that signal we press Escape in the live emdash session (best-effort
-    — a failed interrupt must not block finishing the turn) and finish CANCELLED
-    instead of the normal done."""
+    This function STARTS the turn, it does not wait for it. The reply is pumped tick by
+    tick (`main._pump_chat_bridges`) and the turn is finished there, when the transcript
+    says the agent handed the floor back. Cancellation moved with it: the pump watches
+    CANCELLED_TURNS, presses Escape in the live emdash session, and finishes CANCELLED.
+    `cancel_check` is accepted for signature compatibility and is no longer read here.
+    """
     turn_id = turn["id"]
     agent_slug = turn.get("agent_slug") or ""
     project = turn.get("project") or ""
@@ -229,23 +231,15 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                        turn_id, task, target)
         client.finish(turn_id, note="chat: transcript not found; reply not bridged")
         return f"chat:{turn_id}:{task}"
-    start_index = len(chat_bridge.read_records(path))
-    text = chat_bridge.bridge_response(
-        lambda e: client.post_events(turn_id, [e]),
-        lambda: chat_bridge.read_records(path),
-        start_index=start_index, sleep=time.sleep,
-        should_stop=(lambda: cancel_check(turn_id)) if cancel_check else None,
+    # Hand off to the tick pump and RETURN — the turn stays EXECUTING until the agent
+    # hands the floor back. Waiting here would block the whole runner loop (heartbeat,
+    # claims, session reports) for the length of an agent turn, which is minutes.
+    reader = TailReader(str(path))
+    reader.seek_end()  # byte-equivalent of the old start_index snapshot, without re-reading
+    chat_bridge.IN_FLIGHT[turn_id] = chat_bridge.LiveBridge(
+        turn_id=turn_id, task=task, reader=reader,
     )
-    if cancel_check and cancel_check(turn_id):
-        try:
-            cdp_control.interrupt(task, port=cfg.cdp_port)
-        except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
-            logger.warning("chat turn=%s: interrupt failed: %s", turn_id, exc)
-        client.finish(turn_id, note="cancelled by user", status="cancelled")
-        logger.info("chat turn=%s cancelled by user (task=%s)", turn_id, task)
-        return f"cancelled:{turn_id}"
-    client.finish(turn_id, note=f"chat reply bridged ({len(text)} chars)")
-    logger.info("chat turn=%s bridged %d chars from task=%s", turn_id, len(text), task)
+    logger.info("chat turn=%s bridging from task=%s (agent=%s)", turn_id, task, target)
     return f"chat:{turn_id}:{task}"
 
 
