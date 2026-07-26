@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import pathlib
 import re
 import time
 from pathlib import Path
@@ -172,6 +173,66 @@ def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll:
     return path
 
 
+
+# Where downloaded chat attachments land. Outside any repo checkout on purpose:
+# the runner drives many projects and a screenshot is not source, so it must not
+# appear as an untracked file in whichever repo the agent happens to be in.
+ATTACHMENT_ROOT = pathlib.Path.home() / ".canopy" / "attachments"
+
+
+def _safe_name(name: str) -> str:
+    """A filename safe to join onto a local path. The server sanitises on upload
+    too; this repeats it because a runner must never trust a path it was handed
+    over the wire — `../../.ssh/authorized_keys` is a filename as far as JSON is
+    concerned."""
+    name = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name).strip(".-")
+    return cleaned[:120] or "attachment"
+
+
+def fetch_attachments(client, turn: dict) -> list[pathlib.Path]:
+    """Download this turn's attachments; return the local paths, newest last.
+
+    Best-effort per file: one unreachable attachment must not sink the whole
+    turn, because the human's TEXT is usually the substance and a silently
+    dropped image is better than a chat that never answers. What is not
+    acceptable is dropping it silently from the agent's view, so the prompt only
+    ever cites files that actually made it to disk.
+    """
+    refs = (turn.get("origin_ref") or {}).get("attachments") or []
+    paths: list[pathlib.Path] = []
+    for ref in refs:
+        aid = ref.get("id")
+        if not aid:
+            continue
+        dest = ATTACHMENT_ROOT / str(turn.get("id", "unknown")) / _safe_name(ref.get("filename", ""))
+        try:
+            client.download_attachment(aid, dest)
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.warning("attachment %s could not be fetched; continuing without it", aid, exc_info=True)
+            continue
+        paths.append(dest)
+    return paths
+
+
+def prompt_with_attachments(prompt: str, paths: list[pathlib.Path]) -> str:
+    """Put the files in front of the agent.
+
+    Absolute paths, and an explicit instruction to read them: an agent that is
+    merely TOLD a file exists usually keeps talking, whereas one told to read it
+    reaches for the tool. The whole point of the feature is the agent actually
+    looking at the screenshot.
+    """
+    if not paths:
+        return prompt
+    lines = "\n".join(f"- {p}" for p in paths)
+    noun = "file" if len(paths) == 1 else "files"
+    return (
+        f"{prompt}\n\n"
+        f"The user attached the following {noun}. Read {'it' if len(paths) == 1 else 'them'} "
+        f"with the Read tool before replying:\n{lines}"
+    )
+
 def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
     and REGISTER a bridge that carries the assistant reply back into the ledger — unlike
@@ -192,6 +253,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     target = agent_slug or project  # the emdash project to drive
     thread_key = _thread_key(turn)
     prompt = turn.get("prompt") or ""
+    prompt = prompt_with_attachments(prompt, fetch_attachments(client, turn))
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace

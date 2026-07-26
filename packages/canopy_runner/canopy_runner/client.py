@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import urllib.error
 import urllib.request
 
@@ -39,6 +40,25 @@ class Client:
         if status == 204 or not raw:
             return status, None
         return status, json.loads(raw)
+
+    def download_attachment(self, attachment_id: str, dest: "pathlib.Path") -> None:
+        """Fetch a chat attachment's bytes to `dest`.
+
+        NOT via _call: that one is rooted at /api/harness and json-decodes the
+        body. Attachments live under /api/canopy-sessions and are raw bytes.
+        """
+        url = f"{self.base_url}/api/canopy-sessions/attachments/{attachment_id}/content"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            raise ClientError(f"GET attachment {attachment_id} -> {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ClientError(f"GET attachment {attachment_id} -> {exc.reason}") from exc
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(raw)
 
     def heartbeat(self, runner_id: str, active_turn_ids: list[str], degraded: bool = False,
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
