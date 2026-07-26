@@ -460,6 +460,101 @@ def test_run_claude_captures_session_id_and_forwards_transcript(cloud_runner, mo
     assert fake_proc.killed is False
 
 
+# ── tool_use_id correlation (RC/run-convergence PR3) ────────────────────────
+# With parallel tool calls — routine for Claude — a flat tool_start x N /
+# tool_end x N stream is genuinely ambiguous without a correlating id: the
+# consumer has no way to tell which tool_end belongs to which tool_start.
+# These tests drive run_claude with real stream-json shapes (a `tool_use`
+# content block on an `assistant` event, a `tool_result` block on a `user`
+# event) and assert the emitted TurnEvent payloads carry the id end to end.
+
+def _tool_use_line(session_id: str, tool_use_id: str, name: str, tool_input: dict) -> str:
+    return json.dumps({
+        "type": "assistant", "session_id": session_id,
+        "message": {"content": [
+            {"type": "tool_use", "id": tool_use_id, "name": name, "input": tool_input},
+        ]},
+    }) + "\n"
+
+
+def _tool_result_line(session_id: str, tool_use_id: str, content, is_error: bool = False) -> str:
+    return json.dumps({
+        "type": "user", "session_id": session_id,
+        "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tool_use_id, "content": content, "is_error": is_error},
+        ]},
+    }) + "\n"
+
+
+def test_run_claude_tool_start_carries_id_and_input(cloud_runner, monkeypatch, tmp_path):
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}) + "\n",
+        _tool_use_line("s1", "call-1", "Bash", {"command": "ls"}),
+        json.dumps({"type": "result", "session_id": "s1", "result": "done", "is_error": False}) + "\n",
+    ]
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, returncode=0))
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, {}))
+
+    events = []
+    cloud_runner.run_claude("hi", "turn-tool-1", lambda batch: events.extend(batch), cwd=tmp_path)
+
+    starts = [e for e in events if e["kind"] == "tool_start"]
+    assert len(starts) == 1
+    assert starts[0]["payload"]["id"] == "call-1"
+    assert starts[0]["payload"]["name"] == "Bash"
+    assert starts[0]["payload"]["input"] == {"command": "ls"}
+
+
+def test_run_claude_tool_end_carries_matching_id_is_error_and_content(cloud_runner, monkeypatch, tmp_path):
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}) + "\n",
+        _tool_use_line("s1", "call-1", "Bash", {"command": "false"}),
+        _tool_result_line("s1", "call-1", "boom", is_error=True),
+        json.dumps({"type": "result", "session_id": "s1", "result": "done", "is_error": False}) + "\n",
+    ]
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, returncode=0))
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, {}))
+
+    events = []
+    cloud_runner.run_claude("hi", "turn-tool-2", lambda batch: events.extend(batch), cwd=tmp_path)
+
+    ends = [e for e in events if e["kind"] == "tool_end"]
+    assert len(ends) == 1
+    assert ends[0]["payload"]["tool_use_id"] == "call-1"
+    assert ends[0]["payload"]["is_error"] is True
+    assert ends[0]["payload"]["content"] == "boom"
+
+
+def test_run_claude_parallel_tool_calls_each_keep_their_own_id(cloud_runner, monkeypatch, tmp_path):
+    """The case that motivates this feature: two tool calls overlap (both
+    tool_use blocks land before either tool_result), and their results come
+    back out of order. Without ids there is no way to tell which result goes
+    with which call — this asserts the ids survive the whole event pipeline
+    so a downstream consumer CAN pair them correctly."""
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}) + "\n",
+        _tool_use_line("s1", "call-a", "Bash", {"command": "sleep 10"}),
+        _tool_use_line("s1", "call-b", "Bash", {"command": "sleep 1"}),  # SAME tool name as call-a
+        _tool_result_line("s1", "call-b", "b done"),  # finishes first
+        _tool_result_line("s1", "call-a", "a done"),
+        json.dumps({"type": "result", "session_id": "s1", "result": "done", "is_error": False}) + "\n",
+    ]
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProc(lines, returncode=0))
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, {}))
+
+    events = []
+    cloud_runner.run_claude("hi", "turn-tool-3", lambda batch: events.extend(batch), cwd=tmp_path)
+
+    starts = [e for e in events if e["kind"] == "tool_start"]
+    ends = [e for e in events if e["kind"] == "tool_end"]
+    assert [s["payload"]["id"] for s in starts] == ["call-a", "call-b"]
+    # Both calls share a name — id is the ONLY thing that disambiguates them.
+    assert {s["payload"]["name"] for s in starts} == {"Bash"}
+    # Results arrive out of order (b before a); ids must reflect that, not
+    # stream position, so a consumer can still recover which result is whose.
+    assert [e["payload"]["tool_use_id"] for e in ends] == ["call-b", "call-a"]
+
+
 def test_run_claude_clean_turn_without_result_event_is_not_killed_or_marked_failed(
     cloud_runner, monkeypatch, tmp_path,
 ):

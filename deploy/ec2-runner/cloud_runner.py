@@ -592,11 +592,34 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                     if block.get("type") == "text" and block.get("text"):
                         batch.append({"kind": "assistant", "payload": {"text": block["text"]}})
                     elif block.get("type") == "tool_use":
-                        batch.append({"kind": "tool_start", "payload": {"name": block.get("name", "")}})
+                        # `id` here is the tool_use block's own id — the SAME value the
+                        # matching tool_result block calls `tool_use_id`. Carrying it on
+                        # both events (RC/run-convergence PR3) is what lets the client
+                        # pair a tool_end to its tool_start by id instead of by stream
+                        # order, which is ambiguous the moment two tool calls overlap
+                        # (parallel tool_use) or share a name. Field name is deliberately
+                        # "id" here (not "tool_use_id") to match the raw Anthropic
+                        # tool_use block shape the frontend's pairing already reads
+                        # (content.id / content.tool_use_id — see pairToolMessages.ts).
+                        batch.append({
+                            "kind": "tool_start",
+                            "payload": {
+                                "id": block.get("id", ""),
+                                "name": block.get("name", ""),
+                                "input": block.get("input") or {},
+                            },
+                        })
             elif etype == "user":
                 for block in (evt.get("message", {}).get("content") or []):
                     if block.get("type") == "tool_result":
-                        batch.append({"kind": "tool_end", "payload": {}})
+                        batch.append({
+                            "kind": "tool_end",
+                            "payload": {
+                                "tool_use_id": block.get("tool_use_id", ""),
+                                "is_error": bool(block.get("is_error", False)),
+                                "content": block.get("content"),
+                            },
+                        })
             elif etype == "result":
                 final_text = evt.get("result", "") or ""
                 ok = not evt.get("is_error", False)
