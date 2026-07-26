@@ -9,6 +9,7 @@ import {
   attachSession,
   detachSession,
   requestBackfill,
+  resetSession,
   placeTurn,
   ChatApiError,
   type ChatSessionDetail,
@@ -45,6 +46,8 @@ export function ChatPage() {
   const [oldestTurn, setOldestTurn] = useState<number | null>(null)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetNote, setResetNote] = useState('')
   const [historyUnavailable, setHistoryUnavailable] = useState(false)
 
   // Offline-runner placement banner state. The session payload only carries
@@ -250,6 +253,29 @@ export function ChatPage() {
     }
   }, [id, oldestTurn, loadingEarlier, socket])
 
+  /** Drop canopy's derived copy and rebuild it from the runner's transcript.
+   * Cheap and repeatable: the rows are a cache of a file on the runner's disk,
+   * so this is the way to pick up anything that happened outside a turn. */
+  const resetFromTranscript = useCallback(async () => {
+    if (!id) return
+    setResetting(true)
+    setResetNote('')
+    try {
+      const res = await resetSession(id)
+      setResetNote(
+        res.ok
+          ? `Reset — rebuilding ${res.rows_dropped} message(s) from ${res.runner}`
+          : res.reason === 'runner_unreachable'
+            ? 'Its runner is offline — try again when it is back'
+            : 'Nothing to rebuild from: this session has no runner transcript',
+      )
+    } catch (err) {
+      setResetNote(err instanceof ChatApiError ? err.message : 'Reset failed')
+    } finally {
+      setResetting(false)
+    }
+  }, [id])
+
   const loadFull = useCallback(async () => {
     if (loadingFull) return
     // See loadEarlier: capture the session this call was made for so a
@@ -350,6 +376,18 @@ export function ChatPage() {
           </span>
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
+          <button
+            type="button"
+            onClick={() => void resetFromTranscript()}
+            disabled={resetting}
+            title="Drop canopy's copy and rebuild this conversation from the runner's transcript"
+            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
+          >
+            {resetting ? 'Resetting…' : 'Reset from transcript'}
+          </button>
+        </div>
       </div>
       <div className="min-h-0 flex-1">
         <ChatPanel

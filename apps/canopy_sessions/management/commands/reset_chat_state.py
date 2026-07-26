@@ -18,23 +18,23 @@ nothing.
     manage.py reset_chat_state --prune-ghosts         # + drop unservable zombies
 
 WHAT IS NOT A CACHE, and is therefore never touched here: `Turn`s and their event
-ledger (canopy's own record of what it ran — not derivable from anything), and
-sessions no live runner can serve. A session whose emdash task is gone still has
-its transcript on disk, but nothing reports it any more, so canopy's copy is the
-ONLY copy — those are skipped by default and only dropped under --prune-ghosts.
+ledger — canopy's own record of what it ran, not derivable from anything.
+
+A session is only unresettable when there is no pointer to a transcript (no
+binding) or no live runner to read one (offline/retired, which is transient). It
+is NOT enough that emdash closed or deleted the task: a backfill resolves the
+transcript by worktree PATH under ~/.claude/projects and never asks emdash, and
+Claude Code never deletes those files — verified 2026-07-26 against tasks absent
+from emdash's DB entirely, whose transcripts still resolved with 545 and 607
+records. Falling off the session report ends a session's LISTING, not its
+recoverability.
 """
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.canopy_sessions import services
-from apps.canopy_sessions.models import Message, RunnerBinding, Session
-from apps.harness.models import Runner
-
-# A runner only has to be REACHABLE to ship a transcript, not ready to run turns —
-# mirrors services.request_backfill, which reads the transcript FILE and never
-# needs emdash's CDP port.
-SERVABLE = {Runner.ONLINE, Runner.DEGRADED}
+from apps.canopy_sessions.models import Session
 
 
 class Command(BaseCommand):
@@ -46,12 +46,15 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true", help="Report only; change nothing.")
         parser.add_argument(
             "--prune-ghosts", action="store_true",
-            help="Also DELETE runner-origin sessions no live runner reports (their "
-                 "transcripts are unreachable, so canopy holds the only copy).",
+            help="Also DELETE runner-discovered sessions with NO binding — they can "
+                 "neither be shown nor rebuilt, and the next session report re-creates "
+                 "any whose task is still open. Chats a human started are never pruned.",
         )
 
     def handle(self, *args, **opts):
-        sessions = Session.objects.all().order_by("created_at")
+        sessions = Session.objects.select_related(
+            "runner_binding", "runner_binding__runner"
+        ).order_by("created_at")
         if opts["session"]:
             sessions = sessions.filter(pk=opts["session"])
             if not sessions.exists():
@@ -59,55 +62,25 @@ class Command(BaseCommand):
         if opts["workspace"]:
             sessions = sessions.filter(workspace_id=opts["workspace"])
 
-        bindings = {
-            b.session_id: b
-            for b in RunnerBinding.objects.select_related("runner").filter(
-                session__in=sessions.values("pk")
-            )
-        }
-        dry = opts["dry_run"]
-        reset = skipped = pruned = rows_dropped = 0
-
-        for session in sessions:
-            binding = bindings.get(session.id)
-            servable = (
-                binding is not None
-                and binding.runner_id is not None
-                and binding.runner.live_status in SERVABLE
-            )
-            if not servable:
-                skipped += 1
-                if opts["prune_ghosts"] and session.origin == Session.ORIGIN_RUNNER:
-                    pruned += 1
-                    self.stdout.write(f"  prune  {session.id} {session.title[:40]!r} (no live runner)")
-                    if not dry:
-                        session.delete()
-                else:
-                    self.stdout.write(
-                        f"  skip   {session.id} {session.title[:40]!r} — "
-                        f"{'no runner binding' if binding is None else 'runner not reachable'}"
-                        f"{'; canopy holds the only copy' if session.messages.exists() else ''}"
-                    )
-                continue
-
-            n = Message.objects.filter(session=session).count()
-            rows_dropped += n
-            reset += 1
+        # The SAME service the REST endpoint calls — a CLI that reimplemented the
+        # rule would drift from the button within a release.
+        summary = services.reset_sessions(
+            sessions, prune_ghosts=opts["prune_ghosts"], dry_run=opts["dry_run"]
+        )
+        for r in summary["reset"]:
             self.stdout.write(
-                f"  reset  {session.id} {session.title[:40]!r} — {n} row(s) -> "
-                f"backfill from {binding.runner.name} ({binding.session_key!r})"
+                f"  reset  {r['session_id']} {r['title'][:40]!r} — "
+                f"{r['rows_dropped']} row(s) -> backfill from {r['runner']}"
             )
-            if dry:
-                continue
-            Message.objects.filter(session=session).delete()
-            session.metadata = {**(session.metadata or {}), services.TRANSCRIPT_SOURCED: True}
-            session.save(update_fields=["metadata", "updated_at"])
-            services.request_backfill(session)
-
-        verb = "would reset" if dry else "reset"
+        for r in summary["skipped"]:
+            self.stdout.write(f"  skip   {r['session_id']} {r['title'][:40]!r} — {r['reason']}")
+        for r in summary["pruned"]:
+            self.stdout.write(f"  prune  {r['session_id']} {r['title'][:40]!r} (no binding)")
+        verb = "would reset" if summary["dry_run"] else "reset"
         self.stdout.write(self.style.SUCCESS(
-            f"\n{verb} {reset} session(s), dropping {rows_dropped} derived row(s); "
-            f"{skipped} skipped ({pruned} pruned). Turns and their ledger untouched."
+            f"\n{verb} {len(summary['reset'])} session(s), dropping "
+            f"{summary['rows_dropped']} derived row(s); {len(summary['skipped'])} skipped, "
+            f"{len(summary['pruned'])} pruned. Turns and their ledger untouched."
         ))
-        if dry:
+        if summary["dry_run"]:
             self.stdout.write("(dry run — nothing was changed)")
