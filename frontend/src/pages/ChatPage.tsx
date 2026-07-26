@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChatPanel, PlacementBanner, useSessionSocket, type PlacementRunner } from 'canopy-ui/chat'
+import {
+  ChatPanel,
+  PlacementBanner,
+  useSessionSocket,
+  type PendingAttachment,
+  type PlacementRunner,
+} from 'canopy-ui/chat'
 import { Markdown } from '@/components/Markdown'
 import { wsUrl } from '@/lib/wsUrl'
 import {
@@ -9,9 +15,12 @@ import {
   attachSession,
   detachSession,
   requestBackfill,
+  resetSession,
   placeTurn,
   ChatApiError,
   type ChatSessionDetail,
+  uploadAttachment,
+  deleteAttachment,
 } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { isBoundRunnerOffline, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
@@ -45,6 +54,8 @@ export function ChatPage() {
   const [oldestTurn, setOldestTurn] = useState<number | null>(null)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetNote, setResetNote] = useState('')
   const [historyUnavailable, setHistoryUnavailable] = useState(false)
 
   // Offline-runner placement banner state. The session payload only carries
@@ -52,6 +63,48 @@ export function ChatPage() {
   // matching that name against the fleet-wide runner list.
   const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>([])
   const [placing, setPlacing] = useState(false)
+  // Staged attachments. Uploaded eagerly on pick/paste/drop so the file is on
+  // the server before you press send — sending then sweeps up whatever the
+  // session is holding, which is why no ids need to cross the WebSocket.
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+
+  const handleAttach = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        // Optimistic chip keyed on a temp id, swapped for the server's id on
+        // success. Without it a large paste looks like nothing happened.
+        const tempId = `pending:${file.name}:${Date.now()}:${Math.random()}`
+        setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: true }])
+        uploadAttachment(id!, file)
+          .then((saved) =>
+            setAttachments((prev) =>
+              prev.map((a) => (a.id === tempId ? { id: saved.id, filename: saved.filename } : a)),
+            ),
+          )
+          .catch((err: unknown) =>
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === tempId
+                  ? { ...a, uploading: false, error: err instanceof Error ? err.message : 'failed' }
+                  : a,
+              ),
+            ),
+          )
+      }
+    },
+    [id],
+  )
+
+  const handleRemoveAttachment = useCallback((attachmentId: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
+    // A failed upload has no server row (its id is still the temp one), so only
+    // ask the server to forget the ones it actually knows about.
+    if (!attachmentId.startsWith('pending:')) {
+      deleteAttachment(attachmentId).catch(() => {
+        /* the chip is already gone from the UI; a stray row is swept server-side */
+      })
+    }
+  }, [])
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
 
@@ -250,6 +303,29 @@ export function ChatPage() {
     }
   }, [id, oldestTurn, loadingEarlier, socket])
 
+  /** Drop canopy's derived copy and rebuild it from the runner's transcript.
+   * Cheap and repeatable: the rows are a cache of a file on the runner's disk,
+   * so this is the way to pick up anything that happened outside a turn. */
+  const resetFromTranscript = useCallback(async () => {
+    if (!id) return
+    setResetting(true)
+    setResetNote('')
+    try {
+      const res = await resetSession(id)
+      setResetNote(
+        res.ok
+          ? `Reset — rebuilding ${res.rows_dropped} message(s) from ${res.runner}`
+          : res.reason === 'runner_unreachable'
+            ? 'Its runner is offline — try again when it is back'
+            : 'Nothing to rebuild from: this session has no runner transcript',
+      )
+    } catch (err) {
+      setResetNote(err instanceof ChatApiError ? err.message : 'Reset failed')
+    } finally {
+      setResetting(false)
+    }
+  }, [id])
+
   const loadFull = useCallback(async () => {
     if (loadingFull) return
     // See loadEarlier: capture the session this call was made for so a
@@ -350,14 +426,36 @@ export function ChatPage() {
           </span>
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
+          <button
+            type="button"
+            onClick={() => void resetFromTranscript()}
+            disabled={resetting}
+            title="Drop canopy's copy and rebuild this conversation from the runner's transcript"
+            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
+          >
+            {resetting ? 'Resetting…' : 'Reset from transcript'}
+          </button>
+        </div>
       </div>
       <div className="min-h-0 flex-1">
         <ChatPanel
           state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={socket.sendChat}
+          onSend={() => {
+            // The server consumes whatever the session is holding, so the chips
+            // are spent the moment we send — leaving them would imply they will
+            // ride along again on the next message.
+            setAttachments([])
+            socket.sendChat()
+          }}
           onStop={socket.stopChat}
+          awaitingReply={socket.awaitingReply}
+          attachments={attachments}
+          onAttach={handleAttach}
+          onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
           onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}

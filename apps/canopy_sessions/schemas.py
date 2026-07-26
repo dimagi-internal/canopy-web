@@ -125,3 +125,31 @@ class AttachmentOut(Schema):
     @staticmethod
     def resolve_message_id(obj) -> str | None:
         return str(obj.message_id) if obj.message_id else None
+
+
+class ResetOut(Schema):
+    """One session's reset outcome. `reason` is `ok` | `no_binding` |
+    `runner_unreachable` — stable strings the UI renders as the refusal."""
+
+    session_id: str
+    title: str
+    ok: bool
+    reason: str
+    rows_dropped: int
+    runner: str
+
+
+class ResetIn(Schema):
+    """Bulk reset scope. Empty body = every session the caller can see, in the
+    workspace the request resolved to."""
+
+    prune_ghosts: bool = False
+    dry_run: bool = False
+
+
+class ResetSummaryOut(Schema):
+    dry_run: bool
+    reset: list[ResetOut]
+    skipped: list[ResetOut]
+    pruned: list[dict]
+    rows_dropped: int

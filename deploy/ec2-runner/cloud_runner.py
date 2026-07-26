@@ -158,13 +158,58 @@ def pair_or_load() -> str:
     return rid
 
 
-def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None) -> tuple[bool, str]:
+def _agent_env(slug: str | None) -> dict:
+    """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
+
+    `bootstrap_agents.sh` materializes that file with `op inject` (the fleet's
+    provisioning standard), but writing a file is not the same as exporting it:
+    nothing here ever sourced it, so an agent's own credentials — notably
+    CANOPY_WEB_PAT, which `canopy_web.resolve_pat()` reads FIRST — never reached
+    `claude -p`, and every agent silently fell back to the runner's ambient
+    CANOPY_TOKEN (a human's PAT). Loading it here is what makes per-agent
+    identity real rather than merely provisioned.
+
+    Deliberately layered UNDER the runner's own environment for the few keys the
+    runner must control (CANOPY_BASE_URL, CANOPY_TOKEN as a fallback, PATH), and
+    OVER it for everything else the agent declares. Parsing is intentionally
+    minimal — `op inject` emits plain `KEY=value` lines; anything exotic (export
+    prefixes, shell interpolation) is not part of the format and is skipped
+    rather than guessed at.
+    """
+    env = os.environ.copy()
+    if not slug:
+        return env
+    env_file = pathlib.Path.home() / f".{slug}" / ".env"
+    try:
+        raw = env_file.read_text()
+    except OSError:
+        return env  # not provisioned (yet) — the turn still runs
+    loaded = 0
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum():
+            continue
+        value = value.strip().strip('"').strip("'")
+        env[key] = value
+        loaded += 1
+    if loaded:
+        _log(f"loaded {loaded} vars from {env_file}")
+    return env
+
+
+def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
+               agent_slug: str | None = None) -> tuple[bool, str]:
     """Run `claude -p` on the prompt, streaming stream-json events via `emit`
     (a callable taking a list of event dicts — WS or REST). Returns (ok, final_text).
 
     `cwd` lets the caller run this IN an agent's real clone (see `_turn_cwd`)
     instead of a throwaway scratch dir; None keeps the original scratch-dir
-    behavior (project/session turns, or an agent with no bootstrapped clone)."""
+    behavior (project/session turns, or an agent with no bootstrapped clone).
+    `agent_slug` layers that agent's provisioned env on top (see `_agent_env`)."""
     workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -179,7 +224,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None)
     stderr_path = workdir / "stderr.log"
     stderr_file = stderr_path.open("w")
     proc = subprocess.Popen(
-        cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True
+        cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True,
+        env=_agent_env(agent_slug),
     )
     final_text = ""
     ok = True
@@ -242,6 +288,21 @@ def _stage_github_token(token: str) -> None:
         _log(f"warn: could not stage github token: {exc}")
 
 
+def _turn_agent_slug(turn: dict) -> str:
+    """The agent this turn runs AS, or "" — the single place that decision is made.
+
+    A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
+    session id in origin_ref; that, not a top-level field, is the session signal
+    on TurnOut. A live chat is bridged, never run from a checkout, so it is not
+    an agent-identity turn. Shared by `_turn_cwd` (which clone to run in) and
+    `_agent_env` (whose credentials to load) so the two can never disagree about
+    what counts as an agent turn.
+    """
+    if (turn.get("origin_ref") or {}).get("chat_session_id"):
+        return ""
+    return turn.get("agent_slug") or ""
+
+
 def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     """Where claude should run for this turn (deploy/ec2-runner design spec §2:
     'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
@@ -261,9 +322,8 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     # A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
     # session id in origin_ref — that, not a top-level field, is the session
     # signal on TurnOut. A live chat is bridged, never run from a checkout.
-    is_session = bool((turn.get("origin_ref") or {}).get("chat_session_id"))
-    slug = turn.get("agent_slug") or ""
-    if slug and not is_session:
+    slug = _turn_agent_slug(turn)
+    if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
         if (agent_dir / ".git").is_dir():
             try:
@@ -384,7 +444,8 @@ def run_over_rest(runner_id: str) -> None:
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
-                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit, cwd=cwd)
+                ok, text = run_claude(turn.get("prompt", ""), turn_id, emit, cwd=cwd,
+                                  agent_slug=_turn_agent_slug(turn))
             except Exception as exc:  # never let one turn kill the loop
                 ok, text = False, f"runner error: {exc}"
         finally:
@@ -450,7 +511,8 @@ def _claim_and_run(ws, runner_id: str) -> None:
     lease_stop = _start_lease_renewal(runner_id, tid)
     try:
         try:
-            ok, text = run_claude(turn.get("prompt", ""), tid, emit, cwd=cwd)
+            ok, text = run_claude(turn.get("prompt", ""), tid, emit, cwd=cwd,
+                                  agent_slug=_turn_agent_slug(turn))
         except Exception as exc:
             ok, text = False, f"runner error: {exc}"
     finally:

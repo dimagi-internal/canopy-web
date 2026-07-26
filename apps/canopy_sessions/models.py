@@ -260,6 +260,12 @@ class Attachment(models.Model):
     # Where the bytes are in the bucket. Stored rather than derived so the key
     # scheme can change without orphaning everything written under the old one.
     storage_key = models.CharField(max_length=500)
+    # When this attachment was included in a send. `message` cannot carry that
+    # on its own: a RUNNER-origin session writes NO user Message row (the
+    # transcript is its durable source), so those attachments would stay
+    # message=NULL forever and be swept into every subsequent send. "Pending"
+    # is therefore sent_at IS NULL, not message IS NULL.
+    sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

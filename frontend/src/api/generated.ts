@@ -2456,6 +2456,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset every visible session
+         * @description Bulk reset, scoped to the workspaces the caller can see (and to the pinned
+         *     one on a tenant route). Use `dry_run` to see what would happen first.
+         *
+         *     `prune_ghosts` additionally DELETES runner-discovered sessions that have no
+         *     binding at all: they can neither be shown nor rebuilt, and the next session
+         *     report re-creates any whose task is still open. Chats a human started are
+         *     never pruned.
+         */
+        readonly post: operations["apps_canopy_sessions_api_reset_sessions"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -2506,6 +2532,37 @@ export interface paths {
          *     Idempotent, and never destructive: /unarchive brings it straight back.
          */
         readonly post: operations["apps_canopy_sessions_api_archive_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Reset a session from its transcript
+         * @description Drop this session's derived messages and re-derive them from the runner's
+         *     transcript.
+         *
+         *     A first-class action, not a repair: once the transcript is the durable record,
+         *     these rows are a CACHE of a file on the runner's disk, so rebuilding them is
+         *     cheap and repeatable — the thing you reach for constantly while building, and
+         *     the way to pick up history the old per-turn projection could never capture.
+         *
+         *     Refuses (200 with ok=false + a reason) rather than erroring when there is
+         *     nothing to re-derive from: `no_binding` (no pointer to a transcript) or
+         *     `runner_unreachable` (its box is offline — try again when it's back). Turns
+         *     and their event ledger are never touched; nothing can rebuild those.
+         */
+        readonly post: operations["apps_canopy_sessions_api_reset_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3544,6 +3601,8 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Revoked At */
             readonly revoked_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
         };
         /**
          * PersonalTokenCreatedOut
@@ -3563,6 +3622,8 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Revoked At */
             readonly revoked_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
             /** Raw */
             readonly raw: string;
         };
@@ -3570,6 +3631,11 @@ export interface components {
         readonly PersonalTokenCreateIn: {
             /** Label */
             readonly label: string;
+            /**
+             * Ttl Days
+             * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
+             */
+            readonly ttl_days?: number | null;
         };
         /** TokenExchangeOut */
         readonly TokenExchangeOut: {
@@ -7068,6 +7134,57 @@ export interface components {
             };
             /** Runner Id */
             readonly runner_id?: string | null;
+        };
+        /**
+         * ResetOut
+         * @description One session's reset outcome. `reason` is `ok` | `no_binding` |
+         *     `runner_unreachable` — stable strings the UI renders as the refusal.
+         */
+        readonly ResetOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Ok */
+            readonly ok: boolean;
+            /** Reason */
+            readonly reason: string;
+            /** Rows Dropped */
+            readonly rows_dropped: number;
+            /** Runner */
+            readonly runner: string;
+        };
+        /** ResetSummaryOut */
+        readonly ResetSummaryOut: {
+            /** Dry Run */
+            readonly dry_run: boolean;
+            /** Reset */
+            readonly reset: readonly components["schemas"]["ResetOut"][];
+            /** Skipped */
+            readonly skipped: readonly components["schemas"]["ResetOut"][];
+            /** Pruned */
+            readonly pruned: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Rows Dropped */
+            readonly rows_dropped: number;
+        };
+        /**
+         * ResetIn
+         * @description Bulk reset scope. Empty body = every session the caller can see, in the
+         *     workspace the request resolved to.
+         */
+        readonly ResetIn: {
+            /**
+             * Prune Ghosts
+             * @default false
+             */
+            readonly prune_ghosts: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
         };
         /** MessageOut */
         readonly MessageOut: {
@@ -11138,6 +11255,30 @@ export interface operations {
             };
         };
     };
+    readonly apps_canopy_sessions_api_reset_sessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
     readonly apps_canopy_sessions_api_get_session: {
         readonly parameters: {
             readonly query?: {
@@ -11205,6 +11346,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_reset_session: {
+        readonly parameters: {
+            readonly query?: {
+                readonly dry_run?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResetOut"];
                 };
             };
         };

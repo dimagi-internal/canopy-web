@@ -186,9 +186,10 @@ def test_reset_dry_run_changes_nothing(settings):
     assert not services.transcript_sourced(session)
 
 
-def test_reset_skips_a_session_no_live_runner_can_serve(settings):
-    """The one thing that is NOT a cache: with no runner reporting it, canopy's
-    copy is the only copy, so it is left alone rather than dropped."""
+def test_reset_skips_a_session_with_no_pointer_to_a_transcript(settings):
+    """The genuine blocker: no binding means nothing knows which box, worktree or
+    task this came from, so there is no file to re-derive from. Note this is NOT
+    "emdash closed the task" — that still resolves by path (see _reset_blocker)."""
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
@@ -198,7 +199,7 @@ def test_reset_skips_a_session_no_live_runner_can_serve(settings):
 
     out = _reset()
 
-    assert "skip" in out and "no runner binding" in out
+    assert "skip" in out and services.RESET_NO_BINDING in out
     assert session.messages.count() == before
     assert Session.objects.filter(pk=session.pk).exists()
 
@@ -242,3 +243,97 @@ def test_reset_never_touches_turns(settings):
     _msg, turn = services.send_message(session=session, text="hi", user=user)
     _reset()
     assert Turn.objects.filter(pk=turn.pk).exists()
+
+
+# --- reset as a FIRST-CLASS action: the same rule behind an endpoint -----------
+
+
+def _api(user):
+    from django.test import Client
+    c = Client()
+    c.force_login(user)
+    return c
+
+
+def test_reset_endpoint_rebuilds_one_session(settings):
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, runner = _ctx()
+    session = _bound_session(ws, user, runner)
+    services.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
+
+    resp = _api(user).post(f"/api/canopy-sessions/{session.id}/reset")
+
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["ok"] is True and body["reason"] == services.RESET_OK
+    assert body["rows_dropped"] == 1
+    assert session.messages.count() == 0
+    assert RunnerBinding.objects.get(session=session).backfill_requested is True
+
+
+def test_reset_endpoint_refuses_with_a_reason_instead_of_erroring(settings):
+    """A refusal is a 200 the UI can render, not a 4xx it has to interpret."""
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, _runner = _ctx()
+    session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
+
+    resp = _api(user).post(f"/api/canopy-sessions/{session.id}/reset")
+
+    assert resp.status_code == 200, resp.content
+    assert resp.json() == {
+        "session_id": str(session.id), "title": "", "ok": False,
+        "reason": services.RESET_NO_BINDING, "rows_dropped": 0, "runner": "",
+    }
+
+
+def test_reset_endpoint_is_tenant_gated(settings):
+    """A non-member gets the same 404 as a nonexistent session — no oracle."""
+    settings.CHAT_STUB_EXECUTOR = True
+    _owner, ws, runner = _ctx()
+    session = _bound_session(ws, _owner, runner)
+    stranger = User.objects.create_user("nope", "nope@dimagi.com", "pw")
+
+    resp = _api(stranger).post(f"/api/canopy-sessions/{session.id}/reset")
+
+    assert resp.status_code == 404
+    assert session.messages.count() == session.messages.count()  # untouched
+
+
+def test_bulk_reset_endpoint_dry_run_reports_without_changing(settings):
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, runner = _ctx()
+    a = _bound_session(ws, user, runner, key="task-a")
+    services.persist_transcript_rows(a, [{"index": 2, "role": "user", "text": "hi"}])
+
+    resp = _api(user).post(
+        "/api/canopy-sessions/reset", data={"dry_run": True},
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert [r["session_id"] for r in body["reset"]] == [str(a.id)]
+    assert body["rows_dropped"] == 1
+    assert a.messages.count() == 1, "dry run changed nothing"
+
+
+def test_bulk_reset_endpoint_only_touches_visible_workspaces(settings):
+    settings.CHAT_STUB_EXECUTOR = True
+    user, ws, runner = _ctx()
+    mine = _bound_session(ws, user, runner, key="mine")
+    services.persist_transcript_rows(mine, [{"index": 2, "role": "user", "text": "hi"}])
+    other_user = User.objects.create_user("other", "other@dimagi.com", "pw")
+    other_ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=other_user)
+    theirs = Session.objects.create(
+        workspace=other_ws, origin=Session.ORIGIN_WEB, project="p", title="theirs",
+    )
+    services.persist_transcript_rows(theirs, [{"index": 2, "role": "user", "text": "secret"}])
+
+    resp = _api(user).post("/api/canopy-sessions/reset", data={},
+                           content_type="application/json")
+
+    assert resp.status_code == 200, resp.content
+    ids = {r["session_id"] for r in resp.json()["reset"] + resp.json()["skipped"]}
+    assert str(theirs.id) not in ids
+    assert theirs.messages.count() == 1, "another tenant's rows are untouched"

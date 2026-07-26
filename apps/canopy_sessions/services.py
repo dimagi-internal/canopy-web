@@ -391,6 +391,97 @@ def transcript_sourced(session) -> bool:
     return bool((session.metadata or {}).get(TRANSCRIPT_SOURCED))
 
 
+# Why a reset can be refused. The UI renders these, so they are stable strings.
+RESET_OK = "ok"
+RESET_NO_BINDING = "no_binding"            # nothing knows which box/worktree it came from
+RESET_RUNNER_UNREACHABLE = "runner_unreachable"   # transient: retry when it's back
+
+
+def _reset_blocker(session) -> tuple[str, object]:
+    """(reason, binding) — RESET_OK when this session's rows can be re-derived.
+
+    Deliberately NOT "is the emdash task still open?". A backfill resolves the
+    transcript by WORKTREE PATH under ~/.claude/projects, never by asking emdash,
+    and Claude Code never deletes those files — so a task emdash deleted months
+    ago still ships its full history (verified against the live fleet 2026-07-26:
+    tasks absent from emdash's DB entirely, transcripts resolved, 545 and 607
+    records). Falling off the session report ends a session's LISTING, not its
+    recoverability; conflating the two is what made this look dangerous.
+
+    What actually blocks a reset is having no pointer to a transcript at all (no
+    binding), or no live runner to read it (offline/retired — transient).
+    """
+    from apps.harness.models import Runner
+
+    binding = getattr(session, "runner_binding", None)
+    if binding is None or binding.runner_id is None:
+        return RESET_NO_BINDING, None
+    # Reachable is enough to READ A FILE — mirrors request_backfill, which never
+    # needs emdash's CDP port.
+    if binding.runner.live_status not in (Runner.ONLINE, Runner.DEGRADED):
+        return RESET_RUNNER_UNREACHABLE, binding
+    return RESET_OK, binding
+
+
+def reset_session(session, *, dry_run: bool = False) -> dict:
+    """Drop one session's derived rows and re-derive them from its transcript.
+
+    The rows are a CACHE of a file on the runner's disk, so this is cheap and
+    repeatable — the operation you want constantly while building, not a migration
+    to be performed once with ceremony. Returns a result dict rather than raising,
+    so a bulk caller can report per-session outcomes.
+    """
+    reason, binding = _reset_blocker(session)
+    rows = Message.objects.filter(session=session).count()
+    out = {
+        "session_id": str(session.id),
+        "title": session.title,
+        "ok": reason == RESET_OK,
+        "reason": reason,
+        "rows_dropped": rows if reason == RESET_OK else 0,
+        "runner": binding.runner.name if (binding and binding.runner_id) else "",
+    }
+    if reason != RESET_OK or dry_run:
+        return out
+    Message.objects.filter(session=session).delete()
+    session.metadata = {**(session.metadata or {}), TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata", "updated_at"])
+    request_backfill(session)
+    return out
+
+
+def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = False) -> dict:
+    """Bulk reset. `sessions` is any Session iterable/queryset already scoped by
+    the caller (a workspace, a tenant, one id) — this never widens it.
+
+    `prune_ghosts` DELETES runner-origin sessions that have no binding: a
+    discovered session with no pointer to a transcript can't be shown or rebuilt,
+    and the next session report re-creates it if its task is still open. Web
+    sessions are never pruned — a chat you started is not something to garbage
+    collect.
+    """
+    results, pruned = [], []
+    for session in sessions:
+        result = reset_session(session, dry_run=dry_run)
+        if (
+            prune_ghosts
+            and result["reason"] == RESET_NO_BINDING
+            and session.origin == Session.ORIGIN_RUNNER
+        ):
+            pruned.append({"session_id": str(session.id), "title": session.title})
+            if not dry_run:
+                session.delete()
+            continue
+        results.append(result)
+    return {
+        "dry_run": dry_run,
+        "reset": [r for r in results if r["ok"]],
+        "skipped": [r for r in results if not r["ok"]],
+        "pruned": pruned,
+        "rows_dropped": sum(r["rows_dropped"] for r in results),
+    }
+
+
 def _next_index(session: Session) -> int:
     current = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
     return 0 if current is None else current + 1
@@ -454,6 +545,34 @@ def _resolve_placement(session: Session, placement: str | None):
     return None
 
 
+
+def claim_pending_attachments(session, message=None) -> list[dict]:
+    """Mark this session's un-sent attachments as sent, and describe them for the
+    runner.
+
+    Swept off the SESSION rather than passed by id, so the WebSocket `chat.send`
+    frame needs no new field and REST and WS behave identically. It also matches
+    the draft model: the draft is co-edited and shared, so anything attached to
+    it belongs to the send whoever presses the button.
+
+    `message` is None for a runner-origin session, which writes no user Message
+    row — hence the sent_at stamp, without which those rows would ride along on
+    every later send too.
+    """
+    from .models import Attachment
+
+    pending = list(Attachment.objects.filter(session=session, sent_at__isnull=True))
+    if not pending:
+        return []
+    now = timezone.now()
+    Attachment.objects.filter(pk__in=[a.pk for a in pending]).update(
+        sent_at=now, **({"message": message} if message is not None else {})
+    )
+    return [
+        {"id": str(a.id), "filename": a.filename, "content_type": a.content_type}
+        for a in pending
+    ]
+
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
 ) -> tuple[Message, Turn]:
@@ -514,12 +633,16 @@ def send_message(
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
+        origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+        attachments = claim_pending_attachments(session, message)
+        if attachments:
+            origin_ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
-            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+            origin_ref=origin_ref,
             pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
@@ -592,12 +715,18 @@ def _send_transcript_sourced_message(
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
+    origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+    # message=None: this path writes no durable user row, so the sent_at stamp is
+    # the only thing stopping these attachments riding along on every later send.
+    attachments = claim_pending_attachments(session, None)
+    if attachments:
+        origin_ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=Turn.ORIGIN_API,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
-        origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id)},
+        origin_ref=origin_ref,
         pinned_runner=pinned,
     )
     _maybe_interject(session, message)
