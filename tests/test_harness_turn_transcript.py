@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import zlib
 
 import pytest
 
@@ -26,6 +27,26 @@ def _turn(idempotency_key: str = "k1") -> Turn:
     return Turn.objects.create(
         agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key=idempotency_key
     )
+
+
+def _count_gzip_members(blob: bytes) -> int:
+    """How many concatenated gzip members `blob` contains.
+
+    Time-invariant (unlike comparing to a freshly `gzip.compress()`-ed
+    blob — that embeds a wall-clock MTIME in its header, which makes exact
+    byte-equality assertions a real, if rare, flake). This instead peels off
+    one member at a time via a raw gzip-mode `zlib.decompressobj` and counts
+    how many times `.unused_data` still has bytes left over.
+    """
+    count = 0
+    data = blob
+    while data:
+        count += 1
+        d = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        d.decompress(data)
+        d.flush()
+        data = d.unused_data
+    return count
 
 
 def test_append_transcript_is_retrievable():
@@ -179,13 +200,43 @@ def test_appends_concatenate_gzip_members_rather_than_recompress_whole_blob():
 
     # Correctness: still decompresses to the full accumulated content.
     assert gzip.decompress(stored) == b"hello\nworld"
-    # Mechanism: the stored blob is the concatenation of two INDEPENDENTLY
-    # compressed members, not a single fresh compression of the combined
-    # content — proves the O(1)-per-append path is actually taken (a
-    # decompress-all + recompress-all implementation would produce the
-    # single-member form instead).
-    assert stored == gzip.compress(b"hello") + gzip.compress(b"\nworld")
-    assert stored != gzip.compress(b"hello\nworld")
+    # Mechanism, time-invariant: assert on gzip STRUCTURE (member count)
+    # rather than exact bytes against a freshly computed gzip.compress(...) —
+    # that embeds a wall-clock MTIME in its header, so two calls that straddle
+    # a second boundary produce different header bytes and a byte-equality
+    # assertion would flake for no real reason. Two appends must produce
+    # exactly two concatenated members (one per batch); a decompress-all +
+    # recompress-all implementation would instead collapse everything into a
+    # single member, so this still discriminates the O(1) path from the O(n²)
+    # one it replaced.
+    assert _count_gzip_members(stored) == 2
+
+
+def test_append_onto_a_legacy_single_member_row_still_round_trips():
+    """Backward-compat regression guard: a row written the OLD way (a single
+    gzip member holding the WHOLE accumulated content, as the pre-fix
+    decompress-all + recompress-all implementation produced — and as every
+    row on this table happened to be, before O(1) appends shipped) must still
+    accumulate correctly once a NEW-style append lands on top of it.
+    `gzip.decompress` reassembles a legacy single member followed by a new
+    member exactly as it would two new-style members — this pins that the
+    join/lock logic doesn't secretly depend on the blob always being built
+    from same-shaped members.
+    """
+    turn = _turn()
+    legacy_content = b"foo\nbar"
+    TurnTranscript.objects.create(
+        turn=turn,
+        raw_jsonl_gz=gzip.compress(legacy_content),
+        line_count=2,
+        bytes_raw=len(legacy_content),
+    )
+
+    transcript = services.append_transcript(turn, ["baz"])
+
+    assert services.read_transcript(turn) == b"foo\nbar\nbaz"
+    assert transcript.line_count == 3
+    assert transcript.bytes_raw == len(b"foo\nbar\nbaz")
 
 
 # MINOR 3 — a line containing an embedded "\n" violates the one-record-per-
