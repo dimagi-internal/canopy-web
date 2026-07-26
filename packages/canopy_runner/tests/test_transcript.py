@@ -285,15 +285,91 @@ def test_read_recent_messages_reads_only_tail_of_large_file(tmp_path):
     assert len(msgs) <= 3
 
 
-def test_attach_recent_tail_sets_last_active_from_transcript_mtime(tmp_path):
-    import datetime as dt
+def test_attach_recent_tail_sets_last_active_from_newest_transcript_record(tmp_path):
+    # The live-run case PR #300 fixed: the CC session is what's active, and emdash's
+    # own UI timestamp is stale. The newest record IN the transcript is the signal.
     home = tmp_path / "home"
     claude_home = home / ".claude" / "projects"
     wt = home / "emdash" / "worktrees" / "canopy-web" / "emdash" / "ddd"
-    f = _write_transcript(claude_home, wt, [{"type": "user", "message": {"content": "hi"}}])
+    _write_transcript(claude_home, wt, [
+        {"type": "user", "message": {"content": "hi"}, "timestamp": "2026-07-25T10:00:00.000Z"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "yo"}]},
+         "timestamp": "2026-07-25T10:04:00.000Z"},
+    ])
     sessions = [{"emdash_task": "ddd", "project": "canopy-web",
                  "last_interacted_at": "2020-01-01 00:00:00"}]  # stale emdash value
     transcript.attach_recent_tail(sessions, home=home, claude_home=claude_home)
-    # Overridden to the transcript's write time (the real activity), not the stale value.
-    expected = dt.datetime.fromtimestamp(f.stat().st_mtime, tz=dt.timezone.utc).isoformat()
-    assert sessions[0]["last_interacted_at"] == expected
+    assert sessions[0]["last_interacted_at"] == "2026-07-25T10:04:00+00:00"
+
+
+def test_attach_recent_tail_ignores_a_touched_file_with_no_new_records(tmp_path):
+    # THE BUG (labs 2026-07-25): a live-but-IDLE `claude` process rewrites its own
+    # transcript periodically without appending a single conversational record, so
+    # the file's mtime keeps advancing while nothing happens. Reading mtime as the
+    # activity signal made dormant sessions creep to the top of the phone's list
+    # reading "just now" (and, via is_session_running's 120s window, even render as
+    # "running"). Observed skews on the live fleet: mtime 23.4h and 44.7h newer than
+    # the newest record in the file. Activity is what the transcript SAYS, not when
+    # the file was last written.
+    import os
+    import time
+    home = tmp_path / "home"
+    claude_home = home / ".claude" / "projects"
+    wt = home / "emdash" / "worktrees" / "canopy-web" / "emdash" / "dormant"
+    f = _write_transcript(claude_home, wt, [
+        {"type": "user", "message": {"content": "hi"}, "timestamp": "2026-07-24T09:00:00.000Z"},
+    ])
+    os.utime(f, (time.time(), time.time()))  # touched now; content unchanged
+    sessions = [{"emdash_task": "dormant", "project": "canopy-web",
+                 "last_interacted_at": "2026-07-24 09:00:00"}]
+    transcript.attach_recent_tail(sessions, home=home, claude_home=claude_home)
+    # Still the last real record — the touch bought the session no freshness.
+    assert transcript._parse_utc(sessions[0]["last_interacted_at"]) == transcript._parse_utc(
+        "2026-07-24T09:00:00Z"
+    )
+
+
+def test_attach_recent_tail_keeps_a_newer_emdash_timestamp(tmp_path):
+    # The two clocks measure different halves of one session: emdash's value tracks
+    # its own UI, the transcript tracks the CC session. Neither dominates, so take
+    # the later — here emdash saw an interaction the transcript hasn't recorded yet.
+    home = tmp_path / "home"
+    claude_home = home / ".claude" / "projects"
+    wt = home / "emdash" / "worktrees" / "canopy-web" / "emdash" / "ddd"
+    _write_transcript(claude_home, wt, [
+        {"type": "user", "message": {"content": "hi"}, "timestamp": "2026-07-25T10:00:00.000Z"},
+    ])
+    sessions = [{"emdash_task": "ddd", "project": "canopy-web",
+                 "last_interacted_at": "2026-07-25 11:30:00"}]
+    transcript.attach_recent_tail(sessions, home=home, claude_home=claude_home)
+    assert sessions[0]["last_interacted_at"] == "2026-07-25 11:30:00"
+
+
+def test_attach_recent_tail_leaves_timestamp_alone_when_transcript_has_none(tmp_path):
+    # A transcript with no parseable timestamps yields no opinion — emdash's value
+    # stands rather than being replaced by a guess.
+    home = tmp_path / "home"
+    claude_home = home / ".claude" / "projects"
+    wt = home / "emdash" / "worktrees" / "canopy-web" / "emdash" / "ddd"
+    _write_transcript(claude_home, wt, [{"type": "user", "message": {"content": "hi"}}])
+    sessions = [{"emdash_task": "ddd", "project": "canopy-web",
+                 "last_interacted_at": "2020-01-01 00:00:00"}]
+    transcript.attach_recent_tail(sessions, home=home, claude_home=claude_home)
+    assert sessions[0]["last_interacted_at"] == "2020-01-01 00:00:00"
+
+
+def test_newest_record_time_takes_the_max_not_the_last_line(tmp_path):
+    # Records are appended in order in practice, but a rewrite could land them out
+    # of order; the newest wins either way.
+    f = tmp_path / "s.jsonl"
+    f.write_text("\n".join(json.dumps(x) for x in [
+        {"type": "user", "timestamp": "2026-07-25T12:00:00.000Z"},
+        {"type": "system", "timestamp": "2026-07-25T11:00:00.000Z"},
+        {"type": "assistant"},           # no timestamp — skipped
+        {"type": "user", "timestamp": "nonsense"},  # unparseable — skipped
+    ]), "utf-8")
+    assert transcript.newest_record_time(f) == "2026-07-25T12:00:00+00:00"
+
+
+def test_newest_record_time_of_an_unreadable_file_is_none(tmp_path):
+    assert transcript.newest_record_time(tmp_path / "missing.jsonl") is None

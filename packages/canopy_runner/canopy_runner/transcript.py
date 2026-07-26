@@ -36,9 +36,34 @@ import re
 from pathlib import Path
 
 
-def _iso_utc(epoch: float) -> str:
-    """Epoch seconds -> ISO-8601 UTC string (what the report/API expect)."""
-    return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc).isoformat()
+def _parse_utc(value) -> datetime.datetime | None:
+    """A timestamp from either clock -> aware UTC, or None if it isn't one.
+
+    Two formats meet here: Claude Code's record `timestamp` (ISO-8601 with a "Z")
+    and emdash's sqlite `last_interacted_at` ("YYYY-MM-DD HH:MM:SS", naive but
+    stored in UTC — verified against the live DB). Anything unparseable is None
+    rather than a guess.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _is_later(candidate: str, current) -> bool:
+    """True when `candidate` is strictly newer than `current`. An unparseable or
+    missing `current` loses — a value we can't read is worse than one we can."""
+    new = _parse_utc(candidate)
+    if new is None:
+        return False
+    old = _parse_utc(current)
+    return old is None or new > old
+
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +217,47 @@ def read_recent_messages(path: Path, limit: int = 8) -> list[dict]:
     return msgs[-limit:]
 
 
+def newest_record_time(path: Path) -> str | None:
+    """ISO-8601 UTC of the newest record IN the transcript, or None.
+
+    The session's real activity clock. Deliberately NOT the file's mtime: a
+    live-but-idle `claude` process rewrites its own transcript from time to time
+    without appending a single record, so mtime advances while the conversation is
+    dormant (observed on the fleet 2026-07-25: files whose mtime ran 23h and 44h
+    ahead of their newest record). What the transcript SAYS happened is the only
+    signal that can't drift that way.
+
+    Counts every record type, not just conversational ones: a tool call or a
+    subagent turn mid-run is the session working, and a run that is mid-tool-loop
+    is exactly when "is this alive?" is being asked. Reads only the last
+    TAIL_BYTES like the tail reader; a partial first line just fails to parse.
+    Never raises — an unreadable/timestamp-less file yields None, meaning "no
+    opinion", and the caller keeps whatever it had.
+    """
+    try:
+        with path.open("rb") as f:
+            size = f.seek(0, 2)
+            f.seek(max(0, size - TAIL_BYTES))
+            raw = f.read()
+    except OSError:
+        return None
+    newest: datetime.datetime | None = None
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        ts = _parse_utc(payload.get("timestamp"))
+        if ts and (newest is None or ts > newest):
+            newest = ts
+    return newest.isoformat() if newest else None
+
+
 def session_tail(
     repo: str,
     task: str,
@@ -232,11 +298,16 @@ def attach_recent_tail(
     `count` caps how many transcripts are read per tick; `limit` caps messages per
     session. Sessions past `count`, or with no resolvable transcript, carry [].
 
-    Also overrides `last_interacted_at` with the transcript's mtime when we have it:
-    emdash's own last_interacted_at only tracks emdash's UI, NOT the Claude Code
-    session running in the worktree (which the runner drives), so an actively-running
-    session looked stale ("45m ago" while mid-turn). The transcript file's write time
-    is the real activity signal.
+    Also advances `last_interacted_at` to the newest record in the transcript when
+    that is later: emdash's own last_interacted_at only tracks emdash's UI, NOT the
+    Claude Code session running in the worktree (which the runner drives), so an
+    actively-running session looked stale ("45m ago" while mid-turn).
+
+    The two clocks measure different halves of one session, so we take the LATER of
+    them rather than letting either win outright. It is deliberately a max and not
+    an override: emdash can legitimately be ahead (you touched the task in its UI
+    before the CC session wrote anything), and a transcript with no parseable
+    timestamps has no opinion at all.
     """
     home = home or Path.home()
     claude_home = claude_home or (home / ".claude" / "projects")
@@ -252,7 +323,6 @@ def attach_recent_tail(
             s["recent_messages"] = []
             continue
         s["recent_messages"] = read_recent_messages(path, limit=limit)
-        try:
-            s["last_interacted_at"] = _iso_utc(path.stat().st_mtime)
-        except OSError:
-            pass
+        newest = newest_record_time(path)
+        if newest and _is_later(newest, s.get("last_interacted_at")):
+            s["last_interacted_at"] = newest
