@@ -3601,6 +3601,8 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Revoked At */
             readonly revoked_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
         };
         /**
          * PersonalTokenCreatedOut
@@ -3620,6 +3622,8 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Revoked At */
             readonly revoked_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
             /** Raw */
             readonly raw: string;
         };
@@ -3627,6 +3631,11 @@ export interface components {
         readonly PersonalTokenCreateIn: {
             /** Label */
             readonly label: string;
+            /**
+             * Ttl Days
+             * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
+             */
+            readonly ttl_days?: number | null;
         };
         /** TokenExchangeOut */
         readonly TokenExchangeOut: {

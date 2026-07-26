@@ -25,6 +25,7 @@ def _serialize(token: PersonalToken) -> dict:
         "created_at": token.created_at,
         "last_used_at": token.last_used_at,
         "revoked_at": token.revoked_at,
+        "expires_at": token.expires_at,
     }
 
 
@@ -36,7 +37,9 @@ def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
 
 @router.post("/", response={201: PersonalTokenCreatedOut}, summary="Mint a token")
 def create_token(request: HttpRequest, payload: PersonalTokenCreateIn) -> Status:
-    raw, token = PersonalToken.create_for_user(user=request.user, label=payload.label)
+    raw, token = PersonalToken.create_for_user(
+        user=request.user, label=payload.label, ttl_days=payload.ttl_days
+    )
     body = _serialize(token) | {"raw": raw}
     return Status(201, PersonalTokenCreatedOut.model_validate(body))
 

@@ -233,6 +233,12 @@ AUTH_ALLOWED_EMAIL_DOMAIN = env("AUTH_ALLOWED_EMAIL_DOMAIN", default="dimagi.com
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 
+# Default lifetime for a newly minted Personal Access Token, in days. Applies
+# only when the mint call doesn't pass an explicit ttl_days; 0 there means
+# "never expires". Pre-existing tokens are grandfathered (expires_at NULL) —
+# see apps/tokens/migrations/0003.
+PAT_DEFAULT_TTL_DAYS = env.int("PAT_DEFAULT_TTL_DAYS", default=180)
+
 # Rolling session: refresh the expiry on every request rather than only at login.
 # Django's default (False) sets the 2-week expiry AT LOGIN and never extends it,
 # so an installed PWA would log you out every fortnight no matter how often you
