@@ -1,5 +1,7 @@
 """Allauth adapters: close local signup, and gate social login on the
 email-domain allowlist (or a pending workspace invite)."""
+import logging
+
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
@@ -10,8 +12,55 @@ from apps.workspaces.services import email_admitted_outside_domain
 
 from .auth_domains import allowed_email_domains, email_in_allowlist
 
+logger = logging.getLogger(__name__)
+
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
+    def on_authentication_error(
+        self, request, provider, error=None, exception=None, extra_context=None
+    ):
+        """Log WHY an OAuth callback failed.
+
+        allauth answers a failed callback by rendering a page with HTTP 200, so
+        the container's access log shows a plain `200 OK` and nothing else — a
+        failure is indistinguishable from a success unless you already know
+        that a *successful* callback is a 302. Diagnosing the 2026-07-26 labs
+        incident meant inferring the cause from status codes and a repeated
+        `code` query param; this hook is allauth's own seam for saying it out
+        loud instead.
+
+        The fields are chosen to separate the failure modes that actually
+        differ in the field:
+
+        - `err`/`exc` — allauth's own verdict (a popped state raises
+          PermissionDenied; a network/token-exchange failure does not).
+        - `has_session` — whether the session cookie reached us at all. This
+          is the one that distinguishes "replayed a spent callback" from
+          "the browser never sent the cookie" (a cookie-path or SameSite
+          problem), which look identical from outside.
+        - `ua` — an installed PWA, a Chrome Custom Tab and a normal tab fail
+          differently on mobile, and the User-Agent is the only signal that
+          tells them apart server-side.
+
+        Never logs `code` or `state` values: an authorization code is a live
+        credential, and CloudWatch is not where it should end up. Presence is
+        the diagnostic, not the value.
+        """
+        logger.warning(
+            "social auth failed: provider=%s err=%s exc=%r has_state=%s "
+            "has_session=%s path=%s ua=%r",
+            provider,
+            error,
+            exception,
+            bool(request.GET.get("state")),
+            bool(request.session.session_key),
+            request.path,
+            request.META.get("HTTP_USER_AGENT", "")[:200],
+        )
+        return super().on_authentication_error(
+            request, provider, error=error, exception=exception, extra_context=extra_context
+        )
+
     def pre_social_login(self, request, sociallogin):
         email = (sociallogin.account.extra_data.get("email") or "").strip().lower()
         admitted_outside_domain = False

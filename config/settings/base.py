@@ -332,3 +332,47 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 
+# --- Logging ---
+# There was no LOGGING config at all, so anything our code logged fell through to
+# Python's `lastResort` handler: WARNING+ to stderr, with no timestamp, level or
+# logger name. Combined with allauth rendering a failed OAuth callback as HTTP
+# 200, that left the container emitting uvicorn access lines and essentially
+# nothing else — the 2026-07-26 labs auth incident had to be reconstructed from
+# status codes and a repeated query param.
+#
+# `disable_existing_loggers: False` is load-bearing: uvicorn configures its own
+# loggers (including the access log this deployment is read through), and Django
+# applies this dictConfig at settings load. Setting it True would silence them.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        # Our own code. WARNING by default; DJANGO_LOG_LEVEL=DEBUG turns the
+        # volume up without a code change when something needs watching live.
+        "apps": {
+            "handlers": ["console"],
+            "level": env("DJANGO_LOG_LEVEL", default="WARNING"),
+            "propagate": False,
+        },
+        # allauth's own complaints about the auth cycle, which we otherwise
+        # never see (see CustomSocialAccountAdapter.on_authentication_error).
+        "allauth": {
+            "handlers": ["console"],
+            "level": env("DJANGO_LOG_LEVEL", default="WARNING"),
+            "propagate": False,
+        },
+    },
+}
+
