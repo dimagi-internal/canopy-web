@@ -565,3 +565,104 @@ def test_review_api_create_still_requires_auth(db):
         content_type="application/json",
     )
     assert resp.status_code == 401
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Auth dead-end pages (recoverable, tenant-correct)
+# ──────────────────────────────────────────────────────────────────────
+#
+# A failed OAuth callback is NOT rare: allauth's `verify_and_unstash_state`
+# pops the state, and Google's `code` is single-use, so ANY replay of a
+# callback URL — a restored tab, a back-button press, a reload — lands here
+# by construction. Stock allauth answers with an unstyled dead end that
+# offers no way forward, which is what turned one spent callback into a
+# user reporting the app as broken (labs, 2026-07-26).
+
+
+def test_authentication_error_page_is_recoverable(client):
+    """The OAuth-failure page must offer a user-driven way back to login.
+
+    Deliberately a LINK, not an auto-redirect: this page is reached when the
+    login round-trip did not stick, so bouncing automatically risks the very
+    loop `shouldBounceToLogin` (frontend/src/api/client.v2.ts) exists to
+    prevent. Same principle — on repeat failure, hand control to the human.
+    """
+    from django.urls import reverse
+
+    resp = client.get(reverse("socialaccount_login_error"))
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert reverse("google_login") in body
+    # Stock allauth's dead-end wording must be gone.
+    assert "Third-Party Login Failure" not in body
+
+
+def test_authentication_error_is_logged_without_leaking_credentials(rf, caplog):
+    """A failed callback must say WHY in the logs.
+
+    allauth renders the failure as HTTP 200, so without this the access log
+    cannot distinguish a failed sign-in from a successful one. `has_session` is
+    the field that separates a replayed spent callback from a cookie that never
+    arrived — the two are identical from outside.
+    """
+    import logging
+
+    from django.core.exceptions import PermissionDenied
+
+    adapter = CustomSocialAccountAdapter()
+    request = rf.get("/accounts/google/login/callback/?state=abc123&code=SECRET-CODE")
+    request.session = Mock(session_key=None)
+
+    # The `apps` logger is configured with propagate=False (settings/base.py), so
+    # records never reach the root logger caplog hooks by default. Attach caplog's
+    # handler to the logger itself rather than relaxing the setting — the
+    # propagation behaviour under test should be the one that ships.
+    log = logging.getLogger("apps.common.auth_adapter")
+    log.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="apps.common.auth_adapter"):
+            adapter.on_authentication_error(
+                request, "google", error="unknown", exception=PermissionDenied("bad state")
+            )
+    finally:
+        log.removeHandler(caplog.handler)
+
+    assert len(caplog.records) == 1
+    msg = caplog.records[0].getMessage()
+    assert "provider=google" in msg
+    assert "has_state=True" in msg
+    assert "has_session=False" in msg
+    assert "bad state" in msg
+    # An authorization code is a live credential — presence is the diagnostic,
+    # never the value.
+    assert "SECRET-CODE" not in msg
+    assert "abc123" not in msg
+
+
+def test_auth_error_pages_are_script_name_aware():
+    """Both auth dead-end pages must build their retry link with {% url %}.
+
+    canopy is mounted at /canopy on a hostname it SHARES with two sibling
+    tenants (connect-labs at the root, ace at /ace). A hardcoded
+    `/accounts/google/login/` href therefore does not merely 404 — it walks
+    the user into connect-labs' auth surface. `{% url %}` picks up
+    FORCE_SCRIPT_NAME automatically; a literal href cannot.
+    """
+    from django.template.loader import render_to_string
+    from django.urls import get_script_prefix, set_script_prefix
+
+    original = get_script_prefix()
+    try:
+        set_script_prefix("/canopy/")
+        for template, context in (
+            ("socialaccount/authentication_error.html", {}),
+            (
+                "auth/domain_rejected.html",
+                {"email": "someone@example.com", "allowed_domain": "dimagi.com"},
+            ),
+        ):
+            html = render_to_string(template, context)
+            assert "/canopy/accounts/google/login/" in html, template
+            assert 'href="/accounts/google/login/"' not in html, template
+    finally:
+        set_script_prefix(original)
