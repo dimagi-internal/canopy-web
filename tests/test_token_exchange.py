@@ -251,7 +251,26 @@ def test_exchange_provisioned_membership_carries_provenance(cred):
     assert m.provisioned_by_app_id == c.pk
 
 
-def test_exchange_logs_on_provisioning_create(cred, caplog):
+@pytest.fixture()
+def app_caplog(caplog):
+    """caplog, wired to actually SEE `apps.*` records.
+
+    `LOGGING` gives the `apps` logger `propagate: False` (base.py) so our lines
+    don't double-print through the root logger — but caplog attaches its handler
+    to root, so nothing we log ever reached it: the record printed to stderr and
+    the assertion read an empty string. Attach caplog's handler to `apps` itself
+    for the test. Any future "assert we logged X" test wants this fixture.
+    """
+    logger = logging.getLogger("apps")
+    logger.addHandler(caplog.handler)
+    try:
+        yield caplog
+    finally:
+        logger.removeHandler(caplog.handler)
+
+
+def test_exchange_logs_on_provisioning_create(cred, app_caplog):
+    caplog = app_caplog
     raw, c = cred
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=c.created_by)
     _grant(c, ws, WorkspaceMembership.EDITOR)
