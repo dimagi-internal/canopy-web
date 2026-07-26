@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth.models import User
+from django.db.utils import IntegrityError
 from django.test import Client
 
 from apps.agents.models import Agent
@@ -125,38 +126,28 @@ def test_stranger_cannot_fork_someone_elses_run(owner_client, stranger_client, a
     assert resp.status_code == 404
 
 
-# --- unhomed (workspace-less) agent: must be unresolvable by ANYONE --------
+# --- unhomed (workspace-less) agent: now unrepresentable, not merely gated --
 
 
-def test_unhomed_agent_run_surface_is_unreachable_by_non_member(stranger_client):
-    """The actual bug: `Agent.objects.create(slug="legacy", name="Legacy")` has
-    workspace=None. Pre-fix, `if agent.workspace_id and not is_member(...)`
-    short-circuited to False (no 404) for ANY authenticated caller — this must
-    now 404 instead."""
-    Agent.objects.create(slug="legacy", name="Legacy")
-    resp = _create_run(stranger_client, slug="legacy")
-    assert resp.status_code == 404
-    assert not AgentRun.objects.filter(agent__slug="legacy").exists()
+def test_an_unhomed_agent_cannot_be_created_at_all():
+    """This file originally carried three tests proving an unhomed agent 404s
+    for a stranger, for an existing run's read path, and for an unrelated
+    workspace owner. All three constructed their subject with
+    `Agent.objects.create(slug=..., name=...)` — workspace=None — and that is
+    now an IntegrityError, so none of them can express their own precondition.
 
+    They are replaced by this one rather than deleted quietly, because the
+    security property did not go away: it moved from a runtime gate to a
+    schema constraint (agents migration 0013, `Agent.workspace` NOT NULL).
+    That constraint is what closed the whole bug class — a nullable FK read as
+    "allow" in a tenancy predicate, found eight times across this codebase.
 
-def test_unhomed_agent_existing_run_is_unreachable_by_non_member(stranger_client):
-    """Same hole via the read path: a run that already exists on an unhomed
-    agent must not be listable or gettable by a stranger either."""
-    orphan = Agent.objects.create(slug="orphan", name="Orphan")
-    run = AgentRun.objects.create(agent=orphan, label="Orphan run")
-
-    assert stranger_client.get("/api/agents/orphan/runs/").status_code == 404
-    assert stranger_client.get(f"/api/agents/orphan/runs/{run.id}/").status_code == 404
-
-
-def test_unhomed_agent_is_unreachable_even_for_a_workspace_owner(owner_client):
-    """Not just strangers: an unhomed agent is unresolvable via this API full
-    stop (it needs backfilling a workspace first), not "visible to everyone
-    except non-members." A workspace owner with no relationship to the
-    unhomed agent gets the same 404."""
-    Agent.objects.create(slug="legacy", name="Legacy")
-    resp = _create_run(owner_client, slug="legacy")
-    assert resp.status_code == 404
+    The runtime gate in `_get_agent_or_404` is deliberately KEPT as
+    defense-in-depth and is still exercised, against a homed agent in another
+    tenant, by the stranger_* tests above. Model-level coverage of the
+    constraint itself lives in tests/test_agent_workspace_not_null.py."""
+    with pytest.raises(IntegrityError):
+        Agent.objects.create(slug="legacy", name="Legacy")
 
 
 # --- positive control: a homed agent keeps working for its members ---------
