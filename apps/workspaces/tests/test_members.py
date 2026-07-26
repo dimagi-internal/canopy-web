@@ -32,6 +32,10 @@ def _post(c, url, data=None):
     return c.post(url, data=json.dumps(data or {}), content_type="application/json")
 
 
+def _patch(c, url, data=None):
+    return c.patch(url, data=json.dumps(data or {}), content_type="application/json")
+
+
 def _ws(owner, slug="acme"):
     _post(_client(owner), "/api/workspaces/", {"slug": slug, "display_name": slug.title()})
     return slug
@@ -101,3 +105,55 @@ def test_remove_member_owner_only_and_protects_last_owner():
     assert _client(a).delete(f"/api/workspaces/acme/members/{b.id}/").status_code == 204
     # the last owner can't be removed
     assert _client(a).delete(f"/api/workspaces/acme/members/{a.id}/").status_code == 400
+
+
+def test_set_member_role_owner_only():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    inv = _invite(a, "acme", "b@dimagi.com", "editor")
+    b = _user("b@dimagi.com")
+    _post(_client(b), f"/api/workspaces/invites/{inv['token']}/accept")  # b is now an editor
+
+    # a non-member is 404, never 403 (no existence leak)
+    c = _user("c@dimagi.com")
+    assert _patch(_client(c), f"/api/workspaces/acme/members/{b.id}/", {"role": "owner"}).status_code == 404
+
+    # an editor (member, not owner) is 403
+    assert _patch(_client(b), f"/api/workspaces/acme/members/{b.id}/", {"role": "owner"}).status_code == 403
+
+    # the owner can promote the editor
+    r = _patch(_client(a), f"/api/workspaces/acme/members/{b.id}/", {"role": "owner"})
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["role"] == "owner" and body["user_id"] == b.id and body["email"] == "b@dimagi.com"
+    assert WorkspaceMembership.objects.get(workspace_id="acme", user=b).role == "owner"
+
+
+def test_set_member_role_target_not_a_member_is_404():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    ghost_id = 999999
+    assert _patch(_client(a), f"/api/workspaces/acme/members/{ghost_id}/", {"role": "editor"}).status_code == 404
+
+
+def test_set_member_role_cannot_demote_the_last_owner():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "editor"})
+    assert r.status_code == 400
+    assert WorkspaceMembership.objects.get(workspace_id="acme", user=a).role == "owner"
+
+
+def test_set_member_role_is_idempotent():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "owner"})
+    assert r.status_code == 200, r.content
+    assert r.json()["role"] == "owner"
+
+
+def test_set_member_role_rejects_unknown_role():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "superuser"})
+    assert r.status_code == 422

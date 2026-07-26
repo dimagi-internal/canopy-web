@@ -158,6 +158,55 @@ def current_workspace(user, explicit: str | None = None) -> Workspace:
     return ws
 
 
+# ---- members ----
+
+
+class MemberError(Exception):
+    """Raised by `set_member_role` for any reason a role change can't proceed.
+
+    `.code` is a closed set (`not_found`, `last_owner`) an HTTP layer maps to
+    a status — same shape as `InviteError` below.
+    """
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def is_last_owner(m: WorkspaceMembership) -> bool:
+    """True iff `m` is an owner membership and the only owner left in its
+    workspace. Shared by `remove_member` (api.py) and `set_member_role` below
+    so the "can't strand a workspace without an owner" guard lives in exactly
+    one place."""
+    return m.role == WorkspaceMembership.OWNER and (
+        WorkspaceMembership.objects.filter(
+            workspace_id=m.workspace_id, role=WorkspaceMembership.OWNER
+        ).count()
+        == 1
+    )
+
+
+def set_member_role(*, workspace: Workspace, user_id, role: str) -> WorkspaceMembership:
+    """Change a member's role. Idempotent: setting the role a member already
+    holds succeeds as a no-op. Raises `MemberError('not_found')` if `user_id`
+    isn't a member of `workspace`, or `MemberError('last_owner')` if this
+    would demote the workspace's only remaining owner (mirrors the guard
+    `remove_member` applies when removing the last owner, via `is_last_owner`).
+    """
+    try:
+        m = WorkspaceMembership.objects.select_related("user").get(
+            workspace=workspace, user_id=user_id
+        )
+    except WorkspaceMembership.DoesNotExist:
+        raise MemberError("not_found")
+    if role != m.role:
+        if is_last_owner(m):
+            raise MemberError("last_owner")
+        m.role = role
+        m.save(update_fields=["role"])
+    return m
+
+
 # ---- invites ----
 
 
@@ -225,10 +274,16 @@ def create_invite(
 def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
     """Accept an invite by token on behalf of `user`.
 
-    Returns (workspace, role) — role is the user's resulting membership role,
-    which is their EXISTING role if they were already a member at a different
-    role (get_or_create semantics: acceptance never changes an existing role).
-    Raises InviteError on any invalid state; never mutates on failure.
+    Returns (workspace, role) — role is the user's resulting membership role.
+    UPGRADE-ONLY semantic: if the user is already a member, acceptance moves
+    their role to the HIGHER of their existing role and the invite's role
+    (`WorkspaceMembership.ROLE_RANK`), and never demotes — a stray invite at a
+    lower role than someone already holds must not be able to strip access.
+    Explicit demotion is the owner-only PATCH `/members/{user_id}/`
+    (`set_member_role`), never a side effect of accepting an invite. The
+    invite itself is always consumed (marked accepted) on success, whether or
+    not the role actually changed. Raises InviteError on any invalid state;
+    never mutates on failure.
     """
     try:
         inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
@@ -242,10 +297,13 @@ def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
         raise InviteError("expired")
     if inv.email and (getattr(user, "email", "") or "").lower() != inv.email.lower():
         raise InviteError("email_mismatch")
-    m, _ = WorkspaceMembership.objects.get_or_create(
+    m, created = WorkspaceMembership.objects.get_or_create(
         workspace=inv.workspace, user=user,
         defaults={"role": inv.role, "invited_by": inv.invited_by},
     )
+    if not created and WorkspaceMembership.ROLE_RANK[inv.role] > WorkspaceMembership.ROLE_RANK[m.role]:
+        m.role = inv.role
+        m.save(update_fields=["role"])
     inv.accepted_at = timezone.now()
     inv.save(update_fields=["accepted_at"])
     return inv.workspace, m.role

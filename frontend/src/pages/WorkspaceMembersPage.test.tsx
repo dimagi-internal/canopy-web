@@ -11,6 +11,7 @@ import type { MemberOut, InviteOut } from '@/api/workspaces'
 // RunnerAssignments.test.tsx / ChatSessionsPanel.test.tsx.
 const listMembers = vi.fn<(slug: string) => Promise<MemberOut[]>>()
 const removeMember = vi.fn<(slug: string, userId: number) => Promise<void>>()
+const setMemberRole = vi.fn<(slug: string, userId: number, role: string) => Promise<MemberOut>>()
 const listInvites = vi.fn<(slug: string) => Promise<InviteOut[]>>()
 const createInvite = vi.fn<(slug: string, email: string, role: string) => Promise<InviteOut>>()
 const revokeInvite = vi.fn<(slug: string, inviteId: number) => Promise<void>>()
@@ -26,6 +27,7 @@ class FakeWorkspaceApiError extends Error {
 vi.mock('@/api/workspaces', () => ({
   listMembers,
   removeMember,
+  setMemberRole,
   listInvites,
   createInvite,
   revokeInvite,
@@ -189,6 +191,67 @@ describe('WorkspaceMembersPage', () => {
 
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith('acme', 5))
     await waitFor(() => expect(screen.queryByText('leaving@dimagi.com')).toBeNull())
+  })
+
+  it('an owner can change a role via the select, and the row updates', async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([
+      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
+      member({ user_id: 2, email: 'carol@dimagi.com', role: 'viewer' }),
+    ])
+    listInvites.mockResolvedValue([])
+    setMemberRole.mockResolvedValue(member({ user_id: 2, email: 'carol@dimagi.com', role: 'editor' }))
+
+    renderPage()
+    await screen.findByText('carol@dimagi.com')
+
+    const select = screen.getByLabelText(/change role for carol@dimagi.com/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'editor' } })
+
+    await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('acme', 2, 'editor'))
+    await waitFor(() => expect((screen.getByLabelText(/change role for carol@dimagi.com/i) as HTMLSelectElement).value).toBe('editor'))
+  })
+
+  it('a non-owner sees static role text, not a select', async () => {
+    mockRole = 'editor'
+    listMembers.mockResolvedValue([member({ user_id: 2, email: 'carol@dimagi.com', role: 'viewer' })])
+    listInvites.mockResolvedValue([])
+
+    renderPage()
+    await screen.findByText('carol@dimagi.com')
+
+    expect(screen.queryByLabelText(/change role for carol@dimagi.com/i)).toBeNull()
+    expect(screen.getByText('viewer')).toBeTruthy()
+  })
+
+  it('the sole owner\'s role select is disabled (cannot self-demote to strand the workspace)', async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' })])
+    listInvites.mockResolvedValue([])
+
+    renderPage()
+    await screen.findByText('alice@dimagi.com')
+
+    const select = screen.getByLabelText(/change role for alice@dimagi.com/i) as HTMLSelectElement
+    expect(select.disabled).toBe(true)
+  })
+
+  it('a role-change failure surfaces an error and leaves the row unchanged', async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([
+      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
+      member({ user_id: 2, email: 'carol@dimagi.com', role: 'viewer' }),
+    ])
+    listInvites.mockResolvedValue([])
+    setMemberRole.mockRejectedValue(new FakeWorkspaceApiError(400, 'cannot demote the last owner'))
+
+    renderPage()
+    await screen.findByText('carol@dimagi.com')
+
+    const select = screen.getByLabelText(/change role for carol@dimagi.com/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'owner' } })
+
+    await waitFor(() => expect(screen.getByText(/cannot demote the last owner/i)).toBeTruthy())
   })
 
   it('redirects to the workspace home on a 404 (non-member)', async () => {

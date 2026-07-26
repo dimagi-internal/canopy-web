@@ -54,6 +54,10 @@ class Workspace(models.Model):
 class WorkspaceMembership(models.Model):
     OWNER, EDITOR, VIEWER = "owner", "editor", "viewer"
     ROLE_CHOICES = [(OWNER, "Owner"), (EDITOR, "Editor"), (VIEWER, "Viewer")]
+    # Total order used to decide "higher" vs "lower" role — the single place
+    # role comparisons live (see `accept_invite`'s upgrade-only semantic and
+    # `services.set_member_role`). Do not scatter role comparisons elsewhere.
+    ROLE_RANK = {VIEWER: 0, EDITOR: 1, OWNER: 2}
 
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="memberships"

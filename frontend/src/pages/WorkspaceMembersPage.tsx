@@ -9,10 +9,12 @@ import {
   listMembers,
   removeMember,
   revokeInvite,
+  setMemberRole,
   WorkspaceApiError,
   type InviteOut,
   type InviteRole,
   type MemberOut,
+  type MemberRole,
 } from '@/api/workspaces'
 
 const ROLES: InviteRole[] = ['owner', 'editor', 'viewer']
@@ -43,6 +45,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   const [invites, setInvites] = useState<InviteOut[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
+  const [savingRoleFor, setSavingRoleFor] = useState<number | null>(null)
 
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<InviteRole>('editor')
@@ -79,6 +82,21 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   }, [slug, navigate])
 
   const pendingInvites = useMemo(() => (invites ?? []).filter((i) => isInvitePending(i)), [invites])
+  const ownerCount = useMemo(() => (members ?? []).filter((m) => m.role === 'owner').length, [members])
+
+  async function handleRoleChange(userId: number, role: MemberRole) {
+    if (!slug) return
+    setRowError(null)
+    setSavingRoleFor(userId)
+    try {
+      const updated = await setMemberRole(slug, userId, role)
+      setMembers((prev) => (prev ?? []).map((m) => (m.user_id === userId ? updated : m)))
+    } catch (e) {
+      setRowError(e instanceof Error ? e.message : 'Failed to change role')
+    } finally {
+      setSavingRoleFor(null)
+    }
+  }
 
   async function handleRemoveMember(userId: number) {
     if (!slug) return
@@ -152,10 +170,35 @@ export function WorkspaceMembersPage(): JSX.Element | null {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {members.map((m) => (
+              {members.map((m) => {
+                const isSoleOwner = m.role === 'owner' && ownerCount === 1
+                return (
                 <TableRow key={m.user_id}>
                   <TableCell className="whitespace-normal text-foreground">{m.email}</TableCell>
-                  <TableCell className="capitalize">{m.role}</TableCell>
+                  <TableCell className="capitalize">
+                    {isOwner ? (
+                      <select
+                        aria-label={`Change role for ${m.email}`}
+                        value={m.role}
+                        disabled={isSoleOwner || savingRoleFor === m.user_id}
+                        title={
+                          isSoleOwner
+                            ? 'Every workspace needs at least one owner — promote another member before demoting this one'
+                            : undefined
+                        }
+                        onChange={(e) => void handleRoleChange(m.user_id, e.target.value as MemberRole)}
+                        className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground capitalize disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r} value={r} className="capitalize">
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      m.role
+                    )}
+                  </TableCell>
                   {isOwner && (
                     <TableCell className="text-right">
                       <Button
@@ -170,7 +213,8 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         )}

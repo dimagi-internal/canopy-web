@@ -42,6 +42,10 @@ class MemberOut(StrictModel):
     joined_at: dt.datetime
 
 
+class MemberRoleUpdateIn(StrictModel):
+    role: Role
+
+
 class InviteCreateIn(StrictModel):
     # EmailStr rejects a non-email string at the schema boundary, before it
     # ever becomes a matchable admission key for `pending_invite_for_email` /
