@@ -21,17 +21,23 @@ this is a no-op there. It must still be *correct* for a dev box, a staging DB,
 or a restored snapshot where a row was created straight through the ORM. The
 target is resolved in this order, most-evidenced first:
 
-1. **The modal workspace among already-homed agents.** This is the tenant this
-   deployment's agents demonstrably live in. An unhomed row is, by construction,
-   one that either predates 0007's reach or was hand-created afterward by a
-   non-API path; putting it where its siblings already are is the answer the
-   data gives, and it is a *narrowing* — an unhomed agent is today visible to
-   every authenticated caller through the fail-open legs, and afterwards only to
-   that workspace's members.
+1. **The modal workspace among already-homed agents** — but ONLY when that
+   workspace is a clear plurality, not a coin flip. This is the tenant this
+   deployment's agents demonstrably live in; an unhomed row is, by
+   construction, one that either predates 0007's reach or was hand-created
+   afterward by a non-API path, and putting it where its siblings already are
+   is the answer the data gives — a *narrowing*, since an unhomed agent is
+   today visible to every authenticated caller through the fail-open legs, and
+   afterwards only to that workspace's members. If two or more workspaces tie
+   for the most already-homed agents, there is no data-derived answer at
+   all — picking one anyway would be exactly the silent, unlogged tenancy
+   decision this migration exists to end, so it RAISES instead, naming every
+   tied workspace and its count.
 2. **The sole workspace, if the deployment has exactly one.** Covers a dev or
    test DB whose single tenant is not named `dimagi` and which has no homed
    agent to be modal about. There is no other candidate, so there is no choice
-   to get wrong.
+   to get wrong — this path stays automatic even though step 1 now raises on
+   ambiguity, because "only one workspace exists" is certainty, not plurality.
 3. **The default `dimagi` workspace** (created exactly as 0007 creates it, owned
    by the first superuser else the first user). Only reached when there are
    several workspaces and not one homed agent — i.e. no evidence at all. This is
@@ -49,6 +55,15 @@ and nobody would otherwise have retained access. Here the target workspace
 already exists with its own members; adding more would be a privilege
 escalation dressed as a data fix.
 
+VISIBILITY
+----------
+The claimed no-op is only trustworthy if a violation of it is loud. Every row
+this migration homes is logged (agent slug + destination workspace) through
+the `apps` logger at WARNING — the level `config/settings/base.py` keeps on by
+default in every environment, deploy logs included — and finding zero unhomed
+agents is logged too, so "nothing happened" is an observed fact in the log,
+not an assumption about what didn't print.
+
 REVERSIBILITY
 -------------
 Reversible. The `AlterField` reverse restores `null=True`; the data step's
@@ -58,9 +73,13 @@ a tenant is strictly safer than one without). Reversing therefore leaves the
 column nullable and every agent still homed — exactly the state a re-run of
 this migration would find, so forward/back/forward is idempotent.
 """
+import logging
+
 from django.conf import settings
 from django.db import migrations, models
 from django.db.models import Count
+
+logger = logging.getLogger(__name__)
 
 # Hardcoded, not imported from apps.workspaces.services: a migration must keep
 # describing the schema as it was, and 0007 hardcodes the same literal.
@@ -74,17 +93,30 @@ def _resolve_target(apps):
     Agent = apps.get_model("agents", "Agent")
     Workspace = apps.get_model("workspaces", "Workspace")
 
-    # 1. Modal workspace among already-homed agents. Ties break on slug so the
-    #    outcome is deterministic across replicas / repeated runs.
-    modal = (
+    # 1. Modal workspace among already-homed agents — but only if it is an
+    #    unambiguous plurality. A tie means the data does not actually pick a
+    #    winner, so raise and say what tied rather than silently favoring
+    #    whichever slug sorts first.
+    counts = list(
         Agent.objects.filter(workspace__isnull=False)
         .values("workspace_id")
         .annotate(n=Count("pk"))
         .order_by("-n", "workspace_id")
-        .first()
     )
-    if modal:
-        return modal["workspace_id"]
+    if counts:
+        top_n = counts[0]["n"]
+        tied = sorted(c["workspace_id"] for c in counts if c["n"] == top_n)
+        if len(tied) > 1:
+            raise RuntimeError(
+                "agents.0013 cannot resolve a home for unhomed agents: "
+                f"{len(tied)} workspaces are tied at {top_n} already-homed "
+                f"agent(s) each ({', '.join(tied)}) — there is no data-derived "
+                "answer, and picking one anyway would be exactly the silent "
+                "tenancy decision this migration exists to end. Home the "
+                "tied workspaces' agents (or the unhomed ones) by hand to "
+                "break the tie, then re-run the migration."
+            )
+        return tied[0]
 
     # 2. The only workspace there is.
     slugs = list(Workspace.objects.order_by("slug").values_list("slug", flat=True)[:2])
@@ -121,10 +153,19 @@ def _resolve_target(apps):
 
 def home_unhomed_agents(apps, schema_editor):
     Agent = apps.get_model("agents", "Agent")
-    unhomed = Agent.objects.filter(workspace__isnull=True)
-    if not unhomed.exists():
-        return  # the production path: 0007 already homed everything
-    Agent.objects.filter(workspace__isnull=True).update(workspace_id=_resolve_target(apps))
+    slugs = list(Agent.objects.filter(workspace__isnull=True).values_list("slug", flat=True))
+    if not slugs:
+        # The production path: 0007 already homed everything. Logged so "no
+        # unhomed agents" is an observed fact in the deploy log, not an
+        # assumption about a migration that printed nothing.
+        logger.warning("agents.0013: found no unhomed agents; workspace backfill is a no-op.")
+        return
+    target = _resolve_target(apps)
+    for slug in slugs:
+        logger.warning(
+            "agents.0013: homing unhomed agent %r into workspace %r", slug, target,
+        )
+    Agent.objects.filter(slug__in=slugs).update(workspace_id=target)
 
 
 class Migration(migrations.Migration):
