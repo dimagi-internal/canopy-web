@@ -123,3 +123,53 @@ def test_bearer_can_authenticate_then_list_own_tokens(db, client):
     body = response.json()
     assert len(body) == 1
     assert body[0]["label"] == "self"
+
+
+@pytest.mark.django_db
+def test_create_token_defaults_to_expiring(authed):
+    """A plain mint gets the server default TTL — expiry is opt-out, not opt-in."""
+    client, _ = authed
+    response = client.post(
+        "/api/tokens/", data='{"label": "ci"}', content_type="application/json"
+    )
+    assert response.status_code == 201
+    assert PersonalTokenCreatedOut.model_validate(response.json()).expires_at is not None
+
+
+@pytest.mark.django_db
+def test_create_token_honors_ttl_days(authed):
+    from django.utils import timezone
+
+    client, _ = authed
+    response = client.post(
+        "/api/tokens/",
+        data='{"label": "short", "ttl_days": 7}',
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    parsed = PersonalTokenCreatedOut.model_validate(response.json())
+    assert abs((parsed.expires_at - timezone.now()).days - 7) <= 1
+
+
+@pytest.mark.django_db
+def test_create_token_ttl_zero_never_expires(authed):
+    client, _ = authed
+    response = client.post(
+        "/api/tokens/",
+        data='{"label": "forever", "ttl_days": 0}',
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    assert PersonalTokenCreatedOut.model_validate(response.json()).expires_at is None
+
+
+@pytest.mark.django_db
+def test_create_token_rejects_negative_ttl(authed):
+    client, _ = authed
+    response = client.post(
+        "/api/tokens/",
+        data='{"label": "bad", "ttl_days": -1}',
+        content_type="application/json",
+    )
+    assert response.status_code == 422
+    assert response["Content-Type"].startswith("application/problem+json")

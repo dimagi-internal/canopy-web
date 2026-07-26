@@ -239,3 +239,81 @@ def test_deleting_a_message_unbinds_rather_than_destroys_the_attachment():
 
     row.refresh_from_db()
     assert row.message_id is None
+
+
+# --- delivery: attachments ride the turn to the runner ----------------------
+
+
+def _pending(session, user, name="shot.png"):
+    return Attachment.objects.create(
+        session=session, uploaded_by=user, filename=name,
+        content_type="image/png", size_bytes=len(PNG),
+        storage_key=f"sessions/{session.id}/{uuid.uuid4()}/{name}",
+    )
+
+
+def test_sending_carries_pending_attachments_to_the_runner():
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    _pending(session, user, "shot.png")
+
+    _msg, turn = services.send_message(session=session, text="what is this?", user=user)
+
+    refs = turn.origin_ref.get("attachments")
+    assert refs and [r["filename"] for r in refs] == ["shot.png"]
+    assert "id" in refs[0] and "content_type" in refs[0]
+
+
+def test_a_sent_attachment_does_not_ride_along_on_the_next_send():
+    """sent_at is what stops this. `message` alone cannot: a runner-origin
+    session writes no user Message row, so those rows stay message=NULL."""
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    _pending(session, user)
+
+    services.send_message(session=session, text="first", user=user)
+    _msg2, turn2 = services.send_message(session=session, text="second", user=user, client_id="c2")
+
+    assert "attachments" not in turn2.origin_ref
+
+
+def test_a_send_with_nothing_attached_adds_no_key():
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    _msg, turn = services.send_message(session=session, text="hi", user=user)
+    assert "attachments" not in turn.origin_ref
+
+
+def test_sending_binds_the_attachment_to_the_message_on_a_web_session():
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    row = _pending(session, user)
+
+    message, _turn = services.send_message(session=session, text="look", user=user)
+
+    row.refresh_from_db()
+    assert row.message_id == message.pk
+    assert row.sent_at is not None
+
+
+def test_a_runner_session_stamps_sent_at_without_a_message():
+    """The runner path writes no durable user row, so message stays NULL — but
+    the attachment must still be consumed."""
+    from apps.canopy_sessions import services
+
+    user, ws, _s, _c = _ctx()
+    runner_session = Session.objects.create(
+        workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="ddd",
+    )
+    row = _pending(runner_session, user)
+
+    _msg, turn = services.send_message(session=runner_session, text="look", user=user)
+
+    row.refresh_from_db()
+    assert row.sent_at is not None
+    assert row.message_id is None
+    assert [r["filename"] for r in turn.origin_ref["attachments"]] == ["shot.png"]

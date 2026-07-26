@@ -225,8 +225,15 @@ if isinstance(rows, dict) and rows.get('detail'):
     raise SystemExit('drill start failed: ' + rows['detail'])
 print(f'   started {len(rows)} drill(s)')
 "
-  echo ">> polling for completion (up to 5 min)"
-  for _ in $(seq 1 60); do
+  # Drills run SERIALLY on the box (one claude -p at a time, ~75-90s each), so a
+  # full 5-agent wave needs ~7-8 min. The old 5-min budget timed the LAST agent out
+  # every time — reporting a PENDING that looked like a hang but was just the poll
+  # giving up early. Budget per drill started, with a floor, rather than a flat cap.
+  DRILL_COUNT=$(python3 -c "import json;print(len(json.load(open('$TMP/drill-result.json'))))")
+  POLL_TICKS=$(( DRILL_COUNT * 36 ))   # 36 ticks x 5s = 3 min per drill
+  [[ "$POLL_TICKS" -lt 60 ]] && POLL_TICKS=60
+  echo ">> polling for completion (up to $((POLL_TICKS * 5 / 60)) min for $DRILL_COUNT drill(s))"
+  for _ in $(seq 1 "$POLL_TICKS"); do
     api GET "/api/harness/runners/${RUNNER_ID}/drills" > "$TMP/drills.json"
     PENDING=$(python3 -c "
 import json

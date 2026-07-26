@@ -27,25 +27,31 @@ done
 MYIP=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
 echo ">> SSH allowed from ${MYIP}/32"
 
-# Render: splice cloud_runner.py (base64) into the template. cloud_runner.py stays
-# the single source of truth; the rendered template is a build artifact.
-RENDERED=".runner.cfn.rendered.yaml"
-# gzip+base64 (cloud-init decodes via `encoding: gz+b64`): the RC2 WS client pushed
-# the plain-base64 UserData past EC2's 25.6 KB limit; gzip keeps it well under.
+# Publish cloud_runner.py to Secrets Manager as a single-line gzip+base64 blob.
+# It deliberately does NOT go in UserData: EC2 caps UserData at a hard 16384 bytes
+# and the gz+b64 runner alone is ~12 KB, so splicing it in blew the cap and the
+# stack CREATE_FAILED with "User data is limited to 16384 bytes". The instance role
+# already grants GetSecretValue on canopy/cloud-runner/*, so this needs no new IAM,
+# and canopy-fetch-env re-fetches it on every service start (see runner.cfn.yaml).
+CODE_SECRET="${CODE_SECRET:-canopy/cloud-runner/runner-code}"
+echo ">> publishing cloud_runner.py -> $CODE_SECRET"
 B64=$(python3 -c "import base64,gzip;print(base64.b64encode(gzip.compress(open('cloud_runner.py','rb').read())).decode())")
-python3 - "$B64" > "$RENDERED" <<'PY'
-import sys, pathlib
-b64 = sys.argv[1]
-tpl = pathlib.Path("runner.cfn.yaml").read_text()
-sys.stdout.write(tpl.replace("CLOUD_RUNNER_PY_B64_PLACEHOLDER", b64))
-PY
+if "${AWS[@]}" secretsmanager describe-secret --secret-id "$CODE_SECRET" >/dev/null 2>&1; then
+  "${AWS[@]}" secretsmanager put-secret-value --secret-id "$CODE_SECRET" \
+    --secret-string "$B64" >/dev/null
+else
+  "${AWS[@]}" secretsmanager create-secret --name "$CODE_SECRET" \
+    --description 'cloud_runner.py (gzip+base64) — published by up.sh' \
+    --secret-string "$B64" >/dev/null
+fi
+echo "   ${#B64} bytes published"
 
 echo ">> validating template"
-"${AWS[@]}" cloudformation validate-template --template-body "file://$RENDERED" >/dev/null
+"${AWS[@]}" cloudformation validate-template --template-body "file://runner.cfn.yaml" >/dev/null
 
 echo ">> deploying stack $STACK"
 "${AWS[@]}" cloudformation deploy \
-  --stack-name "$STACK" --template-file "$RENDERED" \
+  --stack-name "$STACK" --template-file runner.cfn.yaml \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides "SshCidr=${MYIP}/32" \
   ${EXTRA_PARAMS:-}
