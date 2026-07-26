@@ -28,6 +28,31 @@ diff a domain expert reads.
 So: fix identity, split the ownership, then build the sharing surface on top. In that
 order, because each step shrinks the next.
 
+### What the hedge has already cost (measured 2026-07-26)
+
+Counting every copy of the three RF Surveys narratives across both user accounts on this
+machine, against what canopy-web holds:
+
+| narrative | canopy-web | local copies | distinct versions | match web |
+|---|---|---|---|---|
+| `verified-monitoring` | v17, 6 scenes | 26 | **6** | 16 |
+| `microplans-study-groups` | v14, 8 scenes | 26 | **3** | 16 |
+| `create-survey-solicitation` | v12, 9 scenes | 16 | 1 | **0** |
+
+Sixty-eight copies of three narratives, in ten distinct states. Every worktree created
+since June carried a copy forward; every edit forked another. For
+`create-survey-solicitation` not one of sixteen local copies matches the narrative that
+produced the video the domain expert actually reviewed — local froze on 2026-06-25 while
+canopy-web moved twice more. And no July run state survives on either account, so for
+all three narratives **canopy-web is the sole surviving record**.
+
+This is the failure the design has to prevent, and it is prevented structurally rather
+than by discipline: after L1 the narrative is not in the worktree, so copying a worktree
+cannot fork it. The recipe stays in git — forking *that* per branch is correct, it is
+code — and the lock is generated, committed, and checked against its recipe. One writer
+per field is not a tidiness argument; it is the difference between three narratives and
+ten.
+
 ## Standing constraint: history is disposable
 
 **Only the latest version of each narrative matters.** Prior versions are not an asset
