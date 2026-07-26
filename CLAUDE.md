@@ -73,6 +73,23 @@ being opened. With auto-merge on, GitHub brings the branch up to date, re-runs C
 the merged result, and lands it — no human rebase loop. Without it you will hand-rebase
 the same PR several times (observed: three times in one afternoon).
 
+**Merge queue is NOT available here — do not retry it.** GitHub requires an
+ORGANISATION-owned repository; `jjackson/canopy-web` is user-owned, so adding a
+`merge_queue` rule to the ruleset returns `422 Invalid rule 'merge_queue':` with
+no field named — because the rule TYPE is rejected, not any parameter. Tried
+2026-07-26 across three parameter shapes before that was clear; don't spend the
+same twenty minutes. Transferring the repo to `dimagi-internal` (jjackson is a
+member) would unlock it, but that moves URLs and every runner PAT,
+`CANOPY_PLUGIN_TOKEN`, and workflow reference wants re-checking first — a real
+decision, not a side effect of wanting a queue. The `merge_group` CI trigger is
+already in place for the day it happens.
+
+**Known gap, accepted:** with `strict: true` and no queue, a PR whose base moved
+can sit `BEHIND` indefinitely — auto-merge USUALLY updates it, but not always
+(#413 stalled until nudged). The fix is one call:
+`gh api -X PUT repos/jjackson/canopy-web/pulls/<n>/update-branch`. Deliberately
+not automated yet: it has bitten once.
+
 Branch protection lives in ONE place: the `main protection` **ruleset** (requires a PR,
 both CI checks, `strict` so a branch must be current, and blocks deletion/force-push).
 There is deliberately no classic branch protection — having both meant two contradictory
