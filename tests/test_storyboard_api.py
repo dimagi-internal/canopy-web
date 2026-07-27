@@ -256,3 +256,65 @@ def test_an_outsider_cannot_edit(outsider, board):
         content_type="application/json",
     )
     assert r.status_code == 404
+
+
+# --------------------------------------------------- the reviewer surface read
+
+
+def test_reading_a_narrative_uses_the_same_token_gate(board):
+    t = board.ensure_share_token()
+    url = f"/api/storyboards/{board.slug}/narratives/verified-monitoring"
+    assert Client().get(url).status_code == 404
+    assert Client().get(f"{url}?t=nope").status_code == 404
+    # right token, but nothing published yet for that slug
+    assert Client().get(f"{url}?t={t}").status_code == 404
+
+
+def test_a_narrative_not_on_this_board_404s(board, ws):
+    """One board's link must not be a read handle for every narrative in the
+    workspace."""
+    from apps.reviews.models import ReviewRequest
+
+    ReviewRequest.objects.create(
+        run_id="somebody-elses-2026-07-26-001",
+        request_json={
+            "gate": "concept_change",
+            "narrative_slug": "somebody-elses",
+            "narration": [{"id": "x", "title": "X", "text": "Secret."}],
+        },
+        gate="concept_change",
+        visibility="link",
+        workspace_id=ws.slug,
+        version=1,
+    )
+    t = board.ensure_share_token()
+    r = Client().get(f"/api/storyboards/{board.slug}/narratives/somebody-elses?t={t}")
+    assert r.status_code == 404
+
+
+def test_the_reader_gets_current_and_previous_narration(board, ws):
+    from apps.reviews.models import ReviewRequest
+
+    for version, text in ((1, "The old line."), (2, "The new line.")):
+        ReviewRequest.objects.create(
+            run_id=f"verified-monitoring-2026-07-26-00{version}",
+            request_json={
+                "gate": "concept_change",
+                "narrative_slug": "verified-monitoring",
+                "narration": [{"id": "the-goal", "title": "The goal", "text": text}],
+            },
+            gate="concept_change",
+            visibility="link",
+            workspace_id=ws.slug,
+            version=version,
+        )
+
+    t = board.ensure_share_token()
+    r = Client().get(f"/api/storyboards/{board.slug}/narratives/verified-monitoring?t={t}")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["version"] == 2
+    assert body["previous_version"] == 1
+    assert body["narration"][0]["text"] == "The new line."
+    assert body["previous_narration"][0]["text"] == "The old line."
+    assert body["capability"] == "read"

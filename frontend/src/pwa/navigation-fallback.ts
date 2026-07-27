@@ -54,6 +54,8 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?walkthroughs/, // list page (plural); NOT the /walkthrough/ viewer
   /^\/(canopy\/)?agents/,
   /^\/(canopy\/)?ddd-release\//, // public release page (chrome-less)
+  /^\/(canopy\/)?storyboard\//, // public shared arc (chrome-less)
+  /^\/(canopy\/)?narrative\//, // public per-narrative reviewer surface
   /^\/(canopy\/)?ddd-plans/,
   /^\/(canopy\/)?ddd/, // NB: after ddd-release/ddd-plans so those match first
   /^\/(canopy\/)?reviews/, // legacy flat → redirect

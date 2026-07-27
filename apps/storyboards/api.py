@@ -30,6 +30,7 @@ from apps.storyboards.schemas import (
     StoryboardIn,
     StoryboardListOut,
     StoryboardOut,
+    NarrativeReadOut,
     StoryboardPatchIn,
 )
 from apps.workspaces import services as wsvc
@@ -247,3 +248,22 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> 
         [item],
         submitted_by=request.user if request.user.is_authenticated else None,
     )
+
+
+@router.get(
+    "/{slug}/narratives/{narrative_slug}",
+    response=NarrativeReadOut,
+    auth=None,
+    summary="Read one narrative on this storyboard (public via ?t=<share_token>)",
+)
+def get_board_narrative(request: HttpRequest, slug: str, narrative_slug: str) -> dict:
+    """The reviewer surface's read. Gated by the SAME token as the board.
+
+    404s when the narrative is not on this board — a link to one arc must not be
+    a read handle for every narrative in the workspace.
+    """
+    board = _readable_or_404(request, slug)
+    data = services.resolve_narrative(board, narrative_slug)
+    if data is None:
+        raise HttpError(404, "no such narrative on this storyboard")
+    return data

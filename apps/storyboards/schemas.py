@@ -96,3 +96,22 @@ class AnonFeedbackIn(StrictModel):
     suggested_text: str = ""
     author_name: str = ""
     author_email: str = ""
+
+
+class NarrationItemOut(StrictModel):
+    id: str
+    title: str
+    text: str
+
+
+class NarrativeReadOut(StrictModel):
+    narrative_slug: str
+    title: str
+    story: str
+    version: int | None
+    previous_version: int | None
+    narration: list[NarrationItemOut]
+    previous_narration: list[NarrationItemOut]
+    storyboard_slug: str
+    storyboard_title: str
+    capability: str

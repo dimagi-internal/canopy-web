@@ -72,3 +72,52 @@ def resolve_board(board: Storyboard) -> dict:
         "capability": board.capability,
         "acts": acts,
     }
+
+
+def resolve_narrative(board: Storyboard, narrative_slug: str) -> dict | None:
+    """One narrative on this board, as the reviewer surface reads it.
+
+    Returns the CURRENT version's narration plus the PREVIOUS one, so the page
+    can show a before/after only where something actually changed. Returns None
+    when the narrative is not on this board — one board's link must never be a
+    read handle for a narrative it does not contain.
+    """
+    from apps.storyboards.models import Entry
+
+    on_board = Entry.objects.filter(
+        act__storyboard=board, narrative_slug=narrative_slug
+    ).exists()
+    if not on_board:
+        return None
+
+    narrative = aggregate.build_narrative(narrative_slug, {board.workspace_id})
+    if narrative is None:
+        return None
+
+    # versions[] is newest-first from the aggregator.
+    versions = [v for v in (narrative.get("versions") or []) if v.get("narration")]
+    current = versions[0] if versions else None
+    previous = versions[1] if len(versions) > 1 else None
+
+    def _narration(v):
+        return [
+            {
+                "id": str(n.get("id") or ""),
+                "title": n.get("title") or "",
+                "text": n.get("text") or "",
+            }
+            for n in (v.get("narration") or [])
+        ]
+
+    return {
+        "narrative_slug": narrative_slug,
+        "title": (current or {}).get("title") or narrative.get("title") or narrative_slug,
+        "story": narrative.get("story") or "",
+        "version": (current or {}).get("version"),
+        "previous_version": (previous or {}).get("version"),
+        "narration": _narration(current or {}),
+        "previous_narration": _narration(previous or {}),
+        "storyboard_slug": board.slug,
+        "storyboard_title": board.title,
+        "capability": board.capability,
+    }
