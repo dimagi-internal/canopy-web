@@ -85,6 +85,16 @@ jobs:
         working-directory: packages/canopy_runner
         run: uv run --with pytest pytest
 
+      # canopy_transcript is the Claude Code transcript core BOTH runners execute
+      # against — ordinals, block extraction, payload caps, NUL scrubbing. It was
+      # extracted precisely because the two runners had drifted apart while each
+      # believed it was doing the same thing, so its suite is what keeps them
+      # honest. The composite-ordinal cases in particular guard a collision that
+      # would silently drop rows rather than fail.
+      - name: Run canopy_transcript tests
+        working-directory: packages/canopy_transcript
+        run: uv run --with pytest pytest -q
+
       # canopy_agent_runs is the Django-free run-lifecycle core that apps/agent_runs
       # imports directly (schemas, stores, the Drive client) — not dead code — yet its
       # suite had never run in CI. `--extra drive` is required, not optional polish:

@@ -10,6 +10,12 @@ dependencies = [
     # shared package is the only way the editor's preview and the runner's firing
     # can't drift. croniter's bound is declared there, once; don't restate it here.
     "canopy-cron",
+    # The Claude Code transcript core — path resolution, tailing, block->row
+    # extraction, ordinals, batching. Shared VERBATIM with the cloud runner and
+    # with the server (which imports BLOCK_STRIDE rather than documenting it).
+    # Both runners had independently written the same functions before this
+    # package existed; see the 2026-07-27 convergence spec.
+    "canopy-transcript",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +34,7 @@ realtime = ["websocket-client>=1.8,<2"]
 # pyproject uses for canopy-agent-runs / canopy-cron, resolved relative to this
 # package so `uv run` here works without publishing to an index.
 canopy-cron = { path = "../canopy_cron", editable = true }
+canopy-transcript = { path = "../canopy_transcript", editable = true }
 
 [project.scripts]
 canopy-runner = "canopy_runner.main:main"
