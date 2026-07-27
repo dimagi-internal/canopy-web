@@ -50,6 +50,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return { ...prev, messages: [...prev.messages, assistant] };
     }
 
+    case "session.activity":
+      return { ...prev, activity: frame.data.state };
+
     case "chat.user_message": {
       // Someone typed into emdash, OR into this page. Both reach here, and that
       // is why matching on turn_index alone is not enough: a web send writes its

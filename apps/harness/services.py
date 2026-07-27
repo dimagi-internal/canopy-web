@@ -1194,7 +1194,18 @@ def record_session(
         # which for an agent turn is an opaque hash (a real one leaked into the
         # Sessions list as "19f91250349ec91b"). Only retitle when the title is
         # still that fallback — never clobber a human-set chat title.
-        if emdash_task_id and binding.session.title == thread_key:
+        # Retitle when the current title is NOT a name the human chose. Two
+        # cases qualify: the raw thread_key fallback (an opaque hash for an agent
+        # turn — one leaked into the Sessions list as "19f91250349ec91b"), and an
+        # AUTOTITLE, which is the first user message truncated to 80 chars.
+        #
+        # The autotitle case is why this is more than an equality check: a
+        # phone-created session gets autotitled before any emdash task exists, so
+        # the old `title == thread_key` guard never matched and the session kept a
+        # sentence for a name while the sidebar showed the task
+        # (observed 2026-07-27). A human-set title is still never clobbered — it
+        # won't match the fallback and won't match the first message either.
+        if emdash_task_id and _title_is_derived(binding.session, thread_key):
             binding.session.title = emdash_task_id[:200]
             binding.session.save(update_fields=["title"])
         binding.live_seen_at = timezone.now()
@@ -1207,6 +1218,32 @@ def record_session(
 
 
 @transaction.atomic
+
+def _title_is_derived(session, thread_key: str) -> bool:
+    """True when a session's title was generated rather than chosen by a human.
+
+    Generated titles are safe to replace with the emdash task name; a title
+    somebody typed is not. Two generators exist: `_thread_session`'s raw
+    thread_key fallback, and `autotitle.maybe_autotitle`, which takes the first
+    user message, collapses whitespace and truncates to TITLE_MAX.
+    """
+    from apps.canopy_sessions.autotitle import TITLE_MAX
+    from apps.canopy_sessions.models import Message
+
+    title = (session.title or "").strip()
+    if not title or title == thread_key:
+        return True
+    first = (
+        Message.objects.filter(session=session, role=Message.USER)
+        .order_by("turn_index")
+        .values_list("plaintext", flat=True)
+        .first()
+    )
+    if not first:
+        return False
+    return title == " ".join(first.split())[:TITLE_MAX]
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None
 ) -> int:

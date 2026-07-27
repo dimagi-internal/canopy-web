@@ -1,6 +1,7 @@
 """TurnEvent -> canonical chat.* frame translation (pure)."""
 from __future__ import annotations
 
+from apps.canopy_sessions import stream_map
 from apps.canopy_sessions.stream_map import turn_event_to_frames
 
 
@@ -92,3 +93,14 @@ def test_a_user_event_becomes_a_client_frame():
     assert frames[0]["data"]["plaintext"] == "do the thing"
     # The ordinal rides along so the client upserts instead of appending.
     assert frames[0]["data"]["turn_index"] == 64
+
+
+def test_an_activity_event_becomes_a_status_frame():
+    """Turn boundaries answer "is the agent working right now" — which nothing
+    else could. Between a prompt and the first tool call, Claude is thinking and
+    emits no content at all, so the session read as idle for the most
+    interesting part of a turn."""
+    for kind, state in (("activity:working", "working"), ("activity:idle", "idle")):
+        frames = stream_map.turn_event_to_frames(
+            {"kind": kind, "seq": -1, "payload": {}}, lambda seq: f"seq:{seq}")
+        assert frames == [{"event": "session.activity", "data": {"state": state}}]

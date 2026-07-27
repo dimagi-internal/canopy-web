@@ -180,3 +180,19 @@ def test_harness_markers_are_not_pushed_live_either(monkeypatch):
     assert texts == ["something I actually typed"]
     # And it is absent from history too, so the two agree.
     assert [m.plaintext for m in s.messages.all()] == ["something I actually typed"]
+
+
+def test_activity_events_fan_out_and_never_persist(monkeypatch):
+    """A turn boundary is a state transition, not a chat row: it must reach every
+    watching client and leave no trace in the transcript."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _post_stream(c, runner, s, [
+        {"kind": "activity:working", "seq": -1, "index": -1, "payload": {}},
+    ])
+    assert [m["event"]["kind"] for m in published] == ["activity:working"]
+    assert s.messages.count() == 0

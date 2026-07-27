@@ -20,6 +20,13 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
     seq = evt.get("seq")
     payload = evt.get("payload") or {}
 
+    if isinstance(kind, str) and kind.startswith("activity:"):
+        # A turn boundary, not a chat row. It answers "is the agent working right
+        # now" — which nothing else could: between a prompt and the first tool
+        # call Claude is thinking and emits no content at all, so the session read
+        # as idle for the most interesting part of a turn.
+        return [{"event": "session.activity",
+                 "data": {"state": kind.split(":", 1)[1]}}]
     if kind == "user":
         # Text a human typed straight into emdash. It reaches no web client any
         # other way — there was no optimistic echo, because no web client sent

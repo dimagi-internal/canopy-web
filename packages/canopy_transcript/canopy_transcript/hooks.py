@@ -40,6 +40,18 @@ from .rows import row_payload, scrub, _tool_input, _tool_result_text
 # on rather than a stopgap.
 FORWARDED_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 
+# Turn-boundary events. These carry no chat content — they answer "is the agent
+# working RIGHT NOW", which the tool events cannot: between submitting a prompt
+# and the first tool call, Claude is thinking and emits nothing at all, so the
+# session read as idle for the most interesting part of a turn (reported
+# 2026-07-27: "the fact that it's running is still not being shown before any
+# text is output").
+#
+# `last_interacted_at` could not answer this either — it comes from emdash's own
+# DB via the session report, so it lags a report cycle and has a 120s window.
+# A hook fires the instant the turn starts.
+ACTIVITY_EVENTS = ("UserPromptSubmit", "Stop")
+
 # A pending call has no result yet. The client renders it as "running…" and
 # replaces it when the matching PostToolUse (or the transcript row) lands, keyed
 # on tool_use_id.
@@ -124,6 +136,20 @@ def rows_for_hook(payload: dict) -> list[dict]:
             "content": {"tool_use_id": tool_use_id, "is_error": _is_error(payload)},
         },
     ]
+
+
+def activity_for_hook(payload: dict) -> str | None:
+    """"working" / "idle" for a turn-boundary event, else None.
+
+    Separate from `rows_for_hook` because this is not a chat row — it is a state
+    transition, with nothing to render in the transcript and nothing to persist.
+    """
+    event = payload.get("hook_event_name")
+    if event == "UserPromptSubmit":
+        return "working"
+    if event == "Stop":
+        return "idle"
+    return None
 
 
 def events_for_hook(payload: dict) -> list[dict]:

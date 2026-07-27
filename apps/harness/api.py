@@ -570,6 +570,16 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # applied only on the durable path would drop a harness marker from
         # history while still pushing it to every watching client — so it would
         # appear live, then vanish on reload. Same rule, both paths.
+        if e.kind.startswith("activity:"):
+            # Fans out, never persists — index -1 already excludes it from the
+            # durable write, and it has no transcript row to be.
+            groups.publish(sgroup, {
+                "type": "chat.turn_event",
+                "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
+                "turn_id": None,
+            })
+            n += 1
+            continue
         if e.kind == "user" and is_system_noise((e.payload or {}).get("text", "")):
             n += 1
             continue

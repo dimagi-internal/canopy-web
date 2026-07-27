@@ -20,6 +20,21 @@ from .models import Message, Session
 TITLE_MAX = 80
 
 
+def _runner_binding(session):
+    """The session's RunnerBinding, or None. Local import keeps this module free
+    of an import cycle with models that reference harness."""
+    from .models import RunnerBinding
+
+    return RunnerBinding.objects.filter(session=session).first()
+
+
+def _publish_title(session) -> None:
+    groups.publish(
+        groups.session_group(session.pk),
+        {"type": "session.title_updated", "title": session.title},
+    )
+
+
 def maybe_autotitle(session_id) -> str | None:
     """Title an untitled session from its first user message. No-op (returns
     None) if the session already has a title, has no user message yet, or that
@@ -28,6 +43,24 @@ def maybe_autotitle(session_id) -> str | None:
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=session_id)
         if session.title:
+            return None
+        # A session a runner backs is ALREADY named — by the emdash task the
+        # human sees in their own sidebar. That name is what they navigate by, so
+        # inventing a title from the first message actively makes the session
+        # harder to find (observed 2026-07-27: "I think we basically implemented
+        # everything we need to…" where the sidebar said
+        # "canopy-web-api-7716-0726-1521").
+        #
+        # The binding is checked rather than `origin`, deliberately: a session
+        # created on the phone still ends up driven by emdash, and the emdash name
+        # is the right title either way. Origin says where it STARTED; the binding
+        # says what is running it.
+        binding = _runner_binding(session)
+        if binding is not None and binding.session_key:
+            if session.title != binding.session_key:
+                session.title = binding.session_key[:200]
+                session.save(update_fields=["title"])
+                _publish_title(session)
             return None
         first = (
             Message.objects.filter(session=session, role=Message.USER)
