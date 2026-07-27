@@ -100,3 +100,40 @@ def test_capability_is_carried_so_the_page_knows_what_to_offer(board):
     board.capability = Storyboard.CAP_SUGGEST
     board.save()
     assert resolve_board(board)["capability"] == Storyboard.CAP_SUGGEST
+
+
+def test_a_card_never_repeats_its_lede_as_its_heading(board, ws):
+    """canopy-web derives a narrative's `title` from the opening of its story,
+    so using it verbatim made every card show the same paragraph twice — once
+    truncated as the heading, once in full beneath it. Observed on all three
+    live RF Surveys narratives."""
+    long_story = (
+        "Maya's goal is to measure differences in outcomes between her program's "
+        "intervention areas and carefully matched non-intervention areas — a rigorous "
+        "matched comparison, not a randomized trial. She wants to leverage the Connect "
+        "network to carry it out."
+    )
+    _publish(ws, "verified-monitoring", 1, long_story, long_story)
+
+    entry = resolve_board(board)["acts"][0]["entries"][0]
+    assert entry["title"] == "Verified Monitoring"
+    assert not entry["lede"].startswith(entry["title"])
+    assert len(entry["title"]) <= 70
+
+
+def test_the_lede_is_one_sentence_not_the_whole_story(board, ws):
+    story = "First sentence here. Second sentence that should not appear on the card."
+    _publish(ws, "verified-monitoring", 1, "A title", story)
+
+    entry = resolve_board(board)["acts"][0]["entries"][0]
+    assert entry["lede"] == "First sentence here."
+
+
+def test_a_genuinely_short_title_is_still_used(board, ws):
+    """canopy-web ALWAYS derives a narrative's title from the opening of its
+    story — there is no separate title field to pass. So a short title only
+    exists when the story itself opens with a short line, and in that case it is
+    a real title and should win over the humanized slug."""
+    _publish(ws, "verified-monitoring", 1, "ignored", "Checking the checkers.")
+    entry = resolve_board(board)["acts"][0]["entries"][0]
+    assert entry["title"] == "Checking the checkers."

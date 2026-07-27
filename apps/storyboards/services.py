@@ -15,6 +15,22 @@ from apps.runs import aggregate
 from apps.storyboards.models import Storyboard
 
 
+# A narrative's stored `title` is derived from the opening of its story, so on a
+# card it repeats the lede verbatim — the heading was a truncated copy of the
+# paragraph directly beneath it. The release page already solved this with
+# _humanize_slug + _lede_from_story; reuse them rather than inventing a third
+# treatment. A genuinely short title (a real one, should narratives ever carry
+# one) is still preferred.
+_MAX_CARD_TITLE = 70
+
+
+def _card_title(narrative_slug: str, stored_title: str | None) -> str:
+    title = (stored_title or "").strip()
+    if title and len(title) <= _MAX_CARD_TITLE:
+        return title
+    return aggregate._humanize_slug(narrative_slug)
+
+
 def _entry_payload(entry, workspace_slugs: set[str]) -> dict:
     """One entry, resolved to what the page shows for it.
 
@@ -40,8 +56,8 @@ def _entry_payload(entry, workspace_slugs: set[str]) -> dict:
     story = current.get("story") or narrative.get("story") or ""
     return {
         "narrative_slug": entry.narrative_slug,
-        "title": current.get("title") or narrative.get("title") or entry.narrative_slug,
-        "lede": story,
+        "title": _card_title(entry.narrative_slug, current.get("title") or narrative.get("title")),
+        "lede": aggregate._lede_from_story(story, None) or story,
         "version": current.get("version"),
         "video_url": current.get("video_url"),
         "video_viewer_url": current.get("video_viewer_url"),
