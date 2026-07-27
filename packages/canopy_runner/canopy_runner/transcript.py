@@ -80,9 +80,11 @@ TAIL_BYTES = 256 * 1024
 _SUFFIX_RE = re.compile(r"-[0-9a-z]+$")
 
 
-def encode_project_dir(worktree: Path) -> str:
-    """Claude Code's ~/.claude/projects/<name> encoding: '/' and '.' -> '-'."""
-    return str(worktree).replace("/", "-").replace(".", "-")
+# Path resolution moved to canopy_transcript (the cloud runner had independently
+# written the same encoding). Re-exported so existing callers and tests keep
+# importing it from here.
+from canopy_transcript import encode_project_dir  # noqa: E402,F401
+from canopy_transcript import resolve_emdash_transcript as _resolve_emdash
 
 
 def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
@@ -97,28 +99,10 @@ def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
 def resolve_transcript(repo: str, task: str, *, home: Path, claude_home: Path) -> Path | None:
     """Newest transcript .jsonl for (repo, task), or None.
 
-    Resolves by emdash's worktree convention, tolerant of two real-world facts the
-    original naive path missed: worktree dirs carry a random de-dupe suffix, and the
-    layout isn't uniform (see `_worktree_bases`). For each candidate base we glob the
-    encoded prefix and accept a project dir that is the exact encoding OR the encoding
-    plus a `-<suffix>` tail, then take the newest .jsonl across all matches. A wrong
-    guess returns None (empty tail), never a wrong transcript from an unrelated task —
-    the prefix is anchored at the parent segment, so `mobile` can't match `alt-mobile`.
+    Thin wrapper over `canopy_transcript.resolve_emdash_transcript`; the
+    convention and its two real-world wrinkles are documented there.
     """
-    if not repo or not task or not claude_home.is_dir():
-        return None
-    candidates: list[Path] = []
-    for base in _worktree_bases(repo, task, home):
-        prefix = encode_project_dir(base)
-        for proj_dir in claude_home.glob(prefix + "*"):
-            if not proj_dir.is_dir():
-                continue
-            rest = proj_dir.name[len(prefix):]
-            if rest == "" or _SUFFIX_RE.fullmatch(rest):
-                candidates.extend(proj_dir.glob("*.jsonl"))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return _resolve_emdash(repo, task, home=home, claude_home=claude_home)
 
 
 def _assistant_text(content) -> str:

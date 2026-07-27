@@ -116,4 +116,22 @@ describe('StoryboardPage', () => {
     renderAt()
     expect(await screen.findByText(/isn’t available/)).toBeTruthy()
   })
+
+  it('names the tab after the storyboard, not the app', async () => {
+    // A shared link gets bookmarked and sits among a dozen other tabs; "Canopy"
+    // does not say which one this is.
+    getStoryboard.mockResolvedValue(board())
+    renderAt()
+    await screen.findByText('What the money bought')
+    expect(document.title).toContain('What the money bought')
+  })
+
+  it('gives each demo video an accessible name', async () => {
+    getStoryboard.mockResolvedValue(board())
+    const { container } = renderAt()
+    await screen.findByText('What the money bought')
+    const videos = [...container.querySelectorAll('video')]
+    expect(videos.length).toBeGreaterThan(0)
+    for (const v of videos) expect(v.getAttribute('aria-label')).toBeTruthy()
+  })
 })
