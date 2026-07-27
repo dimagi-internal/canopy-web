@@ -158,3 +158,25 @@ def test_user_events_are_fanned_out_live(monkeypatch):
         {"kind": "user", "seq": 64, "index": 64, "payload": {"text": "typed in emdash"}},
     ])
     assert [m["event"]["kind"] for m in published] == ["user"]
+
+
+def test_harness_markers_are_not_pushed_live_either(monkeypatch):
+    """The noise filter used to live only on the durable path. Once user events
+    started fanning out, a marker would appear live and then VANISH on reload —
+    filtered from history but not from the stream. Same rule, both paths."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _post_stream(c, runner, s, [
+        {"kind": "user", "seq": 64, "index": 64,
+         "payload": {"text": "[Request interrupted by user]"}},
+        {"kind": "user", "seq": 128, "index": 128,
+         "payload": {"text": "something I actually typed"}},
+    ])
+    texts = [m["event"]["payload"]["text"] for m in published]
+    assert texts == ["something I actually typed"]
+    # And it is absent from history too, so the two agree.
+    assert [m.plaintext for m in s.messages.all()] == ["something I actually typed"]

@@ -176,3 +176,17 @@ def test_purge_apply_removes_only_the_harness_rows():
         "ship the fix",
         "<system-reminder> is injected by the harness",  # assistant text is never noise
     }
+
+
+def test_the_interrupt_marker_is_not_something_you_typed():
+    """Hitting escape in emdash writes `[Request interrupted by user]` as a
+    `type: "user"` record, so it rendered in your own bubble as if you had typed
+    it. Both observed variants are caught (81 rows across the fleet)."""
+    assert is_system_noise("[Request interrupted by user]")
+    assert is_system_noise("[Request interrupted by user for tool use]")
+
+
+def test_a_human_quoting_the_interrupt_marker_still_survives():
+    """Prefix-anchored, never a substring search — asking about the marker is a
+    real message and must not be swallowed."""
+    assert not is_system_noise('why does "[Request interrupted by user]" show up?')
