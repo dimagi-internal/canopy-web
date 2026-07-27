@@ -318,3 +318,27 @@ def test_the_reader_gets_current_and_previous_narration(board, ws):
     assert body["narration"][0]["text"] == "The new line."
     assert body["previous_narration"][0]["text"] == "The old line."
     assert body["capability"] == "read"
+
+
+def test_the_share_url_carries_the_deployment_script_prefix(member, board, settings):
+    """labs serves under FORCE_SCRIPT_NAME=/canopy. build_absolute_uri on a
+    leading-slash path DROPS it, which mints a link that 404s — this shipped
+    broken and was only caught by opening the link. apps/walkthroughs already
+    solved it with get_script_prefix(); this is the same fix."""
+    from django.urls import set_script_prefix
+
+    set_script_prefix("/canopy/")
+    try:
+        url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
+        assert "/canopy/storyboard/" in url, url
+        assert "?t=" in url
+    finally:
+        set_script_prefix("/")
+
+
+def test_the_share_url_has_no_prefix_when_served_at_root(member, board):
+    from django.urls import set_script_prefix
+
+    set_script_prefix("/")
+    url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
+    assert "/storyboard/" in url and "/canopy/" not in url, url
