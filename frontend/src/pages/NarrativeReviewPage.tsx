@@ -198,6 +198,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
               <NoteComposer
                 capability={data.capability}
                 anchorLabel={`Scene ${i + 1}${data.version != null ? ` · v${data.version}` : ''}`}
+                cta={`Leave a note on scene ${i + 1}`}
                 defaults={{
                   narrative_slug: data.narrative_slug,
                   target_version: data.version,
