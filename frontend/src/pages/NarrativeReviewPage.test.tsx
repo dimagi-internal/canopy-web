@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { ThemeProvider } from '@/theme/ThemeProvider'
 import NarrativeReviewPage from './NarrativeReviewPage'
 import * as api from '@/api/storyboards'
 
@@ -44,9 +45,11 @@ const payload = (over: Record<string, unknown> = {}) => ({
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/narrative/verified-monitoring?b=rf-surveys&t=tok']}>
+      <ThemeProvider>
       <Routes>
         <Route path="/narrative/:slug" element={<NarrativeReviewPage />} />
       </Routes>
+      </ThemeProvider>
     </MemoryRouter>,
   )
 }
@@ -66,7 +69,7 @@ describe('NarrativeReviewPage', () => {
   })
 
   const showChanges = async () => {
-    fireEvent.click(await screen.findByRole('button', { name: /Changes since v16/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Show changes/ }))
   }
 
   it('reads clean until you ask what changed', async () => {
@@ -103,7 +106,7 @@ describe('NarrativeReviewPage', () => {
     )
     renderPage()
     await screen.findByText('New one.')
-    expect(screen.queryByRole('button', { name: /Changes since/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Show changes/ })).toBeNull()
   })
 
   it('shows the before/after only on the scene that changed', async () => {

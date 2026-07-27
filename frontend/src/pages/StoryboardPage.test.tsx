@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { ThemeProvider } from '@/theme/ThemeProvider'
 import StoryboardPage from './StoryboardPage'
 import * as api from '@/api/storyboards'
 
@@ -63,9 +64,11 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
 function renderAt(url = '/storyboard/ecf-supply?t=tok') {
   return render(
     <MemoryRouter initialEntries={[url]}>
+      <ThemeProvider>
       <Routes>
         <Route path="/storyboard/:slug" element={<StoryboardPage />} />
       </Routes>
+      </ThemeProvider>
     </MemoryRouter>,
   )
 }
