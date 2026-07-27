@@ -10,6 +10,7 @@ import {
 import { withBase } from '@/lib/basePath'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
+import { PublicHeader } from '@/components/PublicHeader'
 
 /**
  * The shared arc — several DDD narratives as one link.
@@ -83,8 +84,9 @@ export default function StoryboardPage() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-3xl items-center justify-center px-6 text-center">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PublicHeader />
+      <div className="mx-auto flex max-w-3xl flex-1 items-center justify-center px-6 text-center">
         <div>{children}</div>
       </div>
     </div>
@@ -118,13 +120,8 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <PublicHeader />
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
-        <div className="mb-10 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Canopy · Demo
-          </span>
-        </div>
-
         <header className="mb-4">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
             {narrativeCount === 1 ? 'One narrative' : `${narrativeCount} narratives`}

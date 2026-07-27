@@ -3,6 +3,7 @@ import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { apiUrl } from '@/api/base'
 import { leaveFeedback, type Capability } from '@/api/storyboards'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
+import { PublicHeader } from '@/components/PublicHeader'
 import { pairNarrationScenes } from '@/components/ddd/narrativeScenePairing'
 import type { DddNarration } from '@/api/ddd'
 
@@ -99,8 +100,9 @@ export default function NarrativeReviewPage() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-3xl items-center justify-center px-6 text-center">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PublicHeader />
+      <div className="mx-auto flex max-w-3xl flex-1 items-center justify-center px-6 text-center">
         <div>{children}</div>
       </div>
     </div>
@@ -144,6 +146,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <PublicHeader trail={data.storyboard_title} />
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <Link
@@ -164,7 +167,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                     : 'border-border text-muted-foreground hover:border-input hover:text-foreground'
                 }`}
               >
-                {showChanges ? 'Hide changes' : `Changes since v${data.previous_version}`}
+                {showChanges ? 'Hide changes' : 'Show changes'}
               </button>
             )}
             {data.version != null && (
