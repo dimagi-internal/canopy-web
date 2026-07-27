@@ -142,6 +142,16 @@ class Client:
     def post_events(self, turn_id: str, events: list[dict]) -> None:
         self._call("POST", f"/turns/{turn_id}/events", {"events": events})
 
+    def post_transcript(self, turn_id: str, lines: list[str], batch_id: str = "") -> bool:
+        """Append raw JSONL to a turn's retained transcript. Returns False once the
+        server reports the turn's per-turn ceiling is hit, so the caller can stop
+        flushing for this turn (every later batch would be a silent no-op)."""
+        _, payload = self._call(
+            "POST", f"/turns/{turn_id}/transcript",
+            {"lines": lines, "batch_id": batch_id},
+        )
+        return not (payload or {}).get("truncated", False)
+
     def sync_schedules(self, runner_id: str) -> list[dict]:
         """The schedules this runner may fire (tenant-scoped server-side). The runner
         evaluates their cron locally and reports what came due — the server stores the

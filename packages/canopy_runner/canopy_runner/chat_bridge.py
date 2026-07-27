@@ -358,6 +358,55 @@ IDLE_TICKS = 180          # ~15 min of a completely silent transcript
 MAX_TICKS = 2880          # ~4 h total, so a wedged bridge can't hold a session forever
 
 
+# --- Retained raw transcript (per turn) --------------------------------------
+#
+# A turn's raw JSONL is the durable artifact cost and structure are re-derived
+# from (spec 2026-07-26-run-execution-convergence): per-line `usage` and `model`,
+# uuid/parentUuid nesting, tool ids and inputs, the CLI's own timestamps. The
+# TurnEvent ledger is deliberately reduced and cannot answer those.
+#
+# On this runner a "turn's transcript" is the slice of the ongoing emdash session
+# .jsonl written while the bridge was open — which is exactly the window
+# LiveBridge already tails. Work a human does directly in emdash outside a canopy
+# turn belongs to no turn, and is correctly absent.
+#
+# The server 422s a single request whose line bytes exceed 1 MiB
+# (apps/harness/api.py::TRANSCRIPT_APPEND_MAX_BYTES), so batches are bounded by
+# BYTES, not line count: one tool-result line can be enormous on its own.
+TRANSCRIPT_BATCH_MAX_BYTES = 900 * 1024
+
+
+def chunk_raw_lines(lines: list[str], max_bytes: int = TRANSCRIPT_BATCH_MAX_BYTES) -> list[list[str]]:
+    """Split raw JSONL lines into batches whose UTF-8 size stays under `max_bytes`.
+
+    A single line larger than the cap can never fit, even alone — the server
+    rejects the whole request on total bytes. Shipping it anyway would fail every
+    retry and stall the flush, so it is replaced by a marker line: a consumer
+    re-deriving cost from this transcript then SEES a gap instead of silently
+    reading an incomplete turn as a complete one.
+    """
+    batches: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for line in lines:
+        n = len(line.encode("utf-8")) + 1  # +1 for the newline the server joins on
+        if n > max_bytes:
+            if current:
+                batches.append(current)
+                current, size = [], 0
+            batches.append([json.dumps({"type": "canopy_runner_line_dropped",
+                                        "bytes": n})])
+            continue
+        if size + n > max_bytes and current:
+            batches.append(current)
+            current, size = [], 0
+        current.append(line)
+        size += n
+    if current:
+        batches.append(current)
+    return batches
+
+
 @dataclass
 class LiveBridge:
     """One chat turn being bridged, ACROSS runner ticks.
@@ -379,10 +428,21 @@ class LiveBridge:
     idle_ticks: int = 0
     ticks: int = 0
     done_reason: str = ""
+    # Raw JSONL awaiting a flush to POST /turns/{id}/transcript, and the count of
+    # batches already accepted (the batch_id's sequence number, so a lost-ack
+    # retry dedupes server-side instead of double-appending).
+    raw_pending: list[str] = field(default_factory=list)
+    raw_batches_sent: int = 0
+    transcript_truncated: bool = False
 
-    def step(self, new_records: list[dict]) -> None:
-        """Consume one tick's worth of newly-appended records."""
+    def step(self, new_records: list[dict], raw_lines: list[str] | None = None) -> None:
+        """Consume one tick's worth of newly-appended records.
+
+        `raw_lines` is the verbatim JSONL for those records (TailReader.last_raw).
+        Optional so the state machine still unit-tests from records alone."""
         self.ticks += 1
+        if raw_lines and not self.transcript_truncated:
+            self.raw_pending.extend(raw_lines)
         if new_records:
             self.idle_ticks = 0
         else:
@@ -400,7 +460,13 @@ class LiveBridge:
     @property
     def finished(self) -> bool:
         """Done AND fully delivered — undelivered text keeps the turn open so the
-        next tick can retry it."""
+        next tick can retry it.
+
+        Deliberately does NOT wait on `raw_pending`: the retained transcript is a
+        derived artifact, the reply is the turn's actual product, and holding a
+        finished turn open over a transcript flush would make a storage hiccup
+        look like an agent still working. The pump makes a final flush attempt at
+        finish time instead."""
         return bool(self.done_reason) and not self.pending
 
     @property

@@ -338,10 +338,12 @@ def _pump_chat_bridges(cfg: Config, client: Client) -> None:
             continue
         try:
             new_records = bridge.reader.read_new()
+            raw_lines = list(getattr(bridge.reader, "last_raw", ()) or ())
         except Exception:  # noqa: BLE001 — an unreadable transcript is a quiet tick
             logger.debug("chat turn=%s: transcript read failed", turn_id, exc_info=True)
-            new_records = []
-        bridge.step(new_records)
+            new_records, raw_lines = [], []
+        bridge.step(new_records, raw_lines)
+        _flush_turn_transcript(client, bridge)
         if bridge.pending:
             events = [{"kind": "assistant", "payload": {"text": t}} for t in bridge.pending]
             try:
@@ -350,7 +352,49 @@ def _pump_chat_bridges(cfg: Config, client: Client) -> None:
             except Exception:  # noqa: BLE001 — keep it queued and retry next tick
                 logger.debug("chat turn=%s: event post failed, retrying", turn_id, exc_info=True)
         if bridge.finished:
+            # One last attempt before the turn closes: whatever the agent wrote in
+            # its final tick is exactly the part a cost aggregator needs (the
+            # `result` line carries the turn's totals).
+            _flush_turn_transcript(client, bridge, final=True)
             _finish_chat_bridge(cfg, client, bridge, status="done", note=bridge.note)
+
+
+def _flush_turn_transcript(client: Client, bridge, *, final: bool = False) -> None:
+    """Ship the bridge's accumulated raw JSONL to the turn's retained transcript.
+
+    Best-effort and non-blocking for the turn: the reply is the product, this is
+    a derived artifact. A failed batch stays queued and is retried next tick; on
+    the FINAL flush an unshippable batch is dropped rather than holding the turn
+    open, and says so in the log.
+
+    Batches carry `<turn>:<n>` as their batch_id so a lost-ack retry dedupes
+    server-side instead of double-appending (apps/harness/services.append_transcript).
+    """
+    if bridge.transcript_truncated or not bridge.raw_pending:
+        return
+    for batch in chat_bridge.chunk_raw_lines(bridge.raw_pending):
+        batch_id = f"{bridge.turn_id}:{bridge.raw_batches_sent}"
+        try:
+            still_open = client.post_transcript(bridge.turn_id, batch, batch_id)
+        except Exception:  # noqa: BLE001
+            if final:
+                _note_failure(f"transcript:{bridge.turn_id}",
+                              f"final transcript flush ({len(batch)} lines, dropped)")
+                bridge.raw_pending.clear()
+            else:
+                _note_failure(f"transcript:{bridge.turn_id}", "transcript flush")
+            return
+        bridge.raw_batches_sent += 1
+        del bridge.raw_pending[:len(batch)]
+        if not still_open:
+            # Per-turn ceiling reached; every further batch is a server-side
+            # no-op, so stop paying for them.
+            bridge.transcript_truncated = True
+            bridge.raw_pending.clear()
+            logger.info("chat turn=%s: transcript ceiling reached; no further flushes",
+                        bridge.turn_id)
+            return
+    _note_success(f"transcript:{bridge.turn_id}")
 
 
 def _drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
