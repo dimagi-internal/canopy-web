@@ -23,6 +23,8 @@ import { AgentsPage } from './pages/AgentsPage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
+import StoryboardPage from './pages/StoryboardPage'
+import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
 import SupervisorPage from '@/pages/SupervisorPage'
 import ActivityPage from '@/pages/ActivityPage'
@@ -257,6 +259,12 @@ export const router = createBrowserRouter(guarded([
     errorElement: <ShareRouteErrorBoundary />,
     children: [
       { path: '/ddd-release/:narrative/:runId', element: <DddReleasePage /> },
+      // The shared ARC — several narratives as one link. Same public shape as
+      // the release page above: the API self-enforces token-or-member access.
+      { path: '/storyboard/:slug', element: <StoryboardPage /> },
+      // One narrative, scene by scene, for an outsider. `?b=<board>` carries the
+      // storyboard whose token gates it — the narrative itself has no token.
+      { path: '/narrative/:slug', element: <NarrativeReviewPage /> },
     ],
   },
 ]), {

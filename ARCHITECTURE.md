@@ -48,6 +48,7 @@ the arrow's direction and enforce it in CI.
 | `reviews` | **product** | DDD narrative review surface. |
 | `shareouts` | **product** | Team shareout briefings. |
 | `runs` | **product** | DDD run aggregation/versioning. |
+| `storyboards` | **product** | An ordered arc of DDD narratives — acts over entries — shareable as ONE capability-bearing link (`read`/`comment`/`suggest`). Curates narratives, so product. An entry FOLLOWS its narrative's current release rather than freezing a run id, which is safe only because every `feedback.Feedback` row records the version it was left against. Anonymous read mirrors `runs`' release endpoint: `auth=None`, self-enforcing, 404 (never 403) on a wrong token so existence never leaks. |
 
 ## Accepted seams (carve-outs)
 
