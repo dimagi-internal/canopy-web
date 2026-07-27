@@ -115,12 +115,42 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       const block = frame.data.block ?? {};
       const plaintext = typeof block.text === "string" ? block.text : "";
       const id = frame.data.tool_message_id;
-      const existing = prev.messages.find((m) => m.id === id);
+      // Reconcile on the CORRELATION key, not the message id. The same tool call
+      // arrives twice by design: once live from a hook (no ordinal, id `seq:-1`)
+      // and once durably from the transcript (ordinal-keyed, a real id). They
+      // share only `tool_use_id` / `id` in content, so matching on that is what
+      // makes the live row a placeholder the durable row REPLACES rather than a
+      // duplicate that sits beside it forever.
+      const correlation =
+        role === "tool_use"
+          ? (block.id as string | undefined)
+          : (block.tool_use_id as string | undefined);
+      const existing = prev.messages.find(
+        (m) =>
+          m.id === id ||
+          (m.role === role &&
+            correlation !== undefined &&
+            correlation !== "" &&
+            (m.content as Record<string, unknown>)?.[
+              role === "tool_use" ? "id" : "tool_use_id"
+            ] === correlation),
+      );
       if (existing) {
+        // Adopt the incoming id and ordinal: a durable row superseding a live
+        // placeholder must take over its identity, or the next update keys on a
+        // `seq:-1` that no longer means anything.
         return {
           ...prev,
           messages: prev.messages.map((m) =>
-            m.id === id ? { ...m, content: block, plaintext } : m,
+            m === existing
+              ? {
+                  ...m,
+                  id,
+                  turn_index: frame.data.turn_index ?? m.turn_index,
+                  content: block,
+                  plaintext,
+                }
+              : m,
           ),
         };
       }

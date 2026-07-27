@@ -94,3 +94,47 @@ def resolve_cli_transcript(
         return path if path.is_file() else None
     except OSError:
         return None
+
+
+def parse_emdash_worktree(cwd: Path | str, *, home: Path) -> tuple[str, str] | None:
+    """The inverse of `_worktree_bases`: a worktree path -> (repo, task), or None.
+
+    A Claude Code hook reports the session's `cwd`, but canopy identifies a
+    session by (project, session_key) — so the live path needs to run the
+    convention backwards. Handles both observed layouts
+    (`<repo>/emdash/<task>` and `<repo>/<task>`) and strips emdash's random
+    de-dupe suffix, so `…/canopy-web/emdash/runner-yipnn` resolves to
+    ("canopy-web", "runner").
+
+    The suffix strip is ambiguous by construction — a task legitimately named
+    `foo-bar` is indistinguishable from task `foo` with suffix `bar`. Both
+    candidates are therefore returned to the caller's matcher via
+    `emdash_task_candidates`; this returns the *exact* pair only, and None when
+    the path is not under the worktree root at all.
+    """
+    try:
+        rel = Path(cwd).resolve().relative_to((home / "emdash" / "worktrees").resolve())
+    except (ValueError, OSError):
+        return None
+    parts = rel.parts
+    if len(parts) >= 3 and parts[1] == "emdash":
+        return parts[0], parts[2]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return None
+
+
+def emdash_task_candidates(task: str) -> list[str]:
+    """The task names a worktree dir could correspond to, most-specific first.
+
+    emdash appends a random `-<suffix>` to de-dupe worktree dirs, and a task may
+    also legitimately contain a hyphen, so the mapping is genuinely ambiguous:
+    `runner-yipnn` is either task `runner-yipnn` or task `runner`. Returning both
+    lets the caller match against the sessions it actually knows about instead of
+    guessing — the exact name wins when it exists.
+    """
+    out = [task]
+    stripped = _SUFFIX_RE.sub("", task)
+    if stripped and stripped != task:
+        out.append(stripped)
+    return out

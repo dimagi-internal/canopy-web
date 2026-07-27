@@ -26,10 +26,13 @@ import json
 import logging
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
-from . import chat_bridge, emdash, transcript
+from . import chat_bridge, emdash, hook_install, transcript
 from .client import Client, ClientError
+import canopy_transcript as transcript_core
+
 from .tail import TailReader
 from .config import Config
 
@@ -451,6 +454,86 @@ def _note_success(key: str) -> None:
         logger.info("recovered after %d failed attempts: %s", n, key)
 
 
+
+# --- Live hook events (spec 2026-07-27) -------------------------------------
+#
+# Claude Code fires a hook per tool call straight to a loopback listener this
+# runner owns. That is the LIVE half of a session's record: the transcript is
+# complete but lags (the docs say so explicitly), so it cannot drive a view you
+# are actively watching. The transcript remains the durable record, which is
+# what makes it safe for this path to drop events freely.
+#
+# `{(project, session_key): session_id}`, refreshed from the stream sync each
+# tick — the hook reports a cwd, and this is what turns that back into a canopy
+# Session.
+_hook_sessions: dict[tuple[str, str], str] = {}
+_hook_listener = None
+
+
+def _resolve_hook_session(cwd: str) -> str:
+    """A hook's cwd -> canopy session id, or "" if this isn't a session we back.
+
+    Hooks are installed at USER level, so they fire for every Claude Code
+    session on the machine. Most are not ours; returning "" is the expected
+    path, not a failure.
+    """
+    if not cwd:
+        return ""
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
+    if parsed is None:
+        return ""
+    project, task = parsed
+    # The worktree dir may carry emdash's random de-dupe suffix, so try the exact
+    # name first and the stripped one second — matching against sessions we
+    # actually know rather than guessing which it is.
+    for candidate in transcript_core.emdash_task_candidates(task):
+        session_id = _hook_sessions.get((project, candidate))
+        if session_id:
+            return session_id
+    return ""
+
+
+def _start_hook_listener(cfg: Config, client: Client):
+    """Install the user-level hook and start the loopback listener.
+
+    Returns the listener, or None when disabled (`hook_port = 0`), in which case
+    any previously-installed canopy hook is REMOVED — turning the feature off
+    must not leave a curl pointing at a port nothing is listening on.
+    """
+    global _hook_listener
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if cfg.hook_port <= 0:
+        if hook_install.remove(settings_path):
+            logger.info("hook listener disabled; removed canopy's hook from %s",
+                        settings_path)
+        return None
+    from .hook_listener import HookListener
+
+    nonce = uuid.uuid4().hex
+    listener = HookListener(
+        port=cfg.hook_port, nonce=nonce,
+        resolve_session=_resolve_hook_session,
+        forward=lambda: cfg.forward_sessions,
+    )
+    listener.bind_sender(
+        lambda session_id, events: client.post_session_stream(
+            cfg.runner_id, session_id, events)
+    )
+    try:
+        listener.start()
+    except OSError as exc:
+        # Another process already holds the port (a second runner, a stale
+        # process). Live events are an overlay, so this is a warning, not fatal.
+        logger.warning("hook listener could not bind :%d (%s); live events off",
+                       cfg.hook_port, exc)
+        return None
+    hook_install.install(settings_path, port=cfg.hook_port, nonce=nonce)
+    logger.info("live hook events: listener on :%d, forwarding=%s",
+                cfg.hook_port, cfg.forward_sessions)
+    _hook_listener = listener
+    return listener
+
+
 def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
     """Ship conversational rows as live events. seq == index (the composite
     transcript ordinal): monotonic per session forever, so the WS-derived
@@ -496,7 +579,11 @@ def _sync_session_streams(cfg: Config, client: Client) -> None:
         if sid not in desired:
             _stream_readers.pop(sid, None)
 
+    # The hook path resolves a cwd against these, so refresh it wholesale here
+    # rather than accumulating stale entries for detached sessions.
+    _hook_sessions.clear()
     for sid, s in desired.items():
+        _hook_sessions[(s.get("project") or "", s.get("session_key") or "")] = sid
         st = _stream_readers.setdefault(sid, {
             "reader": None, "count": 0,
             "session_key": s.get("session_key") or "", "project": s.get("project") or "",
@@ -806,6 +893,7 @@ def main() -> None:
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
+    _start_hook_listener(cfg, client)
 
     def _wait(seconds: float) -> None:
         # With a live wake channel, block until a nudge OR the poll interval,

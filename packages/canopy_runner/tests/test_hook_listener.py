@@ -1,0 +1,131 @@
+"""The loopback hook listener and its user-level install.
+
+The properties under test are the safety ones: a hook must never fail, the
+forwarding switch must actually gate, and installing must not disturb hooks
+canopy did not put there (emdash owns its own).
+"""
+import json
+
+from canopy_runner import hook_install
+from canopy_runner.hook_listener import HookListener
+
+
+def _payload(cwd="/w/repo/emdash/task", **over):
+    base = {
+        "hook_event_name": "PostToolUse",
+        "cwd": cwd,
+        "tool_name": "Bash",
+        "tool_use_id": "toolu_1",
+        "tool_input": {"command": "ls"},
+        "tool_response": {"stdout": "out"},
+    }
+    base.update(over)
+    return base
+
+
+def _listener(*, forward=True, known=("/w/repo/emdash/task",)):
+    sent = []
+    lis = HookListener(
+        port=0, nonce="n",
+        resolve_session=lambda cwd: "sess-1" if cwd in known else "",
+        forward=lambda: forward,
+    )
+    lis.bind_sender(lambda session_id, events: sent.append((session_id, events)))
+    return lis, sent
+
+
+def test_forwarding_off_accepts_and_drops():
+    """THE switch: the listener always accepts, but only forwards when on. Off
+    means the plumbing is installed and inert."""
+    lis, sent = _listener(forward=False)
+    assert lis.handle_payload(_payload()) == "not-forwarding"
+    assert sent == []
+    assert lis.received == 1
+
+
+def test_forwarding_on_ships_a_complete_tool_pair():
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload()) == "forwarded"
+    (session_id, events), = sent
+    assert session_id == "sess-1"
+    assert [e["kind"] for e in events] == ["tool_use", "tool_result"]
+    # Live rows are view-only; persisting them would give the durable record a
+    # second, unordered source.
+    assert all(e["index"] == -1 for e in events)
+
+
+def test_a_session_canopy_does_not_know_is_dropped_quietly():
+    """User-level hooks fire for EVERY Claude Code session on the machine. Most
+    are not canopy's; dropping them is the expected path, not an error."""
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload(cwd="/somewhere/else")) == "unknown-cwd"
+    assert sent == []
+    assert lis.dropped_unknown_cwd == 1
+
+
+def test_a_failing_transport_never_raises_at_the_hook():
+    """A hook that sees a failure is a hook that can degrade the agent's loop."""
+    lis, _ = _listener()
+    lis.bind_sender(lambda *a: (_ for _ in ()).throw(RuntimeError("canopy down")))
+    assert lis.handle_payload(_payload()) == "error"   # not an exception
+
+
+def test_non_tool_events_are_ignored():
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload(hook_event_name="Stop")) == "ignored"
+    assert sent == []
+
+
+# ── install ────────────────────────────────────────────────────────────────
+
+def test_install_is_idempotent_and_refreshes_in_place(tmp_path):
+    p = tmp_path / "settings.json"
+    assert hook_install.install(p, port=8787, nonce="a") is True
+    assert hook_install.install(p, port=9999, nonce="b") is True
+    entries = json.loads(p.read_text())["hooks"]["PostToolUse"]
+    assert len(entries) == 1, "a re-install must replace, not accumulate"
+    assert "9999" in entries[0]["hooks"][0]["command"]
+    assert "nonce" not in entries[0]["hooks"][0]["command"]
+
+
+def test_install_preserves_hooks_canopy_did_not_write(tmp_path):
+    """emdash writes its own hooks. Ours compose with them; they are not ours to
+    edit."""
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"hooks": {
+        "PostToolUse": [{"hooks": [{"type": "command", "command": "emdash-thing"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "emdash-stop"}]}],
+    }}))
+    hook_install.install(p, port=8787, nonce="a")
+    hooks = json.loads(p.read_text())["hooks"]
+    commands = [h["command"] for e in hooks["PostToolUse"] for h in e["hooks"]]
+    assert "emdash-thing" in commands
+    assert any(hook_install.MARKER in c for c in commands)
+    assert hooks["Stop"][0]["hooks"][0]["command"] == "emdash-stop"
+
+
+def test_remove_takes_only_ours(tmp_path):
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"hooks": [{"type": "command", "command": "someone-elses"}]}]}}))
+    hook_install.install(p, port=8787, nonce="a")
+    assert hook_install.remove(p) is True
+    commands = [h["command"] for e in json.loads(p.read_text())["hooks"]["PostToolUse"]
+                for h in e["hooks"]]
+    assert commands == ["someone-elses"]
+    assert hook_install.remove(p) is False   # nothing of ours left
+
+
+def test_the_command_cannot_fail_or_hang_the_hook(tmp_path):
+    cmd = hook_install.hook_command(8787, "secret")
+    assert "|| true" in cmd, "a failing curl must not fail the hook"
+    assert "--max-time" in cmd, "a hung canopy must not slow every tool call"
+    assert "-d @-" in cmd, "the hook JSON is forwarded verbatim on stdin"
+    assert "127.0.0.1" in cmd, "never off-box: this machine holds fleet credentials"
+
+
+def test_a_settings_file_with_a_malformed_hooks_key_is_left_alone(tmp_path):
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"hooks": "not-an-object"}))
+    assert hook_install.install(p, port=8787, nonce="a") is False
+    assert json.loads(p.read_text())["hooks"] == "not-an-object"

@@ -355,3 +355,87 @@ describe("sessionReducer — session.error draft_version_mismatch", () => {
     expect(next).toBe(prev)
   })
 })
+
+describe("sessionReducer — live/durable reconciliation", () => {
+  const liveToolUse = {
+    event: "chat.tool_use",
+    data: {
+      parent_message_id: null,
+      tool_message_id: "seq:-1",
+      turn_index: -1,
+      block: { id: "toolu_9", name: "Bash", input: { command: "ls" }, text: "" },
+    },
+  } as WsEvent
+
+  const durableToolUse = {
+    event: "chat.tool_use",
+    data: {
+      parent_message_id: null,
+      tool_message_id: "42",
+      turn_index: 128,
+      block: { id: "toolu_9", name: "Bash", input: { command: "ls" }, text: "" },
+    },
+  } as WsEvent
+
+  it("a durable row REPLACES the live placeholder for the same tool call", () => {
+    // The same call arrives twice by design — live from a hook (no ordinal) and
+    // durably from the transcript. They share only tool_use_id, so without
+    // reconciling on it the user sees every tool call twice.
+    const live = sessionReducer(makeState(), liveToolUse)
+    expect(live.messages).toHaveLength(1)
+    const settled = sessionReducer(live, durableToolUse)
+    expect(settled.messages).toHaveLength(1)
+  })
+
+  it("the surviving row takes the durable identity, not the placeholder's", () => {
+    // Otherwise later updates key on a `seq:-1` that no longer means anything.
+    const settled = sessionReducer(
+      sessionReducer(makeState(), liveToolUse),
+      durableToolUse,
+    )
+    expect(settled.messages[0].id).toBe("42")
+    expect(settled.messages[0].turn_index).toBe(128)
+  })
+
+  it("reconciles tool_result on tool_use_id too", () => {
+    const mk = (id: string, turn_index: number) =>
+      ({
+        event: "chat.tool_result",
+        data: {
+          parent_message_id: null,
+          tool_message_id: id,
+          turn_index,
+          block: { tool_use_id: "toolu_9", is_error: false, text: "a.txt" },
+        },
+      }) as WsEvent
+    const settled = sessionReducer(
+      sessionReducer(makeState(), mk("seq:-1", -1)),
+      mk("77", 192),
+    )
+    expect(settled.messages).toHaveLength(1)
+    expect(settled.messages[0].id).toBe("77")
+  })
+
+  it("two different tool calls stay two rows", () => {
+    const other = {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:-1b",
+        turn_index: -1,
+        block: { id: "toolu_OTHER", name: "Read", input: {}, text: "" },
+      },
+    } as WsEvent
+    const next = sessionReducer(sessionReducer(makeState(), liveToolUse), other)
+    expect(next.messages).toHaveLength(2)
+  })
+
+  it("a row with no correlation id still falls back to matching on message id", () => {
+    const noId = {
+      event: "chat.tool_use",
+      data: { parent_message_id: null, tool_message_id: "t1", block: {} },
+    } as WsEvent
+    const next = sessionReducer(sessionReducer(makeState(), noId), noId)
+    expect(next.messages).toHaveLength(1)
+  })
+})
