@@ -5,7 +5,13 @@ Re-exports the names consumers actually use so a caller writes
 into a submodule.
 """
 from .batching import TRANSCRIPT_BATCH_MAX_BYTES, chunk_raw_lines
-from .hooks import FORWARDED_EVENTS, events_for_hook, rows_for_hook
+from .hooks import (
+    FORWARDED_EVENTS,
+    STATUS_COMPLETE,
+    STATUS_PENDING,
+    events_for_hook,
+    rows_for_hook,
+)
 from .paths import (
     emdash_task_candidates,
     encode_project_dir,
@@ -31,7 +37,8 @@ from .rows import (
 from .tail import TailReader
 
 __all__ = [
-    "BLOCK_STRIDE", "FORWARDED_EVENTS", "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
+    "BLOCK_STRIDE", "FORWARDED_EVENTS", "STATUS_COMPLETE", "STATUS_PENDING",
+    "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
     "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "assistant_text", "chunk_raw_lines",
     "compose_index", "conversational_messages", "encode_project_dir", "end_index",
     "emdash_task_candidates", "events_for_hook", "parse_emdash_worktree",

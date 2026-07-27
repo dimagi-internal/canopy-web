@@ -51,6 +51,12 @@ export function groupToolRuns(
   return out;
 }
 
+/** True when any call in the run is still running — a collapsed group should say
+ *  so, or an agent mid-task looks idle. */
+export function runIsActive(rows: ChatRow[]): boolean {
+  return rows.some((row) => row.kind === "tool_pair" && row.result === null);
+}
+
 /** A short label for a collapsed run: "5 tool calls · Bash, Read". */
 export function summariseRun(rows: ChatRow[]): string {
   const names = new Set<string>();

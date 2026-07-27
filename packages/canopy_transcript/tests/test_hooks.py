@@ -27,7 +27,7 @@ def test_one_hook_event_is_a_complete_tool_pair():
     use, result = ct.rows_for_hook(_payload())
     assert use["role"] == "tool_use"
     assert use["content"] == {"id": "toolu_01ABC", "name": "Bash",
-                              "input": {"command": "ls"}}
+                              "input": {"command": "ls"}, "status": "complete"}
     assert result["role"] == "tool_result"
     assert result["content"] == {"tool_use_id": "toolu_01ABC", "is_error": False}
     assert result["text"] == "a.txt"
@@ -48,11 +48,27 @@ def test_an_event_with_no_tool_use_id_is_dropped():
     assert ct.rows_for_hook(_payload(tool_use_id=None)) == []
 
 
-def test_pretooluse_is_never_forwarded():
-    """PreToolUse can BLOCK a tool call. Observability must not be able to stall
-    an agent, so it is not in the forwarded set at all."""
-    assert "PreToolUse" not in ct.FORWARDED_EVENTS
-    assert ct.rows_for_hook(_payload(hook_event_name="PreToolUse")) == []
+def test_pretooluse_yields_a_pending_row_and_no_result():
+    """The point of forwarding PreToolUse: a row the instant the call STARTS, so
+    a long tool call reads as running rather than as nothing happening. It must
+    NOT emit a tool_result — an empty result would render as a finished call.
+
+    Safe to forward because our hook cannot block: fire-and-forget, 2s cap, and
+    it never returns a decision."""
+    rows = ct.rows_for_hook(_payload(hook_event_name="PreToolUse", tool_response=None))
+    assert len(rows) == 1
+    assert rows[0]["role"] == "tool_use"
+    assert rows[0]["content"]["status"] == "pending"
+    assert rows[0]["content"]["name"] == "Bash"
+
+
+def test_the_completed_row_replaces_the_pending_one_by_id():
+    """Both carry the same tool_use_id, which is what lets the client upsert
+    rather than show the call twice — once running, once done."""
+    pre = ct.rows_for_hook(_payload(hook_event_name="PreToolUse"))[0]
+    post_use = ct.rows_for_hook(_payload())[0]
+    assert pre["content"]["id"] == post_use["content"]["id"]
+    assert (pre["content"]["status"], post_use["content"]["status"]) == ("pending", "complete")
 
 
 def test_a_failure_event_marks_the_result_as_an_error():

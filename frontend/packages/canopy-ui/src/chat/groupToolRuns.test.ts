@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { MIN_RUN_TO_GROUP, groupToolRuns, runHasError, summariseRun } from "./groupToolRuns"
+import { MIN_RUN_TO_GROUP, groupToolRuns, runHasError, runIsActive, summariseRun } from "./groupToolRuns"
 import type { ChatRow } from "./pairToolMessages"
 import type { Message } from "./protocol"
 
@@ -67,5 +67,15 @@ describe("groupToolRuns", () => {
   it("a session of only prose is untouched", () => {
     const out = groupToolRuns([prose(1), prose(2)])
     expect(out.map((r) => r.kind)).toEqual(["message", "message"])
+  })
+})
+
+describe("runIsActive", () => {
+  it("a run with a call still in flight reports active", () => {
+    // Collapsed, an agent mid-task would otherwise look idle — which is the
+    // exact question "is this session working?" asks.
+    const pending: ChatRow = { kind: "tool_pair", use: msg({ id: "u9" }), result: null, key: "pair-9" }
+    expect(runIsActive([pair(1), pending])).toBe(true)
+    expect(runIsActive([pair(1), pair(2)])).toBe(false)
   })
 })
