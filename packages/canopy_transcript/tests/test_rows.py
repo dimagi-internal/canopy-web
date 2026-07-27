@@ -193,3 +193,29 @@ def test_scrub_leaves_other_control_characters_alone():
     """Only NUL is rejected by Postgres; tabs/newlines/escapes are real content
     and stripping them would corrupt every terminal capture we ship."""
     assert ct.scrub("a\tb\nc\x1b[0m") == "a\tb\nc\x1b[0m"
+
+
+# ── cwd -> (repo, task): the inverse the live hook path needs ───────────────
+
+def test_parse_worktree_handles_both_observed_layouts(tmp_path):
+    home = tmp_path
+    (home / "emdash" / "worktrees" / "repo" / "emdash" / "task").mkdir(parents=True)
+    (home / "emdash" / "worktrees" / "repo2" / "task2").mkdir(parents=True)
+    assert ct.parse_emdash_worktree(
+        home / "emdash/worktrees/repo/emdash/task", home=home) == ("repo", "task")
+    assert ct.parse_emdash_worktree(
+        home / "emdash/worktrees/repo2/task2", home=home) == ("repo2", "task2")
+
+
+def test_parse_worktree_rejects_a_path_outside_the_root(tmp_path):
+    """A hook fires for EVERY session on the machine, most of them not canopy's.
+    A path we can't place must resolve to nothing, never to a wrong session."""
+    assert ct.parse_emdash_worktree("/somewhere/else", home=tmp_path) is None
+
+
+def test_task_candidates_keep_the_suffix_ambiguity_open():
+    """`runner-yipnn` is either task `runner-yipnn` or task `runner` + emdash's
+    de-dupe suffix. Both are offered so the caller matches against sessions it
+    actually has rather than guessing."""
+    assert ct.emdash_task_candidates("runner-yipnn") == ["runner-yipnn", "runner"]
+    assert ct.emdash_task_candidates("plain") == ["plain"]

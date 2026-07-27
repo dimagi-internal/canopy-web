@@ -29,6 +29,22 @@ class Config:
     # supervisor's session list. Silent truncation is therefore not cosmetic — keep
     # it well above any realistic open-task count.
     session_report_limit: int = 100
+    # --- Live hook events (spec 2026-07-27) -------------------------------
+    # Claude Code hooks POST every tool call to a loopback listener this runner
+    # owns, giving the phone real-time tool activity that transcript tailing
+    # cannot (the docs are explicit that the transcript "may lag the in-memory
+    # conversation"). Same shape emdash already uses for its own hooks.
+    #
+    # forward_sessions is THE switch: the listener always accepts and always
+    # answers 200 (a hook must never fail, and PreToolUse can block a tool call),
+    # but it only forwards to canopy-web when this is on. Off means the plumbing
+    # is installed and inert — flip one box, watch it, then decide about the
+    # fleet. Default off because live events are a lossy overlay: the transcript
+    # is still the durable record either way, so nothing is lost while it's off.
+    forward_sessions: bool = False
+    # Loopback port for the hook listener. 0 disables the listener entirely (and
+    # the hook install), for a box that should never run one.
+    hook_port: int = 8787
     state_path: str = ""
     # The runner drives emdash's real UI over CDP (create/reuse sessions); it needs
     # emdash launched with --remote-debugging-port=<cdp_port> (see "Emdash CDP").
