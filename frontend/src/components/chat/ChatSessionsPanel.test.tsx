@@ -233,27 +233,36 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    // Two-part timeout, and BOTH parts have to be raised together.
+    // Flaky for a reason no timeout could fix. Two rounds of raising them
+    // (#391 → 20s test budget, #419 → 15s per-await) did not hold — it failed
+    // again on main at 16022ms. It was never slow; the element was never going
+    // to appear, and the budget only decided when to give up.
     //
-    // #391 raised the per-TEST timeout (3rd arg to `it`) to 20s after this died
-    // at exactly 5006ms on CI while passing locally — but left the per-await
-    // budgets at 5s. So the binding constraint just moved: it then failed at
-    // ~6095ms on `findByText('Acme')`, which is its own 5s budget expiring
-    // inside a 20s test. Locally the whole test runs in ~200ms; CI is 30x
-    // slower here, so every budget needs headroom, not just the outer one.
+    // The click on the "New chat" dropdown trigger did not flush, so the menu
+    // stayed aria-expanded="false" and 'Acme' never rendered. The siblings hide
+    // this because they click an AGENT passed in as a prop (synchronous); this
+    // one clicks a PROJECT, which only exists after listSlugs resolves into the
+    // open menu.
     //
-    // This matters more under a merge queue, where a flake ejects the PR from
-    // the queue rather than just asking for a re-run.
-    const BUDGET = 15_000
+    // act() is this file's own idiom for a state-changing click (see the
+    // stale-response test below). Resolve the element FIRST, then click inside
+    // act() with a synchronous reference — awaiting a findBy* INSIDE act()
+    // interleaves and reintroduces the same failure. Deterministic now, and
+    // back under the default 5s budgets: ~220ms instead of 6–16s of waiting.
+    const newChat = await screen.findByText('New chat')
+    await act(async () => {
+      fireEvent.click(newChat)
+    })
 
-    fireEvent.click(await screen.findByText('New chat', {}, { timeout: BUDGET }))
-    fireEvent.click(await screen.findByText('Acme', {}, { timeout: BUDGET }))
+    const acme = await screen.findByText('Acme')
+    await act(async () => {
+      fireEvent.click(acme)
+    })
 
-    const select = (await screen.findByTestId('run-on-select', {}, { timeout: BUDGET })) as HTMLSelectElement
-    await waitFor(() => expect(listRunners).toHaveBeenCalled(), { timeout: BUDGET })
-    await waitFor(
-      () => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
-      { timeout: BUDGET },
+    const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
+    await waitFor(() => expect(listRunners).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
     )
-  }, 20_000)
+  })
 })
