@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.http import HttpRequest
+from django.urls import get_script_prefix
 from ninja import Router
 from ninja.errors import HttpError
 
@@ -77,10 +78,19 @@ def _owned_or_404(request: HttpRequest, slug: str) -> Storyboard:
 
 
 def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
+    """The absolute, token-bearing link — the thing you actually send someone.
+
+    Must include the deployment's script prefix: labs serves under
+    ``FORCE_SCRIPT_NAME=/canopy``, and ``build_absolute_uri`` on a leading-slash
+    path drops it, minting a link that 404s. Same fix apps/walkthroughs already
+    carries; reuse it rather than rediscovering it (this one shipped broken and
+    was caught by opening the link).
+    """
     if not board.share_token:
         return None
+    prefix = get_script_prefix().rstrip("/")  # "" locally, "/canopy" on labs
     return request.build_absolute_uri(
-        f"/storyboard/{board.slug}?t={board.share_token}"
+        f"{prefix}/storyboard/{board.slug}?t={board.share_token}"
     )
 
 
