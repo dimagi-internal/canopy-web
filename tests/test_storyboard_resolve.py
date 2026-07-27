@@ -137,3 +137,47 @@ def test_a_genuinely_short_title_is_still_used(board, ws):
     _publish(ws, "verified-monitoring", 1, "ignored", "Checking the checkers.")
     entry = resolve_board(board)["acts"][0]["entries"][0]
     assert entry["title"] == "Checking the checkers."
+
+
+def _film(ws, owner, review, visibility: str):
+    """The walkthrough that IS this narrative version's demo."""
+    from apps.walkthroughs.models import Walkthrough
+
+    w = Walkthrough.objects.create(
+        title="Demo",
+        kind=Walkthrough.KIND_VIDEO,
+        narrative_review_id=review.id,
+        visibility=visibility,
+        workspace_id=ws.slug,
+        owner=owner,
+        drive_file_id="f",
+        drive_folder_id="d",
+        content_type="video/mp4",
+        size_bytes=1,
+    )
+    if visibility == Walkthrough.VISIBILITY_LINK:
+        w.ensure_share_token()
+    return w
+
+
+def test_a_reader_is_not_handed_a_video_they_cannot_stream(board, ws, owner):
+    """The board FOLLOWS the current release, so the next version's walkthrough
+    can land private under a link that has already been sent. A <video> pointing
+    at a stream that 404s renders a black box with no explanation."""
+    review = _publish(ws, "verified-monitoring", 1, "Cut", "The story.")
+    _film(ws, owner, review, "private")
+
+    entry = resolve_board(board, is_member=False)["acts"][0]["entries"][0]
+    assert entry["published"] is True, "the narrative IS published; only its film is not shared"
+    assert entry["video_url"] is None
+
+    mine = resolve_board(board, is_member=True)["acts"][0]["entries"][0]
+    assert mine["video_url"], "a member streams a private artifact through their session"
+
+
+def test_a_public_film_still_reaches_the_reader(board, ws, owner):
+    review = _publish(ws, "verified-monitoring", 1, "Cut", "The story.")
+    _film(ws, owner, review, "link")
+
+    entry = resolve_board(board, is_member=False)["acts"][0]["entries"][0]
+    assert "t=" in entry["video_url"], "an anonymous stream needs the artifact's own token"
