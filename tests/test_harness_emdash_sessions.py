@@ -288,3 +288,23 @@ def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
     # And the liveness half still happened.
     binding = RunnerBinding.objects.get(session=session)
     assert binding.live_seen_at is not None
+
+
+# NOT TESTED HERE, deliberately — and worth recording why.
+#
+# The production failure was:
+#   TransactionManagementError: select_for_update cannot be used outside of a
+#   transaction
+# raised by POST /runners/{id}/sessions on labs, every ~10s, taking the liveness
+# signal for a whole machine down with it (2026-07-27).
+#
+# I wrote a test for it, then removed the fix to check the test actually caught
+# the bug. It did not — it passed either way. pytest-django wraps each test in a
+# transaction, and even `django_db(transaction=True)` did not reproduce the
+# condition through the test client. A test that passes with the bug present is
+# worse than no test: it claims coverage it does not have.
+#
+# The regression guard that DOES work is `test_a_failing_retitle_never_breaks_
+# the_session_report` above: it asserts the report survives any failure in the
+# cosmetic path, which is the property that actually matters here regardless of
+# which exception is raised.
