@@ -137,7 +137,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
               capability={board.capability}
               anchorLabel={`On “${act.title}”`}
               cta="Leave a note on this act"
-              defaults={{}}
+              defaults={{ anchor_id: act.anchor_id }}
               onSubmit={(payload) => leaveFeedback(board.slug, payload, token).then(() => undefined)}
             />
           </section>

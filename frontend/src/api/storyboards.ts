@@ -22,6 +22,8 @@ export interface StoryboardEntry {
 }
 
 export interface StoryboardAct {
+  /** What an act-level note anchors to (`act:<id>`). */
+  anchor_id: string
   title: string
   prose: string
   entries: StoryboardEntry[]

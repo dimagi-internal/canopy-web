@@ -4048,6 +4048,8 @@ export interface components {
         };
         /** ActOut */
         readonly ActOut: {
+            /** Anchor Id */
+            readonly anchor_id: string;
             /** Title */
             readonly title: string;
             /** Prose */

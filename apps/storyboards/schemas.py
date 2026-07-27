@@ -19,6 +19,9 @@ class EntryOut(StrictModel):
 
 
 class ActOut(StrictModel):
+    anchor_id: str
+    """What an act-level note anchors to. Resolvable back to the act via this
+    same read — feedback carries a pointer, never a copy of the act."""
     title: str
     prose: str
     entries: list[EntryOut]
