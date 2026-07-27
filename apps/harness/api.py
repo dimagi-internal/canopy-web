@@ -563,12 +563,18 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     sgroup = groups.session_group(payload.session_id)
     n = 0
     for e in payload.events:
-        if e.kind != "user":
-            groups.publish(sgroup, {
-                "type": "chat.turn_event",
-                "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
-                "turn_id": None,
-            })
+        # User events ARE fanned out. They used to be withheld on the grounds
+        # that "the sender's client already echoed them optimistically" — true
+        # for text typed in the web, false for text typed directly into emdash,
+        # which no web client ever saw. The result was that typing in emdash and
+        # watching on the phone silently dropped your own words until a reload
+        # (observed 2026-07-27). The client upserts on turn_index, so a message
+        # that does arrive twice collapses instead of doubling.
+        groups.publish(sgroup, {
+            "type": "chat.turn_event",
+            "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
+            "turn_id": None,
+        })
         n += 1
     return {"count": n}
 

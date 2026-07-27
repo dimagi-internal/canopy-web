@@ -86,7 +86,7 @@ def _post_stream(c, runner, session, events):
     )
 
 
-def test_stream_post_persists_ordinal_rows_and_fans_out_assistant_only(monkeypatch):
+def test_stream_post_persists_ordinal_rows_and_fans_out_both_roles(monkeypatch):
     published = []
     monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
     _u, _w, runner, s, c = _ctx()
@@ -96,10 +96,13 @@ def test_stream_post_persists_ordinal_rows_and_fans_out_assistant_only(monkeypat
     ]).json()
     assert body == {"count": 2}
     assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
-    # The user's own words are NOT live-pushed (the frontend already echoed them
-    # optimistically); only the assistant frame fans out.
+    # BOTH roles fan out now. User events used to be withheld on the grounds
+    # that "the frontend already echoed them optimistically" — true for text
+    # typed in the web, FALSE for text typed straight into emdash, which no web
+    # client ever saw. That assumption silently dropped your own words from the
+    # phone until a reload (observed 2026-07-27).
     kinds = [m["event"]["kind"] for _g, m in published]
-    assert kinds == ["assistant"]
+    assert kinds == ["user", "assistant"]
 
 
 def test_stream_post_without_ordinal_does_not_persist(monkeypatch):

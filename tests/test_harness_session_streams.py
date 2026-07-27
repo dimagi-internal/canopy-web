@@ -141,3 +141,20 @@ def test_plain_text_rows_store_no_redundant_content():
     msg = Message.objects.get(session=s, turn_index=64)
     assert msg.plaintext == "hello"
     assert msg.content == {}
+
+
+def test_user_events_are_fanned_out_live(monkeypatch):
+    """They used to be withheld because "the sender's client already echoed
+    them" — true for the web, false for emdash, where nothing echoed. The result
+    was that typing in emdash and watching on the phone dropped your own words
+    until a reload."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _post_stream(c, runner, s, [
+        {"kind": "user", "seq": 64, "index": 64, "payload": {"text": "typed in emdash"}},
+    ])
+    assert [m["event"]["kind"] for m in published] == ["user"]

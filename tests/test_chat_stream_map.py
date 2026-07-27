@@ -76,3 +76,19 @@ def test_error_maps_to_stream_error():
     frames = turn_event_to_frames({"seq": 9, "kind": "error", "payload": {"detail": "boom"}, "ts": "t"}, _rid)
     assert frames[0]["event"] == "chat.stream_error"
     assert frames[0]["data"]["detail"] == "boom"
+
+
+def test_a_user_event_becomes_a_client_frame():
+    """Text typed straight into emdash. It reaches no web client any other way —
+    there was no optimistic echo, because no web client sent it. Before this,
+    `stream_map` had no `user` branch at all and the message simply never
+    appeared until a reload (observed 2026-07-27)."""
+    frames = turn_event_to_frames(
+        {"kind": "user", "seq": 64, "payload": {"text": "do the thing"}},
+        lambda seq: f"seq:{seq}",
+    )
+    assert len(frames) == 1
+    assert frames[0]["event"] == "chat.user_message"
+    assert frames[0]["data"]["plaintext"] == "do the thing"
+    # The ordinal rides along so the client upserts instead of appending.
+    assert frames[0]["data"]["turn_index"] == 64
