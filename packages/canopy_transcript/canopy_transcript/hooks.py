@@ -24,10 +24,27 @@ from __future__ import annotations
 
 from .rows import row_payload, scrub, _tool_input, _tool_result_text
 
-# The hook events worth forwarding. PreToolUse is deliberately absent: it can
-# BLOCK a tool call, and nothing about observability should be able to stall an
-# agent. PostToolUse alone already carries input and result together.
-FORWARDED_EVENTS = ("PostToolUse", "PostToolUseFailure")
+# PreToolUse fires when a call STARTS, PostToolUse when it finishes. Both are
+# forwarded, which is what turns the view from "something happened" into a
+# lifecycle: a row appears the instant a tool starts and fills in when it
+# completes.
+#
+# PreToolUse was excluded at first because it CAN block a tool call. That risk
+# belongs to a hook that denies or hangs; ours does neither — it is
+# fire-and-forget with a hard 2s cap and never returns a decision, so it has no
+# way to stall an agent. The safety argument does not survive the hook being
+# unable to answer.
+#
+# This also happens to be the shape ACP already specifies (`tool_call` then
+# `tool_call_update`, carrying a status), so it is the right model to converge
+# on rather than a stopgap.
+FORWARDED_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+
+# A pending call has no result yet. The client renders it as "running…" and
+# replaces it when the matching PostToolUse (or the transcript row) lands, keyed
+# on tool_use_id.
+STATUS_PENDING = "pending"
+STATUS_COMPLETE = "complete"
 
 
 def _result_text(response) -> str:
@@ -59,20 +76,38 @@ def _is_error(payload: dict) -> bool:
 def rows_for_hook(payload: dict) -> list[dict]:
     """The live chat rows one hook event contributes.
 
-    Returns the tool_use and its tool_result as a pair, since PostToolUse
-    carries both. `index` is -1 on every row: live events are a view overlay and
-    must never be persisted (see the module docstring).
+    PreToolUse yields the tool_use ALONE — the call has started and has no
+    result yet, so the client shows it as running. PostToolUse yields the pair,
+    because it carries input and result together, and its tool_use row replaces
+    the pending one by `tool_use_id`.
+
+    `index` is -1 on every row: live events are a view overlay and must never be
+    persisted (see the module docstring).
 
     Returns [] for any event that isn't a forwarded tool event, or that carries
     no `tool_use_id` — without that key a row cannot be reconciled against its
     durable counterpart, and an unreconcilable row would duplicate forever.
     """
-    if payload.get("hook_event_name") not in FORWARDED_EVENTS:
+    event = payload.get("hook_event_name")
+    if event not in FORWARDED_EVENTS:
         return []
     tool_use_id = payload.get("tool_use_id")
     if not isinstance(tool_use_id, str) or not tool_use_id:
         return []
     name = scrub(str(payload.get("tool_name") or ""))
+    if event == "PreToolUse":
+        # Starting: the tool_use row only. No tool_result is emitted, precisely
+        # so the UI can show "running…" rather than a call that looks finished
+        # with an empty result.
+        return [{
+            "index": -1, "role": "tool_use", "text": "",
+            "content": {
+                "id": tool_use_id,
+                "name": name,
+                "input": _tool_input(payload.get("tool_input")),
+                "status": STATUS_PENDING,
+            },
+        }]
     return [
         {
             "index": -1, "role": "tool_use", "text": "",
@@ -80,6 +115,7 @@ def rows_for_hook(payload: dict) -> list[dict]:
                 "id": tool_use_id,
                 "name": name,
                 "input": _tool_input(payload.get("tool_input")),
+                "status": STATUS_COMPLETE,
             },
         },
         {

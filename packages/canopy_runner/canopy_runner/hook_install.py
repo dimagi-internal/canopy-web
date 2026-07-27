@@ -1,4 +1,4 @@
-"""Install canopy's PostToolUse hook into the USER-level Claude Code settings.
+"""Install canopy's tool-lifecycle hooks into the USER-level Claude Code settings.
 
 User level (`~/.claude/settings.json`), deliberately, for two reasons:
 
@@ -14,9 +14,10 @@ User level (`~/.claude/settings.json`), deliberately, for two reasons:
 
 The command mirrors emdash's own idiom (`curl -sf … || true`), which is the
 established pattern on these machines: silent, short-timeout, and incapable of
-failing the hook. `PostToolUse` cannot block a tool call the way `PreToolUse`
-can, but the `|| true` and `--max-time` still matter — a hook that hangs is a
-hook that slows every tool call the agent makes.
+failing the hook. That matters most for `PreToolUse`, which CAN block a tool
+call — ours cannot, because it never returns a decision and gives up after two
+seconds. It matters for `PostToolUse` too: a hook that hangs slows every tool
+call the agent makes, whether or not it can deny one.
 """
 from __future__ import annotations
 
@@ -26,7 +27,14 @@ from pathlib import Path
 
 logger = logging.getLogger("canopy_runner.hooks")
 
-HOOK_EVENT = "PostToolUse"
+# Both halves of the lifecycle. PreToolUse gives "started" the instant a call
+# begins, PostToolUse gives the result — together they turn the view from
+# "something happened" into "it is running `npm test` right now".
+#
+# Safe despite PreToolUse being able to block a tool call: our hook is
+# fire-and-forget with a hard 2s cap and never returns a decision, so it has no
+# mechanism to deny or stall one.
+HOOK_EVENTS = ("PreToolUse", "PostToolUse")
 # Marks the entry as ours so install/remove are idempotent and we never touch
 # a hook somebody else put there.
 MARKER = "canopy-hook-listener"
@@ -76,11 +84,12 @@ def install(settings_path: Path, *, port: int, nonce: str) -> bool:
     if not isinstance(hooks, dict):
         logger.warning("hooks in %s is not an object; refusing to touch it", settings_path)
         return False
-    entries = [e for e in hooks.get(HOOK_EVENT, [])
-               if isinstance(e, dict) and not _is_ours(e)]
-    entries.append({"hooks": [{"type": "command",
-                               "command": hook_command(port, nonce)}]})
-    hooks[HOOK_EVENT] = entries
+    for event in HOOK_EVENTS:
+        entries = [e for e in hooks.get(event, [])
+                   if isinstance(e, dict) and not _is_ours(e)]
+        entries.append({"hooks": [{"type": "command",
+                                   "command": hook_command(port, nonce)}]})
+        hooks[event] = entries
     try:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
@@ -99,16 +108,21 @@ def remove(settings_path: Path) -> bool:
     """
     settings = _load(settings_path)
     hooks = settings.get("hooks")
-    if not isinstance(hooks, dict) or HOOK_EVENT not in hooks:
+    if not isinstance(hooks, dict):
         return False
-    kept = [e for e in hooks.get(HOOK_EVENT, [])
-            if isinstance(e, dict) and not _is_ours(e)]
-    if len(kept) == len(hooks.get(HOOK_EVENT, [])):
-        return False  # nothing of ours to remove
-    if kept:
-        hooks[HOOK_EVENT] = kept
-    else:
-        hooks.pop(HOOK_EVENT)
+    changed = False
+    for event in HOOK_EVENTS:
+        existing = hooks.get(event, [])
+        kept = [e for e in existing if isinstance(e, dict) and not _is_ours(e)]
+        if len(kept) == len(existing):
+            continue  # nothing of ours under this event
+        changed = True
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event)
+    if not changed:
+        return False
     try:
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     except OSError as exc:

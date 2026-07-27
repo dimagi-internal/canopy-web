@@ -82,9 +82,11 @@ def test_install_is_idempotent_and_refreshes_in_place(tmp_path):
     p = tmp_path / "settings.json"
     assert hook_install.install(p, port=8787, nonce="a") is True
     assert hook_install.install(p, port=9999, nonce="b") is True
-    entries = json.loads(p.read_text())["hooks"]["PostToolUse"]
-    assert len(entries) == 1, "a re-install must replace, not accumulate"
-    assert "9999" in entries[0]["hooks"][0]["command"]
+    hooks = json.loads(p.read_text())["hooks"]
+    for event in hook_install.HOOK_EVENTS:
+        entries = hooks[event]
+        assert len(entries) == 1, f"{event}: a re-install must replace, not accumulate"
+        assert "9999" in entries[0]["hooks"][0]["command"]
     assert "nonce" not in entries[0]["hooks"][0]["command"]
 
 
@@ -225,3 +227,28 @@ def test_an_idle_tick_does_not_consume_the_report_window(caplog):
         assert "1 received" in caplog.text, "the idle tick swallowed the first real report"
     finally:
         main_mod._hook_listener = None
+
+
+def test_install_covers_both_halves_of_the_lifecycle(tmp_path):
+    """PreToolUse gives "started", PostToolUse gives the result. Only installing
+    the second is what made a long tool call look like nothing happening."""
+    p = tmp_path / "settings.json"
+    hook_install.install(p, port=8787, nonce="a")
+    hooks = json.loads(p.read_text())["hooks"]
+    assert set(hook_install.HOOK_EVENTS) == {"PreToolUse", "PostToolUse"}
+    for event in hook_install.HOOK_EVENTS:
+        assert any(hook_install.MARKER in h["command"]
+                   for e in hooks[event] for h in e["hooks"]), event
+
+
+def test_remove_clears_both_events_and_spares_foreign_hooks(tmp_path):
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{"type": "command", "command": "someone-elses-pre"}]}],
+    }}))
+    hook_install.install(p, port=8787, nonce="a")
+    assert hook_install.remove(p) is True
+    hooks = json.loads(p.read_text())["hooks"]
+    assert [h["command"] for e in hooks["PreToolUse"] for h in e["hooks"]] == ["someone-elses-pre"]
+    assert "PostToolUse" not in hooks   # ours was the only entry there
+    assert hook_install.remove(p) is False

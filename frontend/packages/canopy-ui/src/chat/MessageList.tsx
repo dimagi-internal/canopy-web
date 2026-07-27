@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2 } from "lucide-react";
 
 import type { Message } from "./protocol";
 import { Button } from "../ui/button";
@@ -7,7 +7,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { pairToolMessages } from "./pairToolMessages";
-import { groupToolRuns, runHasError, summariseRun } from "./groupToolRuns";
+import { groupToolRuns, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
 
 interface Props {
   messages: Message[];
@@ -80,6 +80,9 @@ export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
             // toggle says so, and always when something in it failed — a
             // collapsed group must never hide an error.
             const failed = runHasError(row.rows);
+            // A run with a call still in flight must say so: collapsed, an agent
+            // mid-task would otherwise look idle.
+            const active = runIsActive(row.rows);
             return (
               <details
                 key={row.key}
@@ -91,6 +94,11 @@ export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
                   <span className="text-xs font-medium text-foreground">
                     {summariseRun(row.rows)}
                   </span>
+                  {active && (
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" /> running
+                    </span>
+                  )}
                   {failed && (
                     <span className="text-xs font-medium text-destructive">
                       · contains an error

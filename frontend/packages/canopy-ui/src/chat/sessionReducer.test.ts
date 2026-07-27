@@ -439,3 +439,56 @@ describe("sessionReducer — live/durable reconciliation", () => {
     expect(next.messages).toHaveLength(1)
   })
 })
+
+describe("sessionReducer — pending → complete lifecycle", () => {
+  const mk = (status: string, id = "seq:-1") =>
+    ({
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: id,
+        turn_index: -1,
+        block: { id: "toolu_LIVE", name: "Bash", input: { command: "npm test" }, status, text: "" },
+      },
+    }) as WsEvent
+
+  it("a pending row from PreToolUse appears immediately, with no result", () => {
+    // The whole point: a long tool call should read as RUNNING, not as nothing
+    // happening. Before PreToolUse was forwarded, the row only appeared once the
+    // call had already finished.
+    const next = sessionReducer(makeState(), mk("pending"))
+    expect(next.messages).toHaveLength(1)
+    expect(next.messages[0].role).toBe("tool_use")
+    expect(next.messages[0].content.status).toBe("pending")
+    // No tool_result row — that's what makes ToolCallPair render "running…".
+    expect(next.messages.some((m) => m.role === "tool_result")).toBe(false)
+  })
+
+  it("the completed row REPLACES the pending one rather than doubling it", () => {
+    const pending = sessionReducer(makeState(), mk("pending"))
+    const done = sessionReducer(pending, mk("complete", "seq:-1"))
+    expect(done.messages).toHaveLength(1)
+    expect(done.messages[0].content.status).toBe("complete")
+  })
+
+  it("the durable transcript row then supersedes both", () => {
+    // Three deliveries of one call — pending hook, completed hook, transcript —
+    // must converge on a single row carrying the durable identity.
+    const durable = {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "991",
+        turn_index: 4096,
+        block: { id: "toolu_LIVE", name: "Bash", input: { command: "npm test" }, text: "" },
+      },
+    } as WsEvent
+    const settled = sessionReducer(
+      sessionReducer(sessionReducer(makeState(), mk("pending")), mk("complete")),
+      durable,
+    )
+    expect(settled.messages).toHaveLength(1)
+    expect(settled.messages[0].id).toBe("991")
+    expect(settled.messages[0].turn_index).toBe(4096)
+  })
+})
