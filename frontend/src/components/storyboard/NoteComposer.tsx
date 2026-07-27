@@ -36,10 +36,26 @@ export function NoteComposer({
   if (capability === 'read') return null
 
   if (state === 'saved') {
+    // A reviewer going through a narrative leaves several notes on the same
+    // scene, not one. Ending in a dead "thanks" meant the only way to add
+    // another was to reload the page.
     return (
-      <p className="mt-3 text-[13px] text-success" role="status">
-        Thanks — your note is with the team.
-      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <p className="text-[13px] text-success" role="status">
+          Thanks — your note is with the team.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setText('')
+            setState('idle')
+            setOpen(true)
+          }}
+          className="rounded-md border border-border px-2.5 py-1 text-[12px] text-foreground-secondary transition-colors hover:border-input hover:text-primary"
+        >
+          Add another
+        </button>
+      </div>
     )
   }
 
