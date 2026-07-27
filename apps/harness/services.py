@@ -1329,10 +1329,27 @@ def replace_reported_sessions(
             #
             # `_title_is_derived` recognises only titles WE generated, so a title
             # a human chose is still never touched.
-            if _title_is_derived(binding.session, binding.thread_key or ""):
-                if binding.session.title != s.emdash_task:
-                    binding.session.title = s.emdash_task[:200]
-                    binding.session.save(update_fields=["title"])
+            # ISOLATED, and deliberately so. This is a COSMETIC repair inside the
+            # endpoint the runner calls every ~10s to report which sessions are
+            # alive — the one canopy reads liveness from. Shipping it unguarded
+            # 500'd the whole report on labs (2026-07-27), so every session on
+            # that runner stopped being reported at all: a nicety took out the
+            # liveness signal for the entire machine.
+            #
+            # The savepoint is required, not defensive: the report already holds
+            # `select_for_update` rows, and with SESSION_SAVE_EVERY_REQUEST any
+            # error inside the outer transaction poisons it (CLAUDE.md documents
+            # this trap and names this module as the precedent). Catching without
+            # a savepoint would leave the request unable to commit anything.
+            try:
+                with transaction.atomic():
+                    if _title_is_derived(binding.session, binding.thread_key or ""):
+                        if binding.session.title != s.emdash_task:
+                            binding.session.title = s.emdash_task[:200]
+                            binding.session.save(update_fields=["title"])
+            except Exception:  # noqa: BLE001 — a title must never cost liveness
+                logger.warning("could not retitle session %s from task %r",
+                               binding.session_id, s.emdash_task, exc_info=True)
             # thread_key/host are the binding's durable IDENTITY. NEVER overwrite a
             # non-empty one — an existing binding may be owned by an agent/phone
             # thread (record_session) and this report loop must not steal it (see

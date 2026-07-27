@@ -255,3 +255,36 @@ def test_the_report_never_clobbers_a_title_a_human_chose():
     _report(c, runner.id, [{"emdash_task": "canopy-web-api-7716", "project": "canopy-web"}])
     session.refresh_from_db()
     assert session.title == "Ship the release"
+
+
+def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
+    """The report is how canopy knows which sessions are alive. Shipping the
+    retitle unguarded 500'd the WHOLE report on labs, so every session on that
+    runner stopped being reported — a cosmetic nicety took out the liveness
+    signal for the entire machine.
+
+    Simulated by making the repair itself raise: the report must still succeed
+    and still upsert the binding."""
+    from django.test import Client
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
+    from apps.harness import services as hsvc
+
+    jj = _user("jj-safe")
+    ws = _ws("dimagi-safe", jj)
+    runner = _runner(jj, ws)
+    session = Session.objects.create(workspace=ws, created_by=jj, title="A sentence")
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="task-x",
+                                 thread_key="emdash:task-x", host=runner.host)
+
+    def boom(*a, **k):
+        raise RuntimeError("retitle exploded")
+
+    monkeypatch.setattr(hsvc, "_title_is_derived", boom)
+    c = Client(); c.force_login(jj)
+    resp = _report(c, runner.id, [{"emdash_task": "task-x", "project": "canopy-web"}])
+    assert resp.status_code == 200, "a broken retitle must not fail the report"
+    # And the liveness half still happened.
+    binding = RunnerBinding.objects.get(session=session)
+    assert binding.live_seen_at is not None
