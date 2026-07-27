@@ -575,6 +575,127 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List storyboards */
+        readonly get: operations["apps_storyboards_api_list_storyboards"];
+        readonly put?: never;
+        /** Create a storyboard */
+        readonly post: operations["apps_storyboards_api_create_storyboard"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a storyboard (public via ?t=<share_token>)
+         * @description Anonymous-capable; the handler self-enforces. See the module docstring.
+         */
+        readonly get: operations["apps_storyboards_api_get_storyboard"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /** Edit a storyboard */
+        readonly patch: operations["apps_storyboards_api_patch_storyboard"];
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/rotate-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-mint the share link, killing every link already sent */
+        readonly post: operations["apps_storyboards_api_rotate_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/share": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Mint the share link if it does not exist yet */
+        readonly post: operations["apps_storyboards_api_ensure_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/feedback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Leave feedback on a storyboard (public via ?t=<share_token>)
+         * @description The anonymous write L2 deferred, gated by the board's capability.
+         *
+         *     A ``suggestion`` needs the ``suggest`` grant; a ``comment`` needs
+         *     ``comment``. A read-only link can do neither. The caller cannot choose its
+         *     own channel or target kind — the server fills those in, so an outsider
+         *     cannot file feedback against something this board does not contain.
+         */
+        readonly post: operations["apps_storyboards_api_leave_feedback"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/narratives/{narrative_slug}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read one narrative on this storyboard (public via ?t=<share_token>)
+         * @description The reviewer surface's read. Gated by the SAME token as the board.
+         *
+         *     404s when the narrative is not on this board — a link to one arc must not be
+         *     a read handle for every narrative in the workspace.
+         */
+        readonly get: operations["apps_storyboards_api_get_board_narrative"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/auth/token-exchange": {
         readonly parameters: {
             readonly query?: never;
@@ -3869,6 +3990,213 @@ export interface components {
             readonly note: string;
             /** Resolved In Version */
             readonly resolved_in_version?: number | null;
+        };
+        /** StoryboardListItemOut */
+        readonly StoryboardListItemOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /** Lede */
+            readonly lede: string;
+            /** Capability */
+            readonly capability: string;
+            /** Act Count */
+            readonly act_count: number;
+            /** Share Url */
+            readonly share_url: string | null;
+        };
+        /** StoryboardListOut */
+        readonly StoryboardListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["StoryboardListItemOut"][];
+        };
+        /** ActOut */
+        readonly ActOut: {
+            /** Title */
+            readonly title: string;
+            /** Prose */
+            readonly prose: string;
+            /** Entries */
+            readonly entries: readonly components["schemas"]["EntryOut"][];
+        };
+        /** EntryOut */
+        readonly EntryOut: {
+            /** Narrative Slug */
+            readonly narrative_slug: string;
+            /** Title */
+            readonly title: string;
+            /** Lede */
+            readonly lede: string;
+            /** Version */
+            readonly version: number | null;
+            /** Video Url */
+            readonly video_url: string | null;
+            /** Video Viewer Url */
+            readonly video_viewer_url: string | null;
+            /** Published */
+            readonly published: boolean;
+        };
+        /** StoryboardOut */
+        readonly StoryboardOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /** Lede */
+            readonly lede: string;
+            /** Capability */
+            readonly capability: string;
+            /** Acts */
+            readonly acts: readonly components["schemas"]["ActOut"][];
+        };
+        /** ActIn */
+        readonly ActIn: {
+            /** Title */
+            readonly title: string;
+            /**
+             * Prose
+             * @default
+             */
+            readonly prose: string;
+            /**
+             * Entries
+             * @default []
+             */
+            readonly entries: readonly components["schemas"]["EntryIn"][];
+        };
+        /** EntryIn */
+        readonly EntryIn: {
+            /** Narrative Slug */
+            readonly narrative_slug: string;
+            /**
+             * Pinned Run Id
+             * @default
+             */
+            readonly pinned_run_id: string;
+        };
+        /** StoryboardIn */
+        readonly StoryboardIn: {
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Lede
+             * @default
+             */
+            readonly lede: string;
+            /**
+             * Capability
+             * @default read
+             * @enum {string}
+             */
+            readonly capability: "read" | "comment" | "suggest";
+            /**
+             * Acts
+             * @default []
+             */
+            readonly acts: readonly components["schemas"]["ActIn"][];
+        };
+        /**
+         * StoryboardPatchIn
+         * @description Everything optional — a retitle and a reorder are separate gestures.
+         */
+        readonly StoryboardPatchIn: {
+            /** Title */
+            readonly title?: string | null;
+            /** Lede */
+            readonly lede?: string | null;
+            /** Capability */
+            readonly capability?: ("read" | "comment" | "suggest") | null;
+            /** Acts */
+            readonly acts?: readonly components["schemas"]["ActIn"][] | null;
+        };
+        /** ShareTokenOut */
+        readonly ShareTokenOut: {
+            /** Share Url */
+            readonly share_url: string;
+        };
+        /**
+         * AnonFeedbackIn
+         * @description An outsider's comment or suggestion, arriving with a share token.
+         *
+         *     Deliberately NOT the same shape as `feedback.FeedbackIn`: an anonymous
+         *     caller may not choose its own `channel`, `target_kind` or `source_ref`, and
+         *     must not be able to file feedback against a target the board does not
+         *     contain. The server fills those in.
+         */
+        readonly AnonFeedbackIn: {
+            /**
+             * Narrative Slug
+             * @default
+             */
+            readonly narrative_slug: string;
+            /** Target Version */
+            readonly target_version?: number | null;
+            /**
+             * Anchor Id
+             * @default
+             */
+            readonly anchor_id: string;
+            /**
+             * Kind
+             * @default comment
+             * @enum {string}
+             */
+            readonly kind: "comment" | "suggestion";
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
+            /**
+             * Suggested Text
+             * @default
+             */
+            readonly suggested_text: string;
+            /**
+             * Author Name
+             * @default
+             */
+            readonly author_name: string;
+            /**
+             * Author Email
+             * @default
+             */
+            readonly author_email: string;
+        };
+        /** NarrationItemOut */
+        readonly NarrationItemOut: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Text */
+            readonly text: string;
+        };
+        /** NarrativeReadOut */
+        readonly NarrativeReadOut: {
+            /** Narrative Slug */
+            readonly narrative_slug: string;
+            /** Title */
+            readonly title: string;
+            /** Story */
+            readonly story: string;
+            /** Version */
+            readonly version: number | null;
+            /** Previous Version */
+            readonly previous_version: number | null;
+            /** Narration */
+            readonly narration: readonly components["schemas"]["NarrationItemOut"][];
+            /** Previous Narration */
+            readonly previous_narration: readonly components["schemas"]["NarrationItemOut"][];
+            /** Storyboard Slug */
+            readonly storyboard_slug: string;
+            /** Storyboard Title */
+            readonly storyboard_title: string;
+            /** Capability */
+            readonly capability: string;
         };
         /** TokenExchangeOut */
         readonly TokenExchangeOut: {
@@ -8593,6 +8921,193 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["FeedbackOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_list_storyboards: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoryboardListOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_create_storyboard: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StoryboardIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoryboardOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_get_storyboard: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoryboardOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_patch_storyboard: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StoryboardPatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoryboardOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_rotate_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ShareTokenOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_ensure_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ShareTokenOut"];
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_leave_feedback: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AnonFeedbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_get_board_narrative: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly narrative_slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NarrativeReadOut"];
                 };
             };
         };
