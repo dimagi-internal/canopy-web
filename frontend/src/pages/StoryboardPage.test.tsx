@@ -155,6 +155,41 @@ describe('StoryboardPage', () => {
     expect(leaveFeedback.mock.calls[0][1].anchor_id).toBe('act:supply-base')
   })
 
+  describe('what the reviewer is being asked to do', () => {
+    it('is said plainly to someone who opened the link cold', async () => {
+      getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
+      renderAt()
+      expect(await screen.findByText(/Leave a note anywhere something is wrong/)).toBeTruthy()
+      expect(screen.getByText(/to nobody else/)).toBeTruthy()
+    })
+
+    it('mentions suggested wording only when the link grants it', async () => {
+      getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
+      renderAt()
+      await screen.findByText(/Leave a note anywhere/)
+      expect(screen.queryByText(/exact wording you would use/)).toBeNull()
+
+      cleanup()
+      getStoryboard.mockResolvedValue(board({ capability: 'suggest' }))
+      renderAt()
+      expect(await screen.findByText(/exact wording you would use/)).toBeTruthy()
+    })
+
+    it('says nothing on a read-only link, which asks for nothing', async () => {
+      getStoryboard.mockResolvedValue(board({ capability: 'read' }))
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText(/Leave a note anywhere/)).toBeNull()
+    })
+
+    it('does not instruct the people who sent it', async () => {
+      getStoryboard.mockResolvedValue(board({ capability: 'suggest', is_member: true }))
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText(/Leave a note anywhere/)).toBeNull()
+    })
+  })
+
   it('shows a plain not-available message on 404 rather than an error dump', async () => {
     getStoryboard.mockRejectedValue(new Error('Request failed (404)'))
     renderAt()
