@@ -408,7 +408,18 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # prefer_local turns fall to cloud only via the Phase 2 router policy;
         # Phase 0 has no cloud runners, so keep the simple rule: cloud never
         # takes local_only.
-    busy_agents = Turn.objects.filter(status__in=EXECUTING).values("agent_id")
+    # `agent__isnull=False` is load-bearing for exactly the reason spelled out for
+    # busy_sessions below — the same trap, which was fixed there and missed here.
+    # A PROJECT turn has agent_id NULL, so without this filter one executing repo
+    # turn injected a NULL into this IN-list and every queued AGENT turn evaluated
+    # `agent_id IN (…, NULL)` -> NULL -> got wrongly excluded. Not "that agent is
+    # busy": the runner claimed NOTHING AT ALL while any project turn ran.
+    # Observed on the cloud runner — a drill sat QUEUED and pinned for 40+ minutes
+    # while the runner was online and heartbeating and POST /claim returned 204,
+    # because two canopy-web project turns happened to be executing.
+    busy_agents = Turn.objects.filter(
+        status__in=EXECUTING, agent__isnull=False
+    ).values("agent_id")
     # A session serializes like an agent: never claim a session that already has
     # an executing turn (one_executing_turn_per_session would reject the claim
     # anyway; this avoids the wasted attempt). The chat_session__isnull=False filter
