@@ -133,6 +133,23 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
           {board.lede && (
             <p className="mt-4 text-lg leading-relaxed text-foreground-secondary">{board.lede}</p>
           )}
+
+          {/* A domain expert opening a link cold has no way to know their notes
+              are wanted, or who reads them. The composers are further down the
+              page and their buttons only say what they do, not that doing it is
+              the point of sending this. Members already know. */}
+          {!board.is_member && board.capability !== 'read' && (
+            <p className="mt-4 text-[13.5px] leading-relaxed text-muted-foreground">
+              Watch each demo and read the scenes.{' '}
+              <span className="text-foreground-secondary">
+                Leave a note anywhere something is wrong, missing, or would be said
+                differently
+                {board.capability === 'suggest' ? ' — including the exact wording you would use' : ''}
+                .
+              </span>{' '}
+              Your notes go to the team that sent you this, and to nobody else.
+            </p>
+          )}
         </header>
 
         {board.acts.map((act, i) => (
