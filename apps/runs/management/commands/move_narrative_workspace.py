@@ -1,17 +1,14 @@
-"""Move a narrative's artifacts to another workspace.
+"""Move a narrative to another workspace, from the shell.
 
-A DDD narrative is not a table — it is inferred at read time from the
-``ReviewRequest`` and ``Walkthrough`` rows that share its slug. So a narrative
-"living in" a workspace really means every one of those rows carries that
-workspace, and nothing keeps them together: post a version from a differently
-scoped caller and the lineage silently splits across tenants.
+A thin wrapper over ``apps.runs.transfer`` — the same service the REST route
+uses (``POST /api/ddd/narratives/{slug}/move/``), so the two surfaces cannot
+drift. Prefer the API when you have a session or PAT; this exists for the case
+where you have a shell and no credentials, and for scripted repair.
 
-That is not hypothetical. On labs, ``create-survey-solicitation`` had v12 and
-v7..v1 in ``dimagi`` while v8..v11 sat in ``connect`` — so the narrative's own
-version history was unreadable from either side, and a storyboard scoped to one
-tenant diffed v12 against v7 instead of v11.
+Unlike the API it does NOT check membership: a shell already implies full
+access. That is the one deliberate difference between the surfaces.
 
-DRY RUN BY DEFAULT. Pass ``--apply`` to execute. Mirrors ``audit_auto_join``.
+DRY RUN BY DEFAULT.
 
     python manage.py move_narrative_workspace --to connect \
         --slug verified-monitoring --slug microplans-study-groups
@@ -20,12 +17,8 @@ DRY RUN BY DEFAULT. Pass ``--apply`` to execute. Mirrors ``audit_auto_join``.
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
-from apps.reviews.models import ReviewRequest
-from apps.runs.aggregate import narrative_of_review, narrative_of_walkthrough
-from apps.storyboards.models import Entry, Storyboard
-from apps.walkthroughs.models import Walkthrough
+from apps.runs.transfer import apply_move, plan_move
 from apps.workspaces.models import Workspace
 
 
@@ -49,64 +42,31 @@ class Command(BaseCommand):
         if not Workspace.objects.filter(slug=target).exists():
             raise CommandError(f"no such workspace: {target}")
 
-        reviews = [r for r in ReviewRequest.objects.all() if narrative_of_review(r) in slugs]
-        walkthroughs = [
-            w for w in Walkthrough.objects.all() if narrative_of_walkthrough(w) in slugs
-        ]
+        plan = plan_move(slugs, target)
 
-        moving_reviews = [r for r in reviews if r.workspace_id != target]
-        moving_wts = [w for w in walkthroughs if w.workspace_id != target]
-
-        # A storyboard resolves its entries against ITS OWN workspace, so a board
-        # left behind after its narratives move renders nothing but placeholders.
-        # Moving the narratives without it would just relocate the split.
-        board_ids = set(
-            Entry.objects.filter(narrative_slug__in=slugs).values_list(
-                "act__storyboard_id", flat=True
-            )
-        )
-        moving_boards = [
-            b for b in Storyboard.objects.filter(id__in=board_ids) if b.workspace_id != target
-        ]
-
-        for slug in sorted(slugs):
-            by_ws: dict[str | None, list[int]] = {}
-            for r in reviews:
-                if narrative_of_review(r) == slug:
-                    by_ws.setdefault(r.workspace_id, []).append(r.version or 0)
+        for slug, info in plan["narratives"].items():
             self.stdout.write(f"{slug}:")
-            for ws, versions in sorted(by_ws.items(), key=lambda kv: str(kv[0])):
+            for ws, versions in info["versions_by_workspace"].items():
                 mark = "  (target)" if ws == target else ""
-                self.stdout.write(f"    {ws}: v{sorted(versions)}{mark}")
-            n_w = sum(1 for w in walkthroughs if narrative_of_walkthrough(w) == slug)
-            self.stdout.write(f"    walkthroughs: {n_w}")
-
-        for b in moving_boards:
-            self.stdout.write(f"storyboard {b.slug!r}: {b.workspace_id} -> {target}")
+                split = "  SPLIT" if info["split"] else ""
+                self.stdout.write(f"    {ws}: v{versions}{mark}{split}")
+            self.stdout.write(f"    walkthroughs: {info['walkthroughs']}")
 
         self.stdout.write(
-            f"\nWould move {len(moving_reviews)} review(s), {len(moving_wts)} "
-            f"walkthrough(s) and {len(moving_boards)} storyboard(s) into {target!r}."
+            f"\nWould move {plan['reviews_to_move']} review(s), "
+            f"{plan['walkthroughs_to_move']} walkthrough(s) and "
+            f"{plan['storyboards_to_move']} storyboard(s) into {target!r}."
         )
 
         if not opts["apply"]:
             self.stdout.write(self.style.WARNING("DRY RUN — pass --apply to execute."))
             return
 
-        with transaction.atomic():
-            for r in moving_reviews:
-                r.workspace_id = target
-                r.save(update_fields=["workspace"])
-            for w in moving_wts:
-                w.workspace_id = target
-                w.save(update_fields=["workspace"])
-            for b in moving_boards:
-                b.workspace_id = target
-                b.save(update_fields=["workspace", "updated_at"])
-
+        result = apply_move(slugs, target)
         self.stdout.write(
             self.style.SUCCESS(
-                f"Moved {len(moving_reviews)} review(s), {len(moving_wts)} walkthrough(s) "
-                f"and {len(moving_boards)} storyboard(s)."
+                f"Moved {result['reviews_to_move']} review(s), "
+                f"{result['walkthroughs_to_move']} walkthrough(s) and "
+                f"{result['storyboards_to_move']} storyboard(s)."
             )
         )
