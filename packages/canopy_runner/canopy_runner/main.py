@@ -470,7 +470,12 @@ _hook_sessions: dict[tuple[str, str], str] = {}
 _hook_listener = None
 
 
-_last_hook_report = 0.0
+# None, NOT 0.0: `time.monotonic()` is near zero early in a process's life, so
+# seeding this with 0.0 reads as "already reported just now" and suppresses the
+# first report for a whole window — exactly when you are watching for it, because
+# you have just turned the feature on. Found on the first live enablement; the
+# original test hid it by starting its fake clock at 10,000.
+_last_hook_report: float | None = None
 # Same cadence as the idle-cycle line: often enough to answer "is it working?"
 # without turning a busy agent into a log flood.
 HOOK_REPORT_SECONDS = 300
@@ -488,7 +493,7 @@ def _maybe_report_hooks(now_fn=time.monotonic) -> None:
     listener = _hook_listener
     if listener is None:
         return
-    if now_fn() - _last_hook_report < HOOK_REPORT_SECONDS:
+    if _last_hook_report is not None and now_fn() - _last_hook_report < HOOK_REPORT_SECONDS:
         return
     _last_hook_report = now_fn()
     if listener.received == 0:
