@@ -77,12 +77,16 @@ describe('StoryboardPage', () => {
   })
   afterEach(cleanup)
 
-  it('renders the arc with acts numbered', async () => {
+  it('presents the arc as narratives, never as acts', async () => {
+    // An act holding a single narrative is not a second thing to a reader.
+    // Naming it one produced two composers on the same narrative that differed
+    // in nothing the page showed.
     getStoryboard.mockResolvedValue(board())
-    renderAt()
+    const { container } = renderAt()
     expect(await screen.findByText('What the money bought')).toBeTruthy()
-    expect(screen.getByText('ACT I')).toBeTruthy()
     expect(screen.getByText('Six weeks to a supply base')).toBeTruthy()
+    expect(screen.getByText('One narrative')).toBeTruthy()
+    expect(container.textContent).not.toMatch(/\bACT\b/i)
   })
 
   it('passes the share token through to the API', async () => {
@@ -127,32 +131,36 @@ describe('StoryboardPage', () => {
     expect(screen.queryByText(/Leave a note/)).toBeNull()
   })
 
-  it('names what each composer attaches to', async () => {
-    // An act and the demo inside it each get a composer, so they sit side by
-    // side — two buttons reading "Leave a note" gave no way to tell them apart.
+  it('offers exactly one composer per narrative', async () => {
+    // There used to be two — one on the act, one on the demo inside it —
+    // identical in every way the page showed. See the screenshot in #467.
     getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
     renderAt()
-    expect(await screen.findByText('Leave a note on this act')).toBeTruthy()
-    expect(screen.getByText('Leave a note on this demo')).toBeTruthy()
+    await screen.findByText('What the money bought')
+    expect(screen.getAllByRole('button', { name: /^Leave a note/ })).toHaveLength(1)
+    expect(screen.getByText('Leave a note on this narrative')).toBeTruthy()
   })
 
-  it('says which act an act-level note is about', async () => {
-    // Every act note targets the whole board, so with no anchor three notes on
-    // three acts arrive indistinguishable — and "act II doesn't follow from act
-    // I" is exactly the feedback that means nothing unanchored.
+  it('files a note against the narrative and the version being read', async () => {
+    // The version matters because the board FOLLOWS the current release: a note
+    // that does not say which version it was left against loses its anchor the
+    // moment the narrative moves.
     const leaveFeedback = api.leaveFeedback as unknown as ReturnType<typeof vi.fn>
     leaveFeedback.mockResolvedValue({ created: 1 })
     getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
     renderAt()
 
-    fireEvent.click(await screen.findByText('Leave a note on this act'))
+    fireEvent.click(await screen.findByText('Leave a note on this narrative'))
     fireEvent.change(screen.getByPlaceholderText(/What’s wrong/), {
-      target: { value: 'Act one runs long.' },
+      target: { value: 'This one runs long.' },
     })
     fireEvent.click(screen.getByText('Leave note'))
 
     await waitFor(() => expect(leaveFeedback).toHaveBeenCalled())
-    expect(leaveFeedback.mock.calls[0][1].anchor_id).toBe('act:supply-base')
+    expect(leaveFeedback.mock.calls[0][1]).toMatchObject({
+      narrative_slug: 'procurement',
+      target_version: 4,
+    })
   })
 
   describe('what the reviewer is being asked to do', () => {
@@ -167,12 +175,12 @@ describe('StoryboardPage', () => {
       getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
       renderAt()
       await screen.findByText(/Leave a note anywhere/)
-      expect(screen.queryByText(/exact wording you would use/)).toBeNull()
+      expect(screen.queryByText(/edit the narrative itself/)).toBeNull()
 
       cleanup()
       getStoryboard.mockResolvedValue(board({ capability: 'suggest' }))
       renderAt()
-      expect(await screen.findByText(/exact wording you would use/)).toBeTruthy()
+      expect(await screen.findByText(/edit the narrative itself/)).toBeTruthy()
     })
 
     it('says nothing on a read-only link, which asks for nothing', async () => {
@@ -222,7 +230,7 @@ describe('StoryboardPage', () => {
       expect(screen.queryByText('Act one runs long.')).toBeNull()
     })
 
-    it('appear under the act they were left on', async () => {
+    it('still appear when they predate the act layer being dropped', async () => {
       getStoryboard.mockResolvedValue(board({ is_member: true }))
       getStoryboardNotes.mockResolvedValue({ items: [note()] })
       renderAt()
@@ -269,7 +277,7 @@ describe('StoryboardPage', () => {
       })
       renderAt()
       expect(await screen.findByText('…a QC re-visit.')).toBeTruthy()
-      expect(screen.getByText('Suggested wording')).toBeTruthy()
+      expect(screen.getByText('Narrative edit')).toBeTruthy()
     })
 
     it('say nothing at all when none have come back', async () => {

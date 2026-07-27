@@ -12,15 +12,18 @@ import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 
 /**
- * The shared arc — several DDD narratives, in acts, as one link.
+ * The shared arc — several DDD narratives as one link.
  *
  * Runs OUTSIDE the app shell (PublicLayout) so a `?t=<share_token>` viewer with
  * no Dimagi login is served; the API self-enforces and 404s on a wrong token, so
  * there is nothing to branch on here.
  *
- * Acts are NUMBERED because act order carries meaning — you cannot understand
- * the last act's drill without the first act's purchase order. Scene numbers on
- * the reviewer surface are just addresses, so they stay quiet there.
+ * The reader sees NARRATIVES, not acts. The storage layer still groups entries
+ * under an Act — that is where the curated title and the connective prose live,
+ * and it is what orders the arc — but an act holding a single narrative is not a
+ * second thing to a reader. Naming it one produced the confusion this removed:
+ * two composers on the same narrative, one reading "leave a note on this act"
+ * and one "leave a note on this demo", identical in every way that showed.
  */
 
 type LoadState =
@@ -28,8 +31,6 @@ type LoadState =
   | { kind: 'ready'; data: Storyboard }
   | { kind: 'not_found' }
   | { kind: 'error'; message: string }
-
-const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 
 export default function StoryboardPage() {
   const { slug } = useParams()
@@ -113,6 +114,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
   }, [board.is_member, board.slug])
 
   const grouped = groupNotes(notes)
+  const narrativeCount = board.acts.reduce((n, a) => n + a.entries.length, 0)
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -125,7 +127,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
 
         <header className="mb-4">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-            {board.acts.length === 1 ? 'One act' : `${board.acts.length} acts`}
+            {narrativeCount === 1 ? 'One narrative' : `${narrativeCount} narratives`}
           </p>
           <h1 className="text-4xl font-semibold leading-tight tracking-tight text-foreground md:text-5xl">
             {board.title}
@@ -144,7 +146,9 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
               <span className="text-foreground-secondary">
                 Leave a note anywhere something is wrong, missing, or would be said
                 differently
-                {board.capability === 'suggest' ? ' — including the exact wording you would use' : ''}
+                {board.capability === 'suggest'
+                  ? ' — or edit the narrative itself, in its own words'
+                  : ''}
                 .
               </span>{' '}
               Your notes go to the team that sent you this, and to nobody else.
@@ -154,21 +158,21 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
 
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">
-            <div className="flex items-baseline gap-3.5 border-b border-border pb-3">
-              <span className="shrink-0 pt-0.5 text-[11px] font-bold tracking-[0.16em] text-primary">
-                ACT {ROMAN[i] ?? i + 1}
-              </span>
-              <div>
-                <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
-                  {act.title}
-                </h2>
-                {act.prose && (
-                  <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
-                    {act.prose}
-                  </p>
-                )}
-              </div>
+            <div className="border-b border-border pb-3">
+              <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
+                {act.title}
+              </h2>
+              {act.prose && (
+                <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
+                  {act.prose}
+                </p>
+              )}
             </div>
+
+            {/* Notes left before this page stopped naming a separate act layer.
+                They still belong to this section, so they still render in it —
+                nothing anchors to `act:*` any more, but nothing is dropped. */}
+            <NotesReturned notes={grouped.byAnchor.get(act.anchor_id) ?? []} />
 
             {act.entries.map((entry) => (
               <EntryCard
@@ -179,16 +183,6 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
                 notes={grouped.byNarrative.get(entry.narrative_slug) ?? []}
               />
             ))}
-
-            <NotesReturned notes={grouped.byAnchor.get(act.anchor_id) ?? []} />
-
-            <NoteComposer
-              capability={board.capability}
-              anchorLabel={`On “${act.title}”`}
-              cta="Leave a note on this act"
-              defaults={{ anchor_id: act.anchor_id }}
-              onSubmit={(payload) => leaveFeedback(board.slug, payload, token).then(() => undefined)}
-            />
           </section>
         ))}
 
@@ -284,7 +278,8 @@ function EntryCard({
           <NoteComposer
             capability={board.capability}
             anchorLabel={`On “${entry.title}” · v${entry.version}`}
-            cta="Leave a note on this demo"
+            cta="Leave a note on this narrative"
+            seedText={entry.lede}
             defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
             onSubmit={(payload) =>
               leaveFeedback(board.slug, payload, token).then(() => undefined)

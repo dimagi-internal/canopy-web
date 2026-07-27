@@ -8,7 +8,10 @@ type AuthState =
   | { status: 'authenticated'; user: MeResponse }
   | { status: 'anonymous'; user: null }
 
-const AuthContext = createContext<AuthState>({ status: 'loading', user: null })
+/** Exported so components that render on PUBLIC routes — where the user may or
+ *  may not be signed in — can be tested against either state without standing
+ *  up the provider's /api/me/ fetch. */
+export const AuthContext = createContext<AuthState>({ status: 'loading', user: null })
 
 // Routes reachable without a Dimagi session: public (visibility=link) walkthroughs
 // and reviews. These are tokenless — the UUID in the URL is the only secret, and

@@ -1,13 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/auth/AuthProvider'
 import type { Capability, FeedbackKind, LeaveFeedbackIn } from '@/api/storyboards'
 
 /**
- * One composer, used at act level and scene level.
+ * One composer, used on a narrative and on a scene.
  *
- * Comment and suggest are a single control rather than two buttons: they
- * produce the same kind of thing (a note attached to a place in the story) and
- * differ only in whether the reviewer is proposing replacement words. The
- * "Suggest wording" half only exists when the link grants it.
+ * Comment and edit are a single control rather than two buttons: they produce
+ * the same kind of thing (a note attached to a place in the story) and differ
+ * only in whether the reviewer is rewriting the words. Commenting is a blank
+ * box; editing OPENS THE TEXT ITSELF so you change it in place — describing an
+ * edit in prose ("in the second sentence, say re-visit instead of check") is
+ * work for the reader and a chance to be misread, when the reviewer already
+ * knows the exact words they want. The edit half only exists when the link
+ * grants it.
  */
 const NAME_KEY = 'canopy.reviewer-name'
 
@@ -31,6 +36,7 @@ export function NoteComposer({
   capability,
   anchorLabel,
   cta,
+  seedText,
   defaults,
   onSubmit,
 }: {
@@ -40,6 +46,10 @@ export function NoteComposer({
    *  the demo inside it), so "Leave a note" twice is ambiguous — name the
    *  target. */
   cta: string
+  /** The words an edit starts from — the scene's current text, or the
+   *  narrative's lede. Editing a copy of the real thing is the point; an empty
+   *  box would just be the comment box again. */
+  seedText?: string
   defaults: LeaveFeedbackIn
   onSubmit: (payload: LeaveFeedbackIn) => Promise<void>
 }) {
@@ -47,10 +57,23 @@ export function NoteComposer({
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<FeedbackKind>('comment')
   const [text, setText] = useState('')
-  // Asked once, not once per note. A full review of a three-act arc puts a
-  // composer under every act, every demo and every scene — better than twenty
-  // "Anonymous" notes from the one person you sent the link to.
+  // Asked once, not once per note. A full review puts a composer under every
+  // narrative and every scene — better than twenty "Anonymous" notes from the
+  // one person you sent the link to.
   const [name, setName] = useState(() => readReviewerName())
+  const [touchedName, setTouchedName] = useState(false)
+
+  // Signed in? Then we already know who is editing and should not ask. Read it
+  // from the auth state the app has anyway — the reviewer surfaces render
+  // inside AuthProvider even though they are public, so a second /api/me/ per
+  // composer would be a duplicate of a request already made. Never overwrite
+  // what they typed: a member filing a note under somebody else's name is their
+  // call, not ours.
+  const auth = useAuth()
+  const signedInName = auth.status === 'authenticated' ? auth.user.name || auth.user.email : ''
+  useEffect(() => {
+    if (signedInName && !touchedName) setName((current) => current || signedInName)
+  }, [signedInName, touchedName])
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [error, setError] = useState('')
 
@@ -120,12 +143,19 @@ export function NoteComposer({
                 key={k}
                 type="button"
                 aria-pressed={kind === k}
-                onClick={() => setKind(k)}
+                onClick={() => {
+                  setKind(k)
+                  // Hand them the real words to mutate. Only when the box is
+                  // untouched — switching tabs must never eat what someone
+                  // has already written.
+                  if (k === 'suggestion' && seedText && !text.trim()) setText(seedText)
+                  if (k === 'comment' && text === seedText) setText('')
+                }}
                 className={`px-3 py-1 text-[12px] transition-colors ${
                   kind === k ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {k === 'comment' ? 'Comment' : 'Suggest wording'}
+                {k === 'comment' ? 'Comment' : 'Edit narrative'}
               </button>
             ))}
           </div>
@@ -138,9 +168,11 @@ export function NoteComposer({
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={3}
+        rows={kind === 'suggestion' ? 6 : 3}
         placeholder={
-          kind === 'suggestion' ? 'Propose the wording you’d use instead…' : 'What’s wrong, missing, or worth saying differently?'
+          kind === 'suggestion'
+            ? 'Change the words to what they should say…'
+            : 'What’s wrong, missing, or worth saying differently?'
         }
         className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-foreground-subtle focus-visible:outline-2 focus-visible:outline-primary"
       />
@@ -149,6 +181,7 @@ export function NoteComposer({
         <input
           value={name}
           onChange={(e) => {
+            setTouchedName(true)
             setName(e.target.value)
             rememberReviewerName(e.target.value)
           }}
