@@ -85,6 +85,15 @@ jobs:
         working-directory: packages/canopy_runner
         run: uv run --with pytest pytest
 
+      # cloud_runner.py has a 48-test suite that had never run in CI — the file
+      # is loaded by path (it lives under a hyphenated dir and can't be imported
+      # as a package), which is presumably why it was missed. It executes turns
+      # for the whole cloud fleet and cannot be tested against live EC2, so this
+      # suite is the only gate it has.
+      - name: Run cloud_runner tests
+        working-directory: deploy/ec2-runner
+        run: uv run --with pytest --with pytest-timeout pytest -q
+
       # canopy_transcript is the Claude Code transcript core BOTH runners execute
       # against — ordinals, block extraction, payload caps, NUL scrubbing. It was
       # extracted precisely because the two runners had drifted apart while each

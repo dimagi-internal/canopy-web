@@ -1082,3 +1082,104 @@ def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, m
         "the LAST line was only consumed AFTER the slow POST returned — "
         "the read loop looks blocked behind it (review N2)"
     )
+
+
+# ── concurrent turn execution (2026-07-27 convergence) ──────────────────────
+#
+# The runner used to execute turns strictly serially: the claim loop blocked
+# inside run_claude() until `claude -p` exited, so a box serving five agents
+# drained their turns one at a time. These tests pin the property that fixes.
+
+
+def _reset_turns(cloud_runner):
+    with cloud_runner._TURNS_LOCK:
+        cloud_runner._IN_FLIGHT.clear()
+
+
+def test_start_turn_returns_immediately_while_the_turn_runs(cloud_runner, monkeypatch):
+    """THE regression: dispatch must not block. A turn that takes a second to
+    finish must not hold the claim loop for that second."""
+    _reset_turns(cloud_runner)
+    running = threading.Event()
+    release = threading.Event()
+
+    def slow_run_claude(*a, **k):
+        running.set()
+        release.wait(timeout=5)
+        return True, "done", ""
+
+    monkeypatch.setattr(cloud_runner, "run_claude", slow_run_claude)
+    monkeypatch.setattr(cloud_runner, "_turn_cwd", lambda *a, **k: "/tmp")
+    monkeypatch.setattr(cloud_runner, "_start_lease_renewal", lambda *a, **k: threading.Event())
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, None))
+
+    t0 = time.monotonic()
+    assert cloud_runner._start_turn("r1", {"id": "turn-aaaa"}) is True
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.5, f"dispatch blocked for {elapsed:.2f}s"
+    assert running.wait(timeout=5), "worker never started"
+    assert "turn-aaaa" in cloud_runner._in_flight_ids()
+    release.set()
+    for _ in range(100):
+        if not cloud_runner._in_flight_ids():
+            break
+        time.sleep(0.02)
+    assert cloud_runner._in_flight_ids() == [], "turn never cleared from in-flight"
+
+
+def test_turns_run_concurrently_up_to_the_cap(cloud_runner, monkeypatch):
+    _reset_turns(cloud_runner)
+    monkeypatch.setattr(cloud_runner, "MAX_CONCURRENT_TURNS", 3)
+    release = threading.Event()
+    monkeypatch.setattr(cloud_runner, "run_claude",
+                        lambda *a, **k: (release.wait(timeout=5), "x", ""))
+    monkeypatch.setattr(cloud_runner, "_turn_cwd", lambda *a, **k: "/tmp")
+    monkeypatch.setattr(cloud_runner, "_start_lease_renewal", lambda *a, **k: threading.Event())
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, None))
+
+    started = [cloud_runner._start_turn("r1", {"id": f"turn-{i}"}) for i in range(5)]
+    assert started == [True, True, True, False, False], "cap not enforced"
+    assert len(cloud_runner._in_flight_ids()) == 3
+    release.set()
+
+
+def test_a_crashing_worker_never_takes_down_the_runner(cloud_runner, monkeypatch):
+    """A worker thread that raises must clear itself from in-flight, or the cap
+    leaks until the runner can never claim again."""
+    _reset_turns(cloud_runner)
+    monkeypatch.setattr(cloud_runner, "_turn_cwd",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, None))
+
+    assert cloud_runner._start_turn("r1", {"id": "turn-bad"}) is True
+    for _ in range(100):
+        if not cloud_runner._in_flight_ids():
+            break
+        time.sleep(0.02)
+    assert cloud_runner._in_flight_ids() == [], "crashed worker leaked its slot"
+
+
+def test_heartbeat_reports_every_in_flight_turn(cloud_runner, monkeypatch):
+    """With concurrency, reporting only the newest turn lets the others' leases
+    expire mid-run."""
+    _reset_turns(cloud_runner)
+    with cloud_runner._TURNS_LOCK:
+        cloud_runner._IN_FLIGHT.update({"turn-b": None, "turn-a": None})
+    assert cloud_runner._in_flight_ids() == ["turn-a", "turn-b"]
+
+
+def test_transcript_rows_are_skipped_for_a_non_session_turn(cloud_runner, monkeypatch):
+    """An agent or project turn has no canopy Session to stream into."""
+    calls = []
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: calls.append(a) or (200, None))
+    cloud_runner._ship_transcript_rows("r1", {"id": "t1", "target": "agent:ace"}, "/tmp", "sess")
+    assert calls == []
+
+
+def test_a_missing_transcript_core_never_fails_the_turn(cloud_runner, monkeypatch):
+    """The rows are re-derivable from disk, so an unavailable core costs
+    freshness, never history — and must not raise into the worker."""
+    monkeypatch.setattr(cloud_runner, "_transcript_core", lambda: None)
+    monkeypatch.setattr(cloud_runner, "_chat_session_id", lambda turn: "sess-1")
+    cloud_runner._ship_transcript_rows("r1", {"id": "t1"}, "/tmp", "sess")  # must not raise
