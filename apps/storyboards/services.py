@@ -100,10 +100,18 @@ def board_feedback(board: Storyboard):
         .values_list("narrative_slug", flat=True)
         .distinct()
     )
-    return Feedback.objects.filter(
-        Q(target_kind="storyboard", target_ref=board.slug)
-        | Q(target_kind="narrative", target_ref__in=slugs)
-    ).order_by("-created_at")
+    return (
+        Feedback.objects.filter(
+            Q(target_kind="storyboard", target_ref=board.slug)
+            | Q(target_kind="narrative", target_ref__in=slugs)
+        )
+        # A note with no words is not feedback. Ingest refuses to create one
+        # now, but rows that predate that guard still exist and would render as
+        # an empty card attributed to "Anonymous" — which reads as a reviewer
+        # who said nothing rather than as the artifact of a bug it is.
+        .exclude(body="", suggested_text="")
+        .order_by("-created_at")
+    )
 
 
 def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:

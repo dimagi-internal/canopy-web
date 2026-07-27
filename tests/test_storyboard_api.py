@@ -559,3 +559,16 @@ def test_the_board_read_tells_a_member_it_is_theirs(member, board):
 def test_the_board_read_does_not_tell_a_token_holder_that(board):
     t = board.ensure_share_token()
     assert Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["is_member"] is False
+
+
+def test_a_wordless_row_is_not_shown_as_a_note(member, board):
+    """Ingest refuses to create one now (#451), but rows that predate that guard
+    still exist on labs and would render as an empty card attributed to
+    "Anonymous" — a reviewer who appears to have said nothing."""
+    from apps.feedback.models import Feedback
+
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, body="")
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, body="Real words.")
+
+    items = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]
+    assert [i["body"] for i in items] == ["Real words."]
