@@ -29,6 +29,14 @@ class TailReader:
         self.path = os.fspath(path)
         self.offset = 0
         self._partial = b""
+        # The RAW text of the lines the most recent read_new() consumed, in the
+        # same order. Kept alongside the parsed records because a turn's retained
+        # transcript must be the CLI's own bytes — re-encoding a parsed record
+        # would change field order and number formatting, and the whole point of
+        # storing raw JSONL is that a consumer can re-derive from it exactly.
+        # A line that fails to parse is still raw content, so it is kept here
+        # even though it produces no record.
+        self.last_raw: list[str] = []
 
     def seek_end(self) -> None:
         try:
@@ -38,6 +46,7 @@ class TailReader:
         self._partial = b""
 
     def read_new(self) -> list[dict]:
+        self.last_raw = []
         try:
             size = os.path.getsize(self.path)
         except OSError:
@@ -62,6 +71,9 @@ class TailReader:
             line = line.strip()
             if not line:
                 continue
+            # Decoded, never re-encoded: this is the CLI's own byte content, and
+            # a retained transcript is only re-derivable if it stays verbatim.
+            self.last_raw.append(line.decode("utf-8", errors="replace"))
             try:
                 out.append(json.loads(line))
             except ValueError:

@@ -150,3 +150,136 @@ def test_pump_finish_failure_still_drops_the_bridge():
     _register([[_asst("done", stop="end_turn")]])
     main._pump_chat_bridges(_cfg(), _Client())
     assert chat_bridge.IN_FLIGHT == {}
+
+
+# --- Retained raw transcript (per turn) -------------------------------------
+
+
+class _TranscriptClient:
+    """Records transcript posts; can fail or report the per-turn ceiling."""
+
+    def __init__(self, *, fail=False, truncate_after=None):
+        self.posts = []           # (turn_id, lines, batch_id)
+        self.fail = fail
+        self.truncate_after = truncate_after
+        self.events = []
+        self.finished = []
+
+    def post_transcript(self, turn_id, lines, batch_id=""):
+        if self.fail:
+            raise RuntimeError("network")
+        self.posts.append((turn_id, lines, batch_id))
+        if self.truncate_after is not None and len(self.posts) >= self.truncate_after:
+            return False
+        return True
+
+    def post_events(self, turn_id, events):
+        self.events.append((turn_id, events))
+
+    def finish_turn(self, *a, **k):
+        self.finished.append((a, k))
+
+    def heartbeat(self, *a, **k):
+        pass
+
+
+class _RawReader:
+    """A TailReader stand-in that also exposes last_raw."""
+
+    def __init__(self, batches):
+        self.batches = [(recs, raw) for recs, raw in batches]
+        self.last_raw = []
+
+    def read_new(self):
+        if not self.batches:
+            self.last_raw = []
+            return []
+        recs, raw = self.batches.pop(0)
+        self.last_raw = list(raw)
+        return recs
+
+
+def test_the_turns_raw_jsonl_is_retained_verbatim(monkeypatch):
+    """The retained transcript is the durable artifact cost and structure are
+    re-derived from; it only works if the bytes are the CLI's own."""
+    from canopy_runner import chat_bridge
+
+    chat_bridge.IN_FLIGHT.clear()
+    raw1 = ['{"type":"assistant","message":{"usage":{"input_tokens":5}}}']
+    raw2 = ['{"type":"result","total_cost_usd":0.01}']
+    bridge = chat_bridge.LiveBridge(
+        turn_id="t1", task="task-1",
+        reader=_RawReader([([_asst("working")], raw1),
+                           ([_asst("done", stop="end_turn")], raw2)]),
+    )
+    chat_bridge.IN_FLIGHT["t1"] = bridge
+    c = _TranscriptClient()
+    cfg = _cfg()
+    main._pump_chat_bridges(cfg, c)
+    main._pump_chat_bridges(cfg, c)
+
+    shipped = [line for _t, lines, _b in c.posts for line in lines]
+    assert shipped == raw1 + raw2
+    # batch_ids are sequential per turn, so a lost-ack retry dedupes server-side.
+    assert [b for _t, _l, b in c.posts] == ["t1:0", "t1:1"]
+
+
+def test_a_failed_flush_keeps_the_lines_for_the_next_tick():
+    from canopy_runner import chat_bridge
+
+    chat_bridge.IN_FLIGHT.clear()
+    bridge = chat_bridge.LiveBridge(turn_id="t1", task="x", reader=_RawReader([]))
+    bridge.raw_pending = ['{"a":1}']
+    main._flush_turn_transcript(_TranscriptClient(fail=True), bridge)
+    assert bridge.raw_pending == ['{"a":1}']    # nothing lost
+
+
+def test_a_transcript_hiccup_never_holds_the_turn_open():
+    """The reply is the turn's product; the transcript is derived. A storage
+    problem must not make a finished agent look like it is still working."""
+    from canopy_runner import chat_bridge
+
+    bridge = chat_bridge.LiveBridge(turn_id="t1", task="x", reader=_RawReader([]))
+    bridge.step([_asst("the answer", stop="end_turn")], ['{"raw":1}'])
+    bridge.pending.clear()                      # the reply was delivered
+    assert bridge.raw_pending                   # transcript still queued
+    assert bridge.finished is True
+
+
+def test_flushing_stops_once_the_server_reports_the_ceiling():
+    from canopy_runner import chat_bridge
+
+    bridge = chat_bridge.LiveBridge(turn_id="t1", task="x", reader=_RawReader([]))
+    bridge.raw_pending = ['{"a":1}']
+    c = _TranscriptClient(truncate_after=1)
+    main._flush_turn_transcript(c, bridge)
+    assert bridge.transcript_truncated is True
+    bridge.step([], ['{"b":2}'])                # further lines aren't even queued
+    assert bridge.raw_pending == []
+    main._flush_turn_transcript(c, bridge)
+    assert len(c.posts) == 1                    # and nothing more is sent
+
+
+def test_batches_are_bounded_by_bytes_not_line_count():
+    """The server 422s on total request bytes, and ONE tool-result line can be
+    enormous — a count-based batch would sail past the cap."""
+    from canopy_runner import chat_bridge
+
+    small = ['{"n":%d}' % i for i in range(5)]
+    batches = chat_bridge.chunk_raw_lines(small, max_bytes=25)
+    assert len(batches) > 1
+    for b in batches:
+        assert sum(len(x.encode()) + 1 for x in b) <= 25
+    assert [x for b in batches for x in b] == small
+
+
+def test_an_oversized_single_line_becomes_a_visible_gap():
+    """It can never fit, so shipping it would fail every retry. A marker means a
+    cost aggregator SEES the gap instead of reading a partial turn as complete."""
+    from canopy_runner import chat_bridge
+
+    huge = '{"x":"' + "y" * 5000 + '"}'
+    batches = chat_bridge.chunk_raw_lines(["{}", huge, "{}"], max_bytes=1000)
+    flat = [x for b in batches for x in b]
+    assert huge not in flat
+    assert any("canopy_runner_line_dropped" in x for x in flat)
