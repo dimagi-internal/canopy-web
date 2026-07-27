@@ -826,10 +826,40 @@ def clone_or_pull_canopy_web() -> bool:
                 ["git", "clone", "--depth", "1", CANOPY_WEB_REPO_URL, str(repo_dir)],
                 check=True, timeout=180,
             )
+        _install_transcript_core(repo_dir)
         return True
     except Exception as exc:
         _log(f"warn: could not clone/pull canopy-web ({CANOPY_WEB_REPO_URL}) for bootstrap: {exc}")
         return False
+
+
+def _install_transcript_core(repo_dir: pathlib.Path) -> None:
+    """Install canopy_transcript from the freshly-cloned repo.
+
+    The runner is otherwise stdlib-only and ships as a single file, so this is
+    the one package it needs on the box — the transcript core both runners share
+    (spec 2026-07-27). Installed from the clone rather than an index so it is
+    always the same commit as the rest of this deploy.
+
+    Best-effort by design: `_transcript_core()` degrades to "durable transcript
+    rows disabled" if the import fails, and the turn still runs and still
+    finishes. A bootstrap step that could brick execution is worse than a
+    missing observability feature.
+    """
+    pkg = repo_dir / "packages" / "canopy_transcript"
+    if not pkg.is_dir():
+        _log(f"warn: {pkg} not in the clone; transcript rows disabled")
+        return
+    for installer in (["uv", "pip", "install", "--system", str(pkg)],
+                      [sys.executable, "-m", "pip", "install", str(pkg)]):
+        try:
+            subprocess.run(installer, check=True, timeout=180,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _log(f"installed canopy_transcript from {pkg} via {installer[0]}")
+            return
+        except Exception:  # noqa: BLE001 — try the next installer
+            continue
+    _log("warn: could not install canopy_transcript; transcript rows disabled")
 
 
 def bootstrap_agent_fleet() -> None:
@@ -1020,21 +1050,105 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
 
 
 # ── REST fallback loop (poll) ───────────────────────────────────────────────
-def run_over_rest(runner_id: str) -> None:
-    _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback)")
-    while not _stop:
-        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [], "host": RUNNER_HOST})
-        status, turn = _api("POST", f"/runners/{runner_id}/claim")
-        if status != 200 or not turn:
-            time.sleep(POLL_SECONDS)
-            continue
-        turn_id = turn["id"]
-        _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST)")
-        resume_id = _session_resume_plan(runner_id, turn)
-        _api("POST", f"/turns/{turn_id}/start",
-             {"session_id": resume_id or f"cloud-{turn_id[:8]}"})
-        _api("POST", f"/runners/{runner_id}/heartbeat", {"active_turn_ids": [turn_id], "host": RUNNER_HOST})
+# ── Concurrent turn execution (2026-07-27 convergence) ──────────────────────
+#
+# The runner used to execute turns STRICTLY SERIALLY: the claim loop called
+# run_claude() and blocked inside it until `claude -p` exited, so a box serving
+# five agents drained their turns one at a time. The laptop runner has never
+# worked that way — it registers a chat turn and pumps it across ticks while it
+# keeps heartbeating and claiming.
+#
+# It blocked because it derived the session's RECORD from stdout, so it had to
+# sit in the read loop. Now that the transcript carries the durable record
+# (`_ship_transcript_rows`), the read loop is no longer load-bearing for
+# anything but this turn's own completion, and the whole turn can move off the
+# claim path onto its own thread.
+#
+# Thread-per-turn rather than the laptop's single-threaded pump, deliberately:
+# run_claude() already runs its own flusher and lease threads and has careful
+# lock ordering, so wrapping it is a contained change, where making it
+# non-blocking would be a rewrite of the most delicate function in this file.
+# The cloud box has no CDP/emdash work to interleave with, which is the only
+# reason the laptop needs a pump.
+#
+# WS SAFETY: workers always emit and finish over REST (`_api`), never over the
+# shared WebSocket — `_ws_request` is not safe to call from several threads on
+# one socket, the same constraint `_start_lease_renewal` already documents.
+MAX_CONCURRENT_TURNS = int(os.environ.get("MAX_CONCURRENT_TURNS", "4") or "4")
+
+_TURNS_LOCK = threading.Lock()
+_IN_FLIGHT: dict[str, object] = {}
+
+
+def _in_flight_ids() -> list[str]:
+    """Turn ids currently executing — reported on every heartbeat so the server
+    renews all of their leases, not just the newest."""
+    with _TURNS_LOCK:
+        return sorted(_IN_FLIGHT)
+
+
+def _transcript_core():
+    """canopy_transcript, imported lazily and cached.
+
+    Lazy because this module ALSO clones canopy-web (clone_or_pull_canopy_web),
+    so at import time the package may not exist on the box yet. Returns None if
+    it cannot be imported — the turn still runs and still finishes; only the
+    durable transcript rows are skipped, which the laptop path would backfill
+    anyway.
+    """
+    global _TRANSCRIPT_CORE
+    if _TRANSCRIPT_CORE is not False:
+        return _TRANSCRIPT_CORE
+    try:
+        import canopy_transcript  # noqa: PLC0415
+        _TRANSCRIPT_CORE = canopy_transcript
+    except Exception as exc:  # noqa: BLE001
+        _log(f"canopy_transcript unavailable ({exc}); durable transcript rows disabled")
+        _TRANSCRIPT_CORE = None
+    return _TRANSCRIPT_CORE
+
+
+_TRANSCRIPT_CORE: object = False  # False = not yet attempted
+
+
+def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) -> None:
+    """Ship this session's transcript rows so a cloud session's durable record is
+    the SAME shape as a laptop session's — ordinal-keyed, full fidelity.
+
+    Only meaningful for session-targeted turns: an agent or project turn has no
+    canopy Session to stream into. Best-effort throughout; the record is
+    re-derivable from the transcript on disk, so a failure here costs freshness,
+    never history.
+    """
+    session_id = _chat_session_id(turn)
+    if not session_id:
+        return
+    ct = _transcript_core()
+    if ct is None:
+        return
+    path = ct.resolve_cli_transcript(cwd, cli_session_id, claude_home=CLAUDE_PROJECTS_HOME)
+    if path is None:
+        _log(f"turn {turn['id'][:8]}: no transcript at {cwd} for {cli_session_id[:8]}")
+        return
+    rows = ct.conversational_messages(ct.read_records(path), -1)
+    if not rows:
+        return
+    events = [
+        {"kind": r["role"], "seq": r["index"], "index": r["index"],
+         "payload": ct.row_payload(r)}
+        for r in rows
+    ]
+    status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
+                     {"session_id": session_id, "events": events})
+    _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
+
+
+def _run_turn(runner_id: str, turn: dict) -> None:
+    """Execute one claimed turn to completion. Runs on its own thread."""
+    turn_id = turn["id"]
+    try:
         cwd = _turn_cwd(turn, turn_id)
+        resume_id = turn.get("_resume_id") or None
 
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
@@ -1044,17 +1158,83 @@ def run_over_rest(runner_id: str) -> None:
             try:
                 ok, text, cli_session_id = run_claude(
                     turn.get("prompt", ""), turn_id, emit, cwd=cwd,
-                    agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id or None,
+                    agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
                 )
-            except Exception as exc:  # never let one turn kill the loop
+            except Exception as exc:  # never let one turn kill the runner
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
-            lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
+            lease_stop.set()
         if cli_session_id:
-            _record_session_resume(runner_id, turn, cli_session_id)
+            # Never let bookkeeping cost us the finish below — an exception here
+            # used to strand the turn exactly like a dead socket did (#448).
+            for step, fn in (("record session resume", _record_session_resume),
+                             ("ship transcript rows", None)):
+                try:
+                    if fn is None:
+                        _ship_transcript_rows(runner_id, turn, cwd, cli_session_id)
+                    else:
+                        fn(runner_id, turn, cli_session_id)
+                except Exception as exc:  # noqa: BLE001
+                    _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
+        # ALWAYS over REST. #448 fixed turns being orphaned when the WebSocket
+        # died mid-turn and the finish frame raised; the worker never touches the
+        # socket at all, so that failure class is now structurally impossible
+        # here rather than merely handled.
         finish = "done" if ok else "failed"
-        _api("POST", f"/turns/{turn_id}/finish", {"status": finish, "result_note": text[:2000]})
+        _api("POST", f"/turns/{turn_id}/finish",
+             {"status": finish, "result_note": text[:2000]})
         _log(f"finished turn {turn_id[:8]}: {finish}")
+    except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
+        _log(f"turn {turn_id[:8]} worker crashed: {exc}")
+    finally:
+        with _TURNS_LOCK:
+            _IN_FLIGHT.pop(turn_id, None)
+
+
+def _start_turn(runner_id: str, turn: dict) -> bool:
+    """Start a claimed turn on its own thread. False if at the concurrency cap."""
+    turn_id = turn["id"]
+    with _TURNS_LOCK:
+        if len(_IN_FLIGHT) >= MAX_CONCURRENT_TURNS:
+            return False
+        _IN_FLIGHT[turn_id] = None
+    thread = threading.Thread(
+        target=_run_turn, args=(runner_id, turn), daemon=True,
+        name=f"turn-{turn_id[:8]}",
+    )
+    with _TURNS_LOCK:
+        _IN_FLIGHT[turn_id] = thread
+    thread.start()
+    return True
+
+
+def run_over_rest(runner_id: str) -> None:
+    _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback), "
+         f"up to {MAX_CONCURRENT_TURNS} concurrent turns")
+    while not _stop:
+        # Every in-flight turn rides the heartbeat so the server renews all of
+        # their leases — with concurrency, reporting only the newest would let
+        # the others expire mid-run.
+        _api("POST", f"/runners/{runner_id}/heartbeat",
+             {"active_turn_ids": _in_flight_ids(), "host": RUNNER_HOST})
+        if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
+            time.sleep(POLL_SECONDS)
+            continue
+        status, turn = _api("POST", f"/runners/{runner_id}/claim")
+        if status != 200 or not turn:
+            time.sleep(POLL_SECONDS)
+            continue
+        turn_id = turn["id"]
+        _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST)")
+        resume_id = _session_resume_plan(runner_id, turn)
+        turn["_resume_id"] = resume_id or ""
+        _api("POST", f"/turns/{turn_id}/start",
+             {"session_id": resume_id or f"cloud-{turn_id[:8]}"})
+        if not _start_turn(runner_id, turn):
+            # At the cap between the check and the start — rare, and the server
+            # re-offers the turn on the next claim, so nothing is lost.
+            _log(f"turn {turn_id[:8]}: at concurrency cap, will re-claim")
+        # No sleep on a successful claim: drain the queue as fast as the cap allows.
 
 
 # ── WebSocket control channel (RC2) ─────────────────────────────────────────
@@ -1138,11 +1318,18 @@ def _finish_turn(ws, turn_id: str, ok: bool, text: str) -> None:
 
 
 def _claim_and_run_once(ws, runner_id: str) -> bool:
-    """Claim at most one turn and run it. Returns True if a turn was run.
+    """Claim at most one turn and DISPATCH it. Returns True if a turn was started.
 
-    The bool is what lets `_drain` loop until the queue is actually empty
-    instead of assuming one claim per trigger.
+    Dispatches rather than runs: the worker thread executes the turn while this
+    loop goes back to claiming, so a burst of queued turns (a drill wave enqueues
+    one per agent at once) runs concurrently instead of single-file.
+
+    The worker emits and finishes over REST, never over `ws` — a shared socket
+    is not safe across threads, the same constraint `_start_lease_renewal`
+    observes.
     """
+    if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
+        return False
     res = _ws_request(ws, {"action": "claim"}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:
@@ -1150,36 +1337,10 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     tid = turn["id"]
     _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS)")
     resume_id = _session_resume_plan(runner_id, turn)
+    turn["_resume_id"] = resume_id or ""
     _ws_request(ws, {"action": "start", "turn_id": tid,
                      "session_id": resume_id or f"cloud-{tid[:8]}"}, "start.ack")
-    cwd = _turn_cwd(turn, tid)
-
-    def emit(events, _tid=tid):
-        _ws_request(ws, {"action": "event", "turn_id": _tid, "events": events}, "event.ack", timeout=60)
-
-    # Lease renewal runs on its own thread over REST (never over `ws` — see
-    # _start_lease_renewal) so the lease survives the whole time run_claude()
-    # blocks this loop.
-    lease_stop = _start_lease_renewal(runner_id, tid)
-    try:
-        try:
-            ok, text, cli_session_id = run_claude(
-                turn.get("prompt", ""), tid, emit, cwd=cwd,
-                agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id or None,
-            )
-        except Exception as exc:
-            ok, text, cli_session_id = False, f"runner error: {exc}", ""
-    finally:
-        lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
-    if cli_session_id:
-        # Never let bookkeeping cost us the finish below — an exception here used
-        # to strand the turn exactly like a dead socket did.
-        try:
-            _record_session_resume(runner_id, turn, cli_session_id)
-        except Exception as exc:
-            _log(f"warn: could not record session resume for {tid[:8]}: {exc}")
-    _finish_turn(ws, tid, ok, text)
-    return True
+    return _start_turn(runner_id, turn)
 
 
 def _drain(ws, runner_id: str, max_turns: int = 20) -> int:
@@ -1194,6 +1355,10 @@ def _drain(ws, runner_id: str, max_turns: int = 20) -> int:
     `max_turns` is a runaway guard, not a throttle: it caps one drain pass so a
     server that always returns a turn cannot spin here forever without ever
     heartbeating. Whatever is left is picked up by the next poll tick.
+
+    Since turns now DISPATCH rather than run inline, this counts turns started,
+    and `MAX_CONCURRENT_TURNS` is the real throttle — the loop stops claiming
+    once the cap is reached and resumes as workers finish.
     """
     ran = 0
     while ran < max_turns and not _stop:
@@ -1240,7 +1405,11 @@ def run_over_ws(runner_id: str) -> bool:
         ws.settimeout(WS_POLL_TIMEOUT)
 
         def _beat():
-            _ws_request(ws, {"action": "heartbeat", "active_turn_ids": []}, "heartbeat.ack", timeout=15)
+            # Report in-flight turns, not []: each worker also has its own lease
+            # renewer, but a heartbeat that claims nothing is running while four
+            # turns are executing is a lie the server acts on.
+            _ws_request(ws, {"action": "heartbeat", "active_turn_ids": _in_flight_ids()},
+                        "heartbeat.ack", timeout=15)
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)

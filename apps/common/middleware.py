@@ -110,8 +110,12 @@ def _is_storyboard_link(request) -> bool:
     # ?t=<share_token> gate (or a workspace-member session) inside the handler,
     # so admit anonymous callers and let the API decide. A wrong token 404s there
     # rather than 403ing, so existence never leaks.
+    #
+    # /narrative/ was missed when the surface shipped: the FRONTEND allowlist
+    # knew about it but this one did not, so an anonymous reader got the arc
+    # fine and hit a Google login the moment they clicked "Read the scenes".
     path = request.path
-    if path.startswith("/storyboard/"):
+    if path.startswith("/storyboard/") or path.startswith("/narrative/"):
         return True
     return path.startswith("/api/storyboards/")
 

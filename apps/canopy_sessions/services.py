@@ -22,6 +22,8 @@ from apps.harness.models import Turn
 
 from . import attach
 from .models import Message, Session
+from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
+
 from .transcript_noise import is_system_noise, scrub_nul
 
 # Ledger kinds we surface as transcript rows, and the Message role each maps to.
@@ -290,8 +292,9 @@ def persist_transcript_rows(session, rows) -> int:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
 
-    `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see the
-    runner's `chat_bridge.compose_index`) — because the stream (forward) and
+    `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see
+    `canopy_transcript.compose_index`, imported above so this scheme has exactly
+    one definition) — because the stream (forward) and
     backfill (older) both key on it, they produce the SAME rows by identity and
     `get_or_create` makes every re-ship (retry, overlap, catch-up) a no-op.
     index < 0 (an old runner) falls back to sequential server-side assignment.

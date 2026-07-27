@@ -23,9 +23,28 @@ heartbeating and claiming while an agent works. The step function stays pure
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
+
+# The transcript core lives in canopy_transcript so the cloud runner shares it
+# verbatim (spec 2026-07-27). These re-exports keep existing call sites and
+# tests importing from chat_bridge working — this module is now the emdash
+# BRIDGE state machine, and nothing else.
+from canopy_transcript import (  # noqa: F401
+    BLOCK_STRIDE,
+    TOOL_INPUT_JSON_MAX,
+    TOOL_INPUT_STR_MAX,
+    TOOL_TEXT_MAX,
+    TRANSCRIPT_BATCH_MAX_BYTES,
+    assistant_text as _assistant_text,
+    chunk_raw_lines,
+    compose_index,
+    conversational_messages,
+    end_index,
+    read_records,
+    row_payload,
+    scrub,
+    user_text as _user_text,
+)
 
 # In-flight chat bridges, keyed by turn_id: {turn_id: LiveBridge}. Module-level so
 # execute.py can register one and main.py can pump it without an import cycle
@@ -36,47 +55,14 @@ from pathlib import Path
 IN_FLIGHT: dict[str, LiveBridge] = {}
 
 
-def _assistant_text(content) -> str:
-    """The assistant's spoken output — TEXT blocks only.
-
-    Used by the LIVE CHAT BRIDGE, which still ships prose alone: its events go to
-    the turn ledger, and the same records also reach the client (with tool rows)
-    down the durable stream path, so emitting tools here too would render each
-    call twice under two different message ids. `_rows_for_record` is the
-    full-fidelity reader.
-    """
-    if isinstance(content, str):
-        return content.strip()
-    if not isinstance(content, list):
-        return ""
-    parts = [
-        b.get("text", "")
-        for b in content
-        if isinstance(b, dict) and b.get("type") == "text"
-    ]
-    return "".join(parts).strip()
-
-
-def read_records(path) -> list[dict]:
-    """Every JSONL record in the transcript, best-effort (never raises)."""
-    try:
-        text = Path(path).read_text(errors="replace")
-    except OSError:
-        return []
-    out: list[dict] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            continue
-    return out
-
-
 def new_assistant_texts(records: list[dict], since: int) -> list[str]:
-    """Assistant TEXT messages in records[since:], oldest->newest, non-empty only."""
+    """Assistant TEXT messages in records[since:], oldest->newest, non-empty only.
+
+    Prose only, deliberately: the bridge's events go to the turn ledger while the
+    same records also reach the client with tool rows down the durable stream
+    path, so emitting tools here too would render each call twice under two
+    message ids. `canopy_transcript.rows_for_record` is the full-fidelity reader.
+    """
     texts: list[str] = []
     for rec in records[since:]:
         if rec.get("type") != "assistant":
@@ -87,241 +73,6 @@ def new_assistant_texts(records: list[dict], since: int) -> list[str]:
         if t:
             texts.append(t)
     return texts
-
-
-def _user_text(content) -> str:
-    """A user record's text — a bare string, or the text blocks of a content list."""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        return "".join(
-            b.get("text", "") for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        ).strip()
-    return ""
-
-
-# --- Transcript ordinals -----------------------------------------------------
-#
-# One transcript RECORD can carry several content blocks, and since tool calls
-# became renderable each block is its own chat row — so the raw line ordinal is
-# no longer a unique key. `turn_index` is a single integer (unique per session,
-# and the sort order), so the ordinal is composite: record * STRIDE + block.
-#
-# Multi-block records are rare but real — 38 in 45,955 across the live fleet
-# (2026-07-26), including ("text","tool_use","tool_use"), i.e. exactly the
-# parallel-tool-call case this feature exists to show. Keying on the record
-# alone would drop every block after the first, which is the interesting half.
-#
-# STRIDE is a hard ceiling on blocks-per-record, so it is set far above any
-# plausible fan-out (observed max: 3) rather than snugly. Overflow clamps to the
-# last slot rather than bleeding into the next record's space — a collision
-# inside one record loses a block; a collision ACROSS records would interleave
-# two records' rows and corrupt the ordering the client pages on.
-BLOCK_STRIDE = 64
-
-
-def compose_index(record: int, block: int = 0) -> int:
-    """The composite transcript ordinal for block `block` of record `record`."""
-    return record * BLOCK_STRIDE + min(block, BLOCK_STRIDE - 1)
-
-
-def end_index(record_count: int) -> int:
-    """The highest ordinal a transcript of `record_count` records can hold — the
-    "stream forward only, no history" marker for a first attach with no server
-    marker to resume from."""
-    return compose_index(max(record_count - 1, 0), BLOCK_STRIDE - 1)
-
-
-# Tool payloads are the one part of a transcript that is routinely enormous: a
-# Read of a large file, a Write's full body, a Bash dump. They flow to a phone
-# over a websocket and into a JSONField, so they are capped HERE — at the
-# producer, before the wire — rather than anywhere downstream.
-TOOL_TEXT_MAX = 8_000       # a tool RESULT body
-TOOL_INPUT_STR_MAX = 4_000  # any single string inside a tool's input
-TOOL_INPUT_JSON_MAX = 16_000
-
-
-def scrub(text: str) -> str:
-    """Drop NUL bytes. Postgres rejects them outright in text and jsonb columns.
-
-    A tool result is raw bytes from whatever the tool touched, so `Read` on a
-    compressed or binary file puts one straight into the stream (found on labs
-    2026-07-26, one row in 683). The write is a single transaction, so ONE such
-    row 500s the whole batch — the session's history never rebuilds and the
-    runner retries it every tick forever. Only NUL is stripped: every other
-    control character is legal in Postgres text and is real transcript content.
-    """
-    return text.replace("\x00", "") if "\x00" in text else text
-
-
-def _truncate(text: str, limit: int) -> str:
-    text = scrub(text)
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n… [truncated {len(text) - limit} chars]"
-
-
-def _truncate_input(value, depth: int = 0):
-    """Recursively cap the string leaves of a tool input. Structure is preserved
-    (the UI renders the input as JSON, and a shape with elided values still tells
-    you what the call did); only the bulk goes."""
-    if depth > 6:
-        return "…"
-    if isinstance(value, str):
-        return _truncate(value, TOOL_INPUT_STR_MAX)  # _truncate scrubs NUL
-    if isinstance(value, dict):
-        return {k: _truncate_input(v, depth + 1) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_truncate_input(v, depth + 1) for v in value]
-    return value
-
-
-def _tool_input(raw) -> dict:
-    """A tool_use's input, capped. A pathological input (many large strings, each
-    individually under the leaf cap) degrades to a preview rather than shipping
-    megabytes: better a legible summary than a row nothing will render."""
-    trimmed = _truncate_input(raw if isinstance(raw, dict) else {"value": raw})
-    try:
-        encoded = json.dumps(trimmed)
-    except (TypeError, ValueError):
-        return {"_unserializable": True}
-    if len(encoded) > TOOL_INPUT_JSON_MAX:
-        return {"_truncated": True, "preview": encoded[:2_000]}
-    return trimmed
-
-
-def _tool_result_text(content) -> str:
-    """A tool_result's body as display text.
-
-    The content is a bare string ~70% of the time and a block list otherwise
-    (text, image, tool_reference — all three occur live). Non-text blocks become
-    a short marker so the row still renders and, more importantly, still PAIRS:
-    an image-only result that emitted nothing would leave its tool_use stuck
-    showing "running…" forever.
-    """
-    if isinstance(content, str):
-        return _truncate(content.strip(), TOOL_TEXT_MAX)
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for b in content:
-        if not isinstance(b, dict):
-            continue
-        if b.get("type") == "text":
-            parts.append(b.get("text", ""))
-        elif b.get("type") == "tool_reference":
-            parts.append(f"[tool_reference: {b.get('tool_name', '')}]")
-        else:
-            parts.append(f"[{b.get('type', 'block')}]")
-    return _truncate("".join(parts).strip(), TOOL_TEXT_MAX)
-
-
-def _rows_for_record(rec: dict) -> list[dict]:
-    """The chat rows one transcript record contributes, as
-    [{"block","role","text","content"}] in block order.
-
-    `content` is the row's STRUCTURED fields (empty for plain text) — the
-    tool-call identity the UI pairs and renders on. `text` is its plaintext.
-    """
-    kind = rec.get("type")
-    if kind not in ("user", "assistant"):
-        return []
-    msg = rec.get("message")
-    content = msg.get("content", "") if isinstance(msg, dict) else ""
-
-    # A bare-string content is always a single plain message at block 0.
-    if not isinstance(content, list):
-        text = scrub(_user_text(content) if kind == "user" else _assistant_text(content))
-        return [{"block": 0, "role": kind, "text": text, "content": {}}] if text else []
-
-    # Overflow can only happen if a record ever carries more blocks than the
-    # stride allows (it never has — observed max is 3). Reserve the last slot for
-    # a marker rather than letting the extras pile onto one ordinal, where
-    # get_or_create would keep the first and drop the rest with no trace.
-    if len(content) > BLOCK_STRIDE:
-        kept, dropped = content[: BLOCK_STRIDE - 1], len(content) - (BLOCK_STRIDE - 1)
-        rows = _rows_for_blocks(kind, kept)
-        rows.append({
-            "block": BLOCK_STRIDE - 1, "role": kind,
-            "text": f"[{dropped} further blocks in this record were not recorded]",
-            "content": {"_overflow": dropped},
-        })
-        return rows
-    return _rows_for_blocks(kind, content)
-
-
-def _rows_for_blocks(kind: str, content: list) -> list[dict]:
-    rows: list[dict] = []
-    for b_i, block in enumerate(content):
-        if not isinstance(block, dict):
-            continue
-        btype = block.get("type")
-        if btype == "text":
-            text = scrub(str(block.get("text", "")).strip())
-            if text:
-                rows.append({"block": b_i, "role": kind, "text": text, "content": {}})
-        elif btype == "tool_use":
-            rows.append({
-                "block": b_i, "role": "tool_use", "text": "",
-                "content": {
-                    "id": block.get("id", ""),
-                    "name": block.get("name", ""),
-                    "input": _tool_input(block.get("input")),
-                },
-            })
-        elif btype == "tool_result":
-            rows.append({
-                "block": b_i, "role": "tool_result",
-                "text": _tool_result_text(block.get("content")),
-                "content": {
-                    "tool_use_id": block.get("tool_use_id", ""),
-                    "is_error": bool(block.get("is_error", False)),
-                },
-            })
-        # thinking / image / anything else: not a chat row (yet). It still
-        # occupies its block ordinal, so adding one later re-keys nothing.
-    return rows
-
-
-def conversational_messages(
-    records: list[dict], since: int, *, record_offset: int = 0
-) -> list[dict]:
-    """Conversational rows after `since`, chronological, as
-    {"index","role","text","content"}.
-
-    `index` is the composite transcript ordinal (see `compose_index`) — stable,
-    append-only, and derived purely from position in the file. It is the identity
-    the server keys Message.turn_index on for a runner session, which is what
-    makes the live stream, catch-up, and backfill idempotent against each other.
-
-    Emits user/assistant text plus tool_use/tool_result rows; other block types
-    and non-conversational records consume their ordinal without emitting.
-    `record_offset` shifts the record ordinal for a caller reading an incremental
-    batch (its records start partway through the file). Pass since=-1 for
-    everything.
-    """
-    out: list[dict] = []
-    for i, rec in enumerate(records):
-        for row in _rows_for_record(rec):
-            index = compose_index(i + record_offset, row["block"])
-            if index <= since:
-                continue
-            out.append({
-                "index": index, "role": row["role"],
-                "text": row["text"], "content": row["content"],
-            })
-    return out
-
-
-def row_payload(row: dict) -> dict:
-    """The wire/stored payload for a row: its structured content plus its text.
-
-    ONE shape for every hop — the live WS frame's `block`, the persisted
-    Message.content, and the backfill payload are all this dict, so the client
-    reads the same keys whether a row arrived live or was loaded from history.
-    """
-    return {**(row.get("content") or {}), "text": row.get("text", "")}
 
 
 def hands_back_to_human(rec: dict) -> bool:
@@ -356,55 +107,6 @@ def hands_back_to_human(rec: dict) -> bool:
 # the turn as active, so the real ceiling is "before a human gives up".
 IDLE_TICKS = 180          # ~15 min of a completely silent transcript
 MAX_TICKS = 2880          # ~4 h total, so a wedged bridge can't hold a session forever
-
-
-# --- Retained raw transcript (per turn) --------------------------------------
-#
-# A turn's raw JSONL is the durable artifact cost and structure are re-derived
-# from (spec 2026-07-26-run-execution-convergence): per-line `usage` and `model`,
-# uuid/parentUuid nesting, tool ids and inputs, the CLI's own timestamps. The
-# TurnEvent ledger is deliberately reduced and cannot answer those.
-#
-# On this runner a "turn's transcript" is the slice of the ongoing emdash session
-# .jsonl written while the bridge was open — which is exactly the window
-# LiveBridge already tails. Work a human does directly in emdash outside a canopy
-# turn belongs to no turn, and is correctly absent.
-#
-# The server 422s a single request whose line bytes exceed 1 MiB
-# (apps/harness/api.py::TRANSCRIPT_APPEND_MAX_BYTES), so batches are bounded by
-# BYTES, not line count: one tool-result line can be enormous on its own.
-TRANSCRIPT_BATCH_MAX_BYTES = 900 * 1024
-
-
-def chunk_raw_lines(lines: list[str], max_bytes: int = TRANSCRIPT_BATCH_MAX_BYTES) -> list[list[str]]:
-    """Split raw JSONL lines into batches whose UTF-8 size stays under `max_bytes`.
-
-    A single line larger than the cap can never fit, even alone — the server
-    rejects the whole request on total bytes. Shipping it anyway would fail every
-    retry and stall the flush, so it is replaced by a marker line: a consumer
-    re-deriving cost from this transcript then SEES a gap instead of silently
-    reading an incomplete turn as a complete one.
-    """
-    batches: list[list[str]] = []
-    current: list[str] = []
-    size = 0
-    for line in lines:
-        n = len(line.encode("utf-8")) + 1  # +1 for the newline the server joins on
-        if n > max_bytes:
-            if current:
-                batches.append(current)
-                current, size = [], 0
-            batches.append([json.dumps({"type": "canopy_runner_line_dropped",
-                                        "bytes": n})])
-            continue
-        if size + n > max_bytes and current:
-            batches.append(current)
-            current, size = [], 0
-        current.append(line)
-        size += n
-    if current:
-        batches.append(current)
-    return batches
 
 
 @dataclass
