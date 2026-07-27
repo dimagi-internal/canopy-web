@@ -55,6 +55,9 @@ class EntryIn(StrictModel):
 
 
 class ActIn(StrictModel):
+    key: str = ""
+    """Optional stable identity. Declare it to keep act notes attached through
+    a retitle; otherwise it is derived from the title."""
     title: str
     prose: str = ""
     entries: list[EntryIn] = []

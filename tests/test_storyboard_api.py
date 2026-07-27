@@ -188,23 +188,76 @@ def test_an_act_note_says_which_act(board):
 
     assert set(Feedback.objects.values_list("anchor_id", flat=True)) == set(anchors)
     # And the anchor resolves back to an act — feedback holds a pointer, never a
-    # copy, so a retitle must not orphan it.
-    assert anchors[1] == f"act:{two.pk}"
+    # copy of the act.
+    assert anchors[1] == f"act:{two.key}"
 
 
-def test_an_act_anchor_survives_a_retitle_and_a_reorder(board):
+def test_an_act_anchor_survives_the_board_being_re_imported(member, board, ws):
+    """The guarantee that matters, because BOTH write paths replace acts
+    wholesale (`board.acts.all().delete()` then recreate). Anchoring to the row
+    id would orphan every act note the first time the file was pushed again —
+    which is the normal way this board is edited."""
     board.capability = Storyboard.CAP_COMMENT
     board.save()
     t = board.ensure_share_token()
-    act = board.acts.get()
-
     before = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"][0]["anchor_id"]
-    Act.objects.create(storyboard=board, title="A new opening", position=-1)
-    act.title = "Renamed entirely"
-    act.save()
-    after = [a["anchor_id"] for a in Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"]]
+    old_pk = board.acts.get().pk
 
-    assert before in after, "an anchor that moved would re-point old notes at the wrong act"
+    body = {
+        "title": board.title,
+        "acts": [
+            {
+                "title": "Act one",
+                "prose": "Now with connective tissue.",
+                "entries": [{"narrative_slug": "verified-monitoring"}],
+            }
+        ],
+    }
+    r = member.patch(
+        f"/api/storyboards/{board.slug}", json.dumps(body), content_type="application/json"
+    )
+    assert r.status_code == 200, r.content
+
+    after = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"][0]["anchor_id"]
+    assert after == before
+    assert board.acts.get().pk != old_pk, (
+        "the row was replaced, as this write path always does — which is exactly "
+        "why the anchor cannot be the row id"
+    )
+
+
+def test_a_declared_key_keeps_act_notes_attached_through_a_retitle(member, board):
+    """Identity is stated, never guessed: without a declared key a retitle is
+    indistinguishable from replacing the act, and re-pointing a stranger's note
+    at different words is worse than dropping it."""
+    t = board.ensure_share_token()
+
+    def _put(title, key):
+        return member.patch(
+            f"/api/storyboards/{board.slug}",
+            json.dumps({"acts": [{"key": key, "title": title, "entries": []}]}),
+            content_type="application/json",
+        )
+
+    assert _put("Six weeks to a supply base", "supply-base").status_code == 200
+    before = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"][0]["anchor_id"]
+    assert _put("What six weeks of procurement bought", "supply-base").status_code == 200
+    after = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"][0]["anchor_id"]
+
+    assert before == after == "act:supply-base"
+
+
+def test_two_acts_with_the_same_title_still_get_distinct_anchors(member, board):
+    assert (
+        member.patch(
+            f"/api/storyboards/{board.slug}",
+            json.dumps({"acts": [{"title": "Act", "entries": []}, {"title": "Act", "entries": []}]}),
+            content_type="application/json",
+        ).status_code
+        == 200
+    )
+    keys = list(board.acts.values_list("key", flat=True))
+    assert keys == ["act", "act-2"]
 
 
 def test_the_version_it_was_left_against_is_recorded(board):

@@ -4089,6 +4089,11 @@ export interface components {
         };
         /** ActIn */
         readonly ActIn: {
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
             /** Title */
             readonly title: string;
             /**

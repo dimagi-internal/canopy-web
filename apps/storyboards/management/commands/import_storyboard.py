@@ -13,6 +13,7 @@ the source and this command stays safe to re-run in CI.
     capability: comment          # read | comment | suggest
     acts:
       - title: Six weeks to a supply base
+        key: supply-base        # optional; keeps act notes attached through a retitle
         prose: Procurement integrity you can show, not assert.
         entries: [procurement-eoi, supplier-registry]
       - title: Where the RUTF is, and who is short
@@ -28,6 +29,7 @@ import yaml
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
 
 
@@ -61,10 +63,13 @@ class Command(BaseCommand):
             # Wholesale replace: reordering is a rewrite, not a diff, and the
             # file is the source of truth for structure.
             board.acts.all().delete()
+            taken: set[str] = set()
             for a_pos, act_raw in enumerate(raw.get("acts") or []):
+                title = act_raw.get("title") or f"Act {a_pos + 1}"
                 act = Act.objects.create(
                     storyboard=board,
-                    title=act_raw.get("title") or f"Act {a_pos + 1}",
+                    key=act_key(act_raw.get("key") or "", title, a_pos, taken),
+                    title=title,
                     prose=act_raw.get("prose") or "",
                     position=a_pos,
                 )

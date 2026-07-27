@@ -78,9 +78,8 @@ def resolve_board(board: Storyboard) -> dict:
                 # three acts arrive indistinguishable — and the reader's most
                 # structural feedback ("act II doesn't follow from act I") is
                 # exactly the kind that loses its meaning unanchored.
-                # The pk, not the position or the title: a reorder or a retitle
-                # must not silently re-point feedback at a different act.
-                "anchor_id": f"act:{act.pk}",
+                # See Act.key for why this is not the row id.
+                "anchor_id": act.anchor_id,
                 "title": act.title,
                 "prose": act.prose,
                 "entries": [
