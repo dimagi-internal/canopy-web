@@ -238,33 +238,70 @@ handling, because the archive is authoritative and complete either way.
   multiplayer stream — but a different product surface that should not block
   this.
 
-## Must verify before building
+## Spike results (2026-07-27) — the live path is confirmed
 
-Marked explicitly because the design leans on them and none are yet confirmed
-against this fleet:
+Run against this machine, from inside an emdash-driven session.
 
-1. **Hooks fire inside emdash-driven sessions.** They are user-level settings and
-   emdash spawns `claude`, so they should — but this is the single assumption
-   the whole live path rests on. Verify first, before anything else.
-2. **`MessageDisplay` granularity** — per chunk or per message. Determines
-   whether streamed text is genuinely incremental on the laptop path.
-3. **Hook overhead** on the agent's loop, measured, not assumed. The
-   fire-and-forget timeout is chosen to bound it, but the floor cost of firing
-   at all should be measured on a tool-heavy turn.
-4. **A localhost listener on the runner is acceptable.** It is bound to
-   loopback, but it is new attack surface on a machine holding fleet
-   credentials; it needs at minimum a check that the caller is local and a
-   decision on whether it authenticates at all.
+**1. Hooks fire in an emdash session, and hot-reload.** A `PostToolUse` hook
+installed at user level fired on the *very next* tool call with no restart of
+the session or of emdash. The assumption the whole live path rested on holds.
+
+**2. emdash already uses this exact transport.** Its worktrees carry a
+`.claude/settings.local.json` whose hooks POST to
+`http://127.0.0.1:$EMDASH_HOOK_PORT/hook` with `-d @-` (forwarding the hook JSON
+verbatim), a per-session `$EMDASH_HOOK_NONCE`, `curl -sf`, and `|| true`. That
+is the design in this spec, already running in production on the same machines.
+It **resolves the localhost-listener question**: the precedent exists, loopback
++ per-session nonce is the established auth, and the fire-and-forget idiom is
+proven.
+
+**3. emdash uses only `UserPromptSubmit`, `Notification`, `Stop`** — no tool
+events. canopy's hooks **compose** with emdash's rather than colliding. canopy
+must install at **user level** (`~/.claude/settings.json`, whose `hooks` is
+currently empty) and leave the emdash-managed project file alone, since emdash
+owns and rewrites it.
+
+**4. One user-level install covers every concurrent session.** The probe
+captured events from *two different sessions* at once — this one, and an
+unrelated agent running in `…/emdash/cloud-7s5ii` — distinguishable by
+`session_id` and `cwd`. The "install once per machine, filter by cwd" design is
+empirically confirmed rather than assumed.
+
+**5. `PostToolUse` carries the result, not just the input.** Payload keys:
+
+```
+cwd, duration_ms, effort, hook_event_name, permission_mode, prompt_id,
+session_id, tool_input, tool_name, tool_response, tool_use_id, transcript_path
+```
+
+`tool_response` is a dict (`stdout`, `stderr`, `interrupted`, `isImage`,
+`noOutputExpected` for Bash). **One event is therefore a complete tool_use +
+tool_result pair**, where the transcript splits them across two records. The
+live tail can emit an already-paired row and skip the correlation step
+entirely — pairing by `tool_use_id` remains necessary only for reconciling
+against durable rows.
+
+**6. Payloads are small and carry timing.** ~783 bytes for a Bash call, and
+`duration_ms` gives real per-tool latency — a signal the transcript does not
+contain at all.
+
+### Still unverified
+
+- **`MessageDisplay` granularity** — per chunk or per message. Determines
+  whether streamed text is genuinely incremental on the laptop path. Does not
+  gate the tool path, which is the valuable half.
+- **Hook overhead on a tool-heavy turn**, measured rather than assumed. The
+  floor cost looked negligible (the probe's own hook added no perceptible
+  latency), but it should be measured against a turn with many rapid tool calls
+  before shipping to the fleet.
 
 ## Sequencing
 
 This is more than one implementation plan. It decomposes into four slices, each
 shippable and each leaving the system working:
 
-0. **Spike: confirm hooks fire in an emdash session.** Hours, not days. Nothing
-   below is worth planning until this is a yes; if it is a no, the live half of
-   this design collapses back to transcript tailing and only the shared-core
-   slice survives.
+0. ~~**Spike: confirm hooks fire in an emdash session.**~~ **Done, passed** —
+   see Spike results above. The live path is unblocked.
 1. **Extract `packages/canopy_transcript`** and repoint the laptop runner at it.
    Pure refactor, no behaviour change, no new surface. Independently valuable —
    it removes the duplicate chunker and block extractor even if the rest stalls.
@@ -274,11 +311,11 @@ shippable and each leaving the system working:
    session and a laptop session produce the *same* durable record — which is the
    convergence goal, independent of the live path.
 3. **Live path**: hook install, runner listener, client tail + reconciliation.
-   The only slice that adds new surface area, and the only one that needs the
-   spike to have passed.
+   The only slice that adds new surface area.
 
-Slices 1 and 2 are worth doing on their own merits. Slice 3 is the part that
-depends on an unverified assumption, so it is deliberately last.
+Slices 1 and 2 are worth doing on their own merits — at the end of slice 2 a
+cloud session and a laptop session produce the same durable record, which is the
+convergence goal independent of the live path.
 
 ## Open questions
 
@@ -286,6 +323,8 @@ depends on an unverified assumption, so it is deliberately last.
   (`stream_desired = False`)? It would cut chatter substantially, at the cost of
   a colder first paint on attach. Leaning yes, with the tail seeded from durable
   rows on attach — but this is tunable after measurement, not a design fork.
+  Note the spike measured payloads at ~783 bytes, so the raw volume argument is
+  weak; the real cost is the POST per tool call, not the bytes.
 - Does the cloud runner keep stdout parsing at all once hooks land, or is
   `--include-partial-messages` the only reason to read stdout? Resolve when
   token deltas are built.
