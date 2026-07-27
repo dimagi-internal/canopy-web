@@ -34,7 +34,24 @@ export interface Storyboard {
   title: string
   lede: string
   capability: Capability
+  /** True for the people who SENT the link — the only ones shown the notes. */
+  is_member: boolean
   acts: StoryboardAct[]
+}
+
+export interface Note {
+  id: number
+  kind: FeedbackKind
+  body: string
+  suggested_text: string
+  author_name: string
+  channel: string
+  state: string
+  target_kind: string
+  target_ref: string
+  target_version: number | null
+  anchor_id: string
+  created_at: string
 }
 
 export interface LeaveFeedbackIn {
@@ -68,6 +85,11 @@ async function getJson<T>(url: string): Promise<T> {
 
 export function getStoryboard(slug: string, token?: string | null): Promise<Storyboard> {
   return getJson(withToken(`/api/storyboards/${encodeURIComponent(slug)}`, token))
+}
+
+/** What came back. Members only — a 401/404 here just means "not yours". */
+export function getStoryboardNotes(slug: string): Promise<{ items: Note[] }> {
+  return getJson(`/api/storyboards/${encodeURIComponent(slug)}/notes`)
 }
 
 /** Leave a note. Returns the ingest summary; throws with a readable message on 403. */

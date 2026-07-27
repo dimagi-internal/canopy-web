@@ -28,6 +28,7 @@ from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
 from apps.storyboards.schemas import (
     AnonFeedbackIn,
+    NotesOut,
     ShareTokenOut,
     StoryboardIn,
     StoryboardListOut,
@@ -48,6 +49,14 @@ def _member_boards(request: HttpRequest):
     if not request.user.is_authenticated:
         return Storyboard.objects.none()
     return Storyboard.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(request.user))
+
+
+def _is_member(request: HttpRequest, board: Storyboard) -> bool:
+    """One of the people who SENT the link, rather than one it was sent to."""
+    return bool(
+        request.user.is_authenticated
+        and board.workspace_id in wsvc.user_workspace_slugs(request.user)
+    )
 
 
 def _readable_or_404(request: HttpRequest, slug: str) -> Storyboard:
@@ -161,7 +170,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
             workspace_id=workspace_slug,
         )
         _replace_acts(board, payload.acts)
-    return services.resolve_board(board)
+    return services.resolve_board(board, is_member=True)
 
 
 @router.get(
@@ -172,7 +181,8 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
 )
 def get_storyboard(request: HttpRequest, slug: str) -> dict:
     """Anonymous-capable; the handler self-enforces. See the module docstring."""
-    return services.resolve_board(_readable_or_404(request, slug))
+    board = _readable_or_404(request, slug)
+    return services.resolve_board(board, is_member=_is_member(request, board))
 
 
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
@@ -189,7 +199,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
             board.save(update_fields=[*fields, "updated_at"])
         if payload.acts is not None:
             _replace_acts(board, payload.acts)
-    return services.resolve_board(board)
+    return services.resolve_board(board, is_member=True)
 
 
 @router.post(
@@ -267,6 +277,46 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> 
         [item],
         submitted_by=request.user if request.user.is_authenticated else None,
     )
+
+
+@router.get(
+    "/{slug}/notes",
+    response=NotesOut,
+    auth=session_auth,
+    summary="Read the notes left on this board (members only)",
+)
+def list_notes(request: HttpRequest, slug: str) -> dict:
+    """What came back. Members only, and 404 — never 403 — for everyone else.
+
+    Without this the loop had no closing half: a reviewer could leave notes and
+    the people who sent them the link had no way to read them short of curl.
+
+    A token holder must not reach it. Seeing the other reviewers' notes would
+    bias exactly the independent read you asked for, and the rows carry names
+    that were given to us rather than to each other — so this uses
+    ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR
+    token).
+    """
+    board = _owned_or_404(request, slug)
+    return {
+        "items": [
+            {
+                "id": fb.pk,
+                "kind": fb.kind,
+                "body": fb.body,
+                "suggested_text": fb.suggested_text,
+                "author_name": fb.author_name,
+                "channel": fb.channel,
+                "state": fb.state,
+                "target_kind": fb.target_kind,
+                "target_ref": fb.target_ref,
+                "target_version": fb.target_version,
+                "anchor_id": fb.anchor_id,
+                "created_at": fb.created_at.isoformat(),
+            }
+            for fb in services.board_feedback(board)
+        ]
+    }
 
 
 @router.get(

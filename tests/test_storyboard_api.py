@@ -484,3 +484,78 @@ def test_an_empty_note_is_refused_rather_than_silently_stored(board):
               {"body": "   ", "author_name": "Ellyn"})
     assert r.status_code == 422
     assert Feedback.objects.count() == 0
+
+
+# ---------------------------------------------------------------- reading back
+
+
+def _leave(board, **over):
+    t = board.share_token or board.ensure_share_token()
+    return _post(Client(), f"/api/storyboards/{board.slug}/feedback?t={t}", {**COMMENT, **over})
+
+
+def test_a_member_reads_the_notes_left_on_the_board(member, board):
+    """The closing half of the loop. Without it a reviewer could leave notes and
+    the people who sent them the link had no way to read them short of curl."""
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    _leave(board, body="Act one runs long.", anchor_id=board.acts.get().anchor_id)
+    _leave(board, body="This scene is the one.", narrative_slug="verified-monitoring")
+
+    r = member.get(f"/api/storyboards/{board.slug}/notes")
+    assert r.status_code == 200, r.content
+    items = r.json()["items"]
+    assert {i["body"] for i in items} == {"Act one runs long.", "This scene is the one."}
+    assert {i["target_kind"] for i in items} == {"storyboard", "narrative"}
+
+
+def test_a_token_holder_cannot_read_the_notes(board):
+    """A reviewer reading the other reviewers' notes is exactly the bias you were
+    trying to avoid by asking them separately — and the rows carry names given
+    to us, not to each other. The read token grants the board, never this."""
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    t = board.ensure_share_token()
+    _leave(board, body="Something private.")
+
+    r = Client().get(f"/api/storyboards/{board.slug}/notes?t={t}")
+    assert r.status_code in (401, 404)
+    assert b"Something private." not in r.content
+    # And it answers a real board exactly as it answers a fictional one, so the
+    # refusal cannot be used to probe which boards exist.
+    assert r.status_code == Client().get("/api/storyboards/no-such-board/notes").status_code
+
+
+def test_a_non_member_cannot_read_the_notes(outsider, board):
+    c = Client()
+    c.force_login(outsider)
+    assert c.get(f"/api/storyboards/{board.slug}/notes").status_code == 404
+
+
+def test_the_notes_view_does_not_hand_out_author_emails(member, board):
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    _leave(board, author_email="sophie@example.org", body="Reachable elsewhere.")
+    item = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"][0]
+    assert "author_email" not in item
+
+
+def test_notes_from_another_board_do_not_appear(member, board, ws):
+    other = Storyboard.objects.create(slug="other", title="Other", workspace=ws)
+    other.capability = Storyboard.CAP_COMMENT
+    other.save()
+    act = Act.objects.create(storyboard=other, title="Only act", position=0)
+    Entry.objects.create(act=act, narrative_slug="somewhere-else", position=0)
+    _leave(other, body="Belongs to the other board.")
+
+    bodies = [i["body"] for i in member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]]
+    assert "Belongs to the other board." not in bodies
+
+
+def test_the_board_read_tells_a_member_it_is_theirs(member, board):
+    assert member.get(f"/api/storyboards/{board.slug}").json()["is_member"] is True
+
+
+def test_the_board_read_does_not_tell_a_token_holder_that(board):
+    t = board.ensure_share_token()
+    assert Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["is_member"] is False

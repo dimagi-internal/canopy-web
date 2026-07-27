@@ -12,7 +12,7 @@ remove — and ``storyboards`` is product tier, so importing product is legal.
 from __future__ import annotations
 
 from apps.runs import aggregate
-from apps.storyboards.models import Storyboard
+from apps.storyboards.models import Entry, Storyboard
 
 
 # A narrative's stored `title` is derived from the opening of its story, so on a
@@ -65,7 +65,29 @@ def _entry_payload(entry, workspace_slugs: set[str]) -> dict:
     }
 
 
-def resolve_board(board: Storyboard) -> dict:
+def board_feedback(board: Storyboard):
+    """Every note left on this board — the arc itself and the narratives on it.
+
+    Members only, enforced by the caller. A reviewer must not read what other
+    reviewers said: it biases the feedback you asked them for, and the rows
+    carry names and email addresses that were given to us, not to each other.
+    """
+    from django.db.models import Q
+
+    from apps.feedback.models import Feedback
+
+    slugs = list(
+        Entry.objects.filter(act__storyboard=board)
+        .values_list("narrative_slug", flat=True)
+        .distinct()
+    )
+    return Feedback.objects.filter(
+        Q(target_kind="storyboard", target_ref=board.slug)
+        | Q(target_kind="narrative", target_ref__in=slugs)
+    ).order_by("-created_at")
+
+
+def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
     """The read model for the shared page: acts → entries → current release."""
     workspace_slugs = {board.workspace_id}
 
@@ -93,6 +115,8 @@ def resolve_board(board: Storyboard) -> dict:
         "title": board.title,
         "lede": board.lede,
         "capability": board.capability,
+        # The page shows returning notes only to the people who sent the link.
+        "is_member": is_member,
         "acts": acts,
     }
 
