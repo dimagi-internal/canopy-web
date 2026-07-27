@@ -380,3 +380,13 @@ def test_the_reviewer_surface_heading_is_not_a_copy_of_its_own_body(board, ws):
     # One sentence, not the whole narration — the scenes below carry the rest.
     assert body["story"].endswith(".")
     assert len(body["story"]) < len(long_story)
+
+
+def test_an_empty_note_is_refused_rather_than_silently_stored(board):
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    t_ = board.ensure_share_token()
+    r = _post(Client(), f"/api/storyboards/{board.slug}/feedback?t={t_}",
+              {"body": "   ", "author_name": "Ellyn"})
+    assert r.status_code == 422
+    assert Feedback.objects.count() == 0

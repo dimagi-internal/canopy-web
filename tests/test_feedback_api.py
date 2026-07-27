@@ -50,7 +50,7 @@ def test_post_creates_and_is_idempotent(client):
     assert first.json()["created"] == 1
 
     again = client.post("/api/feedback/", _batch(), content_type="application/json")
-    assert again.json() == {"created": 0, "duplicate": 1, "ids": []}
+    assert again.json() == {"created": 0, "duplicate": 1, "empty": 0, "ids": []}
     assert Feedback.objects.count() == 1
 
 
@@ -116,3 +116,29 @@ def test_a_suggestion_round_trips_its_proposed_text(client):
     item = r.json()["items"][0]
     assert item["kind"] == "suggestion"
     assert "QC enumerator" in item["suggested_text"]
+
+
+def test_a_note_with_no_words_is_not_stored(client):
+    """The UI disables its submit button, but the API accepted an empty body and
+    quietly created a row — an agent ingesting a mailbox could fill the pool
+    with blanks that someone then has to triage."""
+    r = client.post(
+        "/api/feedback/",
+        {"items": [{"target_ref": "verified-monitoring", "body": "   ", "channel": "email",
+                    "source_ref": "<blank@mail>"}]},
+        content_type="application/json",
+    )
+    assert r.status_code == 200
+    assert r.json() == {"created": 0, "duplicate": 0, "empty": 1, "ids": []}
+    assert Feedback.objects.count() == 0
+
+
+def test_a_suggestion_counts_as_content_even_with_no_body(client):
+    r = client.post(
+        "/api/feedback/",
+        {"items": [{"target_ref": "verified-monitoring", "kind": "suggestion",
+                    "suggested_text": "Say back-check.", "channel": "email",
+                    "source_ref": "<s@mail>"}]},
+        content_type="application/json",
+    )
+    assert r.json()["created"] == 1

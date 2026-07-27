@@ -3900,6 +3900,11 @@ export interface components {
             readonly created: number;
             /** Duplicate */
             readonly duplicate: number;
+            /**
+             * Empty
+             * @default 0
+             */
+            readonly empty: number;
             /** Ids */
             readonly ids: readonly number[];
         };
