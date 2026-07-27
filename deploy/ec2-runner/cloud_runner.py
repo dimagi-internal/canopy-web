@@ -1094,6 +1094,49 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     return None
 
 
+def _finish_turn(ws, turn_id: str, ok: bool, text: str) -> None:
+    """Finish the turn, falling back to REST when the WebSocket is gone.
+
+    The finish frame used to be a bare `_ws_request`. If the socket had died
+    mid-turn that raised, the exception unwound out of `_claim_and_run_once`,
+    `_drain` logged it as "drain error", and the turn was NEVER FINISHED — it sat
+    EXECUTING until the 900s lease sweep marked it LOST. That is the whole
+    "runner lost the turn (lease expired mid-drill)" story: on a 5-agent drill
+    wave only the ONE turn short enough to dodge a socket death ever logged
+    "finished turn"; the other four were orphaned and reported nothing for 15
+    minutes.
+
+    Why the socket dies: the runner only pongs from inside `ws.recv()`, and
+    during a turn `recv()` is reached only via each `emit()`'s ack — so a turn
+    with a quiet stretch longer than uvicorn's `--ws-ping-timeout` (20s, see the
+    Dockerfile) stops ponging and the server closes the connection. Fixing that
+    is a separate design question; completion must not depend on the socket
+    either way.
+
+    REST finish is idempotent server-side (`api.py::finish_turn` returns early
+    on an already-terminal turn), so this fallback is safe even if the WS finish
+    partially landed.
+    """
+    body = {"status": "done" if ok else "failed", "result_note": text[:2000]}
+    reason = ""
+    try:
+        acked = _ws_request(
+            ws, {"action": "finish", "turn_id": turn_id, **body}, "finish.ack"
+        )
+        if acked is not None:
+            _log(f"finished turn {turn_id[:8]} (WS): {body['status']}")
+            return
+        reason = "no finish.ack (socket closed)"
+    except Exception as exc:
+        reason = f"{exc}"
+    status, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+    if status == 200:
+        _log(f"finished turn {turn_id[:8]} (REST, after ws finish failed: {reason}): {body['status']}")
+    else:
+        _log(f"COULD NOT FINISH turn {turn_id[:8]} (ws: {reason}; REST status={status}) "
+             f"— it will sit EXECUTING until the lease sweep")
+
+
 def _claim_and_run_once(ws, runner_id: str) -> bool:
     """Claim at most one turn and run it. Returns True if a turn was run.
 
@@ -1129,10 +1172,13 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     finally:
         lease_stop.set()  # turn is over (success/failure/exception) — stop renewing
     if cli_session_id:
-        _record_session_resume(runner_id, turn, cli_session_id)
-    _ws_request(ws, {"action": "finish", "turn_id": tid,
-                     "status": "done" if ok else "failed", "result_note": text[:2000]}, "finish.ack")
-    _log(f"finished turn {tid[:8]} (WS): {'done' if ok else 'failed'}")
+        # Never let bookkeeping cost us the finish below — an exception here used
+        # to strand the turn exactly like a dead socket did.
+        try:
+            _record_session_resume(runner_id, turn, cli_session_id)
+        except Exception as exc:
+            _log(f"warn: could not record session resume for {tid[:8]}: {exc}")
+    _finish_turn(ws, tid, ok, text)
     return True
 
 
