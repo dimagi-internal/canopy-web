@@ -129,3 +129,54 @@ def test_a_settings_file_with_a_malformed_hooks_key_is_left_alone(tmp_path):
     p.write_text(json.dumps({"hooks": "not-an-object"}))
     assert hook_install.install(p, port=8787, nonce="a") is False
     assert json.loads(p.read_text())["hooks"] == "not-an-object"
+
+
+# ── counter reporting ───────────────────────────────────────────────────────
+
+def test_hook_counters_are_reported_but_stay_quiet_until_something_fires(caplog):
+    """Without this the live path is unobservable from the runner side — which
+    is exactly the gap that showed up the first time the server logs weren't
+    reachable."""
+    import logging
+
+    from canopy_runner import main as main_mod
+
+    lis, _ = _listener()
+    main_mod._hook_listener = lis
+    main_mod._last_hook_report = 0.0
+    try:
+        clock = [10_000.0]
+        with caplog.at_level(logging.INFO, logger="canopy_runner"):
+            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            assert caplog.text == "", "nothing fired yet — silence is the honest report"
+
+            lis.handle_payload(_payload())
+            lis.handle_payload(_payload(cwd="/not/ours"))
+            clock[0] += main_mod.HOOK_REPORT_SECONDS + 1
+            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+        assert "2 received" in caplog.text
+        assert "1 forwarded" in caplog.text
+        assert "1 dropped" in caplog.text
+    finally:
+        main_mod._hook_listener = None
+
+
+def test_hook_report_is_throttled(caplog):
+    import logging
+
+    from canopy_runner import main as main_mod
+
+    lis, _ = _listener()
+    lis.handle_payload(_payload())
+    main_mod._hook_listener = lis
+    main_mod._last_hook_report = 0.0
+    try:
+        clock = [10_000.0]
+        with caplog.at_level(logging.INFO, logger="canopy_runner"):
+            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            caplog.clear()
+            clock[0] += 5  # well inside the window
+            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+        assert caplog.text == "", "a busy agent must not flood the log"
+    finally:
+        main_mod._hook_listener = None

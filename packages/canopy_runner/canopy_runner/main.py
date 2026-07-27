@@ -470,6 +470,37 @@ _hook_sessions: dict[tuple[str, str], str] = {}
 _hook_listener = None
 
 
+_last_hook_report = 0.0
+# Same cadence as the idle-cycle line: often enough to answer "is it working?"
+# without turning a busy agent into a log flood.
+HOOK_REPORT_SECONDS = 300
+
+
+def _maybe_report_hooks(now_fn=time.monotonic) -> None:
+    """Log what the hook listener has seen.
+
+    Without this the live path is unobservable from the runner side: events are
+    accepted, resolved and forwarded entirely silently, so "is it working?" can
+    only be answered from the server's logs — which is exactly the question you
+    have when you cannot reach them. Counters are cumulative since start.
+    """
+    global _last_hook_report
+    listener = _hook_listener
+    if listener is None:
+        return
+    if now_fn() - _last_hook_report < HOOK_REPORT_SECONDS:
+        return
+    _last_hook_report = now_fn()
+    if listener.received == 0:
+        return  # nothing has fired yet; silence is the honest report
+    logger.info(
+        "hooks: %d received, %d forwarded, %d dropped (cwd not a session we back), "
+        "forwarding=%s",
+        listener.received, listener.forwarded, listener.dropped_unknown_cwd,
+        listener._forward(),
+    )
+
+
 def _resolve_hook_session(cwd: str) -> str:
     """A hook's cwd -> canopy session id, or "" if this isn't a session we back.
 
@@ -708,6 +739,7 @@ def run_once(cfg: Config, client: Client) -> str:
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
+    _maybe_report_hooks()
     _pump_chat_bridges(cfg, client)
     _maybe_report_sessions(cfg, client)
     _sync_session_streams(cfg, client)
