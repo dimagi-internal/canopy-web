@@ -562,7 +562,17 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         ])
     sgroup = groups.session_group(payload.session_id)
     n = 0
+    from apps.canopy_sessions.transcript_noise import is_system_noise
+
     for e in payload.events:
+        # The noise filter has to run HERE too, not just in
+        # persist_transcript_rows. Now that user events fan out live, a filter
+        # applied only on the durable path would drop a harness marker from
+        # history while still pushing it to every watching client — so it would
+        # appear live, then vanish on reload. Same rule, both paths.
+        if e.kind == "user" and is_system_noise((e.payload or {}).get("text", "")):
+            n += 1
+            continue
         # User events ARE fanned out. They used to be withheld on the grounds
         # that "the sender's client already echoed them optimistically" — true
         # for text typed in the web, false for text typed directly into emdash,

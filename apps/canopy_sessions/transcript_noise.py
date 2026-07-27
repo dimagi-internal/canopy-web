@@ -33,6 +33,13 @@ SYSTEM_NOISE_PREFIXES = (
     # pasted them. Found 2026-07-26 in a rebuilt session: 1 noise row in 110,
     # the only prefix the original list missed.
     "base directory for this skill:",
+    # Hitting escape in emdash writes this as a `type: "user"` record, so it
+    # rendered as a message YOU sent — in your own bubble, on your own side of
+    # the chat. You didn't type it; Claude Code did. Two variants observed
+    # across the fleet (81 rows): the bare marker and "…for tool use", both
+    # caught by this prefix. The information it carries — that the turn was
+    # interrupted — is already obvious from the message that follows it.
+    "[request interrupted by user",
 )
 
 
