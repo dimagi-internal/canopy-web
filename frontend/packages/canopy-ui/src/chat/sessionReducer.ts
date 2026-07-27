@@ -51,19 +51,42 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     }
 
     case "chat.user_message": {
-      // Someone typed into emdash. Upsert on turn_index — the transcript
-      // ordinal is stable, so a re-delivery (reconnect catch-up, a retried
-      // post) collapses onto the same row instead of doubling the message.
-      const existing = prev.messages.find(
-        (m) => m.id === frame.data.message_id ||
-          (m.role === "user" && m.turn_index === frame.data.turn_index),
-      );
+      // Someone typed into emdash, OR into this page. Both reach here, and that
+      // is why matching on turn_index alone is not enough: a web send writes its
+      // row at a DENSE index (services._next_index), then the agent reads the
+      // message and the transcript re-ships the same text at a COMPOSITE ordinal
+      // (record * BLOCK_STRIDE + block). Same words, two different indices, two
+      // different ids — so the upsert missed and the message rendered twice
+      // live, while a reload showed it once (get_or_create dedupes server-side).
+      //
+      // Falling back to matching identical text on a recent user row closes it.
+      // Deliberately narrow: same role, same text, and only against the tail, so
+      // a genuine repeat of a short message ("yes") sent much later still lands
+      // as its own row.
+      const RECENT_USER_ROWS = 6;
+      const sameText = (m: Message) =>
+        m.role === "user" &&
+        m.plaintext.trim() !== "" &&
+        m.plaintext.trim() === frame.data.plaintext.trim();
+      const recentUsers = prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS);
+      const existing =
+        prev.messages.find(
+          (m) => m.id === frame.data.message_id ||
+            (m.role === "user" && m.turn_index === frame.data.turn_index),
+        ) ?? recentUsers.find(sameText);
       if (existing) {
         return {
           ...prev,
           messages: prev.messages.map((m) =>
             m === existing
-              ? { ...m, id: frame.data.message_id, plaintext: frame.data.plaintext }
+              ? {
+                  ...m,
+                  id: frame.data.message_id,
+                  // Take the incoming ordinal: the transcript's composite index
+                  // is the durable one, so the row sorts where a reload puts it.
+                  turn_index: frame.data.turn_index,
+                  plaintext: frame.data.plaintext,
+                }
               : m,
           ),
         };
