@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from apps.storyboards.models import Entry, Storyboard
+from apps.storyboards.models import Act, Entry, Storyboard
 from apps.workspaces.models import Workspace
 
 pytestmark = pytest.mark.django_db
@@ -112,3 +112,28 @@ def test_an_entry_without_a_narrative_slug_is_a_loud_error(tmp_path, ws):
 def test_a_missing_file_is_a_loud_error(ws):
     with pytest.raises(CommandError, match="no such file"):
         call_command("import_storyboard", "/nope/storyboard.yaml", workspace="dimagi")
+
+
+def test_re_importing_keeps_the_same_act_anchors(tmp_path, ws):
+    """The import deletes and recreates every act, so an anchor tied to the row
+    id would orphan every act note on each push. Keys must reproduce."""
+    raw = {**BOARD, "acts": [{"title": "Six weeks", "entries": ["a"]}, {"title": "Where it is", "entries": ["b"]}]}
+    path = _write(tmp_path, raw)
+
+    call_command("import_storyboard", path, workspace="dimagi")
+    before = list(Act.objects.order_by("position").values_list("key", flat=True))
+    pks = set(Act.objects.values_list("pk", flat=True))
+
+    call_command("import_storyboard", path, workspace="dimagi")
+    assert list(Act.objects.order_by("position").values_list("key", flat=True)) == before
+    assert not (pks & set(Act.objects.values_list("pk", flat=True))), "rows were replaced"
+
+
+def test_a_declared_key_survives_a_retitle_in_the_file(tmp_path, ws):
+    first = {**BOARD, "acts": [{"key": "supply-base", "title": "Six weeks", "entries": ["a"]}]}
+    call_command("import_storyboard", _write(tmp_path, first), workspace="dimagi")
+    second = {**BOARD, "acts": [{"key": "supply-base", "title": "What six weeks bought", "entries": ["a"]}]}
+    call_command("import_storyboard", _write(tmp_path, second), workspace="dimagi")
+
+    act = Act.objects.get()
+    assert (act.key, act.title) == ("supply-base", "What six weeks bought")

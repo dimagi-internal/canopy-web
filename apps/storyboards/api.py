@@ -24,6 +24,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.feedback import services as feedback_services
 from apps.storyboards import services
+from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
 from apps.storyboards.schemas import (
     AnonFeedbackIn,
@@ -104,9 +105,14 @@ def _replace_acts(board: Storyboard, acts) -> None:
     the UI cannot drift apart.
     """
     board.acts.all().delete()
+    taken: set[str] = set()
     for a_pos, act_in in enumerate(acts):
         act = Act.objects.create(
-            storyboard=board, title=act_in.title, prose=act_in.prose, position=a_pos
+            storyboard=board,
+            key=act_key(act_in.key, act_in.title, a_pos, taken),
+            title=act_in.title,
+            prose=act_in.prose,
+            position=a_pos,
         )
         for e_pos, entry_in in enumerate(act_in.entries):
             Entry.objects.create(

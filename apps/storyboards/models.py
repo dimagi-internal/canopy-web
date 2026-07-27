@@ -109,6 +109,19 @@ class Act(models.Model):
     """One act of the arc: a title, connective prose, and ordered entries."""
 
     storyboard = models.ForeignKey(Storyboard, on_delete=models.CASCADE, related_name="acts")
+    key = models.SlugField(max_length=120, blank=True, default="")
+    """What act-level feedback anchors to — and the reason it is not the pk.
+
+    Both write paths (the import command and ``PATCH /storyboards/{slug}``)
+    replace acts WHOLESALE: ``board.acts.all().delete()`` then recreate, because
+    reordering an arc is a rewrite, not a diff. So a row id lives exactly as
+    long as the next re-import, and anchoring feedback to it would orphan every
+    act note the first time the file was pushed again.
+
+    Derived from the title when the author does not declare one, which is
+    stable across a re-import that changes nothing. An author who reworders a
+    title and wants the existing notes to follow declares ``key:`` in the
+    storyboard YAML — identity is stated, never guessed."""
     title = models.CharField(max_length=300)
     prose = models.TextField(blank=True, default="")
     """The connective tissue — why this act follows the last one. This is the
@@ -117,6 +130,33 @@ class Act(models.Model):
 
     class Meta:
         ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["storyboard", "key"], name="uniq_act_storyboard_key"
+            ),
+        ]
+
+    @property
+    def anchor_id(self) -> str:
+        """What a note left on this act records."""
+        return f"act:{self.key}"
+
+    def save(self, *args, **kwargs):
+        """Derive a key when none was given, so no write path can create an
+        anchorless act. The batch paths pass one explicitly (they need the whole
+        arc's keys to be deterministic); this covers everything else."""
+        if not self.key:
+            from apps.storyboards.act_keys import act_key
+
+            taken = set(
+                Act.objects.filter(storyboard_id=self.storyboard_id)
+                .exclude(pk=self.pk)
+                .values_list("key", flat=True)
+            )
+            self.key = act_key("", self.title, self.position, taken)
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = [*kwargs["update_fields"], "key"]
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:  # pragma: no cover
         return f"act:{self.storyboard_id}:{self.position}:{self.title[:40]}"
