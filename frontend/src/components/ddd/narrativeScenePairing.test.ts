@@ -65,3 +65,49 @@ describe('pairNarrationScenes', () => {
     expect(pairs[1].status).toBe('changed')
   })
 })
+
+describe('legacy histories whose ids were derived from titles', () => {
+  // Real ids from verified-monitoring on labs, 2026-07-26. The author reworded
+  // every scene title between v16 and v17, and because pre-L0 ids were derived
+  // from the title, ZERO of six ids overlap — so id-matching reported six
+  // "New" scenes and no before/after, on the one narrative a domain expert had
+  // just iterated. This is the case the positional fallback exists for.
+  const v16 = [
+    { id: 'the-survey-verifies-the-program-now-maya-verifies-the-survey', text: 'Old beat one.' },
+    { id: 'the-gap-is-real-where-delivery-happened-vs-where-the-survey-checked', text: 'Old beat two.' },
+    { id: 'the-per-surveyor-scorecard-flags-a-surveyor-and-holds-the-work', text: 'Old beat three.' },
+    { id: 'the-independent-back-check-the-answers-don-t-match', text: 'Old beat four.' },
+    { id: 'the-distribution-signals-warning-signs-held-for-investigation', text: 'Old beat five.' },
+  ]
+  const v17 = [
+    { id: 'the-goal-independent-drillable-proof-the-program-works', text: 'Old beat one.' },
+    { id: 'six-bi-monthly-rounds-over-time-the-gap-holds', text: 'NEW beat two.' },
+    { id: 'where-delivery-happened-vs-where-the-survey-checked-the-map-moves', text: 'Old beat three.' },
+    { id: 'the-per-surveyor-quality-scorecard-catches-a-surveyor', text: 'NEW beat four.' },
+    { id: 'the-independent-back-check-confirms-it', text: 'Old beat five.' },
+    { id: 'gps-is-clean-the-distributions-screen-catches-the-fabrication', text: 'A genuinely new sixth beat.' },
+  ]
+
+  it('pairs positionally when no id is shared, instead of reporting all-new', () => {
+    const pairs = pairNarrationScenes(v16, v17)
+    expect(pairs.map((p) => p.status)).toEqual([
+      'unchanged', 'changed', 'unchanged', 'changed', 'unchanged', 'added',
+    ])
+    expect(pairs[1].before).toBe('Old beat two.')
+    expect(pairs[1].after).toBe('NEW beat two.')
+  })
+
+  it('still matches on id when the ids ARE comparable (post-L0 work)', () => {
+    const before = [{ id: 'the-goal', text: 'Was.' }, { id: 'the-proof', text: 'Same.' }]
+    const after = [{ id: 'the-proof', text: 'Same.' }, { id: 'the-goal', text: 'Now.' }]
+    const pairs = pairNarrationScenes(before, after)
+    // Reorder-safe: matched by id, not position.
+    expect(pairs.find((p) => p.id === 'the-goal')?.status).toBe('changed')
+    expect(pairs.find((p) => p.id === 'the-proof')?.status).toBe('unchanged')
+  })
+
+  it('does not fall back when one side is empty (a first version stays all-new)', () => {
+    const pairs = pairNarrationScenes([], [{ id: 'a', text: 'First ever.' }])
+    expect(pairs.map((p) => p.status)).toEqual(['added'])
+  })
+})
