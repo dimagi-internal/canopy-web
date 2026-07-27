@@ -7,10 +7,29 @@ import * as api from '@/api/storyboards'
 
 vi.mock('@/api/storyboards', async () => {
   const actual = await vi.importActual<typeof api>('@/api/storyboards')
-  return { ...actual, getStoryboard: vi.fn(), leaveFeedback: vi.fn() }
+  return { ...actual, getStoryboard: vi.fn(), leaveFeedback: vi.fn(), getStoryboardNotes: vi.fn() }
 })
 
 const getStoryboard = api.getStoryboard as unknown as ReturnType<typeof vi.fn>
+const getStoryboardNotes = api.getStoryboardNotes as unknown as ReturnType<typeof vi.fn>
+
+function note(over: Partial<api.Note> = {}): api.Note {
+  return {
+    id: 1,
+    kind: 'comment',
+    body: 'Act one runs long.',
+    suggested_text: '',
+    author_name: 'Sophie',
+    channel: 'web',
+    state: 'open',
+    target_kind: 'storyboard',
+    target_ref: 'ecf-supply',
+    target_version: null,
+    anchor_id: 'act:supply-base',
+    created_at: '2026-07-26T10:00:00Z',
+    ...over,
+  }
+}
 
 function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
   return {
@@ -18,9 +37,10 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
     title: 'What the money bought',
     lede: 'From the first purchase order to the child who recovered.',
     capability: 'read',
+    is_member: false,
     acts: [
       {
-        anchor_id: 'act:1',
+        anchor_id: 'act:supply-base',
         title: 'Six weeks to a supply base',
         prose: 'Procurement integrity you can show.',
         entries: [
@@ -51,7 +71,10 @@ function renderAt(url = '/storyboard/ecf-supply?t=tok') {
 }
 
 describe('StoryboardPage', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getStoryboardNotes.mockResolvedValue({ items: [] })
+  })
   afterEach(cleanup)
 
   it('renders the arc with acts numbered', async () => {
@@ -129,7 +152,7 @@ describe('StoryboardPage', () => {
     fireEvent.click(screen.getByText('Leave note'))
 
     await waitFor(() => expect(leaveFeedback).toHaveBeenCalled())
-    expect(leaveFeedback.mock.calls[0][1].anchor_id).toBe('act:1')
+    expect(leaveFeedback.mock.calls[0][1].anchor_id).toBe('act:supply-base')
   })
 
   it('shows a plain not-available message on 404 rather than an error dump', async () => {
@@ -145,6 +168,81 @@ describe('StoryboardPage', () => {
     renderAt()
     await screen.findByText('What the money bought')
     expect(document.title).toContain('What the money bought')
+  })
+
+  describe('the notes that came back', () => {
+    it('are not fetched at all for someone holding the link', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: false }))
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(getStoryboardNotes).not.toHaveBeenCalled()
+    })
+
+    it('never render a reviewer another reviewer’s words', async () => {
+      // The fetch 401s for a non-member anyway; this is the second lock.
+      getStoryboard.mockResolvedValue(board({ is_member: false }))
+      getStoryboardNotes.mockResolvedValue({ items: [note()] })
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText('Act one runs long.')).toBeNull()
+    })
+
+    it('appear under the act they were left on', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: true }))
+      getStoryboardNotes.mockResolvedValue({ items: [note()] })
+      renderAt()
+      expect(await screen.findByText('Act one runs long.')).toBeTruthy()
+      expect(screen.getByText('Sophie')).toBeTruthy()
+    })
+
+    it('appear under the demo they were left on', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: true }))
+      getStoryboardNotes.mockResolvedValue({
+        items: [
+          note({
+            id: 2,
+            target_kind: 'narrative',
+            target_ref: 'procurement',
+            target_version: 4,
+            anchor_id: 'the-goal',
+            body: 'Amina would not say it that way.',
+          }),
+        ],
+      })
+      renderAt()
+      expect(await screen.findByText('Amina would not say it that way.')).toBeTruthy()
+      // The version it was left against, alongside the card's own version chip.
+      expect(screen.getAllByText('v4')).toHaveLength(2)
+    })
+
+    it('collect board-wide notes rather than dropping them', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: true }))
+      getStoryboardNotes.mockResolvedValue({
+        items: [note({ id: 3, anchor_id: '', body: 'The whole arc is too long.' })],
+      })
+      renderAt()
+      expect(await screen.findByText('On the arc as a whole')).toBeTruthy()
+      expect(screen.getByText('The whole arc is too long.')).toBeTruthy()
+    })
+
+    it('show a suggestion’s proposed wording, which lives in another field', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: true }))
+      getStoryboardNotes.mockResolvedValue({
+        items: [
+          note({ id: 4, kind: 'suggestion', body: '', suggested_text: '…a QC re-visit.' }),
+        ],
+      })
+      renderAt()
+      expect(await screen.findByText('…a QC re-visit.')).toBeTruthy()
+      expect(screen.getByText('Suggested wording')).toBeTruthy()
+    })
+
+    it('say nothing at all when none have come back', async () => {
+      getStoryboard.mockResolvedValue(board({ is_member: true }))
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText(/notes? back/)).toBeNull()
+    })
   })
 
   it('gives each demo video an accessible name', async () => {

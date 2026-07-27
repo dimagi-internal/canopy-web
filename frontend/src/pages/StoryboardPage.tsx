@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
-import { getStoryboard, leaveFeedback, type Storyboard } from '@/api/storyboards'
+import {
+  getStoryboard,
+  getStoryboardNotes,
+  leaveFeedback,
+  type Note,
+  type Storyboard,
+} from '@/api/storyboards'
 import { withBase } from '@/lib/basePath'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
+import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 
 /**
  * The shared arc — several DDD narratives, in acts, as one link.
@@ -90,6 +97,23 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
     document.title = `${board.title} · Canopy`
   }, [board.title])
 
+  // The closing half of the loop: the people who sent this link open the same
+  // page to read what came back, in place. Reviewers never see it — the fetch
+  // is only made for members and 401s for anyone else regardless.
+  const [notes, setNotes] = useState<Note[]>([])
+  useEffect(() => {
+    if (!board.is_member) return
+    let live = true
+    getStoryboardNotes(board.slug)
+      .then((r) => live && setNotes(r.items))
+      .catch(() => undefined) // Nothing to read is not an error worth shouting.
+    return () => {
+      live = false
+    }
+  }, [board.is_member, board.slug])
+
+  const grouped = groupNotes(notes)
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
@@ -130,8 +154,16 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
             </div>
 
             {act.entries.map((entry) => (
-              <EntryCard key={entry.narrative_slug} entry={entry} board={board} token={token} />
+              <EntryCard
+                key={entry.narrative_slug}
+                entry={entry}
+                board={board}
+                token={token}
+                notes={grouped.byNarrative.get(entry.narrative_slug) ?? []}
+              />
             ))}
+
+            <NotesReturned notes={grouped.byAnchor.get(act.anchor_id) ?? []} />
 
             <NoteComposer
               capability={board.capability}
@@ -142,6 +174,17 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
             />
           </section>
         ))}
+
+        {grouped.loose.length > 0 && (
+          <section className="mt-11 flex flex-col gap-4">
+            <div className="border-b border-border pb-3">
+              <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
+                On the arc as a whole
+              </h2>
+            </div>
+            <NotesReturned notes={grouped.loose} />
+          </section>
+        )}
 
         <footer className="mt-16 flex items-center justify-between border-t border-border pt-6 text-[11px] text-muted-foreground">
           <span>
@@ -157,10 +200,12 @@ function EntryCard({
   entry,
   board,
   token,
+  notes,
 }: {
   entry: Storyboard['acts'][number]['entries'][number]
   board: Storyboard
   token: string | null
+  notes: Note[]
 }) {
   return (
     <article className="grid grid-cols-1 gap-4 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-[168px_1fr]">
@@ -212,6 +257,8 @@ function EntryCard({
             </span>
           )}
         </div>
+
+        <NotesReturned notes={notes} />
 
         {entry.published && (
           <NoteComposer

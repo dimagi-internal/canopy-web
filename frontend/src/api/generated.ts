@@ -673,6 +673,35 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/notes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read the notes left on this board (members only)
+         * @description What came back. Members only, and 404 — never 403 — for everyone else.
+         *
+         *     Without this the loop had no closing half: a reviewer could leave notes and
+         *     the people who sent them the link had no way to read them short of curl.
+         *
+         *     A token holder must not reach it. Seeing the other reviewers' notes would
+         *     bias exactly the independent read you asked for, and the rows carry names
+         *     that were given to us rather than to each other — so this uses
+         *     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR
+         *     token).
+         */
+        readonly get: operations["apps_storyboards_api_list_notes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/narratives/{narrative_slug}": {
         readonly parameters: {
             readonly query?: never;
@@ -4084,6 +4113,11 @@ export interface components {
             readonly lede: string;
             /** Capability */
             readonly capability: string;
+            /**
+             * Is Member
+             * @default false
+             */
+            readonly is_member: boolean;
             /** Acts */
             readonly acts: readonly components["schemas"]["ActOut"][];
         };
@@ -4207,6 +4241,43 @@ export interface components {
              * @default
              */
             readonly author_email: string;
+        };
+        /**
+         * NoteOut
+         * @description One note as its recipients read it. No `author_email`, `submitted_by` or
+         *     `source_ref`: this view answers "what did they say", and the full record is
+         *     `/api/feedback/`.
+         */
+        readonly NoteOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Channel */
+            readonly channel: string;
+            /** State */
+            readonly state: string;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Created At */
+            readonly created_at: string;
+        };
+        /** NotesOut */
+        readonly NotesOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["NoteOut"][];
         };
         /** NarrationItemOut */
         readonly NarrationItemOut: {
@@ -9179,6 +9250,28 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly apps_storyboards_api_list_notes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NotesOut"];
                 };
             };
         };

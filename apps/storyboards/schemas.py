@@ -32,7 +32,34 @@ class StoryboardOut(StrictModel):
     title: str
     lede: str
     capability: str
+    is_member: bool = False
+    """True when the caller belongs to the owning workspace — i.e. is one of the
+    people who SENT this link, not one of the people it was sent to. The only
+    thing it changes is whether returning notes are shown."""
     acts: list[ActOut]
+
+
+class NoteOut(StrictModel):
+    """One note as its recipients read it. No `author_email`, `submitted_by` or
+    `source_ref`: this view answers "what did they say", and the full record is
+    `/api/feedback/`."""
+
+    id: int
+    kind: str
+    body: str
+    suggested_text: str
+    author_name: str
+    channel: str
+    state: str
+    target_kind: str
+    target_ref: str
+    target_version: int | None
+    anchor_id: str
+    created_at: str
+
+
+class NotesOut(StrictModel):
+    items: list[NoteOut]
 
 
 class StoryboardListItemOut(StrictModel):
