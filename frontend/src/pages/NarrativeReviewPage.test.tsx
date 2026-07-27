@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import NarrativeReviewPage from './NarrativeReviewPage'
+import * as api from '@/api/storyboards'
+
+vi.mock('@/api/storyboards', async () => {
+  const actual = await vi.importActual<typeof api>('@/api/storyboards')
+  return { ...actual, leaveFeedback: vi.fn() }
+})
+
+const leaveFeedback = api.leaveFeedback as unknown as ReturnType<typeof vi.fn>
 
 /**
  * The banner tells a reviewer what moved since they last read the narrative.
@@ -43,6 +51,8 @@ function renderPage() {
 
 describe('NarrativeReviewPage', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    leaveFeedback.mockResolvedValue({ created: 1 })
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => payload() }),
@@ -90,6 +100,72 @@ describe('NarrativeReviewPage', () => {
     await screen.findByText(/1 scene reworded/)
     expect(document.title).toContain('Verified Monitoring')
     expect(document.title).toContain('Proving a programme works')
+  })
+
+  /**
+   * A cut scene is history — it is not in the narrative being read. Numbering
+   * it alongside the others made the scene after it read one higher than it is,
+   * and made the footer promise more scenes than the story has.
+   */
+  describe('a cut scene', () => {
+    const withACut = () =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () =>
+            payload({
+              previous_narration: [
+                { id: 'a', title: 'One', text: 'Kept.' },
+                { id: 'gone', title: 'Dropped', text: 'This beat was removed.' },
+                { id: 'b', title: 'Two', text: 'Also kept.' },
+              ],
+              narration: [
+                { id: 'a', title: 'One', text: 'Kept.' },
+                { id: 'b', title: 'Two', text: 'Also kept.' },
+              ],
+            }),
+        }),
+      )
+
+    it('is not numbered among the scenes that remain', async () => {
+      withACut()
+      const { container } = renderPage()
+      await screen.findByText(/1 cut/)
+      const numbers = [...container.querySelectorAll('section span.font-mono')].map(
+        (n) => n.textContent,
+      )
+      expect(numbers).toEqual(['01', '02', '—'])
+    })
+
+    it('is not counted as a scene of the current narrative', async () => {
+      withACut()
+      renderPage()
+      await screen.findByText(/1 cut/)
+      expect(screen.getByText(/2 scenes/)).toBeTruthy()
+    })
+
+    it('is not badged as if it were new', async () => {
+      withACut()
+      renderPage()
+      expect(await screen.findByText(/Cut since v16/)).toBeTruthy()
+    })
+
+    it('files a note against the version the scene actually exists in', async () => {
+      withACut()
+      renderPage()
+      fireEvent.click(await screen.findByText('Leave a note on the cut scene'))
+      fireEvent.change(screen.getByPlaceholderText(/What’s wrong/), {
+        target: { value: 'Put this back.' },
+      })
+      fireEvent.click(screen.getByText('Leave note'))
+      await waitFor(() => expect(leaveFeedback).toHaveBeenCalled())
+      expect(leaveFeedback.mock.calls[0][1]).toMatchObject({
+        anchor_id: 'gone',
+        target_version: 16,
+      })
+    })
   })
 
   it('shows a plain message rather than an error dump on 404', async () => {
