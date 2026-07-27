@@ -62,6 +62,10 @@ export interface Participant {
 
 export interface SessionState {
   messages: Message[];
+  /** Live agent activity, from the runner's turn-boundary hooks. Undefined when
+   *  no hook has reported yet — the caller then falls back to the server's
+   *  coarser `running` flag. */
+  activity?: "working" | "idle";
   active_draft: Draft | null;
   participants: Participant[];
   presence_user_ids: number[];
@@ -85,6 +89,9 @@ export type WsEvent =
   | { event: "session.error"; data: { code: string; message: string; detail?: unknown } }
   | { event: "session.title_updated"; data: { title: string } }
   | { event: "chat.stream_start"; data: { message_id: string; turn_index: number } }
+  // The agent started or finished a turn. Distinct from tool events: it fires
+  // while Claude is THINKING, before any content exists to show.
+  | { event: "session.activity"; data: { state: "working" | "idle" } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }

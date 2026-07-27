@@ -70,9 +70,28 @@ def test_a_failing_transport_never_raises_at_the_hook():
     assert lis.handle_payload(_payload()) == "error"   # not an exception
 
 
-def test_non_tool_events_are_ignored():
+def test_a_truly_unrelated_event_is_ignored():
     lis, sent = _listener()
-    assert lis.handle_payload(_payload(hook_event_name="Stop")) == "ignored"
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "ignored"
+    assert sent == []
+
+
+def test_turn_boundaries_report_working_and_idle():
+    """The gap the tool events could not cover: between submitting a prompt and
+    the first tool call, Claude is THINKING and emits nothing, so the session
+    read as idle for the most interesting part of a turn."""
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload(hook_event_name="UserPromptSubmit")) == "activity:working"
+    assert lis.handle_payload(_payload(hook_event_name="Stop")) == "activity:idle"
+    assert [e[1][0]["kind"] for e in sent] == ["activity:working", "activity:idle"]
+    # State transitions, never persisted.
+    assert all(e[1][0]["index"] == -1 for e in sent)
+
+
+def test_activity_for_an_unknown_cwd_is_dropped_too():
+    lis, sent = _listener()
+    assert lis.handle_payload(
+        _payload(hook_event_name="UserPromptSubmit", cwd="/elsewhere")) == "unknown-cwd"
     assert sent == []
 
 
@@ -235,7 +254,8 @@ def test_install_covers_both_halves_of_the_lifecycle(tmp_path):
     p = tmp_path / "settings.json"
     hook_install.install(p, port=8787, nonce="a")
     hooks = json.loads(p.read_text())["hooks"]
-    assert set(hook_install.HOOK_EVENTS) == {"PreToolUse", "PostToolUse"}
+    assert set(hook_install.HOOK_EVENTS) == {
+        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
     for event in hook_install.HOOK_EVENTS:
         assert any(hook_install.MARKER in h["command"]
                    for e in hooks[event] for h in e["hooks"]), event

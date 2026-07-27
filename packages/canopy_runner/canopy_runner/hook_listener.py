@@ -31,7 +31,7 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from canopy_transcript import events_for_hook
+from canopy_transcript import activity_for_hook, events_for_hook
 
 logger = logging.getLogger("canopy_runner.hooks")
 
@@ -65,6 +65,22 @@ class HookListener:
         and tests. Never raises — the caller must answer 200 regardless."""
         self.received += 1
         try:
+            activity = activity_for_hook(payload)
+            if activity is not None:
+                cwd = payload.get("cwd") or ""
+                session_id = self._resolve_session(cwd)
+                if not session_id:
+                    self.dropped_unknown_cwd += 1
+                    return "unknown-cwd"
+                if not self._forward():
+                    return "not-forwarding"
+                # A state transition, not a chat row: index -1 so it is never
+                # persisted, and a dedicated kind the server maps to a status
+                # frame rather than a message.
+                self._send(session_id, [{"kind": f"activity:{activity}",
+                                         "seq": -1, "index": -1, "payload": {}}])
+                self.forwarded += 1
+                return f"activity:{activity}"
             events = events_for_hook(payload)
             if not events:
                 return "ignored"          # not a forwarded event kind

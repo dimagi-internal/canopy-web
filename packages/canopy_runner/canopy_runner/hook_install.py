@@ -34,7 +34,14 @@ logger = logging.getLogger("canopy_runner.hooks")
 # Safe despite PreToolUse being able to block a tool call: our hook is
 # fire-and-forget with a hard 2s cap and never returns a decision, so it has no
 # mechanism to deny or stall one.
-HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+# Tool lifecycle plus turn boundaries. UserPromptSubmit/Stop are what make a
+# session read as WORKING before its first tool call — while Claude is thinking,
+# nothing else fires at all.
+#
+# emdash also hooks UserPromptSubmit and Stop, at PROJECT level, pointing at its
+# own port. Both run: Claude Code executes every matching hook, and ours is
+# additive rather than a replacement.
+HOOK_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 # Marks the entry as ours so install/remove are idempotent and we never touch
 # a hook somebody else put there.
 MARKER = "canopy-hook-listener"

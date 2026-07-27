@@ -408,17 +408,29 @@ export function ChatPage() {
     </div>
   )
 
+  // undefined = no hook has reported for this session yet, so defer to the
+  // server's coarser flag rather than asserting idle.
+  const liveWorking =
+    socket.state.activity === undefined
+      ? undefined
+      : socket.state.activity === "working";
   const title = meta?.title?.trim() || 'Chat'
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
         <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
-        {/* Running/idle indicator, from the unified session's liveness fields. */}
-        {meta?.running ? (
+        {/* Live agent activity beats the server's liveness fields when a hook has
+            reported. `meta.running` derives from the runner's session report —
+            emdash's own last_interacted_at, on a report cycle with a 120s window
+            — so it could not show "working" during the part of a turn where
+            Claude is thinking and nothing has been output yet. The hook fires the
+            instant the turn starts. Falls back to `meta.running` when no hook has
+            spoken (an older runner, or forwarding off). */}
+        {(liveWorking ?? meta?.running) ? (
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-            running{meta.runner_name ? ` · ${meta.runner_name}` : ''}
+            running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
         ) : meta?.runner_name ? (
           <span className="shrink-0 text-[12px] text-muted-foreground">
