@@ -1318,6 +1318,21 @@ def replace_reported_sessions(
             binding.thread_key = f"emdash:{s.emdash_task}"
             binding.host = runner.host
         else:
+            # Correct a GENERATED title on an existing session. A brand-new
+            # session above is titled from the emdash task, but an existing one
+            # never was — so a session created on the phone kept its autotitle
+            # (the first user message, truncated) forever, while emdash's own
+            # sidebar showed the task name. The first fix went into
+            # `record_session`, which only runs when a TURN is routed; this is
+            # the path that runs every ~10s, which is why the repair never
+            # actually happened (observed 2026-07-27, after shipping it).
+            #
+            # `_title_is_derived` recognises only titles WE generated, so a title
+            # a human chose is still never touched.
+            if _title_is_derived(binding.session, binding.thread_key or ""):
+                if binding.session.title != s.emdash_task:
+                    binding.session.title = s.emdash_task[:200]
+                    binding.session.save(update_fields=["title"])
             # thread_key/host are the binding's durable IDENTITY. NEVER overwrite a
             # non-empty one — an existing binding may be owned by an agent/phone
             # thread (record_session) and this report loop must not steal it (see
