@@ -106,10 +106,43 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       };
 
     case "chat.tool_use":
-    case "chat.tool_result":
-      // Tool rows are their own Message rows on the server. A full
-      // refresh picks them up; for now, don't duplicate bookkeeping here.
-      return prev;
+    case "chat.tool_result": {
+      // Tool rows are real Message rows on the server; these frames are the
+      // same row arriving live. Upsert by id so a re-delivery (reconnect
+      // catch-up, a retried post) updates in place instead of doubling the
+      // row — and so a tool_result that lands twice can't orphan its pair.
+      const role = frame.event === "chat.tool_use" ? "tool_use" : "tool_result";
+      const block = frame.data.block ?? {};
+      const plaintext = typeof block.text === "string" ? block.text : "";
+      const id = frame.data.tool_message_id;
+      const existing = prev.messages.find((m) => m.id === id);
+      if (existing) {
+        return {
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m.id === id ? { ...m, content: block, plaintext } : m,
+          ),
+        };
+      }
+      const nowIso = new Date().toISOString();
+      const message: Message = {
+        id,
+        // Fall back to appending after the newest row when the server didn't
+        // send an ordinal — order still holds, since frames arrive in order.
+        turn_index:
+          frame.data.turn_index ??
+          (prev.messages[prev.messages.length - 1]?.turn_index ?? 0) + 1,
+        role,
+        content: block,
+        plaintext,
+        status: block.is_error === true ? "error" : "complete",
+        error_detail: null,
+        started_at: nowIso,
+        completed_at: nowIso,
+        created_at: nowIso,
+      };
+      return { ...prev, messages: [...prev.messages, message] };
+    }
 
     case "draft.updated": {
       const incoming = frame.data as Draft;

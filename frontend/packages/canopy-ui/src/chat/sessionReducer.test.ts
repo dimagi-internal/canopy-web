@@ -122,13 +122,86 @@ describe("sessionReducer — chat stream", () => {
     expect(next.messages[0].error_detail).toMatch(/142/)
   })
 
-  it("chat.tool_use is a no-op", () => {
+  it("chat.tool_use appends a tool row carrying the block as its content", () => {
+    // The block IS the content the UI pairs and renders on — dropping the
+    // frame (the old no-op) meant a running agent's tool calls only appeared
+    // after a manual reload, which is precisely when you want to see them.
     const prev = makeState({ messages: [makeMessage()] })
+    const next = sessionReducer(prev, {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:64",
+        turn_index: 64,
+        block: { id: "toolu_1", name: "Bash", input: { command: "ls" }, text: "" },
+      },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(2)
+    const row = next.messages[1]
+    expect(row.role).toBe("tool_use")
+    expect(row.id).toBe("seq:64")
+    expect(row.turn_index).toBe(64)
+    expect(row.content).toEqual({
+      id: "toolu_1",
+      name: "Bash",
+      input: { command: "ls" },
+      text: "",
+    })
+  })
+
+  it("chat.tool_result carries the result body as plaintext", () => {
+    const prev = makeState({ messages: [] })
+    const next = sessionReducer(prev, {
+      event: "chat.tool_result",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:128",
+        turn_index: 128,
+        block: { tool_use_id: "toolu_1", is_error: false, text: "a.txt" },
+      },
+    } as WsEvent)
+    expect(next.messages[0].role).toBe("tool_result")
+    expect(next.messages[0].plaintext).toBe("a.txt")
+    expect(next.messages[0].status).toBe("complete")
+  })
+
+  it("a failed tool result is marked error so the pair renders as one", () => {
+    const next = sessionReducer(makeState(), {
+      event: "chat.tool_result",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:128",
+        turn_index: 128,
+        block: { tool_use_id: "toolu_1", is_error: true, text: "boom" },
+      },
+    } as WsEvent)
+    expect(next.messages[0].status).toBe("error")
+  })
+
+  it("a re-delivered tool frame upserts instead of doubling the row", () => {
+    // Reconnect catch-up and a retried post both re-ship rows; a duplicated
+    // tool_use would leave one copy permanently stuck showing "running…".
+    const frame = {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:64",
+        turn_index: 64,
+        block: { id: "toolu_1", name: "Bash", input: {}, text: "" },
+      },
+    } as WsEvent
+    const once = sessionReducer(makeState(), frame)
+    const twice = sessionReducer(once, frame)
+    expect(twice.messages).toHaveLength(1)
+  })
+
+  it("a tool frame without an ordinal still lands after the newest row", () => {
+    const prev = makeState({ messages: [makeMessage({ turn_index: 7 })] })
     const next = sessionReducer(prev, {
       event: "chat.tool_use",
       data: { parent_message_id: null, tool_message_id: "t1", block: {} },
     } as WsEvent)
-    expect(next).toBe(prev)
+    expect(next.messages[1].turn_index).toBe(8)
   })
 })
 

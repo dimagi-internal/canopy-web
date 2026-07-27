@@ -146,3 +146,58 @@ def test_a_runner_not_declaring_a_project_does_not_claim_it():
     )
 
     assert services.claim_next_turn(runner) is None
+
+
+def test_an_executing_project_turn_does_not_block_every_agent_turn():
+    """The NULL-in-NOT-IN trap: an EXECUTING *project* turn has agent_id NULL, so
+    `busy_agents` contained NULL and `.exclude(agent_id__in=busy_agents)` became
+    `NOT IN (..., NULL)` — never TRUE in SQL, which silently discarded EVERY
+    candidate. One running repo turn made the runner claim nothing at all.
+
+    Observed on the cloud runner: a drill sat QUEUED and pinned for 40+ minutes
+    while the runner was online and heartbeating, and `POST /claim` returned 204,
+    because two canopy-web project turns happened to be executing.
+
+    The identical trap is already documented and guarded for `busy_sessions` a few
+    lines below; it was simply never applied to `busy_agents`.
+    """
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, workspace=ws)
+    agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+
+    # A repo turn already executing on this runner (agent_id IS NULL).
+    Turn.objects.create(
+        project="canopy-web", workspace=ws, origin="api", prompt="repo work",
+        idempotency_key="busy-project-turn", status=Turn.RUNNING,
+        claimed_by=runner, claimed_at=timezone.now(),
+    )
+    # An unrelated agent turn, pinned to this very runner (a drill).
+    queued = Turn.objects.create(
+        agent=agent, workspace=ws, origin="drill", prompt="readiness drill",
+        idempotency_key="drill-hal-1", status=Turn.QUEUED, pinned_runner=runner,
+    )
+
+    got = services.claim_next_turn(runner)
+    assert got is not None, "an executing PROJECT turn must not block agent turns"
+    assert got.pk == queued.pk
+
+
+def test_an_executing_agent_turn_still_blocks_that_same_agent():
+    """The real constraint must survive the fix: one executing turn per agent."""
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, workspace=ws)
+    agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+
+    Turn.objects.create(
+        agent=agent, workspace=ws, origin="api", prompt="already running",
+        idempotency_key="hal-running", status=Turn.RUNNING,
+        claimed_by=runner, claimed_at=timezone.now(),
+    )
+    Turn.objects.create(
+        agent=agent, workspace=ws, origin="drill", prompt="second",
+        idempotency_key="hal-second", status=Turn.QUEUED, pinned_runner=runner,
+    )
+
+    assert services.claim_next_turn(runner) is None

@@ -72,7 +72,18 @@ def test_stranger_enqueueing_for_someone_elses_agent_gets_404(stranger_client, a
 
 def test_stranger_cannot_read_someone_elses_turn(owner_client, stranger_client, agent):
     turn_id = _enqueue(owner_client).json()["id"]
-    assert stranger_client.get(f"/api/harness/turns/{turn_id}").status_code == 404
+    resp = stranger_client.get(f"/api/harness/turns/{turn_id}")
+    assert resp.status_code == 404
+    # Security review 2026-07-26, F4: status-code-only assertions here are
+    # exactly what let the agent-turn branch leak the agent's slug via
+    # _agent_or_404's own 404 message (copied into both title and detail by
+    # the shared HttpError handler) go undetected. _turn_or_404 now catches
+    # and re-raises a uniform message — pin the body, not just the code.
+    body = resp.json()
+    assert body["title"] == "turn not found"
+    assert body["detail"] == "turn not found"
+    assert "echo" not in body["title"].lower()
+    assert "echo" not in (body["detail"] or "").lower()
 
 
 def test_stranger_cannot_finish_someone_elses_turn(owner_client, stranger_client, agent):
@@ -287,11 +298,39 @@ def test_list_turns_only_shows_my_tenants_turns(owner_client, stranger_client, a
     assert resp.json() == []  # filtered, not 404 — a list of nothing
 
 
-def test_null_workspace_agent_stays_ungated(owner_client):
-    """Agents predating tenancy have workspace=None. They must keep working —
-    the existing suite creates agents exactly this way."""
-    Agent.objects.create(slug="legacy", name="Legacy")
-    assert _enqueue(owner_client, slug="legacy", key="k-legacy").status_code == 201
+# The two unhomed-agent tests that used to sit here — `_agent_or_404` 404ing a
+# workspace-less agent (security review 2026-07-26, F1) and `list_turns`
+# excluding its turns (hole B) — are gone with the row they needed:
+# Agent.workspace is NOT NULL as of agents/0013, so the state cannot be
+# constructed. See tests/test_agent_workspace_not_null.py. Their cross-tenant
+# counterparts, which are the half with something left to prove, remain above
+# and below: `test_stranger_enqueueing_for_someone_elses_agent_gets_404` and
+# `test_list_turns_only_shows_my_tenants_turns`.
+
+
+def test_list_turns_excludes_other_tenants_project_and_session_turns(owner_client, stranger_client, workspace):
+    """Found while fixing hole B, broader than that hole's own description: the
+    old single clause `Q(agent__workspace_id__isnull=True)` traverses a
+    nullable FK, so for a PROJECT or SESSION turn (agent_id IS NULL) it was
+    unconditionally true regardless of the turn's OWN workspace — every
+    tenant's project/session turns (prompt, origin_ref, session_id) leaked to
+    every authenticated caller, not just the unhomed-agent case. Verified
+    empirically pre-fix with a throwaway repro before writing this test.
+    Mirrors the same split-by-target-kind fix `claim_next_turn`
+    (apps/harness/services.py) already applies to its own tenant_q."""
+    Turn.objects.create(
+        project="secret-repo", workspace=workspace, origin=Turn.ORIGIN_MANUAL,
+        idempotency_key="p-secret", prompt="secret project prompt",
+    )
+    resp = stranger_client.get("/api/harness/turns/")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # The owner (an actual member of the turn's workspace) still sees it —
+    # this is a tenant filter, not a blanket lockout.
+    owner_resp = owner_client.get("/api/harness/turns/")
+    assert owner_resp.status_code == 200
+    assert len(owner_resp.json()) == 1
 
 
 # --- pair_runner workspace-assignment branches (Task 2, uncovered) ---------

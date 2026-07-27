@@ -5,7 +5,7 @@ import uuid
 
 from django.db import models, transaction
 from django.db.models import Q
-from django.http import HttpRequest
+from django.http import HttpRequest, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -46,6 +46,8 @@ from .schemas import (
     SessionStreamIn,
     StreamPostOut,
     StreamSyncOut,
+    TranscriptAppendIn,
+    TranscriptAppendOut,
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
@@ -72,6 +74,21 @@ ALLOWED_EVENT_KINDS = {
     "cancel_requested",
 }
 
+# A runner is expected to flush the raw transcript periodically (never holding
+# a whole run in memory — see cloud_runner's design), so a well-behaved batch
+# is at most tens of KB. 1MB per request is generous headroom above that while
+# still bounding a runaway/misbehaving batch rather than accepting an
+# unbounded body straight into a gzip+DB write under the turn row lock.
+#
+# Deliberately well under settings.DATA_UPLOAD_MAX_MEMORY_SIZE (pinned
+# explicitly to 2.5MB, config/settings/base.py — security review 2026-07-26,
+# F8) rather than close to it: a request whose JSON-encoded body crosses THAT
+# ceiling never reaches this view at all — request.body raises
+# RequestDataTooBig as an unhandled 500 before Ninja even parses the payload.
+# Keeping this cap well below it means an oversized batch always surfaces as
+# our clean 422, not an occasional 500 depending on JSON escaping overhead.
+TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
+
 
 def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     """Resolve an agent, gated by workspace membership. A non-member gets the
@@ -81,6 +98,16 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
     rather than imported: api modules must not depend on each other, and the
     harness is framework-tier.
+
+    Fails CLOSED on a workspace-less agent (security review 2026-07-26, F1):
+    `agent.workspace_id` falsy must not short-circuit to "ungated" — that would
+    hand ANY authenticated user (not just a workspace member) full read/write on
+    a null-workspace agent's turns, including this app's own raw transcripts.
+    Latent today (production has zero agents with workspace_id IS NULL), but a
+    fail-open tenancy gate is a bug regardless of whether anything currently
+    exploits it. A pre-migration agent with no workspace is simply not
+    resolvable via this API until it's backfilled a workspace — it does not
+    fall back to "visible to everyone."
     """
     agent = Agent.objects.filter(slug=slug).first()
     if agent is None:
@@ -89,7 +116,7 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     ws = getattr(request, "workspace_slug", None)
     if ws and agent.workspace_id != ws:
         raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
-    if agent.workspace_id and not wsvc.is_member(request.user, agent.workspace_id):
+    if not agent.workspace_id or not wsvc.is_member(request.user, agent.workspace_id):
         raise HttpError(404, f"agent '{slug}' not found")
     return agent
 
@@ -155,6 +182,16 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     A PROJECT turn has no agent/session to derive from, so it carries its own
     workspace FK and is gated on that instead. Same 404-not-403 rule either way:
     non-membership must not leak existence.
+
+    Every rejection here raises the SAME uniform `HttpError(404, "turn not
+    found")` — including the agent-turn branch, which delegates to
+    `_agent_or_404` (security review 2026-07-26, F4): that helper's own 404
+    names the agent (`"agent 'ada' not found"`), and the shared error handler
+    copies an HttpError's message into both `title` and `detail`. Left
+    un-caught, a caller holding a stale/guessed turn UUID would learn not just
+    that the turn exists, but which agent owns it. Catching and re-raising
+    here keeps every turn-not-resolvable case indistinguishable from the
+    others, from the caller's side.
     """
     turn = (
         Turn.objects.select_related("agent", "claimed_by", "chat_session")
@@ -164,7 +201,10 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     if turn is None:
         raise HttpError(404, "turn not found")
     if turn.agent_id:
-        _agent_or_404(request, turn.agent.slug)  # raises 404 on wrong tenant
+        try:
+            _agent_or_404(request, turn.agent.slug)  # raises on wrong tenant
+        except HttpError:
+            raise HttpError(404, "turn not found") from None
         return turn
 
     # Session turn: tenancy derives from the chat session's workspace (a session
@@ -181,7 +221,13 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
-    if turn.workspace_id and not wsvc.is_member(request.user, turn.workspace_id):
+    # Fails CLOSED on a workspace-less project turn (security review
+    # 2026-07-26, adjacent to F1): `enqueue_turn` always assigns a real
+    # workspace to a project turn, so this is practically unreachable today —
+    # but matches the invariant F1 established for the agent-turn branch
+    # above, rather than leaving one fail-open gate three lines below a
+    # fail-closed one.
+    if not turn.workspace_id or not wsvc.is_member(request.user, turn.workspace_id):
         raise HttpError(404, "turn not found")
     return turn
 
@@ -504,8 +550,14 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # Ordinal-less events (an old runner) stay live-view-only: persisting
         # assistant rows without the user side would blank the tail fallback's
         # human half the moment any row exists.
+        # The payload IS the row's content (structured fields + "text"), stored
+        # verbatim — a tool_use's {id,name,input} and a tool_result's
+        # {tool_use_id,is_error} are what the client pairs and renders on, so
+        # flattening to text here would strip exactly the half that makes a tool
+        # call legible.
         chat_services.persist_transcript_rows(binding.session, [
-            {"index": e.index, "role": e.kind, "text": (e.payload or {}).get("text", "")}
+            {"index": e.index, "role": e.kind,
+             "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
             for e in payload.events if e.index >= 0
         ])
     sgroup = groups.session_group(payload.session_id)
@@ -635,9 +687,31 @@ def list_turns(
         qs = qs.filter(agent__slug=agent)
     if status:
         qs = qs.filter(status__in=status.split(","))
-    # Tenant filter: a turn's tenant is its agent's. Null-workspace agents stay
-    # visible (ungated, per the migration-safety rule).
-    qs = qs.filter(Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True))
+    # Tenant filter, split by target kind (agent / project / session) — mirrors
+    # claim_next_turn's tenant_q (services.py) and _turn_or_404 (this module).
+    #
+    # Security review 2026-07-26, hole B: this used to be one clause,
+    # `Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True)`,
+    # with two independent problems. (1) The isnull leg left an unhomed
+    # agent's turns (TurnOut: prompt, origin_ref, session_id) visible to ANY
+    # authenticated caller — more permissive than `_agent_or_404`'s fail-closed
+    # gate, recreating the exact list-vs-gate drift `_runner_visibility_q`'s
+    # docstring warns about (a turn the list shows, then 404s on every
+    # action). (2) `agent__workspace_id` traverses a nullable FK: for a
+    # PROJECT or SESSION turn (agent_id IS NULL), the LEFT JOIN makes
+    # `agent__workspace_id__isnull=True` true unconditionally — so that one
+    # clause also leaked every tenant's project/session turns to every
+    # authenticated user, regardless of the turn's own workspace. (Confirmed
+    # empirically pre-fix: an unrelated stranger's GET returned another
+    # tenant's project turn.) Both close by gating each target kind on its
+    # own workspace source, with no null-workspace escape hatch anywhere in
+    # this list — unlike claim_next_turn, which keeps one for agent turns
+    # specifically as a documented, claim-routing-only exception.
+    qs = qs.filter(
+        (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
+        | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
+        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
+    )
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     return list(qs[:limit])  # filter BEFORE slicing — a sliced queryset cannot be filtered
 
@@ -669,6 +743,73 @@ def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
     turn = _turn_or_404(request, turn_id)
     events = turn.events.filter(seq__gt=after).order_by("seq")[:500]
     return {"events": list(events)}
+
+
+@router.post("/turns/{turn_id}/transcript", response=TranscriptAppendOut)
+def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: TranscriptAppendIn):
+    """Ingest a batch of raw `claude -p` JSONL lines onto a turn's retained
+    transcript. Same tenancy gate as every other turn route (_turn_or_404) —
+    deliberately not a bespoke check; a transcript is more sensitive than a
+    turn's status, and a second gate is exactly how the session-turn tenancy
+    leak happened.
+
+    Appending to an already-terminal turn is allowed by design: a runner may
+    flush its last batch after finishing (services.append_transcript has no
+    status check either).
+
+    `batch_id`, if given, dedups a retry of the immediately-preceding batch
+    (F5). The per-turn size ceiling (F2) is enforced inside
+    `services.append_transcript` itself, never here — crossing it drops the
+    batch's content and writes a marker rather than 4xx-ing, because a
+    turn's transcript getting long is not a reason to fail a live run;
+    `truncated` in the response tells the caller that happened.
+    """
+    turn = _turn_or_404(request, turn_id)
+    total_bytes = sum(len(line.encode("utf-8")) for line in payload.lines)
+    if total_bytes > TRANSCRIPT_APPEND_MAX_BYTES:
+        raise HttpError(
+            422,
+            f"transcript batch too large ({total_bytes} bytes; "
+            f"limit is {TRANSCRIPT_APPEND_MAX_BYTES} bytes per request)",
+        )
+    transcript = services.append_transcript(turn, payload.lines, batch_id=payload.batch_id)
+    return {
+        "line_count": transcript.line_count,
+        "bytes_raw": transcript.bytes_raw,
+        "truncated": transcript.truncated,
+    }
+
+
+@router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
+def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
+    """The byte-for-byte raw transcript, streamed as plain JSONL bytes — a
+    turn with nothing ever appended reads as an empty 200, not a 404;
+    absence of a transcript is not absence of a turn. No `response=` schema
+    is declared so Ninja returns this StreamingHttpResponse verbatim instead
+    of trying to serialize it (mirrors apps/canopy_sessions.api's plain
+    HttpResponse for attachment_content).
+
+    Streams `services.iter_transcript`, which inflates the stored gzip
+    INCREMENTALLY in bounded chunks rather than decompressing the whole blob
+    into memory at once (security review 2026-07-26, F3 — the sibling
+    `/events` route caps at 500 rows for the same underlying reason).
+
+    A PRIOR version of this fix instead served the still-gzipped bytes
+    directly with `Content-Encoding: gzip`, betting the HTTP client would
+    inflate transparently — a follow-up review empirically falsified that:
+    `curl --compressed` and `httpx` both return only the FIRST gzip member
+    of Task 1's multi-member on-disk format, silently truncating the
+    transcript with a 200 and no error, and this repo's own runner client
+    (`packages/canopy_runner`, `urllib.request`) does no content-decoding at
+    all — it would have treated raw gzip bytes as JSONL. Streaming plaintext
+    here removes that wire-format gamble: every caller gets exactly the
+    bytes `services.read_transcript` would return, with none of its
+    all-at-once memory cost.
+    """
+    turn = _turn_or_404(request, turn_id)
+    return StreamingHttpResponse(
+        services.iter_transcript(turn), content_type="application/x-ndjson"
+    )
 
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)
@@ -743,32 +884,33 @@ def _runner_schedule_qs(runner: Runner):
     derives from paired_by AND _runner_or_404 pins the runner to request.user,
     so the row and the field are alike server-controlled.
 
-    claim_next_turn NOW DERIVES THE SAME WAY (agent.workspace ∈
-    workspaces(paired_by), or IS NULL), so the two rules AGREE: every schedule
-    this runner may fire produces a turn that same runner may claim.
+    claim_next_turn DERIVES FROM THE SAME TWO FUNCTIONS this does —
+    services.runner_tenant_slugs and services.agent_tenant_q — so the two rules
+    AGREE BY CONSTRUCTION: every schedule this runner may fire produces a turn
+    that same runner may claim. They are no longer two hand-written predicates
+    that happen to match; there is one predicate with two callers.
 
-    They briefly diverged, and the divergence was an outage, not a nicety.
-    claim_next_turn shipped scoped to the Runner.workspace FK while this
-    predicate derived from paired_by — so a runner homed to `alpha` whose pairer
-    also belongs to `beta` could SEE and FIRE beta's schedules here but could not
-    CLAIM the resulting turns, leaving them QUEUED forever. Because one laptop
-    runner serves a fleet that deliberately spans workspaces, that stopped 4 of 5
-    production agents from executing at all. The resolution was to converge the
-    CLAIM onto paired_by (this predicate's rule), NOT to narrow this one onto the
-    FK: the FK records where a runner lives, not who it may work for.
+    That matters because they briefly diverged, and the divergence was an
+    outage, not a nicety. claim_next_turn shipped scoped to the Runner.workspace
+    FK while this predicate derived from paired_by — so a runner homed to
+    `alpha` whose pairer also belongs to `beta` could SEE and FIRE beta's
+    schedules here but could not CLAIM the resulting turns, leaving them QUEUED
+    forever. Because one laptop runner serves a fleet that deliberately spans
+    workspaces, that stopped 4 of 5 production agents from executing at all. The
+    resolution was to converge the CLAIM onto paired_by (this predicate's rule),
+    NOT to narrow this one onto the FK: the FK records where a runner lives, not
+    who it may work for. tests/test_claim_schedule_parity.py fails if the two
+    ever disagree again.
 
-    NULL paired_by fails closed below (none()), which is stricter than
-    _runner_visibility_q's legacy-ungated allowance — an orphaned runner can be
-    operated, but can never sync or fire a schedule.
+    NULL paired_by fails closed inside runner_tenant_slugs (empty slug set →
+    `__in=set()` matches nothing), which is stricter than _runner_visibility_q's
+    legacy-ungated allowance — an orphaned runner can be operated, but can never
+    sync or fire a schedule. That used to be a separate `.none()` branch here; it
+    was folded into the shared helper so there is one mechanism, not two that
+    can drift.
     """
     qs = AgentSchedule.objects.filter(enabled=True).select_related("agent")
-    if runner.paired_by_id is None:
-        return qs.none()  # an orphaned runner has no identity to derive tenancy from
-    slugs = wsvc.user_workspace_slugs(runner.paired_by)
-    # Same-tenant agents, or legacy null-workspace agents (the pre-tenancy path
-    # the existing suite covers). claim_next_turn's predicate is now the same
-    # rule, deriving from the same paired_by — keep the two in step.
-    return qs.filter(Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True))
+    return qs.filter(services.agent_tenant_q(services.runner_tenant_slugs(runner)))
 
 
 @router.get("/schedules/", response=Page[ScheduleOut],

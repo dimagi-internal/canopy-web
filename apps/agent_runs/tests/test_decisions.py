@@ -9,6 +9,7 @@ from apps.agent_runs.models import AgentRun, AgentRunStep
 from apps.agent_runs.schemas import Run, Step
 from apps.agent_runs.stores import DbRunStore, InMemoryRunStore
 from apps.agents.models import Agent
+from apps.workspaces.testing import a_workspace
 
 
 def test_inmem_record_decision_roundtrip():
@@ -56,7 +57,7 @@ def test_inmem_record_decision_marks_run_changed():
 
 @pytest.mark.django_db
 def test_db_record_decision_roundtrip():
-    agent = Agent.objects.create(slug="echo", name="Echo")
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     run = AgentRun.objects.create(agent=agent, label="demo")
     AgentRunStep.objects.create(run=run, key="spec", ordinal=0, status=AgentRunStep.RUNNING)
     store = DbRunStore()
@@ -85,7 +86,7 @@ def test_db_record_decision_roundtrip():
 
 @pytest.mark.django_db
 def test_db_record_decision_defaults_status():
-    agent = Agent.objects.create(slug="echo", name="Echo")
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     run = AgentRun.objects.create(agent=agent, label="demo")
     AgentRunStep.objects.create(run=run, key="spec", ordinal=0, status=AgentRunStep.RUNNING)
     store = DbRunStore()

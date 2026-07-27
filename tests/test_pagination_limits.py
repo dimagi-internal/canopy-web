@@ -15,21 +15,38 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture()
-def client():
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+def user():
+    return User.objects.create_user("jj", "jj@dimagi.com", "pw")
+
+
+@pytest.fixture()
+def workspace(user):
+    # Security review 2026-07-26, hole A: an unhomed agent is now invisible
+    # (apps.agents.api._visible_agent_workspace_ids fails closed), so the
+    # `agent` fixture below must be homed like a real agent (upsert_agent
+    # always homes one) — an unhomed fixture would 404 every per-agent route
+    # exercised here, which is not what this pagination-clamping suite tests.
+    ws = Workspace.objects.create(slug="canopy", display_name="Canopy", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    return ws
+
+
+@pytest.fixture()
+def client(user):
     c = Client()
     c.force_login(user)
     return c
 
 
 @pytest.fixture()
-def agent():
-    return Agent.objects.create(slug="echo", name="Echo")
+def agent(workspace):
+    return Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
 
 
 # One case per distinct clamp shape across the paginated surface: the 500-cap

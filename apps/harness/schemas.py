@@ -305,6 +305,27 @@ class TurnFinishIn(Schema):
     result_note: str = ""
 
 
+class TranscriptAppendIn(Schema):
+    """Raw `claude -p` JSONL lines to append — one element per JSONL record,
+    verbatim (see services.append_transcript). Never re-encoded or parsed."""
+
+    lines: list[str]
+    # Optional per-batch idempotency key (security review 2026-07-26, F5): if
+    # this matches the LAST batch actually applied to the turn, the append is
+    # a no-op (a retry after a lost response), not a double-append. Omit to
+    # skip dedup entirely — older/simpler callers are unaffected.
+    batch_id: str = ""
+
+
+class TranscriptAppendOut(Schema):
+    line_count: int
+    bytes_raw: int
+    # True once this turn's transcript has hit services.TRANSCRIPT_TURN_MAX_BYTES
+    # (F2) — every batch from here on is silently dropped, so a runner can stop
+    # bothering to flush further content for this turn.
+    truncated: bool
+
+
 class ScheduleIn(Schema):
     """Create payload. Cron + tz validate here so a bad expression 422s as
     problem+json at edit time — a typo that silently never fires is the worst
@@ -485,6 +506,10 @@ class BackfillMessageIn(Schema):
     # Transcript record ordinal. -1 = an old runner; the server then keeps the
     # legacy write-once contract (sequential, only into an empty session).
     index: int = -1
+    # Structured fields for a non-prose row — a tool_use's {id,name,input}, a
+    # tool_result's {tool_use_id,is_error}. Empty for plain text. Stored as the
+    # Message's content so history renders identically to the live stream.
+    content: dict = {}
 
 
 class SessionBackfillIn(Schema):

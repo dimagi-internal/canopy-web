@@ -43,27 +43,38 @@ from .schemas import (
 router = Router(auth=session_auth, tags=["agents"])
 
 
-def _visible_agent_workspace_ids(request: HttpRequest) -> set[str | None]:
+def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     """The single definition of 'agent workspaces this caller can see'. A
-    workspace_id (or None, for an unhomed agent) is visible if the caller is
-    pinned to it, or — unpinned — the caller is a member of it, or it's
-    unhomed. _get_agent_or_404, list_agents, and the fleet items query MUST
-    build from this: they used to hand-copy this predicate three times, which is
-    exactly the failure apps/harness/api.py's _runner_visibility_q docstring
-    describes (a runner the list showed but every action 404'd on) — see that
-    docstring for the full story.
+    workspace_id is visible if the caller is pinned to it, or — unpinned —
+    the caller is a member of it. _get_agent_or_404, list_agents, and the
+    fleet items query MUST build from this: they used to hand-copy this
+    predicate three times, which is exactly the failure apps/harness/api.py's
+    _runner_visibility_q docstring describes (a runner the list showed but
+    every action 404'd on) — see that docstring for the full story.
 
     Tenant-pinned (request.workspace_slug truthy): exactly that workspace —
     no separate membership check needed; WorkspaceResolveMiddleware already
     gated membership of the pinned workspace before setting workspace_slug.
 
     Not pinned (flat /api/agents/... callers): any workspace the caller is a
-    member of, plus None (the legacy-ungated unhomed-agent case)."""
+    member of.
+
+    Fails CLOSED on an unhomed agent (security review 2026-07-26, hole A):
+    this used to return the caller's workspace ids **plus {None}**, so an
+    agent with no workspace was visible to ANY authenticated user across the
+    whole agents surface — reads (tasks, work products, skills, turns,
+    including AgentTurnOut.share_token, a public transcript link) AND writes
+    (board commands, PUT /runners). Strictly broader than the read-only hole
+    `_agent_or_404` (apps/harness/api.py, F1) closed for the same
+    workspace-less-agent case. An unhomed agent must be unresolvable via this
+    API, not universally visible. Since agents/0013 made `Agent.workspace` NOT
+    NULL the case is unrepresentable rather than merely unpopulated, so this
+    reads as a plain membership check with nothing to special-case."""
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         return {ws}
-    return set(wsvc.user_workspace_slugs(request.user)) | {None}
+    return set(wsvc.user_workspace_slugs(request.user))
 
 
 def _get_agent_or_404(request: HttpRequest, slug: str):
@@ -94,30 +105,31 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",
              openapi_extra={"x-mcp-expose": True})
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
-    agent = services.upsert_agent(payload)
+    # The tenant is resolved BEFORE the row is written, because Agent.workspace is
+    # NOT NULL (agents/0013) — an agent is never briefly unhomed. Scope to the
+    # request's workspace (from the /w/{ws} prefix or the compat shim's default),
+    # falling back to the org default so an unchanged register() (e.g. Echo's)
+    # keeps working.
+    wsvc.auto_join_workspaces(request.user)
+    pinned = getattr(request, "workspace_slug", None)
+    home = (
+        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
+    ) or wsvc.ensure_default_workspace()
+    if home is None:
+        # Only reachable on a DB with no users at all, which an authenticated
+        # request cannot be. Fail with a real message rather than an IntegrityError.
+        raise HttpError(422, "no workspace available to home this agent in")
+    agent = services.upsert_agent(payload, workspace=home)
     explicit = (payload.workspace or "").strip()
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. Membership-gated; a
         # missing workspace and a non-member get the same 404 (no existence leak).
-        wsvc.auto_join_workspaces(request.user)
         ws = wsvc.Workspace.objects.filter(slug=explicit).first()
         if ws is None or not wsvc.is_member(request.user, explicit):
             raise HttpError(404, f"workspace '{explicit}' not found")
         agent.workspace = ws
         agent.save(update_fields=["workspace"])
-    elif agent.workspace_id is None:
-        # Scope to the request's workspace (from the /w/{ws} prefix or the compat
-        # shim's default); fall back to the org default so an unchanged register()
-        # (e.g. Echo's) keeps working.
-        pinned = getattr(request, "workspace_slug", None)
-        ws = (
-            wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-        ) or wsvc.ensure_default_workspace()
-        if ws is not None:
-            agent.workspace = ws
-            agent.save(update_fields=["workspace"])
-    if agent.workspace_id:
-        wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
+    wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
     return Status(201, AgentOut.model_validate(agent))
 
 

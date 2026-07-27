@@ -23,16 +23,19 @@ def _session_with(n: int) -> Session:
     return s
 
 
-def test_tail_default_is_20():
-    assert services.SESSION_TAIL_DEFAULT == 20
+def test_tail_default_holds_conversational_density():
+    """Sized against the row MIX, not a round number: ~72% of a live session's
+    rows are tool calls, so this has to be ~3x a plain-prose tail to open on a
+    comparable amount of actual conversation."""
+    assert services.SESSION_TAIL_DEFAULT == 60
 
 
 def test_tail_returns_last_n_chronological_with_cursor():
-    s = _session_with(50)
+    s = _session_with(100)
     msgs, has_more, oldest = services.tail_messages(s)
-    assert [m.turn_index for m in msgs] == list(range(30, 50))  # last 20, ascending
+    assert [m.turn_index for m in msgs] == list(range(40, 100))  # last 60, ascending
     assert has_more is True
-    assert oldest == 30
+    assert oldest == 40
 
 
 def test_tail_short_session_has_no_more():
@@ -87,12 +90,12 @@ def _api_ctx(n: int):
 
 
 def test_get_session_returns_tail_not_full():
-    c, s = _api_ctx(50)
+    c, s = _api_ctx(100)
     body = c.get(f"/api/canopy-sessions/{s.id}").json()
-    assert len(body["messages"]) == 20
-    assert [m["turn_index"] for m in body["messages"]] == list(range(30, 50))
+    assert len(body["messages"]) == 60
+    assert [m["turn_index"] for m in body["messages"]] == list(range(40, 100))
     assert body["has_more_before"] is True
-    assert body["oldest_loaded_turn_index"] == 30
+    assert body["oldest_loaded_turn_index"] == 40
 
 
 def test_get_session_full_returns_everything():

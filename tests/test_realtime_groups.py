@@ -10,6 +10,7 @@ from apps.agents.models import Agent
 from apps.harness.models import Turn
 from apps.realtime import groups
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import a_workspace
 
 
 def test_turn_group_is_stable():
@@ -39,17 +40,23 @@ def test_user_can_read_turn_by_workspace_membership():
 
 @pytest.mark.django_db
 def test_user_cannot_read_workspaceless_turn():
-    # An agent with no workspace has no tenant to gate on -> not readable.
+    """No tenant to gate on -> not readable. Uses a PROJECT turn, whose own
+    workspace FK is genuinely nullable; the agent-turn version of this case no
+    longer exists (Agent.workspace is NOT NULL as of agents/0013 — see
+    tests/test_agent_workspace_not_null.py), but the fail-closed branch in
+    user_can_read_turn still has to hold for the kinds that can be NULL."""
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    agent = Agent.objects.create(slug="loner", name="Loner")
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    turn = Turn.objects.create(
+        project="canopy-web", origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+    )
+    assert turn.workspace_id is None
     assert groups.user_can_read_turn(user, turn) is False
 
 
 @pytest.mark.django_db
 def test_superuser_can_read_any_turn():
     su = User.objects.create_superuser("admin", "admin@dimagi.com", "pw")
-    agent = Agent.objects.create(slug="loner", name="Loner")
+    agent = Agent.objects.create(slug="loner", name="Loner", workspace=a_workspace())
     turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
     assert groups.user_can_read_turn(su, turn) is True
 

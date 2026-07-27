@@ -9,20 +9,26 @@ import pytest
 from apps.agent_runs.models import AgentRun
 from apps.agents import services
 from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask, AgentTurn, AgentWorkProduct
+from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
 
 def _agent(slug="echo"):
+    # `workspace` is a required keyword: Agent.workspace is NOT NULL
+    # (agents/0013), so the tenant is chosen before the row is written rather
+    # than patched on afterwards by the view.
     return services.upsert_agent(
-        SimpleNamespace(slug=slug, name="Echo", description="", persona="", email="echo@x.com", avatar_url="")
+        SimpleNamespace(slug=slug, name="Echo", description="", persona="", email="echo@x.com", avatar_url=""),
+        workspace=a_workspace(),
     )
 
 
 def test_upsert_agent_is_idempotent_by_slug():
     a1 = _agent()
     a2 = services.upsert_agent(
-        SimpleNamespace(slug="echo", name="Echo v2", description="d", persona="p", email="", avatar_url="")
+        SimpleNamespace(slug="echo", name="Echo v2", description="d", persona="p", email="", avatar_url=""),
+        workspace=a_workspace(),
     )
     assert a1.pk == a2.pk
     assert Agent.objects.count() == 1

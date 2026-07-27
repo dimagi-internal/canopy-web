@@ -261,3 +261,12 @@ def test_agent_runners_is_tenant_gated(client, workspace):
 
     assert client.get("/api/agents/secret-agent/runners").status_code == 404
     assert _put(client, "secret-agent", []).status_code == 404
+
+
+# The unhomed-agent counterpart of `test_agent_runners_is_tenant_gated` above
+# (security review 2026-07-26, hole A: `_visible_agent_workspace_ids` included
+# {None}, so ANY authenticated user could read AND write an unhomed agent's
+# routing assignments via `PUT /runners`) is gone with the row it needed:
+# Agent.workspace is NOT NULL as of agents/0013. See
+# tests/test_agent_workspace_not_null.py; the cross-tenant test above is the
+# live half of the same assertion.

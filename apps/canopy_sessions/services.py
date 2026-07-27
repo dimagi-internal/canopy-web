@@ -38,7 +38,13 @@ _ROLE_FOR_KIND = {
 # the single home for the tail size, shared by the REST handler and the WS
 # snapshot so the two can't drift; SCROLLBACK_PAGE_DEFAULT is the "Load earlier"
 # page size (aligned with apps/realtime's cursor-paging conventions).
-SESSION_TAIL_DEFAULT = 20
+#
+# 60, not 20, since tool calls became rows: measured over 19k rows of live
+# transcripts (2026-07-26) ~72% of a session's rows are tool_use/tool_result, so
+# a 20-row tail that used to open on 20 messages of conversation would now open
+# on 5 or 6 — the default view would get THINNER as a direct result of adding
+# detail to it. 3x holds the conversational density roughly where it was.
+SESSION_TAIL_DEFAULT = 60
 SCROLLBACK_PAGE_DEFAULT = 50
 
 
@@ -233,18 +239,49 @@ def request_backfill(session) -> str:
     return "requested"
 
 
+# The transcript-ordinal scheme this build writes. Bumped whenever the mapping
+# from a transcript record to a `turn_index` changes; see Session.ordinal_scheme.
+ORDINAL_SCHEME = 1
+
+
+def _ensure_current_ordinal_scheme(locked_session) -> int:
+    """Drop rows written under a superseded ordinal scheme, so the incoming ones
+    can't interleave with them.
+
+    Two schemes in one session is not a cosmetic problem: `turn_index` is the
+    sort order AND the paging cursor, so an old row at 500 and a new row for the
+    same record at 32,000 would render the conversation shuffled, and
+    `get_or_create` would never notice they are the same record.
+
+    This is `reset` — the existing first-class action — fired automatically on
+    the first write instead of waiting for someone to run it. Derived rows only;
+    Turns and their ledger are never touched. Returns rows deleted.
+    """
+    if locked_session.ordinal_scheme == ORDINAL_SCHEME:
+        return 0
+    deleted, _ = Message.objects.filter(session=locked_session).delete()
+    locked_session.ordinal_scheme = ORDINAL_SCHEME
+    locked_session.save(update_fields=["ordinal_scheme", "updated_at"])
+    return deleted
+
+
 def persist_transcript_rows(session, rows) -> int:
     """THE durable write path for a runner session's transcript. rows:
-    [{"index","role","text"}] chronological.
+    [{"index","role","text"[,"content"]}] chronological.
 
-    `index` is the transcript record ordinal (raw index into the session's
-    .jsonl) — because the stream (forward) and backfill (older) both key on it,
-    they produce the SAME rows by identity and `get_or_create` makes every
-    re-ship (retry, overlap, catch-up) a no-op. index < 0 (an old runner) falls
-    back to sequential server-side assignment. Returns rows actually created."""
+    `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see the
+    runner's `chat_bridge.compose_index`) — because the stream (forward) and
+    backfill (older) both key on it, they produce the SAME rows by identity and
+    `get_or_create` makes every re-ship (retry, overlap, catch-up) a no-op.
+    index < 0 (an old runner) falls back to sequential server-side assignment.
+    Returns rows actually created."""
     written = 0
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
+        # `is not None`, never a truthiness test: index 0 is a real ordinal (the
+        # transcript's first record) and `x or -1` would read it as "no ordinal".
+        if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
+            _ensure_current_ordinal_scheme(locked)
         next_index = None
         for row in rows:
             role = row.get("role")
@@ -269,9 +306,12 @@ def persist_transcript_rows(session, rows) -> int:
                 if next_index is None:
                     next_index = _next_index(locked)
                 index, next_index = next_index, next_index + 1
+            content = row.get("content")
+            if not isinstance(content, dict) or not content:
+                content = {"text": text}
             _, created = Message.objects.get_or_create(
                 session=locked, turn_index=index,
-                defaults={"role": role, "plaintext": text, "content": {"text": text}},
+                defaults={"role": role, "plaintext": text, "content": content},
             )
             written += 1 if created else 0
     return written

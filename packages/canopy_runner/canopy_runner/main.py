@@ -377,12 +377,13 @@ def _drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
 
 
 def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
-    """Ship conversational rows as live events. seq == index (the transcript
-    ordinal): monotonic per session forever, so the WS-derived `seq:<n>` message
-    ids can never collide across detaches, restarts, or failovers."""
+    """Ship conversational rows as live events. seq == index (the composite
+    transcript ordinal): monotonic per session forever, so the WS-derived
+    `seq:<n>` message ids can never collide across detaches, restarts, or
+    failovers — including between two rows of the same transcript record."""
     events = [
         {"kind": r["role"], "seq": r["index"], "index": r["index"],
-         "payload": {"text": r["text"]}}
+         "payload": chat_bridge.row_payload(r)}
         for r in rows
     ]
     try:
@@ -441,7 +442,7 @@ def _sync_session_streams(cfg: Config, client: Client) -> None:
             reader = TailReader(str(path))
             records = reader.read_new()
             last = st["last_index"]
-            since = len(records) - 1 if last is None else int(last)
+            since = chat_bridge.end_index(len(records)) if last is None else int(last)
             rows = chat_bridge.conversational_messages(records, since)
             if rows and not _post_stream_rows(cfg, client, sid, rows):
                 continue  # nothing consumed; re-attach next tick
@@ -451,10 +452,10 @@ def _sync_session_streams(cfg: Config, client: Client) -> None:
         if not new_records:
             continue
         base = st["count"]
-        rows = [
-            {**r, "index": r["index"] + base}
-            for r in chat_bridge.conversational_messages(new_records, -1)
-        ]
+        # The batch's records start at `base` in the file; the offset is applied
+        # to the RECORD ordinal inside compose_index, never to the composite
+        # index (adding it there would shift a row into another record's slots).
+        rows = chat_bridge.conversational_messages(new_records, -1, record_offset=base)
         if rows and not _post_stream_rows(cfg, client, sid, rows):
             # Don't advance past unshipped records: reset so the next tick
             # re-attaches and catches up from the server marker.

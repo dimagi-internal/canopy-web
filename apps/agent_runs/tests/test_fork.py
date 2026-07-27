@@ -18,6 +18,7 @@ from apps.agent_runs.models import (
 from apps.agent_runs.schemas import Decision, Run, Step
 from apps.agent_runs.stores import DbRunStore, InMemoryRunStore
 from apps.agents.models import Agent
+from apps.workspaces.testing import a_workspace
 
 
 # --------------------------------------------------------------------------
@@ -116,7 +117,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def db_run():
-    agent = Agent.objects.create(slug="echo", name="Echo")
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     run = AgentRun.objects.create(agent=agent, label="demo", mode=AgentRun.REVIEW, current_step="build")
     spec = AgentRunStep.objects.create(run=run, key="spec", ordinal=0, title="Spec", status=AgentRunStep.COMPLETE)
     build = AgentRunStep.objects.create(run=run, key="build", ordinal=1, title="Build", status=AgentRunStep.RUNNING)
