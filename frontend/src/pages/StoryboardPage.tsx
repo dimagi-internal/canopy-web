@@ -220,7 +220,10 @@ function EntryCard({
           />
         ) : (
           <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-foreground-subtle">
-            Not filmed yet
+            {/* Two different situations, and telling a reader "not filmed yet"
+                about a demo that was filmed but never made public sends them
+                to ask the wrong question. */}
+            {entry.published ? 'Video not shared' : 'Not filmed yet'}
           </div>
         )}
       </div>

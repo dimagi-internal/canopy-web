@@ -31,7 +31,18 @@ def _card_title(narrative_slug: str, stored_title: str | None) -> str:
     return aggregate._humanize_slug(narrative_slug)
 
 
-def _entry_payload(entry, workspace_slugs: set[str]) -> dict:
+def _streamable_anonymously(video_url: str | None) -> bool:
+    """Whether a reader with no login can actually play this.
+
+    Not an inference: ``aggregate._content_url`` appends ``?t=<share_token>``
+    exactly when the walkthrough is ``visibility=link``, and the stream 404s for
+    an anonymous caller in every other case. So the token's presence IS the
+    answer.
+    """
+    return bool(video_url) and "t=" in (video_url or "")
+
+
+def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict:
     """One entry, resolved to what the page shows for it.
 
     A narrative with nothing published yet resolves to a PLACEHOLDER rather than
@@ -54,13 +65,21 @@ def _entry_payload(entry, workspace_slugs: set[str]) -> dict:
 
     current = narrative.get("current_version") or {}
     story = current.get("story") or narrative.get("story") or ""
+
+    # The board FOLLOWS the current release, so the next version's walkthrough
+    # can land private under a link that has already been sent. Handing a reader
+    # a <video> they cannot stream renders a black box with no explanation;
+    # say the artifact is not shared instead.
+    video_url = current.get("video_url")
+    shared = is_member or _streamable_anonymously(video_url)
+
     return {
         "narrative_slug": entry.narrative_slug,
         "title": _card_title(entry.narrative_slug, current.get("title") or narrative.get("title")),
         "lede": aggregate._lede_from_story(story, None) or story,
         "version": current.get("version"),
-        "video_url": current.get("video_url"),
-        "video_viewer_url": current.get("video_viewer_url"),
+        "video_url": video_url if shared else None,
+        "video_viewer_url": current.get("video_viewer_url") if shared else None,
         "published": bool(current),
     }
 
@@ -105,7 +124,8 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
                 "title": act.title,
                 "prose": act.prose,
                 "entries": [
-                    _entry_payload(e, workspace_slugs) for e in act.entries.all()
+                    _entry_payload(e, workspace_slugs, is_member=is_member)
+                    for e in act.entries.all()
                 ],
             }
         )
