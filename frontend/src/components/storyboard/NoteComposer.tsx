@@ -12,11 +12,16 @@ import type { Capability, FeedbackKind, LeaveFeedbackIn } from '@/api/storyboard
 export function NoteComposer({
   capability,
   anchorLabel,
+  cta,
   defaults,
   onSubmit,
 }: {
   capability: Capability
   anchorLabel: string
+  /** What the button says. Two composers can sit next to each other (an act and
+   *  the demo inside it), so "Leave a note" twice is ambiguous — name the
+   *  target. */
+  cta: string
   defaults: LeaveFeedbackIn
   onSubmit: (payload: LeaveFeedbackIn) => Promise<void>
 }) {
@@ -45,7 +50,7 @@ export function NoteComposer({
         onClick={() => setOpen(true)}
         className="mt-3 self-start rounded-md border border-border px-3 py-1 text-[12px] text-foreground-secondary transition-colors hover:border-input hover:text-primary"
       >
-        Leave a note
+        {cta}
       </button>
     )
   }

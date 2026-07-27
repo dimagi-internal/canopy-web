@@ -84,6 +84,12 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function Board({ board, token }: { board: Storyboard; token: string | null }) {
+  // A shared link gets bookmarked and sits among a dozen other tabs. "Canopy"
+  // tells the reader nothing about which one this is.
+  useEffect(() => {
+    document.title = `${board.title} · Canopy`
+  }, [board.title])
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
@@ -130,6 +136,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
             <NoteComposer
               capability={board.capability}
               anchorLabel={`On “${act.title}”`}
+              cta="Leave a note on this act"
               defaults={{}}
               onSubmit={(payload) => leaveFeedback(board.slug, payload, token).then(() => undefined)}
             />
@@ -162,6 +169,7 @@ function EntryCard({
           <video
             controls
             preload="metadata"
+            aria-label={`Demo video: ${entry.title}`}
             className="h-full w-full object-cover"
             src={withBase(entry.video_url)}
           />
@@ -209,6 +217,7 @@ function EntryCard({
           <NoteComposer
             capability={board.capability}
             anchorLabel={`On “${entry.title}” · v${entry.version}`}
+            cta="Leave a note on this demo"
             defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
             onSubmit={(payload) =>
               leaveFeedback(board.slug, payload, token).then(() => undefined)

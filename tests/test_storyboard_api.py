@@ -342,3 +342,41 @@ def test_the_share_url_has_no_prefix_when_served_at_root(member, board):
     set_script_prefix("/")
     url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
     assert "/storyboard/" in url and "/canopy/" not in url, url
+
+
+def test_the_reviewer_surface_heading_is_not_a_copy_of_its_own_body(board, ws):
+    """The stored title is derived from the story's opening, so using it verbatim
+    made the <h1> a truncated copy of the paragraph beneath it — and the story
+    itself is the whole narration concatenated, printed above a scene-by-scene
+    breakdown of the same text. Observed on the live rf-surveys arc."""
+    from apps.reviews.models import ReviewRequest
+
+    long_story = (
+        "Since the independent survey is what verifies the program, Maya can also "
+        "inspect the quality of the survey itself — the focus shifts from reviewing "
+        "program performance to reviewing the surveyors. Maya opens the dashboard."
+    )
+    ReviewRequest.objects.create(
+        run_id="verified-monitoring-2026-07-26-001",
+        request_json={
+            "gate": "concept_change",
+            "narrative_slug": "verified-monitoring",
+            "narrative": long_story,
+            "narration": [{"id": "the-goal", "title": "The goal", "text": long_story}],
+        },
+        gate="concept_change",
+        visibility="link",
+        workspace_id=ws.slug,
+        version=1,
+    )
+
+    t = board.ensure_share_token()
+    body = Client().get(
+        f"/api/storyboards/{board.slug}/narratives/verified-monitoring?t={t}"
+    ).json()
+
+    assert body["title"] == "Verified Monitoring"
+    assert not body["story"].startswith(body["title"])
+    # One sentence, not the whole narration — the scenes below carry the rest.
+    assert body["story"].endswith(".")
+    assert len(body["story"]) < len(long_story)

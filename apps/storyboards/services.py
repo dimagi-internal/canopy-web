@@ -125,10 +125,16 @@ def resolve_narrative(board: Storyboard, narrative_slug: str) -> dict | None:
             for n in (v.get("narration") or [])
         ]
 
+    # Same treatment as the cards: the stored title is derived from the opening
+    # of the story, so using it verbatim makes the heading a truncated copy of
+    # the text beneath it. And the STORY here is the whole narration
+    # concatenated — printing it above a scene-by-scene breakdown makes the
+    # reader read everything twice. One sentence is the hook; the scenes are the
+    # substance.
     return {
         "narrative_slug": narrative_slug,
-        "title": (current or {}).get("title") or narrative.get("title") or narrative_slug,
-        "story": narrative.get("story") or "",
+        "title": _card_title(narrative_slug, (current or {}).get("title") or narrative.get("title")),
+        "story": aggregate._lede_from_story(narrative.get("story") or "", None) or "",
         "version": (current or {}).get("version"),
         "previous_version": (previous or {}).get("version"),
         "narration": _narration(current or {}),
