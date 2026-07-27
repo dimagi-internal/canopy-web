@@ -9,6 +9,24 @@ import type { Capability, FeedbackKind, LeaveFeedbackIn } from '@/api/storyboard
  * differ only in whether the reviewer is proposing replacement words. The
  * "Suggest wording" half only exists when the link grants it.
  */
+const NAME_KEY = 'canopy.reviewer-name'
+
+function readReviewerName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? ''
+  } catch {
+    return '' // Private-mode browsers throw on access; a blank name is fine.
+  }
+}
+
+function rememberReviewerName(value: string): void {
+  try {
+    localStorage.setItem(NAME_KEY, value)
+  } catch {
+    /* not worth failing a note over */
+  }
+}
+
 export function NoteComposer({
   capability,
   anchorLabel,
@@ -29,7 +47,10 @@ export function NoteComposer({
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<FeedbackKind>('comment')
   const [text, setText] = useState('')
-  const [name, setName] = useState('')
+  // Asked once, not once per note. A full review of a three-act arc puts a
+  // composer under every act, every demo and every scene — better than twenty
+  // "Anonymous" notes from the one person you sent the link to.
+  const [name, setName] = useState(() => readReviewerName())
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [error, setError] = useState('')
 
@@ -127,7 +148,10 @@ export function NoteComposer({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <input
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            rememberReviewerName(e.target.value)
+          }}
           placeholder="Your name (optional)"
           className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-[12px] text-foreground placeholder:text-foreground-subtle focus-visible:outline-2 focus-visible:outline-primary"
         />
