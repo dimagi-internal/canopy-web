@@ -241,6 +241,9 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> 
         if not known:
             raise HttpError(404, "no such narrative on this storyboard")
 
+    if not payload.body.strip() and not payload.suggested_text.strip():
+        raise HttpError(422, "a note needs some words")
+
     item = {
         "target_kind": "narrative" if payload.narrative_slug else "storyboard",
         "target_ref": payload.narrative_slug or board.slug,

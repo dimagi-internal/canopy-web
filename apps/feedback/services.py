@@ -27,6 +27,9 @@ _INGEST_FIELDS = (
 def ingest(items: list[dict], *, submitted_by=None) -> dict:
     """Create feedback rows, skipping ones already ingested.
 
+    Items with neither ``body`` nor ``suggested_text`` are skipped and counted
+    as ``empty`` — a note with no words is not feedback.
+
     Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc is
     safe — an agent that re-scans its inbox must not double-file every thread. A
     blank ``source_ref`` never dedupes: a web submit has no natural id.
@@ -36,9 +39,20 @@ def ingest(items: list[dict], *, submitted_by=None) -> dict:
     """
     created_ids: list[int] = []
     duplicate = 0
+    empty = 0
 
     with transaction.atomic():
         for raw in items:
+            # A note with no words is not feedback. The UI disables its submit
+            # button, but the API accepted it and quietly created a row — an
+            # agent ingesting a mailbox could fill the pool with blanks that
+            # someone then has to triage.
+            if not (raw.get("body") or "").strip() and not (
+                raw.get("suggested_text") or ""
+            ).strip():
+                empty += 1
+                continue
+
             data = {k: raw.get(k) for k in _INGEST_FIELDS if raw.get(k) is not None}
             channel = data.get("channel") or Feedback.CHANNEL_WEB
             source_ref = data.get("source_ref") or ""
@@ -52,7 +66,12 @@ def ingest(items: list[dict], *, submitted_by=None) -> dict:
             fb = Feedback.objects.create(**data, submitted_by=submitted_by)
             created_ids.append(fb.pk)
 
-    return {"created": len(created_ids), "duplicate": duplicate, "ids": created_ids}
+    return {
+        "created": len(created_ids),
+        "duplicate": duplicate,
+        "empty": empty,
+        "ids": created_ids,
+    }
 
 
 def list_feedback(*, target_kind=None, target_ref=None, state=None, channel=None):

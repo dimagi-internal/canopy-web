@@ -57,6 +57,8 @@ class FeedbackListOut(StrictModel):
 class FeedbackIngestOut(StrictModel):
     created: int
     duplicate: int
+    empty: int = 0
+    """Items skipped for having neither body nor suggested_text."""
     ids: list[int]
 
 
