@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { getRelease, type DddRunRelease, type DddLink } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
+import { PublicHeader } from '@/components/PublicHeader'
 
 /**
  * The clean, shareable DDD run RELEASE page — the outsider-legible face of a
@@ -70,8 +71,9 @@ export default function DddReleasePage() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-3xl items-center justify-center px-6 text-center">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PublicHeader />
+      <div className="mx-auto flex max-w-3xl flex-1 items-center justify-center px-6 text-center">
         <div>{children}</div>
       </div>
     </div>
@@ -88,14 +90,15 @@ function Release({ data }: { data: DddRunRelease }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <PublicHeader />
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
-        {/* Top bar: quiet wordmark + (members, when public) a copy-share affordance */}
-        <div className="mb-10 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Canopy · Demo
-          </span>
-          {data.is_member && shareUrl && <CopyShare url={shareUrl} />}
-        </div>
+        {/* The wordmark moved into the header; the copy-share affordance stays
+            here, next to the thing it shares, and only for members. */}
+        {data.is_member && shareUrl && (
+          <div className="mb-10 flex items-center justify-end">
+            <CopyShare url={shareUrl} />
+          </div>
+        )}
 
         {/* Hero */}
         <header className="mb-10">
