@@ -158,3 +158,36 @@ class NarrativeVisibilityOut(StrictModel):
     visibility: Literal["public", "private", "mixed"]
     walkthroughs_updated: int
     reviews_updated: int
+
+
+class NarrativeMoveIn(StrictModel):
+    """Move a narrative to another workspace.
+
+    ``dry_run`` defaults to True on purpose: the plan is the only record of
+    where the artifacts were, and the move has no undo beyond running it in
+    reverse. Read the plan, then repeat with ``dry_run: false``.
+    """
+
+    to_workspace: str
+    dry_run: bool = True
+    also: list[str] = []
+    """Extra narrative slugs to move in the SAME transaction — a set of
+    narratives that belong together should not land half-moved."""
+
+
+class NarrativeMoveNarrativeOut(StrictModel):
+    versions_by_workspace: dict[str, list[int]]
+    walkthroughs: int
+    split: bool
+    """True when this narrative's versions are spread across more than one
+    workspace — the condition that makes its own history unreadable."""
+
+
+class NarrativeMoveOut(StrictModel):
+    target: str
+    dry_run: bool
+    narratives: dict[str, NarrativeMoveNarrativeOut]
+    source_workspaces: list[str]
+    reviews_to_move: int
+    walkthroughs_to_move: int
+    storyboards_to_move: int

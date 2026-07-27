@@ -942,6 +942,36 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/ddd/narratives/{slug}/move/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a narrative (and its storyboards) to another workspace
+         * @description Re-home a narrative — supported, not a repair script.
+         *
+         *     A narrative is inferred from the rows that share its slug, so its workspace
+         *     is the same answer repeated across every artifact with nothing keeping them
+         *     in agreement. A version posted from a differently scoped caller splits the
+         *     lineage across tenants and neither side can then read its own history. This
+         *     heals that, and equally serves the honest case: the narrative turned out to
+         *     belong to another team.
+         *
+         *     Requires membership of BOTH sides — you may not move something out of a
+         *     workspace you cannot see, nor into one you do not belong to.
+         */
+        readonly post: operations["apps_runs_api_move_narrative"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/shareouts/": {
         readonly parameters: {
             readonly query?: never;
@@ -4696,6 +4726,58 @@ export interface components {
              * @enum {string}
              */
             readonly visibility: "private" | "link";
+        };
+        /** NarrativeMoveNarrativeOut */
+        readonly NarrativeMoveNarrativeOut: {
+            /** Versions By Workspace */
+            readonly versions_by_workspace: {
+                readonly [key: string]: readonly number[];
+            };
+            /** Walkthroughs */
+            readonly walkthroughs: number;
+            /** Split */
+            readonly split: boolean;
+        };
+        /** NarrativeMoveOut */
+        readonly NarrativeMoveOut: {
+            /** Target */
+            readonly target: string;
+            /** Dry Run */
+            readonly dry_run: boolean;
+            /** Narratives */
+            readonly narratives: {
+                readonly [key: string]: components["schemas"]["NarrativeMoveNarrativeOut"];
+            };
+            /** Source Workspaces */
+            readonly source_workspaces: readonly string[];
+            /** Reviews To Move */
+            readonly reviews_to_move: number;
+            /** Walkthroughs To Move */
+            readonly walkthroughs_to_move: number;
+            /** Storyboards To Move */
+            readonly storyboards_to_move: number;
+        };
+        /**
+         * NarrativeMoveIn
+         * @description Move a narrative to another workspace.
+         *
+         *     ``dry_run`` defaults to True on purpose: the plan is the only record of
+         *     where the artifacts were, and the move has no undo beyond running it in
+         *     reverse. Read the plan, then repeat with ``dry_run: false``.
+         */
+        readonly NarrativeMoveIn: {
+            /** To Workspace */
+            readonly to_workspace: string;
+            /**
+             * Dry Run
+             * @default true
+             */
+            readonly dry_run: boolean;
+            /**
+             * Also
+             * @default []
+             */
+            readonly also: readonly string[];
         };
         /** Page[ShareoutOut] */
         readonly Page_ShareoutOut_: {
@@ -9451,6 +9533,32 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_runs_api_move_narrative: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["NarrativeMoveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NarrativeMoveOut"];
+                };
             };
         };
     };

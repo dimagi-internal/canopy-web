@@ -11,13 +11,16 @@ from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.workspaces import services as wsvc
 
 from . import aggregate, delete
+from .transfer import TransferError, apply_move, plan_move, public_plan
 from .schemas import (
     NarrativeDetailOut,
     NarrativeListItemOut,
+    NarrativeMoveIn,
+    NarrativeMoveOut,
     NarrativeVisibilityIn,
     NarrativeVisibilityOut,
     RunPackageOut,
@@ -168,3 +171,54 @@ def delete_narrative(request: HttpRequest, slug: str):
     if delete.delete_narrative(slug, workspace_slugs=_workspace_slugs(request)) is None:
         raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
     return Status(204, None)
+
+
+@router.post(
+    "/narratives/{slug}/move/",
+    response=NarrativeMoveOut,
+    summary="Move a narrative (and its storyboards) to another workspace",
+)
+def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) -> dict:
+    """Re-home a narrative — supported, not a repair script.
+
+    A narrative is inferred from the rows that share its slug, so its workspace
+    is the same answer repeated across every artifact with nothing keeping them
+    in agreement. A version posted from a differently scoped caller splits the
+    lineage across tenants and neither side can then read its own history. This
+    heals that, and equally serves the honest case: the narrative turned out to
+    belong to another team.
+
+    Requires membership of BOTH sides — you may not move something out of a
+    workspace you cannot see, nor into one you do not belong to.
+    """
+    slugs = {slug, *payload.also}
+    mine = wsvc.user_workspace_slugs(request.user)
+
+    if payload.to_workspace not in mine:
+        raise ProblemError(
+            403,
+            f"You are not a member of {payload.to_workspace!r}",
+            type_=TYPE_FORBIDDEN,
+        )
+
+    plan = plan_move(slugs, payload.to_workspace)
+    unreachable = [ws for ws in plan["source_workspaces"] if ws not in mine]
+    if unreachable:
+        raise ProblemError(
+            403,
+            f"You are not a member of {', '.join(unreachable)} — "
+            f"a narrative cannot be moved out of a workspace you cannot see",
+            type_=TYPE_FORBIDDEN,
+        )
+
+    if not plan["narratives"]:
+        raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
+
+    if payload.dry_run:
+        return {**public_plan(plan), "dry_run": True}
+
+    try:
+        result = apply_move(slugs, payload.to_workspace)
+    except TransferError as exc:
+        raise ProblemError(422, str(exc), type_=TYPE_VALIDATION)
+    return {**result, "dry_run": False}
