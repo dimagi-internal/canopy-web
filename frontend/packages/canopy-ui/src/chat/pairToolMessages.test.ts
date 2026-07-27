@@ -310,3 +310,51 @@ describe("toolPreview / toolDisplayName", () => {
     expect(toolDisplayName(use)).toBe("drive_create_file");
   });
 });
+
+describe("stale pending rows", () => {
+  const pendingUse = (id: string): Message => ({
+    id: `live-${id}`, turn_index: -1, role: "tool_use",
+    content: { id, name: "Bash", status: "pending" }, plaintext: "",
+    status: "complete", error_detail: null, started_at: null, completed_at: null,
+    created_at: "",
+  })
+  const text = (id: string): Message => ({
+    id, turn_index: 10, role: "assistant", content: {}, plaintext: "done",
+    status: "complete", error_detail: null, started_at: null, completed_at: null,
+    created_at: "",
+  })
+  const resultFor = (id: string): Message => ({
+    id: `r-${id}`, turn_index: 20, role: "tool_result",
+    content: { tool_use_id: id }, plaintext: "out",
+    status: "complete", error_detail: null, started_at: null, completed_at: null,
+    created_at: "",
+  })
+
+  it("keeps a pending row while it is the newest thing — it IS running", () => {
+    const rows = pairToolMessages([text("a"), pendingUse("t1")])
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toMatchObject({ kind: "tool_pair", result: null })
+  })
+
+  it("drops a pending row once later activity proves it is not in flight", () => {
+    // The live bug: PreToolUse fired, its PostToolUse never arrived, and the row
+    // rendered "running…" forever — while a reload showed nothing, because the
+    // durable transcript never had it.
+    const rows = pairToolMessages([pendingUse("t1"), text("a")])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe("message")
+  })
+
+  it("keeps a pending row whose result DID arrive, so the pair renders", () => {
+    const rows = pairToolMessages([pendingUse("t1"), resultFor("t1"), text("a")])
+    const pair = rows.find((r) => r.kind === "tool_pair")
+    expect(pair).toBeDefined()
+    expect((pair as { result: Message | null }).result).not.toBeNull()
+  })
+
+  it("leaves ordinary completed tool rows untouched", () => {
+    const done: Message = { ...pendingUse("t9"), content: { id: "t9", name: "Bash" } }
+    const rows = pairToolMessages([done, resultFor("t9"), text("a")])
+    expect(rows.filter((r) => r.kind === "tool_pair")).toHaveLength(1)
+  })
+})

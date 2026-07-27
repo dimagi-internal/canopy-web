@@ -42,7 +42,44 @@ function toolResultId(message: Message): string | null {
   return typeof id === "string" && id !== "" ? id : null;
 }
 
+/**
+ * A pending live row (`status: "pending"` from PreToolUse, no ordinal) is a
+ * PLACEHOLDER. It is meant to be replaced when its result arrives — but if that
+ * never lands (the turn ended, the runner stopped streaming, a hook was dropped),
+ * it strands a row rendering "running…" forever, which reads as an agent stuck
+ * mid-call. Observed live 2026-07-27: one orphan row per turn, and it vanished on
+ * reload because the durable transcript never contained it.
+ *
+ * A pending row is therefore dropped once ANY later row exists — later activity
+ * is proof that whatever it was waiting on is no longer in flight. It survives
+ * only while it is genuinely the newest thing in the session, which is exactly
+ * when "running…" is true.
+ */
+function dropStaleLiveRows(messages: Message[]): Message[] {
+  const lastIndex = messages.length - 1;
+  return messages.filter((m, i) => {
+    if (m.role !== "tool_use") return true;
+    const content = m.content as Record<string, unknown> | undefined;
+    if (content?.status !== "pending") return true;
+    const id = typeof content.id === "string" ? content.id : null;
+    // Its result arrived — the pair will render normally, keep it.
+    if (
+      id &&
+      messages.some(
+        (o) =>
+          o.role === "tool_result" &&
+          (o.content as Record<string, unknown> | undefined)?.tool_use_id === id,
+      )
+    ) {
+      return true;
+    }
+    // Still the newest row: genuinely in flight.
+    return i === lastIndex;
+  });
+}
+
 export function pairToolMessages(messages: Message[]): ChatRow[] {
+  messages = dropStaleLiveRows(messages);
   const rows: ChatRow[] = [];
   // Map of tool_use_id → index into rows[] for that pair. Lets a tool_result
   // arriving later in the stream slot itself into the existing pair row.

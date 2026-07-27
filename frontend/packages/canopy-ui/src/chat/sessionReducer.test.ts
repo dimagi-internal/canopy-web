@@ -492,3 +492,50 @@ describe("sessionReducer — pending → complete lifecycle", () => {
     expect(settled.messages[0].turn_index).toBe(4096)
   })
 })
+
+describe("sessionReducer — a web send arriving twice", () => {
+  it("does not render the same message twice at two different ordinals", () => {
+    // THE live bug (2026-07-27): a web send writes its row at a DENSE index
+    // (_next_index), then the agent reads it and the transcript re-ships the
+    // same text at a COMPOSITE ordinal. Different index, different id, so
+    // matching on turn_index alone missed and the message appeared twice — while
+    // a reload showed it once, because get_or_create dedupes server-side.
+    const seeded = makeState({
+      messages: [
+        makeMessage({ id: "501", turn_index: 37, role: "user", plaintext: "try one more time" }),
+      ],
+    })
+    const fromTranscript = {
+      event: "chat.user_message",
+      data: { message_id: "902", turn_index: 144448, plaintext: "try one more time" },
+    } as WsEvent
+    const next = sessionReducer(seeded, fromTranscript)
+    expect(next.messages).toHaveLength(1)
+    // And it adopts the durable ordinal, so it sorts where a reload puts it.
+    expect(next.messages[0].turn_index).toBe(144448)
+    expect(next.messages[0].id).toBe("902")
+  })
+
+  it("a genuine repeat sent much later is still its own row", () => {
+    // The dedupe must not swallow real repetition — only the tail is compared.
+    const many = Array.from({ length: 9 }, (_, i) =>
+      makeMessage({ id: `u${i}`, turn_index: i, role: "user", plaintext: i === 0 ? "yes" : `m${i}` }),
+    )
+    const next = sessionReducer(makeState({ messages: many }), {
+      event: "chat.user_message",
+      data: { message_id: "new", turn_index: 500, plaintext: "yes" },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(10)
+  })
+
+  it("an empty-text frame never collapses onto another empty row", () => {
+    const seeded = makeState({
+      messages: [makeMessage({ id: "1", turn_index: 1, role: "user", plaintext: "" })],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "2", turn_index: 2, plaintext: "" },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(2)
+  })
+})
