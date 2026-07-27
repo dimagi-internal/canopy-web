@@ -166,6 +166,47 @@ def test_whole_board_feedback_targets_the_storyboard(board):
     assert (fb.target_kind, fb.target_ref) == ("storyboard", board.slug)
 
 
+def test_an_act_note_says_which_act(board):
+    """Act-level notes all target the board, so without an anchor a reader's
+    most structural feedback ("act II doesn't follow from act I") arrives
+    indistinguishable from a note on any other act."""
+    two = Act.objects.create(storyboard=board, title="Act two", position=1)
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    t = board.ensure_share_token()
+
+    read = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()
+    anchors = [a["anchor_id"] for a in read["acts"]]
+    assert len(set(anchors)) == 2, "two acts, two anchors"
+
+    for anchor in anchors:
+        _post(
+            Client(),
+            f"/api/storyboards/{board.slug}/feedback?t={t}",
+            {**COMMENT, "anchor_id": anchor},
+        )
+
+    assert set(Feedback.objects.values_list("anchor_id", flat=True)) == set(anchors)
+    # And the anchor resolves back to an act — feedback holds a pointer, never a
+    # copy, so a retitle must not orphan it.
+    assert anchors[1] == f"act:{two.pk}"
+
+
+def test_an_act_anchor_survives_a_retitle_and_a_reorder(board):
+    board.capability = Storyboard.CAP_COMMENT
+    board.save()
+    t = board.ensure_share_token()
+    act = board.acts.get()
+
+    before = Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"][0]["anchor_id"]
+    Act.objects.create(storyboard=board, title="A new opening", position=-1)
+    act.title = "Renamed entirely"
+    act.save()
+    after = [a["anchor_id"] for a in Client().get(f"/api/storyboards/{board.slug}?t={t}").json()["acts"]]
+
+    assert before in after, "an anchor that moved would re-point old notes at the wrong act"
+
+
 def test_the_version_it_was_left_against_is_recorded(board):
     """The page FOLLOWS the current release, so without this a comment loses its
     anchor the moment the narrative moves."""

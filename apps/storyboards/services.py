@@ -73,6 +73,14 @@ def resolve_board(board: Storyboard) -> dict:
     for act in board.acts.all():
         acts.append(
             {
+                # What an act-level note is ABOUT. Without it every act note
+                # targets the whole board with a blank anchor, so three notes on
+                # three acts arrive indistinguishable — and the reader's most
+                # structural feedback ("act II doesn't follow from act I") is
+                # exactly the kind that loses its meaning unanchored.
+                # The pk, not the position or the title: a reorder or a retitle
+                # must not silently re-point feedback at a different act.
+                "anchor_id": f"act:{act.pk}",
                 "title": act.title,
                 "prose": act.prose,
                 "entries": [

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import StoryboardPage from './StoryboardPage'
 import * as api from '@/api/storyboards'
@@ -20,6 +20,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
     capability: 'read',
     acts: [
       {
+        anchor_id: 'act:1',
         title: 'Six weeks to a supply base',
         prose: 'Procurement integrity you can show.',
         entries: [
@@ -72,6 +73,7 @@ describe('StoryboardPage', () => {
       board({
         acts: [
           {
+            anchor_id: 'act:9',
             title: 'Act',
             prose: '',
             entries: [
@@ -109,6 +111,25 @@ describe('StoryboardPage', () => {
     renderAt()
     expect(await screen.findByText('Leave a note on this act')).toBeTruthy()
     expect(screen.getByText('Leave a note on this demo')).toBeTruthy()
+  })
+
+  it('says which act an act-level note is about', async () => {
+    // Every act note targets the whole board, so with no anchor three notes on
+    // three acts arrive indistinguishable — and "act II doesn't follow from act
+    // I" is exactly the feedback that means nothing unanchored.
+    const leaveFeedback = api.leaveFeedback as unknown as ReturnType<typeof vi.fn>
+    leaveFeedback.mockResolvedValue({ created: 1 })
+    getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
+    renderAt()
+
+    fireEvent.click(await screen.findByText('Leave a note on this act'))
+    fireEvent.change(screen.getByPlaceholderText(/What’s wrong/), {
+      target: { value: 'Act one runs long.' },
+    })
+    fireEvent.click(screen.getByText('Leave note'))
+
+    await waitFor(() => expect(leaveFeedback).toHaveBeenCalled())
+    expect(leaveFeedback.mock.calls[0][1].anchor_id).toBe('act:1')
   })
 
   it('shows a plain not-available message on 404 rather than an error dump', async () => {
