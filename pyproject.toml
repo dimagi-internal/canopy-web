@@ -36,6 +36,11 @@ dependencies = [
     # implementation, so the editor's preview and the runner's firing can't diverge.
     # It carries croniter (bound there, deliberately); nothing else here imports it.
     "canopy-cron",
+    # The Django-free Claude Code transcript core. The server imports BLOCK_STRIDE
+    # from it so the ordinal scheme has ONE definition — it previously lived in the
+    # runner and was restated in a server comment, which is exactly how the two
+    # runners' copies drifted apart in the first place.
+    "canopy-transcript",
     "pywebpush>=2.3.0",
 ]
 
@@ -72,6 +77,9 @@ canopy-agent-runs = { path = "packages/canopy_agent_runs", editable = true }
 # Same deal for the cron slot math: in-repo, standalone, installable. The runner
 # (packages/canopy_runner) depends on it directly rather than via canopy-web.
 canopy-cron = { path = "packages/canopy_cron", editable = true }
+# The transcript core: in-repo, standalone, installable. Both runners depend on it
+# directly; the server uses it for the ordinal scheme.
+canopy-transcript = { path = "packages/canopy_transcript", editable = true }
 
 [tool.setuptools.packages.find]
 include = ["apps*", "config*"]
