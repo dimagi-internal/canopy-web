@@ -121,6 +121,16 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
   const moved = edited + added + cut
   const q = token ? `?t=${encodeURIComponent(token)}` : ''
 
+  // A cut scene is history, not part of the story being read. Numbering it
+  // alongside the others made scene 4 read as scene 5 and made the footer
+  // promise more scenes than the narrative has. Number only what is still in
+  // the narrative; a cut scene gets a dash.
+  const sceneNumbers = new Map<number, number>()
+  pairs.forEach((p, i) => {
+    if (p.status !== 'removed') sceneNumbers.set(i, sceneNumbers.size + 1)
+  })
+  const sceneCount = sceneNumbers.size
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
@@ -171,21 +181,37 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
         )}
 
         <div>
-          {pairs.map((pair, i) => (
+          {pairs.map((pair, i) => {
+            const n = sceneNumbers.get(i)
+            const isCut = pair.status === 'removed'
+            return (
             <section
               key={pair.id ?? i}
               className="flex flex-col gap-3 border-t border-border py-5 first:border-t-0"
             >
               <div className="flex flex-wrap items-baseline gap-2.5">
                 <span className="font-mono text-[11px] tabular-nums text-foreground-subtle">
-                  {String(i + 1).padStart(2, '0')}
+                  {n != null ? String(n).padStart(2, '0') : '—'}
                 </span>
                 {pair.title && (
                   <h2 className="text-[15px] font-semibold text-foreground">{pair.title}</h2>
                 )}
                 {pair.status !== 'unchanged' && (
-                  <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success">
-                    {pair.status === 'added' ? 'New' : pair.status === 'removed' ? 'Cut' : 'Changed'}
+                  // A cut scene is not an addition; badging it in the same
+                  // green said "look at this new thing" about something that is
+                  // no longer there.
+                  <span
+                    className={
+                      isCut
+                        ? 'rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground'
+                        : 'rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success'
+                    }
+                  >
+                    {pair.status === 'added'
+                      ? 'New'
+                      : isCut
+                        ? `Cut since v${data.previous_version}`
+                        : 'Changed'}
                   </span>
                 )}
               </div>
@@ -208,18 +234,30 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                   </div>
                 </div>
               ) : (
-                <p className="text-[13.5px] leading-relaxed text-foreground-secondary">
+                <p
+                  className={
+                    isCut
+                      ? 'text-[13.5px] leading-relaxed text-foreground-subtle line-through decoration-foreground-subtle/50'
+                      : 'text-[13.5px] leading-relaxed text-foreground-secondary'
+                  }
+                >
                   {pair.after ?? pair.before}
                 </p>
               )}
 
               <NoteComposer
                 capability={data.capability}
-                anchorLabel={`Scene ${i + 1}${data.version != null ? ` · v${data.version}` : ''}`}
-                cta={`Leave a note on scene ${i + 1}`}
+                anchorLabel={
+                  isCut
+                    ? `Cut scene · v${data.previous_version}`
+                    : `Scene ${n}${data.version != null ? ` · v${data.version}` : ''}`
+                }
+                cta={isCut ? 'Leave a note on the cut scene' : `Leave a note on scene ${n}`}
                 defaults={{
                   narrative_slug: data.narrative_slug,
-                  target_version: data.version,
+                  // A cut scene exists only in the previous version, so filing
+                  // the note against the current one points it at nothing.
+                  target_version: isCut ? data.previous_version : data.version,
                   anchor_id: pair.id ?? '',
                 }}
                 onSubmit={(payload) =>
@@ -227,13 +265,14 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                 }
               />
             </section>
-          ))}
+            )
+          })}
         </div>
 
         <footer className="mt-14 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-6 text-[11px] text-muted-foreground">
           <span>
             <span className="font-mono">{data.narrative_slug}</span>
-            {data.version != null && ` · v${data.version}`} · {pairs.length} scenes
+            {data.version != null && ` · v${data.version}`} · {sceneCount} scenes
           </span>
         </footer>
       </div>
