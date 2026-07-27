@@ -134,6 +134,8 @@ the active workspace. `/ddd-plans` and `/reviews` now redirect to `/`.
 - `/review/:id` — Editable narrative review surface for DDD (approve / redraft a story before build); public (link-visibility) reviews are readable by anyone with the URL, but submitting a decision requires a Dimagi login
 - `/invite/:token` — Accept-invite page (deliberately outside `/w/:workspace/`: an invitee has no membership yet, so there's no tenant to scope into). Pre-auth, previews the invite (masked email, workspace name, role) via `GET /api/workspaces/invites/{token}/preview`; accepting requires a Dimagi (or invite-admitted) login
 - `/share/:token` — Public, chrome-less read-only viewer for a shared session (no login; mounted outside the app shell)
+- `/storyboard/:slug` — **The shared arc**: several DDD narratives grouped into ordered acts, as ONE link. Public via `?t=<share_token>`, chrome-less (`PublicLayout`), no login. The page *follows* each narrative's current release rather than freezing a run id, so an emailed link never goes stale. Acts are numbered because act order carries meaning; a narrative with nothing published yet renders as "Being built" rather than vanishing (a storyboard is usually authored before its narratives are filmed)
+- `/narrative/:slug?b=<storyboard>` — **The reviewer surface**: one narrative scene by scene, with a before/after on the scenes that changed. Gated by the storyboard's token (`b=` names the board). Shows the story and nothing else — no gates, features, provenance, actionability or findings. This is now the front door for narrative review; the operator console (`/w/:ws/ddd/:narrative`) keeps the machinery and sits behind a link (canopy-web#290: *"something only I understand"*)
 - `/api/` — REST API
 - `/admin/` — Django admin
 - `/health/` — Health check
@@ -373,6 +375,25 @@ Token-based session sharing (the `/canopy:share-session` flow); the app was rena
 - `POST /api/sessions/arcs/{slug}/rotate-token` — Rotate an arc's share token (owner)
 
 - `GET /api/share/{token}` — Public read-only view of a shared session (no login; `share_router` mounted at `/api/share`, drives `/share/:token`)
+
+### Feedback (`apps/feedback`) — what someone said, from any channel
+**Framework tier**, generic over its target (`target_kind` + `target_ref` **strings, never an FK** — a DDD narrative is not a table, and an FK would break the one-way rule; the same discipline `Item` follows). Feedback is **input to a decision, not work**: this app deliberately emits **no signal** — no `Item`, no push, no timeline event. A turn reads the pool when the owner is ready, clusters it across channels, and proposes a disposition for each piece. `tests/test_feedback_emits_nothing.py` guards that (no signals module, no receiver, no `Item` reference, no `AppConfig.ready()` hook).
+
+**canopy-web is not an integration hub.** Email and Google-Doc feedback arrive because an **agent** reads them and POSTs — no pollers, no third-party credentials, no inbound connectors. That is what keeps the app generic over `channel` instead of growing one integration per source.
+- `POST /api/feedback/` — Ingest (batch, atomic). **Idempotent per `(channel, source_ref)`** via a PARTIAL unique index that excludes blanks, so re-reading a mailbox dedupes while two web submits stay two pieces of feedback. `submitted_by` is the **caller** (the agent's PAT user, or the logged-in human), never the external author, who has no account
+- `GET /api/feedback/` — The pool (`?target_kind=`, `?target_ref=`, `?state=`, `?channel=`)
+- `POST /api/feedback/{id}/resolve` — Record a disposition. The **only** mutation: feedback is what somebody said, and editing it after the fact would make the pool untrustworthy as a record
+
+### Storyboards (`apps/storyboards`) — the shareable arc
+**Product tier** (it curates DDD narratives). `Storyboard → Act → Entry`; an entry names a narrative by slug and resolves to its **current** release at read time. `Entry.pinned_run_id` exists but stays blank except to hold an entry on a known-good run while that narrative is mid-redraft. `slug` is unique **per workspace**, not globally.
+- `GET|POST /api/storyboards/` — List / create (member)
+- `GET /api/storyboards/{slug}` — Read. `auth=None`, self-enforcing (member OR matching `?t=`); a wrong token **404s, never 403s**, so "no such board" and "wrong token" are indistinguishable
+- `PATCH /api/storyboards/{slug}` — Retitle / reorder / set capability. Acts are replaced wholesale — reordering is a rewrite, not a diff
+- `POST /api/storyboards/{slug}/share` · `/rotate-token` — Mint / re-mint the link (rotate kills every link already sent)
+- `GET /api/storyboards/{slug}/narratives/{narrative_slug}` — The reviewer surface's read: current + previous narration for the diff. Same token gate; 404s when the narrative is not on this board
+- `POST /api/storyboards/{slug}/feedback` — The **anonymous, capability-gated write**. One grant per board as a ladder (`read` < `comment` < `suggest`). Lives here and **not** in `apps/feedback` on purpose: `feedback` is framework and `storyboards` is product, so having the framework app resolve a storyboard token would invert the boundary — the storyboard owns the token, so it owns the route, and calls `feedback.services.ingest` (which is why that service layer is request-free). The caller cannot forge what it is not entitled to: `channel`/`target_kind` are server-set, and feedback against a narrative not on this board 404s
+
+Authoring: `python manage.py import_storyboard storyboard.yaml --workspace <slug>` so agents author the arc beside the product it curates. Idempotent per `(workspace, slug)`; a re-import updates in place and **preserves the share token** — the arc changed, not who may see it.
 
 ### Timeline (`apps/timeline`)
 - `GET /api/timeline/` — Team activity timeline. Generic activity-log aggregation that reads other apps' events via a string registry (cursor-paginated; link-out only). See `docs/superpowers/specs/2026-06-19-team-activity-timeline-design.md`.
