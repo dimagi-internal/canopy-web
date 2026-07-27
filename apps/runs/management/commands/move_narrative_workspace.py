@@ -24,6 +24,7 @@ from django.db import transaction
 
 from apps.reviews.models import ReviewRequest
 from apps.runs.aggregate import narrative_of_review, narrative_of_walkthrough
+from apps.storyboards.models import Entry, Storyboard
 from apps.walkthroughs.models import Walkthrough
 from apps.workspaces.models import Workspace
 
@@ -56,6 +57,18 @@ class Command(BaseCommand):
         moving_reviews = [r for r in reviews if r.workspace_id != target]
         moving_wts = [w for w in walkthroughs if w.workspace_id != target]
 
+        # A storyboard resolves its entries against ITS OWN workspace, so a board
+        # left behind after its narratives move renders nothing but placeholders.
+        # Moving the narratives without it would just relocate the split.
+        board_ids = set(
+            Entry.objects.filter(narrative_slug__in=slugs).values_list(
+                "act__storyboard_id", flat=True
+            )
+        )
+        moving_boards = [
+            b for b in Storyboard.objects.filter(id__in=board_ids) if b.workspace_id != target
+        ]
+
         for slug in sorted(slugs):
             by_ws: dict[str | None, list[int]] = {}
             for r in reviews:
@@ -68,9 +81,12 @@ class Command(BaseCommand):
             n_w = sum(1 for w in walkthroughs if narrative_of_walkthrough(w) == slug)
             self.stdout.write(f"    walkthroughs: {n_w}")
 
+        for b in moving_boards:
+            self.stdout.write(f"storyboard {b.slug!r}: {b.workspace_id} -> {target}")
+
         self.stdout.write(
-            f"\nWould move {len(moving_reviews)} review(s) and {len(moving_wts)} "
-            f"walkthrough(s) into {target!r}."
+            f"\nWould move {len(moving_reviews)} review(s), {len(moving_wts)} "
+            f"walkthrough(s) and {len(moving_boards)} storyboard(s) into {target!r}."
         )
 
         if not opts["apply"]:
@@ -84,9 +100,13 @@ class Command(BaseCommand):
             for w in moving_wts:
                 w.workspace_id = target
                 w.save(update_fields=["workspace"])
+            for b in moving_boards:
+                b.workspace_id = target
+                b.save(update_fields=["workspace", "updated_at"])
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Moved {len(moving_reviews)} review(s) and {len(moving_wts)} walkthrough(s)."
+                f"Moved {len(moving_reviews)} review(s), {len(moving_wts)} walkthrough(s) "
+                f"and {len(moving_boards)} storyboard(s)."
             )
         )

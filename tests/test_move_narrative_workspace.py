@@ -104,3 +104,39 @@ def test_several_narratives_move_together(workspaces):
         "--slug", "a-narrative", "--slug", "b-narrative", "--apply",
     )
     assert ReviewRequest.objects.filter(workspace_id="connect").count() == 2
+
+
+def test_a_storyboard_follows_its_narratives(workspaces):
+    """A board resolves entries against ITS OWN workspace, so leaving it behind
+    would just relocate the split instead of healing it."""
+    from apps.storyboards.models import Act, Entry, Storyboard
+
+    board = Storyboard.objects.create(
+        slug="rf-surveys", title="Proving a programme works", workspace_id="dimagi"
+    )
+    act = Act.objects.create(storyboard=board, title="Act", position=0)
+    Entry.objects.create(act=act, narrative_slug="create-survey-solicitation", position=0)
+    _split_lineage()
+
+    call_command(
+        "move_narrative_workspace", "--to", "connect",
+        "--slug", "create-survey-solicitation", "--apply",
+    )
+    board.refresh_from_db()
+    assert board.workspace_id == "connect"
+
+
+def test_an_unrelated_storyboard_stays_put(workspaces):
+    from apps.storyboards.models import Act, Entry, Storyboard
+
+    other = Storyboard.objects.create(slug="other", title="Other", workspace_id="dimagi")
+    act = Act.objects.create(storyboard=other, title="Act", position=0)
+    Entry.objects.create(act=act, narrative_slug="something-else", position=0)
+    _split_lineage()
+
+    call_command(
+        "move_narrative_workspace", "--to", "connect",
+        "--slug", "create-survey-solicitation", "--apply",
+    )
+    other.refresh_from_db()
+    assert other.workspace_id == "dimagi"
