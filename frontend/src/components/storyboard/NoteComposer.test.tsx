@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { NoteComposer } from './NoteComposer'
 
 afterEach(cleanup)
+
+// jsdom here exposes a `localStorage` object whose methods are missing, which
+// is why the component guards every access — but a stub is needed to test that
+// it remembers anything at all.
+beforeEach(() => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+  })
+})
 
 function setup(capability: 'read' | 'comment' | 'suggest', onSubmit = vi.fn().mockResolvedValue(undefined)) {
   const { container } = render(
@@ -66,6 +77,27 @@ describe('NoteComposer', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
     expect(onSubmit.mock.calls[1][0].body).toBe('second')
+  })
+
+  it('asks for the reviewer’s name once, not once per note', async () => {
+    // A full review puts a composer under every act, every demo and every
+    // scene. Retyping a name twenty times is how you end up with twenty
+    // "Anonymous" notes from the one person you sent the link to.
+    const first = setup('comment')
+    fireEvent.click(screen.getByText('Leave a note'))
+    fireEvent.change(screen.getByPlaceholderText(/Your name/), { target: { value: 'Sophie' } })
+    fireEvent.change(first.note(), { target: { value: 'one' } })
+    fireEvent.click(screen.getByText('Leave note'))
+    await waitFor(() => expect(first.onSubmit).toHaveBeenCalled())
+    expect(first.onSubmit.mock.calls[0][0].author_name).toBe('Sophie')
+
+    cleanup()
+    const second = setup('comment')
+    fireEvent.click(screen.getByText('Leave a note'))
+    fireEvent.change(second.note(), { target: { value: 'two' } })
+    fireEvent.click(screen.getByText('Leave note'))
+    await waitFor(() => expect(second.onSubmit).toHaveBeenCalled())
+    expect(second.onSubmit.mock.calls[0][0].author_name).toBe('Sophie')
   })
 
   it('surfaces a failure instead of pretending it saved', async () => {
