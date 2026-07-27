@@ -208,3 +208,50 @@ def test_list_is_newest_first_by_last_interacted_at():
     rows = c.get("/api/harness/sessions").json()
     tasks = [r["emdash_task"] for r in rows]
     assert tasks == ["newer", "older"]
+
+
+def test_the_report_corrects_an_autotitled_session():
+    """A session created on the phone is autotitled (first message, truncated)
+    before any emdash task exists, so it kept a sentence for a name while the
+    sidebar showed the task. The first fix went into `record_session`, which only
+    runs when a TURN is routed — this is the path that runs every ~10s, and
+    missing it is why the repair never happened (observed 2026-07-27, after
+    shipping it)."""
+    from django.test import Client
+
+    from apps.canopy_sessions.models import Message, RunnerBinding, Session
+
+    jj = _user("jj-title")
+    ws = _ws("dimagi-title", jj)
+    runner = _runner(jj, ws)
+    title = "I think we basically implemented everything"
+    session = Session.objects.create(workspace=ws, created_by=jj, title=title)
+    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+                           plaintext=title)
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="canopy-web-api-7716",
+                                 thread_key="emdash:canopy-web-api-7716",
+                                 host=runner.host)
+    c = Client(); c.force_login(jj)
+    _report(c, runner.id, [{"emdash_task": "canopy-web-api-7716", "project": "canopy-web"}])
+    session.refresh_from_db()
+    assert session.title == "canopy-web-api-7716"
+
+
+def test_the_report_never_clobbers_a_title_a_human_chose():
+    from django.test import Client
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    jj = _user("jj-human")
+    ws = _ws("dimagi-human", jj)
+    runner = _runner(jj, ws)
+    session = Session.objects.create(workspace=ws, created_by=jj, title="Ship the release")
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="canopy-web-api-7716",
+                                 thread_key="emdash:canopy-web-api-7716",
+                                 host=runner.host)
+    c = Client(); c.force_login(jj)
+    _report(c, runner.id, [{"emdash_task": "canopy-web-api-7716", "project": "canopy-web"}])
+    session.refresh_from_db()
+    assert session.title == "Ship the release"
