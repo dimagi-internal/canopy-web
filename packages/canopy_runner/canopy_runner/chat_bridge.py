@@ -142,7 +142,21 @@ TOOL_INPUT_STR_MAX = 4_000  # any single string inside a tool's input
 TOOL_INPUT_JSON_MAX = 16_000
 
 
+def scrub(text: str) -> str:
+    """Drop NUL bytes. Postgres rejects them outright in text and jsonb columns.
+
+    A tool result is raw bytes from whatever the tool touched, so `Read` on a
+    compressed or binary file puts one straight into the stream (found on labs
+    2026-07-26, one row in 683). The write is a single transaction, so ONE such
+    row 500s the whole batch — the session's history never rebuilds and the
+    runner retries it every tick forever. Only NUL is stripped: every other
+    control character is legal in Postgres text and is real transcript content.
+    """
+    return text.replace("\x00", "") if "\x00" in text else text
+
+
 def _truncate(text: str, limit: int) -> str:
+    text = scrub(text)
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n… [truncated {len(text) - limit} chars]"
@@ -155,7 +169,7 @@ def _truncate_input(value, depth: int = 0):
     if depth > 6:
         return "…"
     if isinstance(value, str):
-        return _truncate(value, TOOL_INPUT_STR_MAX)
+        return _truncate(value, TOOL_INPUT_STR_MAX)  # _truncate scrubs NUL
     if isinstance(value, dict):
         return {k: _truncate_input(v, depth + 1) for k, v in value.items()}
     if isinstance(value, list):
@@ -218,7 +232,7 @@ def _rows_for_record(rec: dict) -> list[dict]:
 
     # A bare-string content is always a single plain message at block 0.
     if not isinstance(content, list):
-        text = _user_text(content) if kind == "user" else _assistant_text(content)
+        text = scrub(_user_text(content) if kind == "user" else _assistant_text(content))
         return [{"block": 0, "role": kind, "text": text, "content": {}}] if text else []
 
     # Overflow can only happen if a record ever carries more blocks than the
@@ -244,7 +258,7 @@ def _rows_for_blocks(kind: str, content: list) -> list[dict]:
             continue
         btype = block.get("type")
         if btype == "text":
-            text = str(block.get("text", "")).strip()
+            text = scrub(str(block.get("text", "")).strip())
             if text:
                 rows.append({"block": b_i, "role": kind, "text": text, "content": {}})
         elif btype == "tool_use":
