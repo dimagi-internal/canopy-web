@@ -1286,88 +1286,90 @@ def replace_reported_sessions(
 
     now_keys = {s.emdash_task for s in deduped}
 
-    for s in deduped:
-        # Find this runner's binding for the task WITHOUT depending on the live
-        # `runner` FK — the clear step below nulls it for anything that fell off the
-        # report, and a lookup keyed on it would then miss the row and fork a
-        # DUPLICATE Session when the task reappears. The two branches are
-        # asymmetric on purpose: `runner=runner` preserves today's behaviour
-        # exactly while the FK is set (legacy bindings carry host="" and would stop
-        # matching if we keyed on host alone), and the null branch recovers a row
-        # THIS runner previously released — scoped by host, because emdash task
-        # names collide across machines and one laptop must never claim another's.
-        # The null branch requires a NON-BLANK host: a legacy binding with host=""
-        # would otherwise be recoverable by any runner whose own host is "" (two
-        # un-heartbeated runners would fuse). `runner=runner` still covers a
-        # host="" binding this runner currently owns, so that case is unaffected.
-        host_match = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
-        binding = (
-            RunnerBinding.objects.select_for_update()
-            .filter(session_key=s.emdash_task)
-            .filter(Q(runner=runner) | host_match)
-            .first()
-        )
-        if binding is None:
-            session = Session.objects.create(
-                workspace=workspace,
-                origin=Session.ORIGIN_RUNNER,
-                project=s.project or "",
-                title=s.emdash_task,
+    # The loop takes select_for_update locks, which Django REJECTS outside a
+    # transaction — "select_for_update cannot be used outside of a transaction".
+    # That was latent from #350: nothing in the loop wrote after taking the lock,
+    # so the error was never raised. Adding a `.save()` (the title repair) made it
+    # fire, 500ing the endpoint the runner calls every ~10s to report which
+    # sessions are alive — the whole machine went dark on liveness.
+    #
+    # Wrapping the loop is the real fix: the lock was always meant to serialize
+    # concurrent reports for a task, and without a transaction it never did.
+    with transaction.atomic():
+        for s in deduped:
+            # Find this runner's binding for the task WITHOUT depending on the live
+            # `runner` FK — the clear step below nulls it for anything that fell off the
+            # report, and a lookup keyed on it would then miss the row and fork a
+            # DUPLICATE Session when the task reappears. The two branches are
+            # asymmetric on purpose: `runner=runner` preserves today's behaviour
+            # exactly while the FK is set (legacy bindings carry host="" and would stop
+            # matching if we keyed on host alone), and the null branch recovers a row
+            # THIS runner previously released — scoped by host, because emdash task
+            # names collide across machines and one laptop must never claim another's.
+            # The null branch requires a NON-BLANK host: a legacy binding with host=""
+            # would otherwise be recoverable by any runner whose own host is "" (two
+            # un-heartbeated runners would fuse). `runner=runner` still covers a
+            # host="" binding this runner currently owns, so that case is unaffected.
+            host_match = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
+            binding = (
+                RunnerBinding.objects.select_for_update()
+                .filter(session_key=s.emdash_task)
+                .filter(Q(runner=runner) | host_match)
+                .first()
             )
-            binding = RunnerBinding(session=session, session_key=s.emdash_task)
-            binding.thread_key = f"emdash:{s.emdash_task}"
-            binding.host = runner.host
-        else:
-            # Correct a GENERATED title on an existing session. A brand-new
-            # session above is titled from the emdash task, but an existing one
-            # never was — so a session created on the phone kept its autotitle
-            # (the first user message, truncated) forever, while emdash's own
-            # sidebar showed the task name. The first fix went into
-            # `record_session`, which only runs when a TURN is routed; this is
-            # the path that runs every ~10s, which is why the repair never
-            # actually happened (observed 2026-07-27, after shipping it).
-            #
-            # `_title_is_derived` recognises only titles WE generated, so a title
-            # a human chose is still never touched.
-            # ISOLATED, and deliberately so. This is a COSMETIC repair inside the
-            # endpoint the runner calls every ~10s to report which sessions are
-            # alive — the one canopy reads liveness from. Shipping it unguarded
-            # 500'd the whole report on labs (2026-07-27), so every session on
-            # that runner stopped being reported at all: a nicety took out the
-            # liveness signal for the entire machine.
-            #
-            # The savepoint is required, not defensive: the report already holds
-            # `select_for_update` rows, and with SESSION_SAVE_EVERY_REQUEST any
-            # error inside the outer transaction poisons it (CLAUDE.md documents
-            # this trap and names this module as the precedent). Catching without
-            # a savepoint would leave the request unable to commit anything.
-            try:
-                with transaction.atomic():
-                    if _title_is_derived(binding.session, binding.thread_key or ""):
-                        if binding.session.title != s.emdash_task:
-                            binding.session.title = s.emdash_task[:200]
-                            binding.session.save(update_fields=["title"])
-            except Exception:  # noqa: BLE001 — a title must never cost liveness
-                logger.warning("could not retitle session %s from task %r",
-                               binding.session_id, s.emdash_task, exc_info=True)
-            # thread_key/host are the binding's durable IDENTITY. NEVER overwrite a
-            # non-empty one — an existing binding may be owned by an agent/phone
-            # thread (record_session) and this report loop must not steal it (see
-            # the docstring above). But DO fill an EMPTY one: bindings predating the
-            # SessionLink fold have host="" and can never satisfy
-            # RunnerBinding.reusable_by (which requires runner AND host), so a chat
-            # sent to one spawned a fresh emdash session forever instead of reusing
-            # the live one. Fill-if-empty heals those without clobbering anything.
-            if not binding.thread_key:
+            if binding is None:
+                session = Session.objects.create(
+                    workspace=workspace,
+                    origin=Session.ORIGIN_RUNNER,
+                    project=s.project or "",
+                    title=s.emdash_task,
+                )
+                binding = RunnerBinding(session=session, session_key=s.emdash_task)
                 binding.thread_key = f"emdash:{s.emdash_task}"
-            if not binding.host:
                 binding.host = runner.host
-        binding.runner = runner
-        binding.status = s.status or ""
-        binding.last_interacted_at = _aware(s.last_interacted_at)
-        binding.live_seen_at = timezone.now()
-        binding.tail = list(s.recent_messages or [])
-        binding.save()
+            else:
+                # Correct a GENERATED title on an existing session. A brand-new
+                # session above is titled from the emdash task, but an existing one
+                # never was — so a session created on the phone kept its autotitle
+                # (the first user message, truncated) forever, while emdash's own
+                # sidebar showed the task name. The first fix went into
+                # `record_session`, which only runs when a TURN is routed; this is
+                # the path that runs every ~10s, which is why the repair never
+                # actually happened (observed 2026-07-27, after shipping it).
+                #
+                # `_title_is_derived` recognises only titles WE generated, so a title
+                # a human chose is still never touched.
+                # Cosmetic repair, kept isolated: a title must never cost liveness.
+                # The enclosing `transaction.atomic()` (see below) is what makes the
+                # select_for_update above legal at all; this inner block only stops a
+                # retitle failure from rolling the whole report back.
+                try:
+                    with transaction.atomic():
+                        if _title_is_derived(binding.session, binding.thread_key or ""):
+                            if binding.session.title != s.emdash_task:
+                                binding.session.title = s.emdash_task[:200]
+                                binding.session.save(update_fields=["title"])
+                except Exception:  # noqa: BLE001 — a title must never cost liveness
+                    logger.warning("could not retitle session %s from task %r",
+                                   binding.session_id, s.emdash_task, exc_info=True)
+                # thread_key/host are the binding's durable IDENTITY. NEVER overwrite a
+                # non-empty one — an existing binding may be owned by an agent/phone
+                # thread (record_session) and this report loop must not steal it (see
+                # the docstring above). But DO fill an EMPTY one: bindings predating the
+                # SessionLink fold have host="" and can never satisfy
+                # RunnerBinding.reusable_by (which requires runner AND host), so a chat
+                # sent to one spawned a fresh emdash session forever instead of reusing
+                # the live one. Fill-if-empty heals those without clobbering anything.
+                if not binding.thread_key:
+                    binding.thread_key = f"emdash:{s.emdash_task}"
+                if not binding.host:
+                    binding.host = runner.host
+            binding.runner = runner
+            binding.status = s.status or ""
+            binding.last_interacted_at = _aware(s.last_interacted_at)
+            binding.live_seen_at = timezone.now()
+            binding.tail = list(s.recent_messages or [])
+            binding.save()
 
     # Un-archive anything re-reported as open. The DERIVED staleness half of
     # `state=active` recomputes on every read, but this WRITTEN half does not heal
