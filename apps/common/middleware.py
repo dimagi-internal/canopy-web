@@ -105,6 +105,17 @@ def _is_invite_link(request) -> bool:
     return bool(_INVITE_TOKEN_LINK.match(path))
 
 
+def _is_storyboard_link(request) -> bool:
+    # /storyboard/<slug> (SPA shell) and its read + feedback API self-enforce the
+    # ?t=<share_token> gate (or a workspace-member session) inside the handler,
+    # so admit anonymous callers and let the API decide. A wrong token 404s there
+    # rather than 403ing, so existence never leaks.
+    path = request.path
+    if path.startswith("/storyboard/"):
+        return True
+    return path.startswith("/api/storyboards/")
+
+
 def _is_ddd_release_link(request) -> bool:
     # /ddd-release/<slug>/<run_id> (SPA shell) and the read API
     # (/api/ddd/release/<run_id>/) self-enforce the ?t=<share_token> gate (or a
@@ -144,6 +155,7 @@ class LoginRequiredMiddleware:
             or _is_review_link(request.path)
             or _is_share_link(request.path)
             or _is_ddd_release_link(request)
+            or _is_storyboard_link(request)
             or _is_invite_link(request)
         ):
             return self.get_response(request)
