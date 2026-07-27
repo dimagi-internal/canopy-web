@@ -239,6 +239,27 @@ def request_backfill(session) -> str:
     return "requested"
 
 
+def storage_content(content: dict, text: str) -> dict:
+    """The row's `content` as STORED — the wire payload minus its `text` key.
+
+    The wire and the row deliberately share one shape (the live frame's `block`,
+    the backfill payload, and this column are the same dict), and that shape has
+    to carry `text` because the client builds a message from the frame alone.
+    Storage does not: `plaintext` is its own column, and nothing on the render
+    path reads `content["text"]` — MessageItem and ToolCallPair both use
+    `plaintext`.
+
+    Keeping the copy cost 36% of all stored transcript bytes (measured over
+    20,585 rows of live transcripts, 2026-07-26: 9.4MB of 26.2MB), mostly tool
+    result bodies duplicated verbatim. Only the redundant key is dropped: a
+    `text` that somehow DIFFERS from plaintext is kept, and every other key
+    (`id`, `name`, `input`, `tool_use_id`, `client_id`) is untouched.
+    """
+    if content.get("text") != text:
+        return content
+    return {k: v for k, v in content.items() if k != "text"}
+
+
 # The transcript-ordinal scheme this build writes. Bumped whenever the mapping
 # from a transcript record to a `turn_index` changes; see Session.ordinal_scheme.
 ORDINAL_SCHEME = 1
@@ -307,13 +328,13 @@ def persist_transcript_rows(session, rows) -> int:
                     next_index = _next_index(locked)
                 index, next_index = next_index, next_index + 1
             content = row.get("content")
-            if not isinstance(content, dict) or not content:
-                content = {"text": text}
+            if not isinstance(content, dict):
+                content = {}
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
             text = scrub_nul(text)
-            content = scrub_nul(content)
+            content = storage_content(scrub_nul(content), text)
             _, created = Message.objects.get_or_create(
                 session=locked, turn_index=index,
                 defaults={"role": role, "plaintext": text, "content": content},

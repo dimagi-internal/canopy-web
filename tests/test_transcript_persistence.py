@@ -399,3 +399,33 @@ def test_a_nul_byte_cannot_take_down_the_whole_batch():
     assert rows[1].content["blob"] == "xy"          # nested strings too
     assert rows[1].content["tool_use_id"] == "t1"   # non-strings untouched
     assert rows[1].content["is_error"] is False
+
+
+def test_content_does_not_duplicate_plaintext():
+    """The wire payload and the stored row share one shape, but `text` is the
+    one key storage doesn't need — plaintext is its own column and nothing on
+    the render path reads content["text"]. Keeping it cost 36% of all stored
+    transcript bytes (20,585 rows measured, 2026-07-26)."""
+    _u, _ws, _r, s, _c = _ctx()
+    services.persist_transcript_rows(s, [
+        {"index": 0, "role": "assistant", "text": "hello", "content": {"text": "hello"}},
+        {"index": 64, "role": "tool_result", "text": "a.txt",
+         "content": {"tool_use_id": "t1", "is_error": False, "text": "a.txt"}},
+    ])
+    prose, result = list(s.messages.order_by("turn_index"))
+    assert prose.plaintext == "hello" and prose.content == {}
+    # Every OTHER key survives — those are what the UI pairs and renders on.
+    assert result.plaintext == "a.txt"
+    assert result.content == {"tool_use_id": "t1", "is_error": False}
+
+
+def test_a_text_that_differs_from_plaintext_is_kept():
+    """Only the redundant copy is dropped. A `text` that disagrees is real data
+    and losing it would be a silent edit, not a saving."""
+    _u, _ws, _r, s, _c = _ctx()
+    services.persist_transcript_rows(s, [
+        {"index": 0, "role": "assistant", "text": "shown",
+         "content": {"text": "different", "id": "x"}},
+    ])
+    msg = s.messages.get()
+    assert msg.content == {"text": "different", "id": "x"}

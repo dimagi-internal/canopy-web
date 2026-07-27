@@ -125,9 +125,10 @@ def test_tool_frames_reach_the_client_live(monkeypatch):
     assert [m["event"]["kind"] for m in published] == ["tool_use"]
 
 
-def test_plain_text_rows_keep_their_legacy_content_shape():
-    """Back-compat: an older runner posts {"text": ...} and nothing else, and its
-    rows must still store the same content they always did."""
+def test_plain_text_rows_store_no_redundant_content():
+    """An older runner posts {"text": ...} and nothing else. That whole payload is
+    a duplicate of plaintext, so the stored content is empty — see
+    services.storage_content. The row itself is unchanged."""
     from apps.canopy_sessions.models import Message
 
     user, ws, runner, c = _ctx()
@@ -138,5 +139,5 @@ def test_plain_text_rows_keep_their_legacy_content_shape():
         {"kind": "assistant", "seq": 64, "index": 64, "payload": {"text": "hello"}},
     ])
     msg = Message.objects.get(session=s, turn_index=64)
-    assert msg.content == {"text": "hello"}
     assert msg.plaintext == "hello"
+    assert msg.content == {}

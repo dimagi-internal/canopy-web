@@ -542,3 +542,46 @@ def test_maybe_report_sessions_throttled(db, tmp_path, monkeypatch):
     clock[0] += cfg.session_report_seconds + 1
     m._maybe_report_sessions(cfg, client, now_fn=now)   # window elapsed -> reports
     assert len(calls) == 2
+
+
+# --- Best-effort failure visibility ----------------------------------------
+
+
+def test_repeated_backfill_failures_are_warned_not_swallowed(caplog):
+    """The NUL-byte bug (2026-07-26) was a hard 500 on EVERY backfill attempt for
+    one session, invisible in the runner log because the handler logged at DEBUG.
+    A failure that repeats means stuck, not flaky, and must be visible."""
+    import logging
+
+    main_mod._failures.clear()
+    with caplog.at_level(logging.WARNING, logger="canopy_runner"):
+        main_mod._note_failure("backfill:s1", "backfill post")
+        assert "attempt 1" in caplog.text
+        caplog.clear()
+        # Quiet in between, so a stuck session can't drown the log...
+        for _ in range(main_mod._REWARN_EVERY - 2):
+            main_mod._note_failure("backfill:s1", "backfill post")
+        assert caplog.text == ""
+        # ...but it re-surfaces, so it can't be forgotten either.
+        main_mod._note_failure("backfill:s1", "backfill post")
+        assert f"attempt {main_mod._REWARN_EVERY}" in caplog.text
+
+
+def test_recovery_clears_the_streak_and_says_so(caplog):
+    import logging
+
+    main_mod._failures.clear()
+    main_mod._note_failure("stream:s1", "stream post")
+    with caplog.at_level(logging.INFO, logger="canopy_runner"):
+        main_mod._note_success("stream:s1")
+    assert "recovered after 1" in caplog.text
+    assert "stream:s1" not in main_mod._failures
+
+
+def test_success_with_no_prior_failure_is_silent(caplog):
+    import logging
+
+    main_mod._failures.clear()
+    with caplog.at_level(logging.INFO, logger="canopy_runner"):
+        main_mod._note_success("stream:s1")
+    assert caplog.text == ""
