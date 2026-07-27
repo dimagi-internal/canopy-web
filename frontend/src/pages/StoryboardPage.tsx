@@ -84,6 +84,12 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function Board({ board, token }: { board: Storyboard; token: string | null }) {
+  // A shared link gets bookmarked and sits among a dozen other tabs. "Canopy"
+  // tells the reader nothing about which one this is.
+  useEffect(() => {
+    document.title = `${board.title} · Canopy`
+  }, [board.title])
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
@@ -163,6 +169,7 @@ function EntryCard({
           <video
             controls
             preload="metadata"
+            aria-label={`Demo video: ${entry.title}`}
             className="h-full w-full object-cover"
             src={withBase(entry.video_url)}
           />

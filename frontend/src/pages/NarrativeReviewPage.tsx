@@ -103,6 +103,10 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function Review({ data, token }: { data: NarrativeRead; token: string | null }) {
+  useEffect(() => {
+    document.title = `${data.title} · ${data.storyboard_title} · Canopy`
+  }, [data.title, data.storyboard_title])
+
   const pairs = useMemo(
     () => pairNarrationScenes(data.previous_narration, data.narration),
     [data.previous_narration, data.narration],
