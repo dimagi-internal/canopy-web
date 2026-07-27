@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, "packages/canopy_runner")
 from django.contrib.auth.models import User
 from apps.harness import services as hs
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Turn
 from apps.agents.models import Agent
 from apps.workspaces.models import Workspace
 from canopy_runner import chat_bridge as cb
