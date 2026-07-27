@@ -376,6 +376,37 @@ def _drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
         time.sleep(poll)
 
 
+# Persistent per-key failure counters for the best-effort transcript paths
+# (stream posts, backfill posts). These retry every tick forever by design, so
+# logging each failure would spam and logging none is what actually happened:
+# the NUL-byte bug (2026-07-26) was a hard 500 on every backfill attempt for one
+# session, invisible in the runner log because the handler logged at DEBUG. A
+# failure that REPEATS is the interesting kind — it means stuck, not flaky.
+_failures: dict[str, int] = {}
+
+# Warn on the first failure, then every Nth, so a permanently-stuck session stays
+# visible in the log without drowning it (~5 min apart at the default tick).
+_REWARN_EVERY = 60
+
+
+def _note_failure(key: str, what: str) -> None:
+    """Count a best-effort failure and log it at a level someone will see."""
+    n = _failures.get(key, 0) + 1
+    _failures[key] = n
+    if n == 1 or n % _REWARN_EVERY == 0:
+        logger.warning("%s failed (attempt %d, still retrying): %s", what, n, key,
+                       exc_info=True)
+    else:
+        logger.debug("%s failed (attempt %d): %s", what, n, key, exc_info=True)
+
+
+def _note_success(key: str) -> None:
+    """Clear a failure streak; log the recovery if there was one to clear."""
+    n = _failures.pop(key, 0)
+    if n:
+        logger.info("recovered after %d failed attempts: %s", n, key)
+
+
 def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
     """Ship conversational rows as live events. seq == index (the composite
     transcript ordinal): monotonic per session forever, so the WS-derived
@@ -388,9 +419,10 @@ def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -
     ]
     try:
         client.post_session_stream(cfg.runner_id, sid, events)
+        _note_success(f"stream:{sid}")
         return True
     except Exception:  # noqa: BLE001
-        logger.debug("stream post failed (non-fatal)", exc_info=True)
+        _note_failure(f"stream:{sid}", "stream post")
         return False
 
 
@@ -485,8 +517,11 @@ def _drain_backfills(cfg: Config, client: Client) -> None:
         messages = chat_bridge.conversational_messages(chat_bridge.read_records(path), -1)
         try:
             client.post_session_backfill(cfg.runner_id, sid, messages)
+            _note_success(f"backfill:{sid}")
         except Exception:  # noqa: BLE001
-            logger.debug("backfill post failed (non-fatal)", exc_info=True)
+            # A backfill that keeps failing never rebuilds the session's history
+            # and never stops trying — exactly the case that must not be silent.
+            _note_failure(f"backfill:{sid}", f"backfill post ({len(messages)} rows)")
 
 
 def run_once(cfg: Config, client: Client) -> str:
