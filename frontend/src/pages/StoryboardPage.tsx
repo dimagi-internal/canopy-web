@@ -130,6 +130,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
             <NoteComposer
               capability={board.capability}
               anchorLabel={`On “${act.title}”`}
+              cta="Leave a note on this act"
               defaults={{}}
               onSubmit={(payload) => leaveFeedback(board.slug, payload, token).then(() => undefined)}
             />
@@ -209,6 +210,7 @@ function EntryCard({
           <NoteComposer
             capability={board.capability}
             anchorLabel={`On “${entry.title}” · v${entry.version}`}
+            cta="Leave a note on this demo"
             defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
             onSubmit={(payload) =>
               leaveFeedback(board.slug, payload, token).then(() => undefined)

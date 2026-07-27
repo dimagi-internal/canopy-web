@@ -99,13 +99,16 @@ describe('StoryboardPage', () => {
     getStoryboard.mockResolvedValue(board({ capability: 'read' }))
     renderAt()
     await screen.findByText('What the money bought')
-    expect(screen.queryByText('Leave a note')).toBeNull()
+    expect(screen.queryByText(/Leave a note/)).toBeNull()
   })
 
-  it('offers a composer once the link grants comment', async () => {
+  it('names what each composer attaches to', async () => {
+    // An act and the demo inside it each get a composer, so they sit side by
+    // side — two buttons reading "Leave a note" gave no way to tell them apart.
     getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
     renderAt()
-    expect((await screen.findAllByText('Leave a note')).length).toBeGreaterThan(0)
+    expect(await screen.findByText('Leave a note on this act')).toBeTruthy()
+    expect(screen.getByText('Leave a note on this demo')).toBeTruthy()
   })
 
   it('shows a plain not-available message on 404 rather than an error dump', async () => {
