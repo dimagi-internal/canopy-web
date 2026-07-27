@@ -201,3 +201,27 @@ def test_the_first_report_is_not_throttled_out_at_process_start(caplog):
         assert "1 received" in caplog.text
     finally:
         main_mod._hook_listener = None
+
+
+def test_an_idle_tick_does_not_consume_the_report_window(caplog):
+    """The stamp must be taken only when something is actually logged. Taking it
+    on a no-op tick means the first tick after startup (nothing fired yet) burns
+    the whole window, and the first real report waits behind it — the same
+    5-minutes-of-silence symptom as the seed bug, from a different cause. Both
+    were found live; both had passing tests."""
+    import logging
+
+    from canopy_runner import main as main_mod
+
+    lis, _ = _listener()
+    main_mod._hook_listener = lis
+    main_mod._last_hook_report = None
+    try:
+        with caplog.at_level(logging.INFO, logger="canopy_runner"):
+            main_mod._maybe_report_hooks(now_fn=lambda: 1.0)   # idle tick, nothing fired
+            assert caplog.text == ""
+            lis.handle_payload(_payload())                      # now something fires
+            main_mod._maybe_report_hooks(now_fn=lambda: 6.0)    # 5s later, well inside the window
+        assert "1 received" in caplog.text, "the idle tick swallowed the first real report"
+    finally:
+        main_mod._hook_listener = None

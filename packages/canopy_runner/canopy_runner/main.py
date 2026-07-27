@@ -495,9 +495,12 @@ def _maybe_report_hooks(now_fn=time.monotonic) -> None:
         return
     if _last_hook_report is not None and now_fn() - _last_hook_report < HOOK_REPORT_SECONDS:
         return
-    _last_hook_report = now_fn()
     if listener.received == 0:
-        return  # nothing has fired yet; silence is the honest report
+        # Nothing has fired yet; silence is the honest report — and crucially we
+        # do NOT stamp, or an idle tick right after startup burns the whole
+        # window and the first real report waits 5 minutes behind it.
+        return
+    _last_hook_report = now_fn()
     logger.info(
         "hooks: %d received, %d forwarded, %d dropped (cwd not a session we back), "
         "forwarding=%s",
