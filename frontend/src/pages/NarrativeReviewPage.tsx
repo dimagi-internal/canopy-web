@@ -111,7 +111,14 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
     () => pairNarrationScenes(data.previous_narration, data.narration),
     [data.previous_narration, data.narration],
   )
-  const changed = pairs.filter((p) => p.status !== 'unchanged').length
+  // Count the kinds separately: with the positional fallback for legacy
+  // histories, a rewritten narrative can add a scene as well as reword others,
+  // and calling a brand-new scene "changed" misreports what the reader is
+  // looking at.
+  const edited = pairs.filter((p) => p.status === 'changed').length
+  const added = pairs.filter((p) => p.status === 'added').length
+  const cut = pairs.filter((p) => p.status === 'removed').length
+  const moved = edited + added + cut
   const q = token ? `?t=${encodeURIComponent(token)}` : ''
 
   return (
@@ -145,12 +152,19 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
 
         {data.previous_version != null && (
           <p className="mb-8 rounded-lg border border-warning/25 bg-warning/[0.08] px-3 py-2.5 text-[12.5px] text-muted-foreground">
-            {changed === 0 ? (
+            {moved === 0 ? (
               <>Nothing has changed since v{data.previous_version}.</>
             ) : (
               <>
-                {changed === 1 ? 'One scene has' : `${changed} scenes have`} changed since v
-                {data.previous_version} — marked below.
+                Since v{data.previous_version}:{' '}
+                {[
+                  edited && `${edited} scene${edited === 1 ? '' : 's'} reworded`,
+                  added && `${added} new`,
+                  cut && `${cut} cut`,
+                ]
+                  .filter(Boolean)
+                  .join(', ')}{' '}
+                — marked below.
               </>
             )}
           </p>
