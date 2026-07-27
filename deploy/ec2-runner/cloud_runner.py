@@ -710,8 +710,20 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 
 
 def _stage_github_token(token: str) -> None:
-    """Wire a git credential helper so `git clone` of private agent repos works
-    (used by the reconciler in the next milestone; harmless for a trivial turn)."""
+    """Make the staged GitHub token usable by BOTH `git` and `gh`.
+
+    The credential helper only teaches `git` — `gh` ignores it entirely and looks
+    for its own login or GH_TOKEN. So every agent had working clone/fetch/push but
+    `gh auth status` reported "not logged into any GitHub hosts", which blocks the
+    PR-based shipping flow the operating model is built on. Readiness drills called
+    it out as the single blocking failure for hal after everything else was green.
+
+    Exporting GH_TOKEN is the fix rather than running `gh auth login`: it needs no
+    interactive step on a headless box, it is scoped to this process tree (so it is
+    inherited by agent turns via `_agent_env`, which copies os.environ), and it
+    leaves nothing on disk to go stale.
+    """
+    os.environ["GH_TOKEN"] = token
     try:
         subprocess.run(["git", "config", "--global", "credential.helper", "store"],
                        check=False, capture_output=True)
