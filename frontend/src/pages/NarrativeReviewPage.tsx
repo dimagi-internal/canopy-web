@@ -15,8 +15,13 @@ import type { DddNarration } from '@/api/ddd'
  * the front door, not a second-class copy of it (canopy-web#290: "the current
  * DDD review screens are very complicated and something only I understand").
  *
- * The before/after appears ONLY on scenes that changed. Showing it on every
- * scene would make a two-line edit look like a rewrite.
+ * The narrative reads CLEAN by default — the story as it stands now, with no
+ * diff furniture. What changed since the last version is a question you ask,
+ * not the first thing you are shown: most readers of a shared link are meeting
+ * this story for the first time, and struck-through old wording beside new
+ * makes a finished narrative look like a work in progress. The toggle beside
+ * the version pill turns the comparison on, and then the before/after appears
+ * only on the scenes that actually changed.
  */
 
 interface NarrativeRead {
@@ -103,6 +108,8 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function Review({ data, token }: { data: NarrativeRead; token: string | null }) {
+  const [showChanges, setShowChanges] = useState(false)
+
   useEffect(() => {
     document.title = `${data.title} · ${data.storyboard_title} · Canopy`
   }, [data.title, data.storyboard_title])
@@ -131,6 +138,10 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
   })
   const sceneCount = sceneNumbers.size
 
+  // Reading the story, not the diff: a cut scene is not in this narrative at
+  // all, so with the comparison off it should not be on the page.
+  const visible = showChanges ? pairs : pairs.filter((p) => p.status !== 'removed')
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
@@ -141,11 +152,27 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
           >
             ← {data.storyboard_title}
           </Link>
-          {data.version != null && (
-            <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] tabular-nums text-info">
-              v{data.version}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {data.previous_version != null && (
+              <button
+                type="button"
+                aria-pressed={showChanges}
+                onClick={() => setShowChanges((on) => !on)}
+                className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                  showChanges
+                    ? 'border-warning/40 bg-warning/15 text-warning'
+                    : 'border-border text-muted-foreground hover:border-input hover:text-foreground'
+                }`}
+              >
+                {showChanges ? 'Hide changes' : `Changes since v${data.previous_version}`}
+              </button>
+            )}
+            {data.version != null && (
+              <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] tabular-nums text-info">
+                v{data.version}
+              </span>
+            )}
+          </div>
         </div>
 
         <header className="mb-6">
@@ -160,7 +187,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
           )}
         </header>
 
-        {data.previous_version != null && (
+        {showChanges && data.previous_version != null && (
           <p className="mb-8 rounded-lg border border-warning/25 bg-warning/[0.08] px-3 py-2.5 text-[12.5px] text-muted-foreground">
             {moved === 0 ? (
               <>Nothing has changed since v{data.previous_version}.</>
@@ -181,7 +208,8 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
         )}
 
         <div>
-          {pairs.map((pair, i) => {
+          {visible.map((pair) => {
+            const i = pairs.indexOf(pair)
             const n = sceneNumbers.get(i)
             const isCut = pair.status === 'removed'
             return (
@@ -196,7 +224,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                 {pair.title && (
                   <h2 className="text-[15px] font-semibold text-foreground">{pair.title}</h2>
                 )}
-                {pair.status !== 'unchanged' && (
+                {showChanges && pair.status !== 'unchanged' && (
                   // A cut scene is not an addition; badging it in the same
                   // green said "look at this new thing" about something that is
                   // no longer there.
@@ -216,7 +244,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                 )}
               </div>
 
-              {pair.status === 'changed' && pair.before ? (
+              {showChanges && pair.status === 'changed' && pair.before ? (
                 <div className="grid gap-3.5 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] uppercase tracking-[0.16em] text-foreground-subtle">
@@ -253,6 +281,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                     : `Scene ${n}${data.version != null ? ` · v${data.version}` : ''}`
                 }
                 cta={isCut ? 'Leave a note on the cut scene' : `Leave a note on scene ${n}`}
+                seedText={pair.after ?? pair.before ?? ''}
                 defaults={{
                   narrative_slug: data.narrative_slug,
                   // A cut scene exists only in the previous version, so filing

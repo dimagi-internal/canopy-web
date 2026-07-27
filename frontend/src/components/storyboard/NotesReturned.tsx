@@ -31,7 +31,7 @@ export function NotesReturned({ notes, label }: { notes: Note[]; label?: string 
             </span>
             {n.kind === 'suggestion' && (
               <span className="rounded-full border border-special/30 bg-special/10 px-1.5 py-px text-[10px] text-special">
-                Suggested wording
+                Narrative edit
               </span>
             )}
             {n.target_version != null && <span className="tabular-nums">v{n.target_version}</span>}

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { NoteComposer } from './NoteComposer'
+import { AuthContext } from '@/auth/AuthProvider'
 
 afterEach(cleanup)
 
@@ -41,19 +42,19 @@ describe('NoteComposer', () => {
   it('offers comment only, until the link grants suggest', () => {
     setup('comment')
     fireEvent.click(screen.getByText('Leave a note'))
-    expect(screen.queryByText('Suggest wording')).toBeNull()
+    expect(screen.queryByText('Edit narrative')).toBeNull()
 
     cleanup()
     setup('suggest')
     fireEvent.click(screen.getByText('Leave a note'))
-    expect(screen.getByText('Suggest wording')).toBeTruthy()
+    expect(screen.getByText('Edit narrative')).toBeTruthy()
   })
 
   it('sends a comment in body and a suggestion in suggested_text', async () => {
     const { onSubmit, note } = setup('suggest')
     fireEvent.click(screen.getByText('Leave a note'))
     fireEvent.change(note(), { target: { value: 'Say back-check.' } })
-    fireEvent.click(screen.getByText('Suggest wording'))
+    fireEvent.click(screen.getByText('Edit narrative'))
     fireEvent.click(screen.getByText('Leave note'))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
@@ -98,6 +99,71 @@ describe('NoteComposer', () => {
     fireEvent.click(screen.getByText('Leave note'))
     await waitFor(() => expect(second.onSubmit).toHaveBeenCalled())
     expect(second.onSubmit.mock.calls[0][0].author_name).toBe('Sophie')
+  })
+
+  it('hands the reviewer the real words to edit, rather than a blank box', async () => {
+    // Describing an edit in prose ("in the second sentence say re-visit") is
+    // work for the reader and a chance to be misread, when the reviewer already
+    // knows the words they want.
+    render(
+      <NoteComposer
+        capability="suggest"
+        anchorLabel="Scene 2"
+        cta="Leave a note"
+        seedText="Tomas checks the register."
+        defaults={{}}
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    fireEvent.click(screen.getByText('Leave a note'))
+    fireEvent.click(screen.getByText('Edit narrative'))
+    expect((screen.getByPlaceholderText(/Change the words/) as HTMLTextAreaElement).value).toBe(
+      'Tomas checks the register.',
+    )
+  })
+
+  it('never eats what the reviewer already typed', async () => {
+    const { note } = setup('suggest')
+    fireEvent.click(screen.getByText('Leave a note'))
+    fireEvent.change(note(), { target: { value: 'half a thought' } })
+    fireEvent.click(screen.getByText('Edit narrative'))
+    expect((note() as HTMLTextAreaElement).value).toBe('half a thought')
+  })
+
+  it('does not ask a signed-in editor who they are', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(
+      <AuthContext.Provider
+        value={{
+          status: 'authenticated',
+          user: { name: 'Jonathan Jackson', email: 'jj@dimagi.com', avatar_url: '' },
+        }}
+      >
+        <NoteComposer
+          capability="comment"
+          anchorLabel="Scene 1"
+          cta="Leave a note"
+          defaults={{}}
+          onSubmit={onSubmit}
+        />
+      </AuthContext.Provider>,
+    )
+    fireEvent.click(screen.getByText('Leave a note'))
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Your name/) as HTMLInputElement).value).toBe(
+        'Jonathan Jackson',
+      ),
+    )
+    fireEvent.change(screen.getByPlaceholderText(/What’s wrong/), { target: { value: 'x' } })
+    fireEvent.click(screen.getByText('Leave note'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].author_name).toBe('Jonathan Jackson')
+  })
+
+  it('still asks an anonymous reviewer', () => {
+    setup('comment')
+    fireEvent.click(screen.getByText('Leave a note'))
+    expect((screen.getByPlaceholderText(/Your name/) as HTMLInputElement).value).toBe('')
   })
 
   it('surfaces a failure instead of pretending it saved', async () => {

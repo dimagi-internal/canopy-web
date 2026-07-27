@@ -13,10 +13,12 @@ vi.mock('@/api/storyboards', async () => {
 const leaveFeedback = api.leaveFeedback as unknown as ReturnType<typeof vi.fn>
 
 /**
- * The banner tells a reviewer what moved since they last read the narrative.
- * It counted `status !== 'unchanged'` as "changed", so a brand-new scene was
- * reported as a rewording — on `verified-monitoring` that read "6 scenes have
- * changed" when it was 5 reworded and 1 new.
+ * The narrative reads CLEAN by default; the comparison with the previous
+ * version is a question you ask, via the toggle beside the version pill.
+ *
+ * Most readers of a shared link are meeting the story for the first time, and
+ * struck-through old wording beside new makes a finished narrative look like a
+ * work in progress.
  */
 const payload = (over: Record<string, unknown> = {}) => ({
   narrative_slug: 'verified-monitoring',
@@ -63,14 +65,50 @@ describe('NarrativeReviewPage', () => {
     vi.unstubAllGlobals()
   })
 
+  const showChanges = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /Changes since v16/ }))
+  }
+
+  it('reads clean until you ask what changed', async () => {
+    renderPage()
+    expect(await screen.findByText('New one.')).toBeTruthy()
+    expect(screen.queryByText('Old one.')).toBeNull()
+    expect(screen.queryByText(/reworded/)).toBeNull()
+    expect(screen.queryByText('New')).toBeNull()
+  })
+
   it('counts a new scene as new, not as reworded', async () => {
     renderPage()
+    await showChanges()
     expect(await screen.findByText(/1 scene reworded/)).toBeTruthy()
     expect(screen.getByText(/1 new/)).toBeTruthy()
   })
 
+  it('puts the comparison away again', async () => {
+    renderPage()
+    await showChanges()
+    await screen.findByText('Old one.')
+    fireEvent.click(screen.getByRole('button', { name: /Hide changes/ }))
+    expect(screen.queryByText('Old one.')).toBeNull()
+  })
+
+  it('offers no toggle when there is no previous version to compare with', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => payload({ previous_version: null, previous_narration: [] }),
+      }),
+    )
+    renderPage()
+    await screen.findByText('New one.')
+    expect(screen.queryByRole('button', { name: /Changes since/ })).toBeNull()
+  })
+
   it('shows the before/after only on the scene that changed', async () => {
     renderPage()
+    await showChanges()
     await screen.findByText(/1 scene reworded/)
     expect(screen.getByText('Old one.')).toBeTruthy()
     expect(screen.getByText('New one.')).toBeTruthy()
@@ -92,12 +130,13 @@ describe('NarrativeReviewPage', () => {
       }),
     )
     renderPage()
+    await showChanges()
     expect(await screen.findByText(/Nothing has changed since v16/)).toBeTruthy()
   })
 
   it('names the tab after the narrative and its storyboard', async () => {
     renderPage()
-    await screen.findByText(/1 scene reworded/)
+    await screen.findByText('New one.')
     expect(document.title).toContain('Verified Monitoring')
     expect(document.title).toContain('Proving a programme works')
   })
@@ -129,9 +168,17 @@ describe('NarrativeReviewPage', () => {
         }),
       )
 
+    it('is not on the page at all until you ask what changed', async () => {
+      withACut()
+      renderPage()
+      await screen.findByText('Kept.')
+      expect(screen.queryByText('This beat was removed.')).toBeNull()
+    })
+
     it('is not numbered among the scenes that remain', async () => {
       withACut()
       const { container } = renderPage()
+      await showChanges()
       await screen.findByText(/1 cut/)
       const numbers = [...container.querySelectorAll('section span.font-mono')].map(
         (n) => n.textContent,
@@ -142,6 +189,7 @@ describe('NarrativeReviewPage', () => {
     it('is not counted as a scene of the current narrative', async () => {
       withACut()
       renderPage()
+      await showChanges()
       await screen.findByText(/1 cut/)
       expect(screen.getByText(/2 scenes/)).toBeTruthy()
     })
@@ -149,12 +197,14 @@ describe('NarrativeReviewPage', () => {
     it('is not badged as if it were new', async () => {
       withACut()
       renderPage()
+      await showChanges()
       expect(await screen.findByText(/Cut since v16/)).toBeTruthy()
     })
 
     it('files a note against the version the scene actually exists in', async () => {
       withACut()
       renderPage()
+      await showChanges()
       fireEvent.click(await screen.findByText('Leave a note on the cut scene'))
       fireEvent.change(screen.getByPlaceholderText(/What’s wrong/), {
         target: { value: 'Put this back.' },
