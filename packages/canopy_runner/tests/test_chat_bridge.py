@@ -270,3 +270,32 @@ def test_end_index_marks_the_whole_file_as_already_seen():
         {"type": "tool_use", "id": "t1", "name": "X", "input": {}},
     ]}}]
     assert conversational_messages(recs, chat_bridge.end_index(len(recs))) == []
+
+
+def test_nul_bytes_are_stripped_from_tool_payloads():
+    """Postgres rejects NUL in text/jsonb, and the server writes a backfill batch
+    in ONE transaction — so a single binary tool result (a Read of a compressed
+    file) 500s the whole batch and the session's history can never rebuild.
+    Labs 2026-07-26: exactly one row in 683 did this."""
+    recs = [
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "binary\x00payload"}]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Write",
+             "input": {"content": "also\x00bad"}}]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "prose\x00too"}]}},
+    ]
+    result, use, prose = conversational_messages(recs, -1)
+    assert "\x00" not in result["text"]
+    assert "\x00" not in use["content"]["input"]["content"]
+    assert "\x00" not in prose["text"]
+    # Stripped, not mangled — the surrounding content survives.
+    assert result["text"] == "binarypayload"
+
+
+def test_scrub_leaves_other_control_characters_alone():
+    """Only NUL is rejected by Postgres; tabs/newlines/escapes are real content
+    and stripping them would corrupt every terminal capture we ship."""
+    assert chat_bridge.scrub("a\tb\nc\x1b[0m") == "a\tb\nc\x1b[0m"

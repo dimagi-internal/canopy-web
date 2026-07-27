@@ -375,3 +375,27 @@ def test_tool_rows_persist_their_structured_content():
     assert use.role == Message.TOOL_USE and use.content["name"] == "Read"
     res = Message.objects.get(session=s, turn_index=128)
     assert res.role == Message.TOOL_RESULT and res.content["tool_use_id"] == "t1"
+
+
+def test_a_nul_byte_cannot_take_down_the_whole_batch():
+    """Postgres rejects NUL in text/jsonb. The batch is ONE transaction, so an
+    unscrubbed byte from a binary tool result (a Read of a compressed file) 500s
+    every other row with it — and since the runner retries forever, that
+    session's history could never rebuild. Labs 2026-07-26: one row in 683.
+
+    Scrubbed server-side because the runner's own copy only covers runners that
+    have been updated, and this is the single durable write path."""
+    _u, _ws, _r, s, _c = _ctx()
+    written = services.persist_transcript_rows(s, [
+        {"index": 0, "role": "user", "text": "before\x00after",
+         "content": {"text": "before\x00after"}},
+        {"index": 64, "role": "tool_result", "text": "bin\x00ary",
+         "content": {"tool_use_id": "t1", "is_error": False, "blob": "x\x00y"}},
+    ])
+    assert written == 2
+    rows = list(s.messages.order_by("turn_index"))
+    assert rows[0].plaintext == "beforeafter"
+    assert rows[1].plaintext == "binary"
+    assert rows[1].content["blob"] == "xy"          # nested strings too
+    assert rows[1].content["tool_use_id"] == "t1"   # non-strings untouched
+    assert rows[1].content["is_error"] is False

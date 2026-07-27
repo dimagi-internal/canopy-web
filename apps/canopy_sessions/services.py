@@ -22,7 +22,7 @@ from apps.harness.models import Turn
 
 from . import attach
 from .models import Message, Session
-from .transcript_noise import is_system_noise
+from .transcript_noise import is_system_noise, scrub_nul
 
 # Ledger kinds we surface as transcript rows, and the Message role each maps to.
 _ROLE_FOR_KIND = {
@@ -309,6 +309,11 @@ def persist_transcript_rows(session, rows) -> int:
             content = row.get("content")
             if not isinstance(content, dict) or not content:
                 content = {"text": text}
+            # Postgres rejects NUL in text/jsonb, and the batch is ONE
+            # transaction — an unscrubbed byte from a binary tool result 500s
+            # every other row with it. See transcript_noise.scrub_nul.
+            text = scrub_nul(text)
+            content = scrub_nul(content)
             _, created = Message.objects.get_or_create(
                 session=locked, turn_index=index,
                 defaults={"role": role, "plaintext": text, "content": content},

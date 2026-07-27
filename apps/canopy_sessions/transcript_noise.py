@@ -36,6 +36,31 @@ SYSTEM_NOISE_PREFIXES = (
 )
 
 
+def scrub_nul(value):
+    """Strip NUL bytes from every string in `value` (str / dict / list).
+
+    Postgres rejects 0x00 outright in text and jsonb. A tool result is raw bytes
+    from whatever the tool touched, so a `Read` of a compressed or binary file
+    carries one straight into the write path — observed on labs 2026-07-26: one
+    row in 683 took down the whole batch with a 500, and because the write is a
+    single transaction and the runner retries forever, that session's history
+    could never rebuild.
+
+    Server-side for the same reason the noise filter is (see the module
+    docstring): the runner has its own copy, but a producer-side scrub only
+    covers producers that have been updated, and the runner is a laptop daemon
+    on a checkout that lags. This is the single durable write path, so enforcing
+    it here is what makes the guarantee hold.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if isinstance(value, dict):
+        return {k: scrub_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_nul(v) for v in value]
+    return value
+
+
 def is_system_noise(text: str) -> bool:
     """True when this record is harness output wearing a user record's clothes.
 
