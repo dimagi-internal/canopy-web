@@ -306,6 +306,33 @@ step4_claude_plugins() {
       && ok "installed canopy@canopy" \
       || warn "claude plugin install canopy@canopy failed"
   fi
+  reinstall_cli_from_marketplace_clone
+}
+
+reinstall_cli_from_marketplace_clone() {
+  # Step 1 installs the canopy CLI with `uv tool install git+<url>` because the
+  # marketplace clone does not exist yet at that point. That leaves a VCS install,
+  # and `canopy doctor` fails its CLI-install-source check for it:
+  #   "uv-receipt.toml records no directory requirement"
+  # It is not cosmetic — provenance is what lets /canopy:update track the local
+  # clone rather than silently reinstalling from a moving remote. Now that step 4
+  # has materialized the clone, re-point the CLI at it. Idempotent: skipped once
+  # the receipt already records a directory requirement.
+  local clone="$HOME/.claude/plugins/marketplaces/canopy"
+  local receipt="$HOME/.local/share/uv/tools/canopy/uv-receipt.toml"
+  if [[ ! -d "$clone" ]]; then
+    warn "marketplace clone not at $clone — leaving the CLI on its VCS install"
+    return
+  fi
+  if grep -q 'directory = ' "$receipt" 2>/dev/null; then
+    ok "canopy CLI already installed from a directory requirement"
+    return
+  fi
+  if uv tool install --force --reinstall "$clone" >/dev/null 2>&1; then
+    ok "canopy CLI re-pointed at the marketplace clone ($clone)"
+  else
+    warn "could not re-point the canopy CLI at $clone — doctor will flag its provenance"
+  fi
 }
 
 # ── Step 5: readiness summary ────────────────────────────────────────────────────
