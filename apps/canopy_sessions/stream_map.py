@@ -20,6 +20,15 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
     seq = evt.get("seq")
     payload = evt.get("payload") or {}
 
+    if kind == "user":
+        # Text a human typed straight into emdash. It reaches no web client any
+        # other way — there was no optimistic echo, because no web client sent
+        # it. Carries the transcript ordinal so the client can upsert rather
+        # than append, which is what keeps a re-delivery from doubling it.
+        mid = resolve_message_id(seq)
+        return [{"event": "chat.user_message",
+                 "data": {"message_id": mid, "turn_index": seq,
+                          "plaintext": payload.get("text", "")}}]
     if kind == "assistant":
         mid = resolve_message_id(seq)
         return [

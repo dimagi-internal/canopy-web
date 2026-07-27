@@ -50,6 +50,40 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return { ...prev, messages: [...prev.messages, assistant] };
     }
 
+    case "chat.user_message": {
+      // Someone typed into emdash. Upsert on turn_index — the transcript
+      // ordinal is stable, so a re-delivery (reconnect catch-up, a retried
+      // post) collapses onto the same row instead of doubling the message.
+      const existing = prev.messages.find(
+        (m) => m.id === frame.data.message_id ||
+          (m.role === "user" && m.turn_index === frame.data.turn_index),
+      );
+      if (existing) {
+        return {
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m === existing
+              ? { ...m, id: frame.data.message_id, plaintext: frame.data.plaintext }
+              : m,
+          ),
+        };
+      }
+      const nowIso = new Date().toISOString();
+      const user: Message = {
+        id: frame.data.message_id,
+        turn_index: frame.data.turn_index,
+        role: "user",
+        content: { text: frame.data.plaintext },
+        plaintext: frame.data.plaintext,
+        status: "complete",
+        error_detail: null,
+        started_at: null,
+        completed_at: null,
+        created_at: nowIso,
+      };
+      return { ...prev, messages: [...prev.messages, user] };
+    }
+
     case "chat.delta":
       return {
         ...prev,

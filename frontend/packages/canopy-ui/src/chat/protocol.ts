@@ -85,6 +85,9 @@ export type WsEvent =
   | { event: "session.error"; data: { code: string; message: string; detail?: unknown } }
   | { event: "session.title_updated"; data: { title: string } }
   | { event: "chat.stream_start"; data: { message_id: string; turn_index: number } }
+  // A human typed into emdash rather than into this page. No client echoed it,
+  // so this is the only way it reaches the browser before a reload.
+  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 
 import type { Message } from "./protocol";
 import { Button } from "../ui/button";
@@ -7,6 +7,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { pairToolMessages } from "./pairToolMessages";
+import { groupToolRuns, runHasError, summariseRun } from "./groupToolRuns";
 
 interface Props {
   messages: Message[];
@@ -22,10 +23,14 @@ const TOOLBAR_THRESHOLD = 5;
 type BulkState = "default" | "all" | "none";
 
 export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
-  const rows = useMemo(() => pairToolMessages(messages), [messages]);
+  const paired = useMemo(() => pairToolMessages(messages), [messages]);
+  // Collapse back-to-back tool calls into one row. An agent mid-task emits long
+  // stretches of them, and one row each pushes the prose you actually read off
+  // the screen.
+  const rows = useMemo(() => groupToolRuns(paired), [paired]);
   const toolPairCount = useMemo(
-    () => rows.filter((r) => r.kind === "tool_pair").length,
-    [rows],
+    () => paired.filter((r) => r.kind === "tool_pair").length,
+    [paired],
   );
   // ``default`` = each <details> uses its own native state (collapsed
   // initially, user can toggle individually). The bulk toggles flip
@@ -70,6 +75,43 @@ export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
       )}
       <div className="flex flex-col gap-2 p-4">
         {rows.map((row) => {
+          if (row.kind === "tool_run") {
+            // One line for a whole run, open on demand. `open` when the bulk
+            // toggle says so, and always when something in it failed — a
+            // collapsed group must never hide an error.
+            const failed = runHasError(row.rows);
+            return (
+              <details
+                key={row.key}
+                open={forceToolOpen ?? (failed || undefined)}
+                className="group my-1 rounded border border-border bg-muted/40 text-sm"
+              >
+                <summary className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-muted-foreground hover:bg-muted/60 select-none [&::-webkit-details-marker]:hidden">
+                  <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" />
+                  <span className="text-xs font-medium text-foreground">
+                    {summariseRun(row.rows)}
+                  </span>
+                  {failed && (
+                    <span className="text-xs font-medium text-destructive">
+                      · contains an error
+                    </span>
+                  )}
+                </summary>
+                <div className="space-y-1 border-t border-border/60 p-2">
+                  {row.rows.map((r) =>
+                    r.kind === "tool_pair" ? (
+                      <ToolCallPair
+                        key={r.key}
+                        use={r.use}
+                        result={r.result}
+                        forceOpen={forceToolOpen}
+                      />
+                    ) : null,
+                  )}
+                </div>
+              </details>
+            );
+          }
           if (row.kind === "tool_pair") {
             return (
               <ToolCallPair
