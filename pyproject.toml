@@ -62,6 +62,9 @@ dev = [
     # dev-only: channels.testing.WebsocketCommunicator imports daphne's live
     # test harness at package import time. Prod serves WS via uvicorn, not daphne.
     "daphne>=4.1,<5.0",
+    # dev-only: in-memory async Redis for apps/realtime/presence_store.py tests —
+    # exercises the same redis.asyncio API surface without a real Redis instance.
+    "fakeredis>=2.23,<3.0",
 ]
 
 [build-system]

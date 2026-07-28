@@ -157,6 +157,12 @@ if _CHANNELS_REDIS_URL:
 else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
+# Shared async Redis client for presence state (apps/common/redis_client.py,
+# apps/realtime/presence_store.py). Reuses the same REDIS_URL as the Channels
+# layer above rather than inventing a second env var — when unset, presence
+# degrades to "not available" instead of crashing.
+PRESENCE_REDIS_URL = env("REDIS_URL", default="")
+
 # Database
 DATABASES = {
     "default": env.db("DATABASE_URL", default="postgres://localhost:5432/canopy_web"),
