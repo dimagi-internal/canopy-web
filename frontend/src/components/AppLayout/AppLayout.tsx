@@ -7,7 +7,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
 import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
 import { wsUrl } from '@/lib/wsUrl'
-import { PRESENCE_PREFERENCE_CHANGED_EVENT } from '@/presence/events'
+import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 
 // `tenant` items live under /w/:workspace; the rest are personal/global (root).
@@ -247,15 +247,9 @@ function AppShell() {
   const auth = useAuth()
   const { active } = useWorkspace()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [presenceReconnectNonce, setPresenceReconnectNonce] = useState(0)
-
-  // See `PresenceHeaderBadge` above for why this forces a full socket
-  // reconnect rather than something lighter.
-  useEffect(() => {
-    const onPreferenceChanged = () => setPresenceReconnectNonce((n) => n + 1)
-    window.addEventListener(PRESENCE_PREFERENCE_CHANGED_EVENT, onPreferenceChanged)
-    return () => window.removeEventListener(PRESENCE_PREFERENCE_CHANGED_EVENT, onPreferenceChanged)
-  }, [])
+  // See `PresenceHeaderBadge` above for why bumping this forces a full
+  // socket reconnect rather than something lighter.
+  const presenceReconnectNonce = usePresenceReconnectNonce()
 
   // Anonymous visitors only ever reach the app shell on a public link route
   // (/walkthrough/:id, /review/:id — see AuthProvider). Every nav destination
