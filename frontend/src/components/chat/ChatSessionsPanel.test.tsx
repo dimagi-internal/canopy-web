@@ -233,25 +233,31 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    // Flaky for a reason no timeout could fix. Two rounds of raising them
-    // (#391 → 20s test budget, #419 → 15s per-await) did not hold — it failed
-    // again on main at 16022ms. It was never slow; the element was never going
-    // to appear, and the budget only decided when to give up.
+    // Flaky for a reason no timeout could fix — and the three earlier rounds
+    // (#391 → 20s budget, #419 → 15s per-await, #434 → click inside act())
+    // all missed the actual mechanism, so it kept failing on main.
     //
-    // The click on the "New chat" dropdown trigger did not flush, so the menu
-    // stayed aria-expanded="false" and 'Acme' never rendered. The siblings hide
-    // this because they click an AGENT passed in as a prop (synchronous); this
-    // one clicks a PROJECT, which only exists after listSlugs resolves into the
-    // open menu.
+    // The trigger is `disabled={creating || (agents.length === 0 && projects.length === 0)}`.
+    // This test renders with agents=[], so the button is disabled until
+    // listSlugs() resolves and fills `projects`. findByText('New chat')
+    // resolves the moment the TEXT exists — which is the first render, while
+    // the button is still disabled. Clicking a disabled button is a no-op:
+    // the menu never opens, and 'Acme' can never render.
     //
-    // act() is this file's own idiom for a state-changing click (see the
-    // stale-response test below). Resolve the element FIRST, then click inside
-    // act() with a synchronous reference — awaiting a findBy* INSIDE act()
-    // interleaves and reintroduces the same failure. Deterministic now, and
-    // back under the default 5s budgets: ~220ms instead of 6–16s of waiting.
-    const newChat = await screen.findByText('New chat')
+    // So it was a race between listSlugs() settling and the test clicking,
+    // which is why it only lost on a loaded CI box, and why raising budgets
+    // could never help: by the time anything started waiting, the single
+    // click had already been swallowed and nothing would re-issue it.
+    //
+    // The siblings don't flake because they pass a non-empty `agents` prop,
+    // which makes the trigger enabled on the very first render.
+    //
+    // Fix: wait on the CONDITION that makes the click meaningful (the button
+    // being enabled) rather than on the text being present.
+    const newChatButton = () => screen.getByText('New chat').closest('button')!
+    await waitFor(() => expect(newChatButton().disabled).toBe(false))
     await act(async () => {
-      fireEvent.click(newChat)
+      fireEvent.click(newChatButton())
     })
 
     const acme = await screen.findByText('Acme')
