@@ -8,11 +8,22 @@ from pydantic import EmailStr, Field
 
 from apps.common.schemas import StrictModel
 
+from .models import SLUG_PATTERN
+
 Role = Literal["owner", "editor", "viewer"]
 
 
 class WorkspaceCreateIn(StrictModel):
-    slug: str = Field(min_length=1, max_length=64)
+    # Charset, not just length: the slug is an addressing token that ends up
+    # inside the presence page key `<app>:<workspace>:<resource>` (parsed with
+    # a bounded `split(":", 2)` over a resource segment that legitimately
+    # contains colons). A colon-bearing slug is therefore irreducibly
+    # ambiguous — `canopy:acme:eu:activity` reads as workspace `acme:eu` or as
+    # workspace `acme` + resource `eu:activity` — which is a cross-tenant
+    # roster leak the presence layer cannot undo. Single source of truth for
+    # the pattern is `Workspace.SLUG_PATTERN`, which also validates the model
+    # save path (a shell or management command never sees this schema).
+    slug: str = Field(min_length=1, max_length=64, pattern=SLUG_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
     # Deliberately no `auto_join_domains` here: it is never client input.
     # `auto_join_domains` grants standing DOMAIN-WIDE (every user of that

@@ -284,16 +284,22 @@ async def test_the_bare_word_global_no_longer_skips_the_membership_gate(member_u
 async def test_a_workspace_shadowing_the_sentinel_cannot_be_used_to_bypass_the_gate(
     member_user,
 ):
-    """FINDING 1, belt and braces. WORKSPACE_RE cannot match `~global`, but
-    workspace CREATION enforces no charset at all — so a row literally named
-    `~global` can still be made. If it exists, the global branch must not
-    run: otherwise that row's roster is the one surface every authenticated
-    user reaches without a membership check."""
+    """FINDING 1, belt and braces. WORKSPACE_RE cannot match `~global`, and
+    `Workspace.slug` now rejects that charset on every save path — but this
+    check stays: it is what makes the guard survive a row that predates the
+    charset rule, arrives by raw SQL, or is restored from an old dump. If such
+    a row exists, the global branch must not run: otherwise that row's roster
+    is the one surface every authenticated user reaches without a membership
+    check.
+
+    Seeded via `bulk_create`, which does not call `Model.save()` — the only
+    way to mint the hostile row now that the model validates its own slug.
+    """
     from apps.realtime import presence_store
     from apps.workspaces.models import Workspace
 
-    await database_sync_to_async(Workspace.objects.create)(
-        slug="~global", display_name="Shadow", created_by=member_user
+    await database_sync_to_async(Workspace.objects.bulk_create)(
+        [Workspace(slug="~global", display_name="Shadow", created_by=member_user)]
     )
 
     communicator, connected = await _connect(member_user)
@@ -333,16 +339,23 @@ async def test_a_colon_bearing_workspace_slug_gets_no_presence_rather_than_a_for
     which the bounded split reads as workspace `acme`. Its own members must
     NOT be admitted on the strength of that (they are not members of
     `acme`), and — the leak direction — a member of an unrelated `acme` must
-    never end up in a roster alongside them."""
+    never end up in a roster alongside them.
+
+    A colon slug is now unmintable at the tenancy layer (see
+    `apps/workspaces/models.py::SLUG_PATTERN` — that is the real fix, because
+    the ambiguity is irreducible once such a slug exists). This test keeps the
+    presence-side guard honest against a row that predates the rule or lands
+    by raw SQL, so it seeds via `bulk_create`, which bypasses `Model.save()`.
+    """
     from apps.realtime import presence_store
     from apps.workspaces.models import Workspace, WorkspaceMembership
 
     @sync_to_async
     def _seed():
         eu_user = get_user_model().objects.create_user(username="eu@x.com", email="eu@x.com")
-        eu_ws = Workspace.objects.create(
-            slug="acme:eu", display_name="Acme EU", created_by=eu_user
-        )
+        eu_ws = Workspace.objects.bulk_create(
+            [Workspace(slug="acme:eu", display_name="Acme EU", created_by=eu_user)]
+        )[0]
         WorkspaceMembership.objects.create(workspace=eu_ws, user=eu_user, role="editor")
         return eu_user
 
