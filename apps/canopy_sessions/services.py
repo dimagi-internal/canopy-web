@@ -642,6 +642,42 @@ def claim_pending_attachments(session, message=None) -> list[dict]:
         for a in pending
     ]
 
+# Which product a session BELONGS to, keyed off the marker its creator stamped.
+# `metadata.source` is already the canonical "who made this" marker — canopy's
+# own session LIST filters on it (`?source=ace-web`).
+SOURCE_ORIGINS = {"ace-web": Turn.ORIGIN_ACE_WEB}
+
+
+def default_origin(session) -> str:
+    """The source a turn on this session is, when the caller didn't name one.
+
+    A session ace-web created is ace-web work — whoever typed it, over whatever
+    transport. That is the rule, and getting it wrong is what shipped in #496:
+    origin was threaded only through ace-web's SERVER-side run dispatcher, on
+    the reasoning that a human typing "IS a human typing" and therefore chat. So
+    a person typing into ace-web's own chat produced `canopy_web_chat`,
+    indistinguishable from canopy's chat UI, and routed to whatever runs canopy
+    chat rather than to the box that runs ace-web's work. Observed directly:
+    "testing", typed into an ace-web session, went to a laptop runner.
+
+    The distinction that matters is not human-vs-programmatic, it is WHICH
+    PRODUCT the work belongs to. Deriving it here rather than asking each caller
+    to pass it means every ace-web surface is covered by construction — the chat
+    UI over the WS, the workbench's discuss-this-step pane, and the run
+    dispatcher — with no client change and no way for one of them to be missed.
+
+    Not tamper-proof, and deliberately not sold as such: `metadata` is
+    caller-supplied on the generic session-create endpoint, so a caller could
+    stamp `source: ace-web` itself. That is no weaker than what already exists —
+    `ace_web` is a POSTABLE origin any caller may name outright — and the blast
+    radius is the one the routing spec already accepted: you can only enqueue
+    into your own workspace, and a rule only redirects that agent's work among
+    runners you can see.
+    """
+    source = (getattr(session, "metadata", None) or {}).get("source")
+    return SOURCE_ORIGINS.get(source, Turn.ORIGIN_CANOPY_WEB_CHAT)
+
+
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
     origin: str | None = None,
@@ -673,7 +709,7 @@ def send_message(
     send, so this path writes no row — the frontend already echoes the message
     optimistically (draft.committed), and a transient Message keeps the contract.
     """
-    origin = origin or Turn.ORIGIN_CANOPY_WEB_CHAT
+    origin = origin or default_origin(session)
     if transcript_sourced(session):
         return _send_transcript_sourced_message(
             session=session, text=text, client_id=client_id, placement=placement,

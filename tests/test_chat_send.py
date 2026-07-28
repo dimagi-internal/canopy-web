@@ -327,3 +327,60 @@ def test_transcript_sourced_send_carries_the_origin_too():
     assert chat.transcript_sourced(session)
     _msg, turn = chat.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
     assert turn.origin == Turn.ORIGIN_ACE_WEB
+
+
+# ---- origin derived from the session's owning product ----
+# #496 threaded origin only through ace-web's SERVER-side run dispatcher, so a
+# human typing into ace-web's OWN chat produced canopy_web_chat and routed like
+# canopy chat. Observed live: "testing" typed into an ace-web session went to a
+# laptop runner instead of the box that runs ace-web's work. The distinction
+# that matters is which PRODUCT the session belongs to, not who typed.
+
+
+def _ace_web_session(**meta):
+    user = User.objects.create_user("aw", "aw@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="aw-ws", display_name="W", created_by=user)
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=user)
+    session = chat.create_session(workspace=ws, created_by=user, agent=agent)
+    session.metadata = {**(session.metadata or {}), "source": "ace-web", **meta}
+    session.save(update_fields=["metadata"])
+    return user, session
+
+
+def test_a_human_typing_in_an_ace_web_session_is_ace_web_work():
+    user, session = _ace_web_session(origin_key="ace-web:dimagi-team")
+    _msg, turn = chat.send_message(session=session, text="testing", user=user)
+    assert turn.origin == Turn.ORIGIN_ACE_WEB
+
+
+def test_a_canopy_session_is_still_chat():
+    user, _ws, _agent, session = _ctx()
+    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    assert turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
+
+
+def test_transcript_sourced_ace_web_session_also_derives_ace_web():
+    # The path labs actually takes — every session is transcript_sourced at
+    # creation, so deriving on the durable path only would be a no-op in prod.
+    user, session = _ace_web_session()
+    session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    assert chat.transcript_sourced(session)
+    _msg, turn = chat.send_message(session=session, text="testing", user=user)
+    assert turn.origin == Turn.ORIGIN_ACE_WEB
+
+
+def test_an_explicit_origin_still_wins():
+    # The run dispatcher names ace_web outright; derivation must not fight it,
+    # and a caller naming something else must not be silently overridden.
+    user, session = _ace_web_session()
+    _msg, turn = chat.send_message(session=session, text="x", user=user,
+                                   origin=Turn.ORIGIN_EMAIL)
+    assert turn.origin == Turn.ORIGIN_EMAIL
+
+
+def test_unknown_or_missing_source_falls_back_to_chat():
+    user, _ws, _agent, session = _ctx()
+    for meta in ({}, {"source": "something-else"}, {"source": None}):
+        session.metadata = meta
+        assert chat.default_origin(session) == Turn.ORIGIN_CANOPY_WEB_CHAT, meta

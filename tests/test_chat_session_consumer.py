@@ -359,3 +359,49 @@ async def test_snapshot_falls_back_to_the_binding_tail():
     assert [m["turn_index"] for m in msgs] == [-2, -1]   # never collides with real rows
     assert [m["id"] for m in msgs] == ["tail:-2", "tail:-1"]
     await comm.disconnect()
+
+
+# ── origin derived from the session's owning product ────────────────────────
+# THE path a human actually uses: canopy-ui's chat kit sends `chat.send` and the
+# consumer calls send_message with no origin. #496 threaded origin only through
+# ace-web's SERVER-side run dispatcher, so typing into ace-web's own chat still
+# produced canopy_web_chat and routed like canopy chat — observed live, a
+# "testing" message on an ace-web session went to a laptop runner. Deriving in
+# the REST view alone would have left this path exactly as broken.
+async def test_ws_send_on_an_ace_web_session_is_ace_web_work():
+    def _seed_ace_web():
+        owner, _teammate, session = _seed()
+        session.metadata = {**(session.metadata or {}), "source": "ace-web",
+                            "origin_key": "ace-web:dimagi-team"}
+        session.save(update_fields=["metadata"])
+        return owner, session
+
+    owner, session = await database_sync_to_async(_seed_ace_web)()
+    comm = await _connect(session, owner)
+    assert (await comm.connect())[0]
+    await comm.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "testing"}})
+    await _recv_match(comm, lambda f: f.get("event") == "draft.updated")
+    await comm.send_json_to({"action": "chat.send", "data": {}})
+    await _recv_match(comm, lambda f: f.get("event") == "chat.stream_complete")
+
+    origin = await database_sync_to_async(
+        lambda: Turn.objects.filter(chat_session_id=session.id).first().origin
+    )()
+    assert origin == Turn.ORIGIN_ACE_WEB
+    await comm.disconnect()
+
+
+async def test_ws_send_on_a_canopy_session_is_still_chat():
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+    comm = await _connect(session, owner)
+    assert (await comm.connect())[0]
+    await comm.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hi"}})
+    await _recv_match(comm, lambda f: f.get("event") == "draft.updated")
+    await comm.send_json_to({"action": "chat.send", "data": {}})
+    await _recv_match(comm, lambda f: f.get("event") == "chat.stream_complete")
+
+    origin = await database_sync_to_async(
+        lambda: Turn.objects.filter(chat_session_id=session.id).first().origin
+    )()
+    assert origin == Turn.ORIGIN_CANOPY_WEB_CHAT
+    await comm.disconnect()
