@@ -36,7 +36,18 @@ from django.utils import timezone
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
 validate_slug = RegexValidator(
-    regex=SLUG_PATTERN,
+    # `\Z`, not `$` (and not `SLUG_PATTERN` verbatim): Python's `re` special-
+    # cases `$` to also match immediately before a single trailing `\n`, so
+    # `RegexValidator`'s `.search()`-based check would let `"acme\n"` through
+    # even though the pattern "looks" fully anchored — `\Z` matches only the
+    # true end of the string, with no such exception. This is deliberately a
+    # SEPARATE pattern from the exported `SLUG_PATTERN` (which schemas.py
+    # feeds straight into Pydantic's `Field(pattern=...)`): Pydantic v2
+    # compiles `pattern=` with the Rust `regex` crate, which does not
+    # recognize `\Z` (only lowercase `\z`) and would fail to compile — and
+    # doesn't need the fix anyway, since Rust's `$` has no trailing-newline
+    # quirk to begin with. See tests/test_trailing_newline_slug.py.
+    regex=r"^[a-z0-9][a-z0-9-]*\Z",
     message=(
         "Slug must start with a lowercase letter or digit and contain only "
         "lowercase letters, digits and hyphens."
