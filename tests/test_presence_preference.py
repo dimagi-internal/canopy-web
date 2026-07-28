@@ -1,5 +1,7 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
+from django.db.utils import IntegrityError
 
 from apps.realtime.models import PresencePreference, show_presence_for
 
@@ -23,5 +25,13 @@ def test_honours_an_explicit_opt_out():
 def test_a_user_has_at_most_one_preference_row():
     user = _user()
     PresencePreference.objects.create(user=user, show_presence=False)
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         PresencePreference.objects.create(user=user, show_presence=True)
+
+
+def test_defaults_to_visible_for_anonymous_user():
+    assert show_presence_for(AnonymousUser()) is True
+
+
+def test_defaults_to_visible_for_unsaved_user_instance():
+    assert show_presence_for(get_user_model()(username="unsaved@x.com")) is True

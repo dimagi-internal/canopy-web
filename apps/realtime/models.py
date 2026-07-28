@@ -30,6 +30,15 @@ class PresencePreference(models.Model):
 
 
 def show_presence_for(user) -> bool:
-    """Whether this user should be written into rosters. Defaults to True."""
+    """Whether this user should be written into rosters. Defaults to True.
+
+    Presence is designed to degrade quietly rather than raise, so a caller
+    passing an AnonymousUser or an unsaved user instance (no usable primary
+    key) gets the same "visible" default as a user with no preference row —
+    not a crash. Callers should still gate on is_authenticated where it makes
+    sense, but this helper must not depend on that ordering.
+    """
+    if not getattr(user, "pk", None):
+        return True
     pref = PresencePreference.objects.filter(user=user).first()
     return True if pref is None else pref.show_presence
