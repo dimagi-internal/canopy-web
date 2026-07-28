@@ -28,6 +28,28 @@ Parameters:
     Type: String
     Default: ''
     Description: Comma-separated agent slugs this runner may drive.
+  RunnerSessions:
+    Type: String
+    AllowedValues: ['0', '1']
+    Default: '1'
+    Description: >
+      Whether this runner declares capabilities.sessions and may therefore claim
+      chat/session-targeted turns — including the ace-web runs delegated to
+      canopy's harness, which are session-targeted by construction and are the
+      reason this box exists (spec 2026-07-27 source-aware runner routing).
+
+      Default ON as of 2026-07-28, once the durable-record path was verified end
+      to end on this box: a session turn now ships its transcript rows via
+      /runners/{id}/session-stream and lands ordinal-keyed Message rows, and
+      resumes its CLI session across turns. Two server-side defects had to be
+      fixed first — the WS claim frame dropped origin_ref (so the runner could
+      not tell a session turn was one), and the in-repo packages were installed
+      by a method this AMI cannot run, so canopy_transcript was never importable.
+
+      Still NOT implemented here: /runners/{id}/streams + /backfills, so a
+      viewer attached mid-turn sees the reduced TurnEvent stream rather than a
+      live transcript tail, and a server-requested backfill is ignored. History
+      is not lost by either — the transcript ships at turn end regardless.
   AgentSlugs:
     Type: String
     Default: 'ace,ada,echo,eva,hal'
@@ -186,6 +208,7 @@ Resources:
                 CLAUDE_CODE_OAUTH_TOKEN=$(secret ${ClaudeTokenSecret})
                 RUNNER_PROJECTS=${RunnerProjects}
                 RUNNER_AGENTS=${RunnerAgents}
+                RUNNER_SESSIONS=${RunnerSessions}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}

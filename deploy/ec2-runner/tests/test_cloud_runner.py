@@ -1236,3 +1236,69 @@ class TestInheritedSessionMarkers:
         env = cloud_runner._agent_env("echo")
         assert env["CANOPY_WEB_PAT"] == "agent-pat"
         assert "CLAUDECODE" not in env
+
+
+# --- exposing the in-repo packages (canopy_transcript / canopy_acp) ----------
+# These used to be `uv pip install --system`'d, which cannot work on this AMI:
+# Ubuntu 24.04's system Python is PEP 668 externally-managed (uv refuses) and
+# the box has no pip for the fallback. The failure was swallowed, so
+# canopy_transcript was simply never importable and every session turn the
+# cloud runner executed wrote zero durable rows. Observed live 2026-07-28.
+
+
+def _fake_pkg(tmp_path, name):
+    pkg = tmp_path / "packages" / name
+    (pkg / name).mkdir(parents=True)
+    (pkg / name / "__init__.py").write_text("")
+    return pkg
+
+
+def test_expose_repo_package_puts_the_clone_on_sys_path(cloud_runner, tmp_path, monkeypatch):
+    pkg = _fake_pkg(tmp_path, "canopy_transcript")
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+    cloud_runner._expose_repo_package(tmp_path, "canopy_transcript", "transcript rows")
+    assert str(pkg) in cloud_runner.sys.path
+    # and it must actually be importable from there — the whole point
+    assert (pkg / "canopy_transcript" / "__init__.py").exists()
+
+
+def test_expose_repo_package_never_shells_out(cloud_runner, tmp_path, monkeypatch):
+    # No installer means no PEP 668 to trip over, and no 180s subprocess on a
+    # boot path. If this ever regresses to shelling out, this fails loudly.
+    _fake_pkg(tmp_path, "canopy_transcript")
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+
+    def _boom(*a, **kw):
+        raise AssertionError("bootstrap must not shell out to an installer")
+
+    monkeypatch.setattr(cloud_runner.subprocess, "run", _boom)
+    cloud_runner._expose_repo_package(tmp_path, "canopy_transcript", "transcript rows")
+
+
+def test_expose_repo_package_is_idempotent(cloud_runner, tmp_path, monkeypatch):
+    # canopy-fetch-env re-runs on every service start; a restart loop must not
+    # grow sys.path without bound.
+    pkg = _fake_pkg(tmp_path, "canopy_acp")
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+    for _ in range(3):
+        cloud_runner._expose_repo_package(tmp_path, "canopy_acp", "the ACP executor")
+    assert cloud_runner.sys.path.count(str(pkg)) == 1
+
+
+def test_expose_repo_package_missing_from_clone_degrades(cloud_runner, tmp_path, monkeypatch):
+    # A partial clone must disable the named feature, not raise on a boot path.
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+    before = list(cloud_runner.sys.path)
+    cloud_runner._expose_repo_package(tmp_path, "canopy_transcript", "transcript rows")
+    assert cloud_runner.sys.path == before
+
+
+def test_expose_repo_package_rejects_a_bare_project_dir(cloud_runner, tmp_path, monkeypatch):
+    # packages/<name>/ exists but packages/<name>/<name>/ does not — a checkout
+    # that would put an unimportable path on sys.path and fail later, at import,
+    # far from the cause.
+    (tmp_path / "packages" / "canopy_transcript").mkdir(parents=True)
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+    before = list(cloud_runner.sys.path)
+    cloud_runner._expose_repo_package(tmp_path, "canopy_transcript", "transcript rows")
+    assert cloud_runner.sys.path == before
