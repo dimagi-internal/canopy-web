@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PresenceBadge } from './PresenceBadge'
 import type { Viewer } from './usePresence'
 
@@ -48,6 +48,32 @@ describe('PresenceBadge', () => {
     expect(screen.getByText(/Me/)).toBeTruthy()
     expect(screen.getByText('(you)')).toBeTruthy()
     expect(screen.getByText('User 1')).toBeTruthy()
+  })
+
+  it('renders two viewers with no email without colliding their React keys', () => {
+    // Email is not guaranteed non-empty (the server sends "" for a user with
+    // none), so it cannot be the row key. A collision here shows up as a
+    // React duplicate-key error, not as a visibly missing row.
+    const errors: unknown[][] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      errors.push(args)
+    })
+    try {
+      render(
+        <PresenceBadge
+          viewers={[
+            viewer(1, { email: '', name: 'Ana' }),
+            viewer(2, { email: '', name: 'Bo' }),
+          ]}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button'))
+      expect(screen.getByText('Ana')).toBeTruthy()
+      expect(screen.getByText('Bo')).toBeTruthy()
+    } finally {
+      spy.mockRestore()
+    }
+    expect(errors.flat().join(' ')).not.toMatch(/same key/i)
   })
 
   it('marks idle viewers in the expanded list', () => {

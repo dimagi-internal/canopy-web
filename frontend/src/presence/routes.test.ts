@@ -26,9 +26,30 @@ describe('canopyPresenceRules', () => {
     expect(b?.pageKey).toBe('canopy:dimagi:session:def-456')
   })
 
-  it('lands a global (non-tenant) page in the global namespace', () => {
+  it('lands a global (non-tenant) page in the ~global sentinel namespace', () => {
+    // The `~` prefix is a security boundary, not cosmetics: the server's
+    // page-key parser only treats `~global` as "skip the membership gate",
+    // and no client-assertable workspace slug can contain a `~`. A bare
+    // `global` here would be a workspace name a user can create.
     const settings = pageKeyFor('canopy', '/settings', canopyPresenceRules)
-    expect(settings?.pageKey).toBe('canopy:global:settings')
+    expect(settings?.pageKey).toBe('canopy:~global:settings')
+  })
+
+  it('never emits a bare "global" workspace segment from any global rule', () => {
+    for (const path of [
+      '/settings',
+      '/system',
+      '/insights',
+      '/sessions',
+      '/supervisor',
+      '/schedules',
+      '/activity',
+      '/walkthrough/abc',
+      '/review/abc',
+    ]) {
+      const loc = pageKeyFor('canopy', path, canopyPresenceRules)
+      expect(loc?.pageKey.startsWith('canopy:~global:')).toBe(true)
+    }
   })
 
   it('returns null for /invite/:token — a pending invitee has no roster to join', () => {

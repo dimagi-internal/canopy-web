@@ -34,6 +34,76 @@ def test_parse_page_key_rejects_malformed():
     assert presence_keys.parse_page_key("ace:only-two") is None
 
 
+def test_parse_page_key_rejects_the_bare_word_global_as_a_workspace():
+    """`global` used to be the sentinel that SKIPPED the membership gate, and
+    it is a slug any user can create (workspace slugs have no charset or
+    reserved-name validation). The sentinel is now `~global`, whose leading
+    `~` cannot match WORKSPACE_RE — so no client-assertable slug can ever
+    equal it."""
+    assert presence_keys.GLOBAL_SENTINEL == "~global"
+    assert presence_keys.WORKSPACE_RE.match(presence_keys.GLOBAL_SENTINEL) is None
+    # A bare `global` is now just an ordinary workspace name: it parses, and
+    # therefore goes through the membership gate like any other tenant.
+    assert presence_keys.parse_page_key("canopy:global:activity") == (
+        "canopy",
+        "global",
+        "activity",
+    )
+    assert presence_keys.parse_page_key("canopy:~global:activity") == (
+        "canopy",
+        "~global",
+        "activity",
+    )
+
+
+def test_parse_page_key_rejects_a_workspace_segment_outside_the_slug_charset():
+    """The workspace segment is the AUTH segment — nothing but a clean slug
+    (or the sentinel) may reach the membership gate."""
+    for bad in (
+        "canopy:ACME:activity",  # uppercase
+        "canopy:a cme:activity",  # inner whitespace
+        "canopy:-acme:activity",  # leading hyphen
+        "canopy:~acme:activity",  # leading tilde — sentinel namespace
+        "canopy:acme.eu:activity",  # dot
+        "canopy:acme/eu:activity",  # slash
+        "canopy::activity",  # empty
+        f"canopy:{'a' * 65}:activity",  # over max_length
+    ):
+        assert presence_keys.parse_page_key(bad) is None, bad
+
+
+def test_a_colon_bearing_workspace_slug_can_never_occupy_the_auth_segment():
+    """Finding 2. A workspace slugged `acme:eu` renders the key
+    `canopy:acme:eu:activity`. The bounded split can only ever put the text
+    BEFORE the first separator into the workspace slot, so the colon-bearing
+    name is never what the membership gate checks — and WORKSPACE_RE now
+    rejects such a name outright, so it cannot be addressed as a tenant at
+    all (presence is simply dead for it, rather than borrowing `acme`'s
+    gate)."""
+    assert presence_keys.WORKSPACE_RE.match("acme:eu") is None
+    app, workspace, resource = presence_keys.parse_page_key("canopy:acme:eu:activity")
+    assert workspace == "acme"
+    assert resource == "eu:activity"
+
+
+def test_parse_page_key_rejects_a_foreign_or_malformed_app_segment():
+    assert presence_keys.parse_page_key("CANOPY:ws:activity") is None
+    assert presence_keys.parse_page_key("can opy:ws:activity") is None
+    assert presence_keys.parse_page_key(f"{'a' * 33}:ws:activity") is None
+    # A well-formed but foreign app parses here (this module has no opinion
+    # on which app is running); the consumer is what rejects it.
+    assert presence_keys.parse_page_key("ace:ws:activity") == ("ace", "ws", "activity")
+
+
+def test_parse_page_key_rejects_an_oversized_key():
+    oversized = "canopy:ws:" + "r" * presence_keys.MAX_PAGE_KEY_LEN
+    assert len(oversized) > presence_keys.MAX_PAGE_KEY_LEN
+    assert presence_keys.parse_page_key(oversized) is None
+    at_limit = "canopy:ws:" + "r" * (presence_keys.MAX_PAGE_KEY_LEN - len("canopy:ws:"))
+    assert len(at_limit) == presence_keys.MAX_PAGE_KEY_LEN
+    assert presence_keys.parse_page_key(at_limit) is not None
+
+
 def test_group_name_is_channels_safe():
     name = presence_keys.group_name("ace:ws:opp:a/run-001")
     assert name.startswith("presence.")

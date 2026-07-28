@@ -20,21 +20,39 @@ Two rules carry the security weight of this surface:
    membership, visibility is re-read on every `presence.enter` rather than
    cached at connect time, so flipping "Show me as viewing" off bounds the
    exposure window to "until you next navigate" rather than "until you
-   close the tab".
+   close the tab". An opted-out enter also actively FORGETS any field this
+   connection already wrote, rather than letting it age out of Redis on the
+   60s field TTL — otherwise flipping the toggle off and staying on the same
+   page keeps re-broadcasting a roster that still contains you.
+
+Presence is an enhancement, never a dependency: every Redis call made from
+a frame handler is wrapped, degrading to "no write" / "empty roster" rather
+than letting a Redis blip raise out of `receive_json` and kill the consumer
+(which would take the page's socket down with it).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from apps.workspaces import services as workspace_services
+from apps.workspaces.models import Workspace
 
 from . import presence_keys, presence_store
 from .models import show_presence_for
 
-GLOBAL_WORKSPACE = "global"
+logger = logging.getLogger(__name__)
+
+#: This deployment's app segment. A page key naming any OTHER app is
+#: rejected outright: cross-app roster keys are namespaced precisely so two
+#: sibling deployments cannot share a roster, and honouring a foreign app
+#: segment here would hand that namespacing back to the client.
+APP_NAME = "canopy"
+
+GLOBAL_SENTINEL = presence_keys.GLOBAL_SENTINEL
 
 
 class PresenceConsumer(AsyncJsonWebsocketConsumer):
@@ -87,6 +105,11 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
             await self._leave_current()
             return
         app, workspace, resource = parsed
+        if app != APP_NAME:
+            # A key for a different app. Treat exactly like a malformed one —
+            # this deployment only ever hosts its own rosters.
+            await self._leave_current()
+            return
         # Rebuild the canonical form from the (whitespace-stripped) parsed
         # parts rather than trusting the raw client string — parse_page_key
         # strips each segment, so "canopy: ws :activity" and "canopy:ws:activity"
@@ -94,7 +117,17 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
         # roster across two.
         canonical_key = f"{app}:{workspace}:{resource}"
 
-        if workspace != GLOBAL_WORKSPACE:
+        if workspace == GLOBAL_SENTINEL:
+            # Belt and braces. WORKSPACE_RE cannot match the sentinel, so no
+            # legitimately-shaped slug collides with it — but workspace
+            # creation enforces no charset at all, so a row literally named
+            # "~global" could still be created and would turn this branch
+            # into "skip the membership gate for that tenant's roster".
+            # One indexed PK lookup, and only on global pages.
+            if await Workspace.objects.filter(pk=GLOBAL_SENTINEL).aexists():
+                await self._leave_current()
+                return
+        else:
             member = await database_sync_to_async(workspace_services.is_member)(
                 self.user, workspace
             )
@@ -145,25 +178,44 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
     # -- helpers --
 
     async def _write(self):
-        if not self.visible or self.page_key is None:
+        if self.page_key is None:
             return
-        await presence_store.touch(
-            self.page_key,
-            user_id=self.user.id,
-            connection_id=self.connection_id,
-            name=getattr(self.user, "get_full_name", lambda: "")() or self.user.username,
-            email=self.user.email or "",
-            sub_location=self.sub_location,
-            idle=bool(self.idle),
-        )
+        if not self.visible:
+            # Not just "skip the write" — actively remove anything this
+            # connection wrote earlier. A re-enter on the SAME key with
+            # visibility flipped off never passes through _leave_current, so
+            # without this the previously-written field survives on its 60s
+            # TTL and the broadcast that follows re-serves a roster that
+            # still contains the user who just opted out.
+            await self._forget()
+            return
+        try:
+            await presence_store.touch(
+                self.page_key,
+                user_id=self.user.id,
+                connection_id=self.connection_id,
+                name=getattr(self.user, "get_full_name", lambda: "")() or self.user.username,
+                email=self.user.email or "",
+                sub_location=self.sub_location,
+                idle=bool(self.idle),
+            )
+        except Exception:
+            logger.warning("presence: write failed, skipping", exc_info=True)
+
+    async def _forget(self):
+        if self.page_key is None:
+            return
+        try:
+            await presence_store.forget(
+                self.page_key, user_id=self.user.id, connection_id=self.connection_id
+            )
+        except Exception:
+            logger.warning("presence: forget failed, entry will expire on TTL", exc_info=True)
 
     async def _leave_current(self):
         if self.group is None or self.page_key is None:
             return
-        if self.visible:
-            await presence_store.forget(
-                self.page_key, user_id=self.user.id, connection_id=self.connection_id
-            )
+        await self._forget()
         group, page_key = self.group, self.page_key
         await self.channel_layer.group_discard(group, self.channel_name)
         self.group, self.page_key = None, None
@@ -188,7 +240,13 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
         page_key = event.get("page_key")
         if page_key != self.page_key:
             return
-        viewers = await presence_store.roster(page_key)
+        try:
+            viewers = await presence_store.roster(page_key)
+        except Exception:
+            # Degrade to "nobody here" rather than raising out of the
+            # channel-layer dispatch and tearing the socket down.
+            logger.warning("presence: roster read failed, serving empty", exc_info=True)
+            viewers = []
         await self.send_json({
             "event": "presence.roster",
             "data": {

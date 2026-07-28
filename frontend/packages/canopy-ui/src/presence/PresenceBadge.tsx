@@ -33,6 +33,12 @@ export function PresenceBadge({ viewers }: { viewers: Viewer[] }) {
   if (viewers.length < 2) return null
 
   // You first, then everyone else in roster order.
+  //
+  // Rows are keyed by POSITION, not by email: email is the only plausible
+  // identity field on a Viewer and it is not guaranteed non-empty (the
+  // server sends "" for a user with no email), so two such viewers would
+  // collide on one key. The list is short, server-ordered, and re-rendered
+  // wholesale on every roster broadcast, so index keys cost nothing here.
   const ordered = [...viewers].sort((a, b) => Number(b.self) - Number(a.self))
   const shown = ordered.slice(0, MAX_AVATARS)
   const overflow = ordered.length - shown.length
@@ -46,11 +52,11 @@ export function PresenceBadge({ viewers }: { viewers: Viewer[] }) {
         aria-label={`${viewers.length} people viewing this page`}
         className="flex items-center -space-x-2 rounded-full p-0.5 hover:opacity-90"
       >
-        {shown.map((v) => {
+        {shown.map((v, i) => {
           const { initials, colorClass } = avatarFor(v.email, v.name)
           return (
             <span
-              key={v.email}
+              key={i}
               className={`inline-flex h-6 w-6 items-center justify-center rounded-full
                 ring-2 ring-card text-[10px] font-semibold text-white ${colorClass}
                 ${v.idle ? 'opacity-45' : ''}`}
@@ -74,10 +80,10 @@ export function PresenceBadge({ viewers }: { viewers: Viewer[] }) {
           className="absolute right-0 z-50 mt-2 w-64 rounded-md border border-border
             bg-card p-1 shadow-md"
         >
-          {ordered.map((v) => {
+          {ordered.map((v, i) => {
             const { initials, colorClass } = avatarFor(v.email, v.name)
             return (
-              <div key={v.email} className="flex items-center gap-2 rounded px-2 py-1.5">
+              <div key={i} className="flex items-center gap-2 rounded px-2 py-1.5">
                 <span
                   className={`inline-flex h-6 w-6 shrink-0 items-center justify-center
                     rounded-full text-[10px] font-semibold text-white ${colorClass}

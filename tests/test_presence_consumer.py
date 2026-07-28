@@ -245,13 +245,190 @@ async def test_a_global_page_key_succeeds_with_no_workspace_memberships():
     assert connected
     await communicator.send_json_to({
         "type": "presence.enter",
-        "page_key": "canopy:global:settings",
+        "page_key": "canopy:~global:settings",
         "sub_location": "Settings",
     })
     message = await communicator.receive_json_from(timeout=2)
     assert message["event"] == "presence.roster"
-    assert message["data"]["page_key"] == "canopy:global:settings"
+    assert message["data"]["page_key"] == "canopy:~global:settings"
     assert [v["email"] for v in message["data"]["viewers"]] == [user.email]
+    await communicator.disconnect()
+
+
+# -- Final-review security regressions --
+
+
+@pytest.mark.asyncio
+async def test_the_bare_word_global_no_longer_skips_the_membership_gate(member_user):
+    """FINDING 1. `global` used to be the sentinel that bypassed the gate,
+    and workspace slugs carry NO reserved-name validation — so any user
+    could create a workspace called `global` and every OTHER authenticated
+    user could then read (and write themselves into) its roster by asserting
+    `canopy:global:<resource>`. The sentinel moved to `~global`; `global` is
+    now an ordinary tenant name, gated like any other."""
+    from apps.realtime import presence_store
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:global:activity",
+        "sub_location": "Activity",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+    assert await presence_store.roster("canopy:global:activity") == []
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_workspace_shadowing_the_sentinel_cannot_be_used_to_bypass_the_gate(
+    member_user,
+):
+    """FINDING 1, belt and braces. WORKSPACE_RE cannot match `~global`, but
+    workspace CREATION enforces no charset at all — so a row literally named
+    `~global` can still be made. If it exists, the global branch must not
+    run: otherwise that row's roster is the one surface every authenticated
+    user reaches without a membership check."""
+    from apps.realtime import presence_store
+    from apps.workspaces.models import Workspace
+
+    await database_sync_to_async(Workspace.objects.create)(
+        slug="~global", display_name="Shadow", created_by=member_user
+    )
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:~global:settings",
+        "sub_location": "Settings",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+    assert await presence_store.roster("canopy:~global:settings") == []
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_page_key_for_a_different_app_is_rejected(member_user):
+    """The app segment namespaces rosters across sibling deployments. It was
+    parsed and then ignored, so a client could park canopy viewers on
+    `ace:<ws>:<resource>` — a key ace-web's own users legitimately occupy."""
+    from apps.realtime import presence_store
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "ace:test-ws:activity",
+        "sub_location": "Activity",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+    assert await presence_store.roster("ace:test-ws:activity") == []
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_colon_bearing_workspace_slug_gets_no_presence_rather_than_a_foreign_gate():
+    """FINDING 2. A workspace slugged `acme:eu` renders `canopy:acme:eu:...`,
+    which the bounded split reads as workspace `acme`. Its own members must
+    NOT be admitted on the strength of that (they are not members of
+    `acme`), and — the leak direction — a member of an unrelated `acme` must
+    never end up in a roster alongside them."""
+    from apps.realtime import presence_store
+    from apps.workspaces.models import Workspace, WorkspaceMembership
+
+    @sync_to_async
+    def _seed():
+        eu_user = get_user_model().objects.create_user(username="eu@x.com", email="eu@x.com")
+        eu_ws = Workspace.objects.create(
+            slug="acme:eu", display_name="Acme EU", created_by=eu_user
+        )
+        WorkspaceMembership.objects.create(workspace=eu_ws, user=eu_user, role="editor")
+        return eu_user
+
+    eu_user = await _seed()
+
+    communicator, connected = await _connect(eu_user)
+    assert connected
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:acme:eu:activity",
+        "sub_location": "Activity",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+    assert await presence_store.roster("canopy:acme:eu:activity") == []
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_opting_out_on_the_page_you_are_already_on_removes_you_immediately(member_user):
+    """A re-enter on the SAME key never passes through _leave_current, so
+    without an explicit forget on the invisible branch the previously-written
+    field survives its 60s TTL — and the broadcast that follows re-serves a
+    roster still containing the user who just opted out."""
+    from apps.realtime import presence_store
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:activity",
+        "sub_location": "Activity",
+    })
+    msg = await communicator.receive_json_from(timeout=2)
+    assert [v["email"] for v in msg["data"]["viewers"]] == [member_user.email]
+
+    await _acreate_pref(member_user)  # opt out, same page, no navigation
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:activity",
+        "sub_location": "Activity",
+    })
+    msg = await communicator.receive_json_from(timeout=2)
+    assert msg["data"]["viewers"] == []
+    assert await presence_store.roster("canopy:test-ws:activity") == []
+
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_redis_failure_degrades_to_an_empty_roster_instead_of_killing_the_socket(
+    member_user, monkeypatch
+):
+    """Presence is an enhancement. An unwrapped store call raises straight out
+    of receive_json and Channels tears the consumer down, taking the page's
+    socket with it."""
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("redis is having a moment")
+
+    monkeypatch.setattr("apps.realtime.presence_store.touch", _boom)
+    monkeypatch.setattr("apps.realtime.presence_store.roster", _boom)
+    monkeypatch.setattr("apps.realtime.presence_store.forget", _boom)
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:activity",
+        "sub_location": "Activity",
+    })
+    msg = await communicator.receive_json_from(timeout=2)
+    assert msg["event"] == "presence.roster"
+    assert msg["data"]["viewers"] == []
+
+    # ...and the socket is still alive and still serving frames afterwards.
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:b",
+        "sub_location": "Page B",
+    })
+    msg = await communicator.receive_json_from(timeout=2)
+    assert msg["data"]["page_key"] == "canopy:test-ws:opp:b"
+
     await communicator.disconnect()
 
 

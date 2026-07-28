@@ -5,6 +5,7 @@ import { usePresence } from './usePresence'
 
 class FakeSocket {
   static last: FakeSocket | null = null
+  static created = 0
   static OPEN = 1
   readyState = 0
   sent: string[] = []
@@ -13,6 +14,7 @@ class FakeSocket {
   onclose: (() => void) | null = null
   constructor(public url: string) {
     FakeSocket.last = this
+    FakeSocket.created += 1
   }
   send(frame: string) {
     this.sent.push(frame)
@@ -32,6 +34,7 @@ class FakeSocket {
 beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
   vi.useFakeTimers()
+  FakeSocket.created = 0
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -111,6 +114,72 @@ describe('usePresence', () => {
     )
     expect(result.current.viewers).toEqual([])
     expect(FakeSocket.last).toBeNull()
+  })
+
+  it('backs off exponentially while reconnects keep failing, up to a ceiling', () => {
+    // A tab left open past session expiry is closed with 4001 on every
+    // attempt. A flat retry hammers a handshake every 2s forever; the delay
+    // must grow and then cap.
+    renderHook(() => usePresence({ url: 'ws://x/ws/presence/', location: LOC }))
+    expect(FakeSocket.created).toBe(1)
+
+    const failOnce = (expectedDelay: number) => {
+      const before = FakeSocket.created
+      act(() => FakeSocket.last!.onclose!())
+      // Nothing reconnects a millisecond early...
+      act(() => void vi.advanceTimersByTime(expectedDelay - 1))
+      expect(FakeSocket.created).toBe(before)
+      // ...and exactly one reconnect lands on the deadline.
+      act(() => void vi.advanceTimersByTime(1))
+      expect(FakeSocket.created).toBe(before + 1)
+    }
+
+    failOnce(2_000)
+    failOnce(4_000)
+    failOnce(8_000)
+    failOnce(16_000)
+    failOnce(32_000)
+    failOnce(60_000) // ceiling, not 64_000
+    failOnce(60_000) // and it stays there
+  })
+
+  it('resets the backoff once a socket actually opens', () => {
+    renderHook(() => usePresence({ url: 'ws://x/ws/presence/', location: LOC }))
+    act(() => FakeSocket.last!.onclose!())
+    act(() => void vi.advanceTimersByTime(2_000))
+    act(() => FakeSocket.last!.onclose!())
+    act(() => void vi.advanceTimersByTime(4_000)) // now at a 4s delay
+
+    act(() => FakeSocket.last!.open()) // a good connection clears the streak
+
+    const before = FakeSocket.created
+    act(() => FakeSocket.last!.onclose!())
+    act(() => void vi.advanceTimersByTime(2_000))
+    expect(FakeSocket.created).toBe(before + 1)
+  })
+
+  it('clears the previous page\'s viewers on navigation even when the socket is not open', () => {
+    // Otherwise the old page's avatars linger on the new page until a roster
+    // for it arrives — which, on a dead socket, may be never.
+    const { result, rerender } = renderHook(
+      ({ location }) => usePresence({ url: 'ws://x/ws/presence/', location }),
+      { initialProps: { location: LOC } },
+    )
+    act(() => FakeSocket.last!.open())
+    act(() =>
+      FakeSocket.last!.deliver({
+        event: 'presence.roster',
+        data: {
+          page_key: LOC.pageKey,
+          viewers: [{ email: 'a@x.com', name: 'A', sub_location: '', idle: false, self: false }],
+        },
+      }),
+    )
+    expect(result.current.viewers).toHaveLength(1)
+
+    FakeSocket.last!.readyState = 3 // socket dropped, reconnect pending
+    rerender({ location: { pageKey: 'ace:ws:activity', subLocation: 'Activity' } })
+    expect(result.current.viewers).toEqual([])
   })
 
   it('swallows a synchronous WebSocket constructor throw and stays on an empty roster', () => {

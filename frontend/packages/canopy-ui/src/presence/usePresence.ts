@@ -16,7 +16,12 @@ export interface UsePresenceOptions {
 
 const HEARTBEAT_MS = 20_000
 const IDLE_AFTER_MS = 120_000
-const RECONNECT_MS = 2_000
+// Reconnect backoff. A flat retry is wrong for the permanent-failure case:
+// a tab left open past session expiry is closed with 4001 on every attempt,
+// so a flat 2s retry hammers a handshake forever. Double up to a ceiling and
+// reset on a socket that actually opens.
+const RECONNECT_BASE_MS = 2_000
+const RECONNECT_MAX_MS = 60_000
 
 /**
  * One presence socket per tab.
@@ -45,6 +50,13 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
     let closedByCleanup = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let heartbeat: ReturnType<typeof setInterval> | null = null
+    let reconnectDelay = RECONNECT_BASE_MS
+
+    const scheduleReconnect = () => {
+      if (closedByCleanup) return
+      reconnectTimer = setTimeout(open, reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS)
+    }
 
     const send = (frame: unknown) => {
       const ws = wsRef.current
@@ -66,11 +78,14 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
         // failure — stay on the empty roster and retry on the normal
         // reconnect cadence, never propagate.
         setViewers([])
-        if (!closedByCleanup) reconnectTimer = setTimeout(open, RECONNECT_MS)
+        scheduleReconnect()
         return
       }
       wsRef.current = sock
       sock.onopen = () => {
+        // A socket that actually opened means the failure that got us here
+        // is over; start the next backoff series from the bottom.
+        reconnectDelay = RECONNECT_BASE_MS
         enter()
         heartbeat = setInterval(
           () => send({ type: 'presence.heartbeat', idle: idleRef.current }),
@@ -101,8 +116,7 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
         if (wsRef.current === sock) wsRef.current = null
         if (heartbeat) clearInterval(heartbeat)
         setViewers([])
-        if (closedByCleanup) return
-        reconnectTimer = setTimeout(open, RECONNECT_MS)
+        scheduleReconnect()
       }
     }
     open()
@@ -122,9 +136,13 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
   // render, and keying on identity would re-send presence.enter on every
   // render instead of only on an actual location change.
   useEffect(() => {
+    // Clear FIRST, unconditionally. If the socket is not open yet the old
+    // page's avatars are already wrong — leaving them up until a roster for
+    // the new page arrives (which, on a dead socket, may be never) shows
+    // strangers as viewing the page you just navigated to.
+    setViewers([])
     const ws = wsRef.current
     if (!location || !ws || ws.readyState !== WebSocket.OPEN) return
-    setViewers([])
     ws.send(
       JSON.stringify({
         type: 'presence.enter',

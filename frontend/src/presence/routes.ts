@@ -29,6 +29,19 @@ const TENANT_RESOURCE_LABELS: Record<string, string> = {
   ddd: 'DDD',
 }
 
+/**
+ * Workspace segment for pages that are NOT tenant-scoped.
+ *
+ * The leading `~` is load-bearing, not decoration: the server's page-key
+ * parser validates the workspace segment against `^[a-z0-9][a-z0-9_-]{0,63}$`,
+ * which `~global` cannot match. A bare `global` CAN match it, which made
+ * "global" a workspace name any user could create and then assert to skip
+ * the membership gate entirely. Keep this in lockstep with
+ * `apps/realtime/presence_keys.py`'s `GLOBAL_SENTINEL` (and with ace-web's,
+ * which carries the identical constant).
+ */
+const GLOBAL_SENTINEL = '~global'
+
 const GLOBAL_RESOURCE_LABELS: Record<string, string> = {
   system: 'System',
   insights: 'Insights',
@@ -131,18 +144,18 @@ export const canopyPresenceRules: RouteRule[] = [
 
   {
     pattern: /^\/walkthrough\/([^/]+)/,
-    build: (m) => ({ workspace: 'global', resource: `walkthrough:${m[1]}`, subLocation: 'Walkthrough' }),
+    build: (m) => ({ workspace: GLOBAL_SENTINEL, resource: `walkthrough:${m[1]}`, subLocation: 'Walkthrough' }),
   },
   {
     pattern: /^\/review\/([^/]+)/,
-    build: (m) => ({ workspace: 'global', resource: `review:${m[1]}`, subLocation: 'Review' }),
+    build: (m) => ({ workspace: GLOBAL_SENTINEL, resource: `review:${m[1]}`, subLocation: 'Review' }),
   },
   // The remaining top-level personal/global pages (see router.tsx's
   // non-tenant routes): one roster per page.
   {
     pattern: /^\/(system|insights|sessions|supervisor|schedules|activity|settings)\b/,
     build: (m) => ({
-      workspace: 'global',
+      workspace: GLOBAL_SENTINEL,
       resource: m[1],
       subLocation: GLOBAL_RESOURCE_LABELS[m[1]] ?? m[1],
     }),

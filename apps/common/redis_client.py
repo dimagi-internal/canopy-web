@@ -28,11 +28,3 @@ async def get_redis() -> redis.asyncio.Redis | None:
     if _client is None:
         _client = redis.asyncio.from_url(url, decode_responses=True)
     return _client
-
-
-async def close_redis() -> None:
-    """Testing hook — close and reset the cached client."""
-    global _client
-    if _client is not None:
-        await _client.close()
-        _client = None
