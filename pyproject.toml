@@ -99,4 +99,12 @@ asyncio_mode = "auto"
 # The standalone packages/canopy_agent_runs has its OWN plain-pytest suite (no Django,
 # no DB); it is run from its own dir, not as part of the Django suite. Ignore it
 # here so the Django runner doesn't try to collect it under DJANGO_SETTINGS.
-addopts = "--ignore=packages"
+#
+# deploy/ec2-runner is ignored for the same reason, and one more: cloud_runner.py is
+# deliberately stdlib-only, and CI runs its suite from its own dir in a BARE env
+# (`uv run --with pytest`). That bare run is the only thing proving the file hasn't
+# grown a dependency on canopy-web's environment — an accidental `import django`
+# would sail through here (Django is installed) and fail on the EC2 box. Collecting
+# it here therefore doesn't just re-run 58 tests we already run, it re-runs them in
+# the one environment that cannot check the invariant they exist to protect.
+addopts = "--ignore=packages --ignore=deploy"
