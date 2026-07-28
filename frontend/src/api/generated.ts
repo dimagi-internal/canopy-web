@@ -1290,6 +1290,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/runner-rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the agent's per-source routing rules
+         * @description The per-source overrides on top of the default ordered list (spec
+         *     2026-07-27). One rule per source, max — the priority runner, and whether it is
+         *     the only one allowed to take that source's work.
+         */
+        readonly get: operations["apps_agents_api_list_agent_runner_rules"];
+        /**
+         * Replace the agent's per-source routing rules
+         * @description Wholesale replace, scoped to non-empty-source rows — the default ordered
+         *     list belongs to PUT /runners and is left alone.
+         *
+         *     A separate endpoint rather than a combined body so neither write can clobber
+         *     the other's rows (they share one table), and so the existing GET response
+         *     shape stays what the frontend already consumes.
+         */
+        readonly put: operations["apps_agents_api_replace_agent_runner_rules"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/syncs/": {
         readonly parameters: {
             readonly query?: never;
@@ -5571,6 +5602,83 @@ export interface components {
             readonly runner_ids?: readonly string[] | null;
             /** Runners */
             readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][] | null;
+        };
+        /**
+         * AgentRunnerRuleOut
+         * @description One per-source routing rule: the priority runner for a source, and whether
+         *     it is the ONLY runner allowed to take that source's work.
+         *
+         *     `source` stays a plain `str` here (not the literal) by the same rule the rest
+         *     of the API follows — an output schema serializes what the DB already holds, and
+         *     a Literal would break on a value retired later. `queued_count` is the agent's
+         *     queued turns from this source, which is what the UI's parked warning reads.
+         */
+        readonly AgentRunnerRuleOut: {
+            /** Source */
+            readonly source: string;
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Strict */
+            readonly strict: boolean;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+            /**
+             * Queued Count
+             * @default 0
+             */
+            readonly queued_count: number;
+        };
+        /**
+         * AgentRunnerRuleIn
+         * @description One rule of the wholesale-replace body. `source` is typed as the routable
+         *     literal so an unknown source is a 422 here rather than a rule that silently
+         *     never matches anything — and so the generated TypeScript carries the union.
+         */
+        readonly AgentRunnerRuleIn: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Strict
+             * @default false
+             */
+            readonly strict: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /**
+         * AgentRunnerRulesIn
+         * @description Wholesale replace of an agent's source rules. Scoped to non-empty-source
+         *     rows: the default ordered list is the sibling endpoint's business, and neither
+         *     write may clobber the other's rows.
+         */
+        readonly AgentRunnerRulesIn: {
+            /** Rules */
+            readonly rules?: readonly components["schemas"]["AgentRunnerRuleIn"][];
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -10211,6 +10319,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_agent_runner_rules: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerRuleOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_replace_agent_runner_rules: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRunnerRulesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerRuleOut"][];
                 };
             };
         };
