@@ -298,6 +298,46 @@ def pair_or_load() -> str:
     return rid
 
 
+# Session-identity markers Claude Code exports into its own child processes.
+# They must NOT reach a `claude` this runner spawns.
+#
+# Measured 2026-07-28 by spawning `claude` from inside a Claude Code session: the
+# child came up in the PARENT'S permission mode (`auto`, self-approving) and
+# announced "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
+# marker". Transcript saving being off is the serious half — the transcript is
+# canopy's DURABLE RECORD, so a turn would run, finish, report success, and
+# leave nothing to persist or reset from.
+#
+# Normally the runner is a service and has none of these. It inherits them the
+# moment someone starts it from inside an agent session — exactly the debugging
+# situation where you would least suspect the record.
+#
+# CLAUDE_CODE_OAUTH_TOKEN IS DELIBERATELY NOT HERE: it is how the box
+# authenticates (see the module docstring). A blanket CLAUDE_CODE* strip is the
+# obvious-looking version of this fix and it silently breaks every turn.
+INHERITED_SESSION_MARKERS = (
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+)
+
+
+def _child_safe_env() -> dict:
+    """`os.environ` with the parent's Claude session identity removed.
+
+    Credentials are preserved; only the markers that make a spawned agent behave
+    as a CHILD of this process are dropped.
+    """
+    env = os.environ.copy()
+    for marker in INHERITED_SESSION_MARKERS:
+        env.pop(marker, None)
+    return env
+
+
 def _agent_env(slug: str | None) -> dict:
     """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
 
@@ -316,7 +356,7 @@ def _agent_env(slug: str | None) -> dict:
     prefixes, shell interpolation) is not part of the format and is skipped
     rather than guessed at.
     """
-    env = os.environ.copy()
+    env = _child_safe_env()
     if not slug:
         return env
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
