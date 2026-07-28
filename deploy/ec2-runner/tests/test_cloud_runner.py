@@ -597,6 +597,11 @@ def test_run_claude_transcript_failure_does_not_fail_turn(cloud_runner, monkeypa
         raise RuntimeError("network is down")
 
     monkeypatch.setattr(cloud_runner, "_api", boom)
+    # A raising _api lands in the retry loop, which sleeps
+    # TRANSCRIPT_POST_RETRY_SLEEP_SECONDS (1.0s) between each of its 3 attempts.
+    # Nothing here asserts on elapsed time, so that was 2s of dead wall-clock —
+    # the slowest single test in the repo. Same idiom as the retry tests above.
+    monkeypatch.setattr(cloud_runner.time, "sleep", lambda *_a: None)
     ok, text, cli_session_id = cloud_runner.run_claude(
         "hi", "turn-xyz", lambda batch: None, cwd=tmp_path,
     )
