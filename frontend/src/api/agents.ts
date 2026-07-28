@@ -18,6 +18,10 @@ export type AgentTaskLink = Schemas['AgentTaskLink']
 export type AgentCommandOut = Schemas['AgentTaskCommandOut']
 export type PostCommandResult = Schemas['CommandResultOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
+export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
+// The routable source union, straight off the generated request schema — the
+// picker and the rule rows both key on it, so there is no hand-kept copy.
+export type RoutableSource = Schemas['AgentRunnerRuleIn']['source']
 
 export type AgentTaskStatus = AgentTaskOut['status']
 export type AgentCommandKind = Schemas['AgentTaskCommandIn']['kind']
@@ -217,4 +221,36 @@ export async function putAgentRunners(
     body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
   })
   return Array.from(unwrap(res, 'putAgentRunners'))
+}
+
+// Per-source overrides on top of the default ordered list — one rule per source.
+// A separate endpoint from putAgentRunners on purpose: both live in one table,
+// and each write is scoped server-side so neither clobbers the other's rows.
+export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
+  return Array.from(unwrap(res, 'getAgentRunnerRules'))
+}
+
+export async function putAgentRunnerRules(
+  slug: string,
+  rules: readonly { source: string; runnerId: string; strict: boolean }[],
+): Promise<AgentRunnerRuleOut[]> {
+  const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
+    params: { path: { slug } },
+    body: {
+      rules: rules.map((r) => ({
+        // Cast against the REQUEST type, not the response's: AgentRunnerRuleOut
+        // .source is a plain string (output schemas serialize what the DB holds),
+        // so casting to it would type-check nothing.
+        source: r.source as RoutableSource,
+        runner_id: r.runnerId,
+        strict: r.strict,
+        // Always sent: the generated body type requires it, and this editor has
+        // no disable affordance — a rule you don't want is deleted (cheap to
+        // re-add), so every rule it writes is an enabled one.
+        enabled: true,
+      })),
+    },
+  })
+  return Array.from(unwrap(res, 'putAgentRunnerRules'))
 }

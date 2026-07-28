@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
+import { RunnerSourceRules } from '@/components/agents/RunnerSourceRules'
 
 // The routing-matrix row: which RUNNERS (not kinds) this agent will route to, in
 // rank order. Supersedes RunnerOrder's kind-based `runner_preference` — a rank is
@@ -188,7 +189,11 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5" data-testid={`runner-assignments-${agentSlug}`}>
+    <div className="flex flex-col gap-2" data-testid={`runner-assignments-${agentSlug}`}>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        Default order
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
       {rows.length === 0 && (
         <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
           unroutable — no runners assigned
@@ -293,7 +298,11 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
         )}
       </div>
 
-      {error && <span className="text-[11px] text-destructive">{error}</span>}
+        {error && <span className="text-[11px] text-destructive">{error}</span>}
+      </div>
+
+      {/* The exceptions to the order above — one rule per source. */}
+      <RunnerSourceRules agentSlug={agentSlug} fleet={fleet} />
     </div>
   )
 }
