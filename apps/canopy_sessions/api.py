@@ -318,6 +318,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
         message, turn = services.send_message(
             session=session, text=payload.text, user=request.user,
             client_id=payload.client_id, placement=payload.placement,
+            origin=payload.origin,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
