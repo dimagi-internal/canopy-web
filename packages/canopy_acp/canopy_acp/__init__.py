@@ -17,10 +17,12 @@ from .client import (
     allow_first_option,
     find_adapter,
 )
+from .menus import menu_from_permission_request, option_id_for
 from .updates import TERMINAL_STATUSES, ToolCall, UpdateReducer
 
 __all__ = [
     "AcpAgent", "AcpConnection", "Pending", "PermissionDecision",
     "TERMINAL_STATUSES", "ToolCall", "UpdateReducer",
     "allow_first_option", "find_adapter",
+    "menu_from_permission_request", "option_id_for",
 ]
