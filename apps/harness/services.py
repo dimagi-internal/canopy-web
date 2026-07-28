@@ -390,7 +390,9 @@ def unclaimable_queued_turns(user) -> list[dict]:
             | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=ws_slugs))
             | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=ws_slugs))
         )
-        .select_related("agent")
+        # chat_session + its binding are read per turn by the per-source
+        # refinement below (once per turn PER RUNNER), so preload them.
+        .select_related("agent", "chat_session", "chat_session__runner_binding")
         .order_by("created_at")
     )
     if not queued:
@@ -409,6 +411,39 @@ def unclaimable_queued_turns(user) -> list[dict]:
         if runner_tenant_slugs(r) & ws_slugs
     ]
     ids = {t.id for t in queued}
+    # The SAME rows claim_next_turn composes from, so the two answers cannot
+    # diverge — including the session leg's agent, which routes by its agent's
+    # rules while the session is not yet bound.
+    agent_ids = {t.agent_id for t in queued if t.agent_id} | {
+        t.chat_session.agent_id
+        for t in queued
+        if t.chat_session_id and t.chat_session.agent_id
+    }
+    defaults, priorities = load_assignment_rows(agent_ids)
+
+    def _refined_allows(r, t) -> bool:
+        """The per-candidate refinements claim_next_turn applies after the coarse
+        target match — same checks, same ORDER, so coverage can't overstate what
+        claiming will do."""
+        # A pin trumps everything below it (claim_next_turn's `pinned_here`).
+        if t.pinned_runner_id == r.id:
+            return True
+        if t.chat_session_id:
+            # STICKINESS, mirroring the claim loop's bound_to_me short-circuit: a
+            # session bound to this runner claims on it regardless of assignments.
+            # Surviving runner_target_q is what IDENTIFIES the holder, so running
+            # the assignment check here would report a live chat as `config`
+            # ("no runner is assigned") while claiming takes it happily.
+            binding = getattr(t.chat_session, "runner_binding", None)
+            if binding is not None and binding.runner_id == r.id:
+                return True
+            routed_agent = t.chat_session.agent_id
+        else:
+            routed_agent = t.agent_id
+        if not routed_agent:
+            return True  # project turn / agentless session: runner_target_q had the last word
+        rows = assignment_rows_for(routed_agent, t.origin, defaults, priorities)
+        return any(rr.id == r.id for _rank, rr in rows)
 
     def _covered_by(rs) -> set:
         out: set = set()
@@ -417,7 +452,15 @@ def unclaimable_queued_turns(user) -> list[dict]:
             # projects + binding-sticky sessions), plus the pin arm — a turn
             # pinned to an offline standby must read "offline", not "config".
             q = runner_target_q(r) | Q(pinned_runner=r)
-            out |= set(Turn.objects.filter(pk__in=ids).filter(q).values_list("pk", flat=True))
+            for t in (
+                Turn.objects.filter(pk__in=ids).filter(q)
+                .select_related("agent", "chat_session", "chat_session__runner_binding")
+            ):
+                # Then the per-source refinement. A runner assigned the agent but
+                # excluded by a strict rule for THIS turn's source does not cover
+                # it, and saying otherwise would mask a genuinely parked queue.
+                if _refined_allows(r, t):
+                    out.add(t.pk)
         return out
 
     reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED)]
