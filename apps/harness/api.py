@@ -121,25 +121,73 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     return agent
 
 
+def _runner_owned_q(request: HttpRequest) -> Q:
+    """Ownership: the caller paired it, or nobody did (legacy-ungated)."""
+    return Q(paired_by=request.user) | Q(paired_by__isnull=True)
+
+
+def _runner_read_q(request: HttpRequest) -> Q:
+    """'Runners this caller can SEE' — derived from the TENANT, like claim time.
+
+    Seeing a runner and acting on one are different questions that one predicate
+    answered, and its `paired_by == caller` leg is right for the second and wrong
+    for the first. A workspace's fleet is typically paired by ONE human, so every
+    other member listed ZERO runners and could not distinguish "no runner serves
+    this repo" from "I can see nothing at all".
+
+    That cost a real afternoon (labs, 2026-07-28). `canopy project dispatch`
+    preflights by listing the fleet; under an agent identity the list came back
+    empty, it concluded BLOCKED, and it was routed around with `--no-preflight`.
+    The next dispatch went at a repo nothing declared, was accepted 201, and sat
+    QUEUED until the stuck-turn banner caught it — a guard that cries wolf gets
+    disabled, and takes the true positives with it.
+
+    `services.unclaimable_queued_turns` had ALREADY made this exact fix at its own
+    call site, with a comment explaining that scoping candidates to
+    `paired_by=user` made every stuck turn read as `config` for anyone who had not
+    personally paired a runner. Same rule, second call site.
+
+    What is deliberately NOT inherited from the act-on predicate: its
+    `workspace_id__isnull=True` leg. There it is backstopped by ownership, so it
+    means "your own legacy runner"; here, with ownership gone, the same leg would
+    mean "everyone's", which is the NULL-means-allow shape this codebase has
+    already paid to remove from six tenancy predicates (PRs #378, #421, #423). A
+    runner with no workspace has no tenant to share, so it stays visible only to
+    the human who paired it — hence the `& _runner_owned_q` on that leg alone.
+
+    Nothing listed is secret to a member: RunnerOut carries status, capabilities,
+    host and `paired_by_email` — never credentials, which have their own
+    owner-gated route.
+    """
+    wsvc.auto_join_workspaces(request.user)
+    ws = getattr(request, "workspace_slug", None)
+    if ws:
+        # Tenant-pinned: exact match only, and no null-workspace leg at all — a
+        # null-workspace runner is wrong-tenant here, not ungated (the property
+        # test_pinned_null_workspace_runner_is_neither_listed_nor_actionable
+        # pins). WorkspaceResolveMiddleware has already gated membership of `ws`.
+        return Q(workspace_id=ws)
+    return (
+        Q(workspace_id__in=wsvc.user_workspace_slugs(request.user))
+        | (Q(workspace_id__isnull=True) & _runner_owned_q(request))
+    )
+
+
 def _runner_visibility_q(request: HttpRequest) -> Q:
-    """The single definition of 'runners this caller can see and act on'.
-    _runner_or_404 and list_runners MUST build from this — when they were
-    written separately they drifted: the list OR'd in workspace_id__isnull=True
-    unconditionally while the gate 404'd a null-workspace runner once a tenant
-    was pinned, so the list showed a runner every action then 404'd on.
+    """'Runners this caller can ACT ON' — the tenant AND ownership. Unchanged.
 
-    Tenant-pinned (request.workspace_slug truthy): exact workspace match only —
-    a null-workspace runner is wrong-tenant here, NOT ungated. No separate
-    is_member check is needed in this branch: WorkspaceResolveMiddleware
-    already gates membership of the pinned workspace before it ever sets
-    request.workspace_slug, so a runner matching `ws` implies the caller is a
-    member of it.
+    Heartbeating, claiming as, mutating, retiring and crediting a runner gate on
+    this. Ownership is the boundary because these operations speak FOR the runner:
+    `paired_by` is what `claim_next_turn` derives a tenant from, so acting as
+    someone else's runner is acting with their memberships.
 
-    Not pinned (flat /api/harness/... callers): the runner's workspace must be
-    one the caller is a member of, or null (the legacy-ungated path
-    pre-existing tests depend on).
-
-    Either way, paired_by must be the caller, or null (also legacy-ungated).
+    `_runner_read_q` is deliberately WIDER, which gives up the invariant these two
+    used to share by being one function ("never list a runner every action then
+    404s on"). That invariant is now carried explicitly instead of structurally,
+    by `RunnerOut.can_manage`: a client can say "runner X serves this repo, ask
+    its owner to declare on it" rather than discovering ownership from a bare 404
+    on an action it was told to try. Read ⊇ act-on holds by construction — every
+    leg here appears in the read, ANDed with less.
     """
     wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
@@ -147,7 +195,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
         wq = Q(workspace_id=ws)
     else:
         wq = Q(workspace_id__in=wsvc.user_workspace_slugs(request.user)) | Q(workspace_id__isnull=True)
-    return wq & (Q(paired_by=request.user) | Q(paired_by__isnull=True))
+    return wq & _runner_owned_q(request)
 
 
 def _runner_or_404(
@@ -304,19 +352,28 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     return RunnerCredentialOut(**services.get_runner_credential(runner))
 
 
-@router.get("/runners/", response=list[RunnerOut], summary="List my runners")
+@router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
 def list_runners(request: HttpRequest):
-    """The supervisor's runner status. Filters on the exact same
-    _runner_visibility_q predicate _runner_or_404 gates on — a runner you
-    cannot act on must not be listed. Retired runners are excluded at lookup,
-    as everywhere else."""
+    """The supervisor's runner status, and the fleet read every preflight makes.
+
+    Scoped by TENANT (`_runner_read_q`), not by who paired what: a member who
+    paired nothing used to list nothing, which reads identically to "this
+    workspace has no runners" and is the wrong answer to draw a conclusion from.
+    Each row carries `can_manage` for the ownership half. Retired runners are
+    excluded at lookup, as everywhere else.
+    """
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
-        .filter(_runner_visibility_q(request))
+        .filter(_runner_read_q(request))
         .prefetch_related("drills")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
-    return list(qs[:50])
+    rows = list(qs[:50])
+    for r in rows:
+        # Resolved here rather than in the schema because it is a property of the
+        # (caller, runner) PAIR, and a Ninja resolver only sees the row.
+        r.can_manage = r.paired_by_id in (request.user.id, None)
+    return rows
 
 
 @router.patch("/runners/{runner_id}", response=RunnerOut)
@@ -686,13 +743,16 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
 
     pinned = None
     if payload.runner_id is not None:
-        # Same visibility predicate _runner_or_404 / list_runners gate on: a runner
-        # the caller cannot see must 422 as unknown, never be attachable because
-        # its UUID was guessed. Retired runners are excluded too — pinning to one
-        # strands the turn forever, since nothing can claim it.
+        # The question here is exactly "can the caller SEE this runner?" — a runner
+        # it cannot see must 422 as unknown, never be attachable because its UUID
+        # was guessed. So this follows the READ predicate: pinning directs work at
+        # a box, it does not speak for it, and any member can already enqueue a
+        # turn this runner will claim (claim_next_turn re-checks the tenant either
+        # way). Retired runners are excluded too — pinning to one strands the turn
+        # forever, since nothing can claim it.
         pinned = (
             Runner.objects.exclude(status=Runner.RETIRED)
-            .filter(_runner_visibility_q(request))
+            .filter(_runner_read_q(request))
             .filter(id=payload.runner_id)
             .first()
         )
