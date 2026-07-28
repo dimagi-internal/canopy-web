@@ -103,3 +103,33 @@ def test_nul_bytes_are_scrubbed_on_the_hook_path_too():
     reintroduces the byte that took down a whole batch."""
     rows = ct.rows_for_hook(_payload(tool_response={"stdout": "bin\x00ary"}))
     assert "\x00" not in rows[1]["text"]
+
+
+def test_a_notification_reports_blocked():
+    """Claude Code fires Notification when it wants a human — a permission
+    prompt, or an idle wait for input. Before this, a session blocked on a
+    permission dialog looked exactly like one that was working, which is the
+    worst of the three states to get wrong: you wait on an agent that is
+    waiting on you.
+    """
+    assert ct.activity_for_hook({"hook_event_name": "Notification",
+                              "message": "Claude needs your permission to use Bash"}) == "blocked"
+
+
+def test_blocked_is_coarse_on_purpose():
+    """A hook observer cannot tell "needs permission" from "idle waiting" —
+    emdash can only because it is an ACP client with a real
+    pendingPermissionCount. Parsing the message string to guess would be
+    inventing precision we do not have, so both resolve to "blocked".
+    """
+    idle = ct.activity_for_hook({"hook_event_name": "Notification",
+                              "message": "Claude is waiting for your input"})
+    permission = ct.activity_for_hook({"hook_event_name": "Notification",
+                                    "message": "Claude needs your permission to use Bash"})
+    assert idle == permission == "blocked"
+
+
+def test_a_notification_is_a_state_not_a_row():
+    """It carries no chat content — emitting a row would put a phantom message
+    in the transcript."""
+    assert ct.rows_for_hook({"hook_event_name": "Notification", "message": "x"}) == []

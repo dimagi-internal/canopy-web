@@ -50,7 +50,18 @@ FORWARDED_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 # `last_interacted_at` could not answer this either — it comes from emdash's own
 # DB via the session report, so it lags a report cycle and has a 120s window.
 # A hook fires the instant the turn starts.
-ACTIVITY_EVENTS = ("UserPromptSubmit", "Stop")
+# `Notification` fires when Claude Code wants a human: it needs permission for a
+# tool, or the prompt has sat idle waiting for input. Both mean the same thing to
+# a watcher — this session is BLOCKED on you — and neither was visible before:
+# a session waiting on a permission dialog nobody can see reads exactly like one
+# that is working, which is the worst of the three states to get wrong.
+#
+# It is a COARSE signal by necessity. emdash knows the difference because it is
+# an ACP client and gets `session/request_permission` with a real
+# `pendingPermissionCount`; a hook observer gets one notification and a message
+# string. Distinguishing the two by parsing that string would be guessing, so we
+# do not — "wants you" is the honest resolution of what a hook can see.
+ACTIVITY_EVENTS = ("UserPromptSubmit", "Stop", "Notification")
 
 # A pending call has no result yet. The client renders it as "running…" and
 # replaces it when the matching PostToolUse (or the transcript row) lands, keyed
@@ -139,7 +150,7 @@ def rows_for_hook(payload: dict) -> list[dict]:
 
 
 def activity_for_hook(payload: dict) -> str | None:
-    """"working" / "idle" for a turn-boundary event, else None.
+    """"working" / "idle" / "blocked" for a turn-boundary event, else None.
 
     Separate from `rows_for_hook` because this is not a chat row — it is a state
     transition, with nothing to render in the transcript and nothing to persist.
@@ -149,6 +160,8 @@ def activity_for_hook(payload: dict) -> str | None:
         return "working"
     if event == "Stop":
         return "idle"
+    if event == "Notification":
+        return "blocked"
     return None
 
 

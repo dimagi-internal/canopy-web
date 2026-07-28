@@ -539,3 +539,48 @@ describe("sessionReducer — a web send arriving twice", () => {
     expect(next.messages).toHaveLength(2)
   })
 })
+
+describe("blocked — the agent is waiting on YOU", () => {
+  it("renders as its own state, not as working", () => {
+    const state = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked" },
+    });
+    expect(state.activity).toBe("blocked");
+  });
+
+  it("clears once the agent produces a row again", () => {
+    // Notification fires on the way INTO a wait and nothing fires on the way
+    // out — approving a permission prompt emits no hook at all. A row is the
+    // only proof the wait ended, so without this the chip says "needs you" for
+    // the rest of the turn, long after you answered.
+    const blocked = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked" },
+    });
+    const after = sessionReducer(blocked, {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "m1",
+        turn_index: 3,
+        block: { id: "toolu_1", name: "Bash" },
+      },
+    });
+    expect(after.activity).toBe("working");
+  });
+
+  it("is not cleared by traffic that proves nothing about the agent", () => {
+    // A teammate typing, or presence churn, says nothing about whether the
+    // agent is still waiting for an answer.
+    const blocked = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked" },
+    });
+    const after = sessionReducer(blocked, {
+      event: "presence.joined",
+      data: { user_id: 2, display_name: "Someone" },
+    });
+    expect(after.activity).toBe("blocked");
+  });
+});

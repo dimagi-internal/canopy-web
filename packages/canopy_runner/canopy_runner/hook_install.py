@@ -41,7 +41,10 @@ logger = logging.getLogger("canopy_runner.hooks")
 # emdash also hooks UserPromptSubmit and Stop, at PROJECT level, pointing at its
 # own port. Both run: Claude Code executes every matching hook, and ours is
 # additive rather than a replacement.
-HOOK_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
+# Notification is what makes "blocked on you" visible — a session waiting on a
+# permission dialog is otherwise indistinguishable from one that is working.
+# emdash also hooks Notification at PROJECT level for its own port; both run.
+HOOK_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification")
 # Marks the entry as ours so install/remove are idempotent and we never touch
 # a hook somebody else put there.
 MARKER = "canopy-hook-listener"

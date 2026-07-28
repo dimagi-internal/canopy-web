@@ -104,6 +104,16 @@ jobs:
         working-directory: packages/canopy_transcript
         run: uv run --with pytest pytest -q
 
+      # canopy_acp is the ACP client the CLOUD runner executes turns through.
+      # Its reducer is the piece that cannot be eyeballed: ACP's tool_call_update
+      # is a sparse PATCH, so a merge bug renders half-empty tool calls rather
+      # than failing, and the suite replays a recorded live sequence to catch it.
+      # The live-adapter tests skip unless ACP_ADAPTER_PATH is set (they need
+      # Node, Claude auth and tokens), so CI runs the protocol logic only.
+      - name: Run canopy_acp tests
+        working-directory: packages/canopy_acp
+        run: uv run --with pytest pytest -q
+
       # canopy_agent_runs is the Django-free run-lifecycle core that apps/agent_runs
       # imports directly (schemas, stores, the Drive client) — not dead code — yet its
       # suite had never run in CI. `--extra drive` is required, not optional polish:
