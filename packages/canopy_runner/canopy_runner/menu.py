@@ -25,6 +25,7 @@ the signal.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 # The pointer marking the highlighted row. Cosmetic for answering (we send the
@@ -176,6 +177,27 @@ def find_menu(text: str) -> Menu | None:
 
     return Menu(question=question, options=options, title=title, body=body,
                 selected=selected, raw=text)
+
+
+def find_menu_settled(read_screen, *, attempts: int = 3, delay: float = 0.8):
+    """`find_menu`, tolerant of a half-drawn frame.
+
+    Observed live 2026-07-28: a single read caught the TUI mid-render — the
+    options were on screen but the footer had not been painted yet — so the
+    dialog did not parse, and the answer was dropped as stale. Failing safe is
+    right, but a phone tap that silently does nothing is its own bug, and the
+    frame settles in well under a second.
+
+    Takes a callable rather than a screen so the retry actually re-reads.
+    """
+    found = None
+    for attempt in range(attempts):
+        found = find_menu(read_screen())
+        if found is not None:
+            return found
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return found
 
 
 def answer_keys(option: int | None) -> list[str]:
