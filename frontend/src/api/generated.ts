@@ -2960,6 +2960,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/answer-menu": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Answer the dialog an agent is blocked on
+         * @description Approve or refuse a permission prompt from the web.
+         *
+         *     A refusal is a 200 with `ok:false` and a stable reason, not a 4xx: the dialog
+         *     can go stale between the phone rendering it and a thumb reaching it, and the
+         *     runner can go offline in between — both ordinary, neither a client error.
+         *     Same shape `reset` uses for the same reason.
+         */
+        readonly post: operations["apps_canopy_sessions_api_answer_menu"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/stop": {
         readonly parameters: {
             readonly query?: never;
@@ -8131,6 +8156,8 @@ export interface components {
             readonly client_id: string;
             /** Placement */
             readonly placement?: string | null;
+            /** Origin */
+            readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
         };
         /**
          * TurnOutMinimal
@@ -8156,6 +8183,18 @@ export interface components {
         readonly PlaceIn: {
             /** Placement */
             readonly placement: string;
+        };
+        /**
+         * MenuAnswerIn
+         * @description Which option to press on a blocked agent's dialog.
+         *
+         *     `None` means refuse — sent as Escape. Deliberately nullable rather than a
+         *     magic number: every dialog offers Esc, and it is the only answer that is
+         *     safe when the option numbering is not what the client thought it was.
+         */
+        readonly MenuAnswerIn: {
+            /** Option */
+            readonly option?: number | null;
         };
         /**
          * StreamStateOut
@@ -12792,6 +12831,34 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_answer_menu: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MenuAnswerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };

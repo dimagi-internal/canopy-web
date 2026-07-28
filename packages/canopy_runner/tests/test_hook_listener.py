@@ -72,8 +72,18 @@ def test_a_failing_transport_never_raises_at_the_hook():
 
 def test_a_truly_unrelated_event_is_ignored():
     lis, sent = _listener()
-    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "ignored"
+    assert lis.handle_payload(_payload(hook_event_name="SessionStart")) == "ignored"
     assert sent == []
+
+
+def test_a_notification_reports_blocked():
+    """Notification used to be ignored. It is the only signal that the agent is
+    waiting on a HUMAN — a permission prompt, or an idle wait for input — and
+    without it such a session rendered exactly like one that was working, so you
+    waited on an agent that was waiting on you."""
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
+    assert sent and sent[0][1][0]["kind"] == "activity:blocked"
 
 
 def test_turn_boundaries_report_working_and_idle():
@@ -255,7 +265,7 @@ def test_install_covers_both_halves_of_the_lifecycle(tmp_path):
     hook_install.install(p, port=8787, nonce="a")
     hooks = json.loads(p.read_text())["hooks"]
     assert set(hook_install.HOOK_EVENTS) == {
-        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification"}
     for event in hook_install.HOOK_EVENTS:
         assert any(hook_install.MARKER in h["command"]
                    for e in hooks[event] for h in e["hooks"]), event
@@ -272,3 +282,57 @@ def test_remove_clears_both_events_and_spares_foreign_hooks(tmp_path):
     assert [h["command"] for e in hooks["PreToolUse"] for h in e["hooks"]] == ["someone-elses-pre"]
     assert "PostToolUse" not in hooks   # ours was the only entry there
     assert hook_install.remove(p) is False
+
+
+# -- the menu a "blocked" state cannot describe on its own -------------------
+
+def _listener_with_menu(menu=None, boom=False):
+    sent = []
+    def read_menu(cwd):
+        if boom:
+            raise RuntimeError("CDP is wedged")
+        return menu
+    lis = HookListener(
+        port=0, nonce="n", resolve_session=lambda cwd: "sess-1",
+        forward=lambda: True, read_menu=read_menu)
+    lis.bind_sender(lambda sid, events: sent.append((sid, events)))
+    return lis, sent
+
+
+MENU = {"question": "Do you want to proceed?", "title": "Bash command",
+        "body": "rm target.txt", "options": [{"number": 1, "label": "Yes"},
+                                             {"number": 2, "label": "No"}]}
+
+
+def test_a_blocked_state_carries_the_menu_so_the_phone_can_show_it():
+    lis, sent = _listener_with_menu(MENU)
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
+    assert sent[0][1][0]["payload"]["menu"]["question"] == "Do you want to proceed?"
+
+
+def test_working_and_idle_never_read_the_screen():
+    """Reading costs a CDP round trip. Only `blocked` means the agent has
+    stopped and is waiting, so only `blocked` pays for it."""
+    lis, sent = _listener_with_menu(MENU)
+    lis.handle_payload(_payload(hook_event_name="UserPromptSubmit"))
+    lis.handle_payload(_payload(hook_event_name="Stop"))
+    assert all(e[1][0]["payload"] == {} for e in sent)
+
+
+def test_a_failed_read_still_reports_blocked():
+    """Driving emdash over CDP can be slow, wedged, or looking elsewhere. Losing
+    the menu costs the phone its buttons; losing the STATE would leave you
+    waiting on an agent that is waiting on you."""
+    lis, sent = _listener_with_menu(boom=True)
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
+    assert sent[0][1][0]["payload"] == {}
+
+
+def test_no_menu_reader_configured_is_not_an_error():
+    """A runner without CDP still reports the state."""
+    sent = []
+    lis = HookListener(port=0, nonce="n", resolve_session=lambda c: "s",
+                                     forward=lambda: True)
+    lis.bind_sender(lambda sid, ev: sent.append((sid, ev)))
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
+    assert sent[0][1][0]["payload"] == {}

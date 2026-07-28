@@ -246,3 +246,25 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
 export function attachmentUrl(attachmentId: string): string {
   return apiUrl(`/api/canopy-sessions/attachments/${attachmentId}/content`);
 }
+
+/**
+ * Answer the dialog a blocked agent is waiting on.
+ *
+ * `option = null` refuses (the runner sends Escape). A refusal comes back as a
+ * 200 with `ok:false` and a reason rather than a 4xx: the dialog can go stale
+ * between the phone rendering it and a thumb reaching it, and the runner can go
+ * offline in between — both ordinary, neither a client error.
+ */
+export function answerMenu(
+  id: string,
+  option: number | null,
+): Promise<{ ok: boolean; reason: string }> {
+  return request<{ ok: boolean; reason: string }>(
+    `/api/canopy-sessions/${encodeURIComponent(id)}/answer-menu`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ option }),
+    },
+  );
+}

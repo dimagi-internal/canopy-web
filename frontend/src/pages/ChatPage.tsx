@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import {
   ChatPanel,
   PlacementBanner,
+  MenuPrompt,
   useSessionSocket,
   type PendingAttachment,
   type PlacementRunner,
@@ -17,6 +18,7 @@ import {
   requestBackfill,
   resetSession,
   placeTurn,
+  answerMenu,
   ChatApiError,
   type ChatSessionDetail,
   uploadAttachment,
@@ -408,12 +410,61 @@ export function ChatPage() {
     </div>
   )
 
+  // Answering the dialog a blocked agent is waiting on. The optimistic clear is
+  // deliberate: the runner re-reads the screen and refuses a stale answer, so the
+  // worst case is a menu that reappears — better than buttons that stay live
+  // against a dialog that is already gone.
+  const [answering, setAnswering] = useState(false)
+  const [answerError, setAnswerError] = useState('')
+  const onAnswerMenu = useCallback(
+    async (option: number | null) => {
+      if (!id) return
+      setAnswering(true)
+      setAnswerError('')
+      try {
+        const res = await answerMenu(id, option)
+        if (!res.ok) {
+          setAnswerError(
+            res.reason === 'unavailable'
+              ? 'That runner is offline — answer it in emdash.'
+              : res.reason === 'unbound'
+                ? 'This session has no runner to answer on.'
+                : 'Could not answer.',
+          )
+        }
+      } catch {
+        setAnswerError('Could not answer.')
+      } finally {
+        setAnswering(false)
+      }
+    },
+    [id],
+  )
+
   // undefined = no hook has reported for this session yet, so defer to the
   // server's coarser flag rather than asserting idle.
   const liveWorking =
     socket.state.activity === undefined
       ? undefined
       : socket.state.activity === "working";
+  // The agent asked for a human and stopped — a permission prompt, or an idle
+  // wait for input. It previously rendered as "running", which is the worst way
+  // to get this wrong: you wait on an agent that is waiting on you.
+  const liveBlocked = socket.state.activity === "blocked";
+  // The window between pressing send and the agent actually starting: the turn
+  // is enqueued, a runner has to claim it and (on a laptop) drive it into
+  // emdash before Claude sees a prompt at all. NOTHING could report during it —
+  // `activity` waits on a UserPromptSubmit hook that cannot fire until the
+  // prompt lands, and `running` comes from the session report, which lags a
+  // cycle. So a phone send showed no feedback for seconds and then jumped
+  // straight to running, which reads as the app having ignored you.
+  //
+  // `awaitingReply` is set the instant you press send, client-side with no
+  // round trip, so it is the only thing that can answer immediately. Shown as
+  // "queued" rather than folded into "running" because the distinction is the
+  // useful part: queued means canopy has not started your turn yet, running
+  // means the agent is thinking. Confusing the two hides where the delay is.
+  const liveQueued = socket.awaitingReply;
   const title = meta?.title?.trim() || 'Chat'
 
   return (
@@ -427,10 +478,20 @@ export function ChatPage() {
             Claude is thinking and nothing has been output yet. The hook fires the
             instant the turn starts. Falls back to `meta.running` when no hook has
             spoken (an older runner, or forwarding off). */}
-        {(liveWorking ?? meta?.running) ? (
+        {liveBlocked ? (
+          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-warning">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+            needs you{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
+          </span>
+        ) : (liveWorking ?? meta?.running) ? (
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
+          </span>
+        ) : liveQueued ? (
+          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-muted-foreground">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+            queued{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
         ) : meta?.runner_name ? (
           <span className="shrink-0 text-[12px] text-muted-foreground">
@@ -475,7 +536,14 @@ export function ChatPage() {
           emptyState={emptyState}
           historySlot={historySlot}
           banner={
-            boundOffline ? (
+            socket.state.menu ? (
+              <MenuPrompt
+                menu={socket.state.menu}
+                busy={answering}
+                error={answerError}
+                onAnswer={onAnswerMenu}
+              />
+            ) : boundOffline ? (
               <PlacementBanner
                 runnerName={meta?.runner_name ?? ''}
                 eligibleRunners={placementRunners}

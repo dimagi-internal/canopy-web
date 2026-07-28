@@ -5,6 +5,9 @@ import datetime as dt
 import uuid
 
 from ninja import Schema
+from pydantic import field_validator
+
+from apps.harness.schemas import Origin, normalize_origin
 
 
 class SessionCreateIn(Schema):
@@ -29,6 +32,15 @@ class SendIn(Schema):
     # session's currently bound runner, or a runner UUID string pins to that
     # runner outright. None leaves normal routing/stickiness in charge.
     placement: str | None = None
+    # What KIND of work this send is, for source-aware routing (spec 2026-07-27).
+    # None = the default `canopy_web_chat` (a human typing in the web UI), which
+    # a caller cannot spell for itself: `Origin` admits only the POSTABLE values,
+    # so the server-only sources keep exactly one producer each. ace-web sets
+    # `ace_web` here — without it, a delegated run enqueues as `canopy_web_chat`
+    # and an `ace_web` routing rule has nothing to match.
+    origin: Origin | None = None
+
+    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
 
 class PlaceIn(Schema):
@@ -153,3 +165,13 @@ class ResetSummaryOut(Schema):
     skipped: list[ResetOut]
     pruned: list[dict]
     rows_dropped: int
+
+
+class MenuAnswerIn(Schema):
+    """Which option to press on a blocked agent's dialog.
+
+    `None` means refuse — sent as Escape. Deliberately nullable rather than a
+    magic number: every dialog offers Esc, and it is the only answer that is
+    safe when the option numbering is not what the client thought it was.
+    """
+    option: int | None = None

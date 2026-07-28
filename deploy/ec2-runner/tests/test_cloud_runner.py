@@ -597,6 +597,11 @@ def test_run_claude_transcript_failure_does_not_fail_turn(cloud_runner, monkeypa
         raise RuntimeError("network is down")
 
     monkeypatch.setattr(cloud_runner, "_api", boom)
+    # A raising _api lands in the retry loop, which sleeps
+    # TRANSCRIPT_POST_RETRY_SLEEP_SECONDS (1.0s) between each of its 3 attempts.
+    # Nothing here asserts on elapsed time, so that was 2s of dead wall-clock —
+    # the slowest single test in the repo. Same idiom as the retry tests above.
+    monkeypatch.setattr(cloud_runner.time, "sleep", lambda *_a: None)
     ok, text, cli_session_id = cloud_runner.run_claude(
         "hi", "turn-xyz", lambda batch: None, cwd=tmp_path,
     )
@@ -1183,3 +1188,51 @@ def test_a_missing_transcript_core_never_fails_the_turn(cloud_runner, monkeypatc
     monkeypatch.setattr(cloud_runner, "_transcript_core", lambda: None)
     monkeypatch.setattr(cloud_runner, "_chat_session_id", lambda turn: "sess-1")
     cloud_runner._ship_transcript_rows("r1", {"id": "t1"}, "/tmp", "sess")  # must not raise
+
+
+class TestInheritedSessionMarkers:
+    """A `claude` this runner spawns must not think it is a CHILD of a Claude
+    session that happens to have started the runner.
+
+    Measured 2026-07-28: a claude spawned from inside a Claude Code session came
+    up in the parent's permission mode (`auto`, self-approving) and reported
+    "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker".
+    The transcript is canopy's durable record, so that turn would have run,
+    finished, reported success, and left nothing behind.
+    """
+
+    def test_session_markers_are_stripped(self, cloud_runner, monkeypatch):
+        for marker in cloud_runner.INHERITED_SESSION_MARKERS:
+            monkeypatch.setenv(marker, "inherited")
+        env = cloud_runner._agent_env(None)
+        for marker in cloud_runner.INHERITED_SESSION_MARKERS:
+            assert marker not in env, marker
+
+    def test_the_oauth_token_survives(self, cloud_runner, monkeypatch):
+        """The one that must NOT be stripped. `claude` authenticates with it, so
+        a blanket CLAUDE_CODE* strip — the obvious-looking version of this fix —
+        silently breaks every turn on the box."""
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "secret-token")
+        monkeypatch.setenv("CLAUDECODE", "1")
+        env = cloud_runner._agent_env(None)
+        assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "secret-token"
+        assert "CLAUDECODE" not in env
+
+    def test_ordinary_environment_is_untouched(self, cloud_runner, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setenv("CANOPY_TOKEN", "pat")
+        env = cloud_runner._agent_env(None)
+        assert env["PATH"] == "/usr/bin"
+        assert env["CANOPY_TOKEN"] == "pat"
+
+    def test_an_agents_own_env_still_layers_on_top(self, cloud_runner, monkeypatch, tmp_path):
+        """Stripping must not disturb the per-agent identity load — that file is
+        what makes an agent use its OWN PAT instead of the runner's."""
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setattr(cloud_runner.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+        agent_dir = tmp_path / ".echo"
+        agent_dir.mkdir()
+        (agent_dir / ".env").write_text("CANOPY_WEB_PAT=agent-pat\n")
+        env = cloud_runner._agent_env("echo")
+        assert env["CANOPY_WEB_PAT"] == "agent-pat"
+        assert "CLAUDECODE" not in env

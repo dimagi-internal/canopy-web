@@ -585,3 +585,69 @@ def test_success_with_no_prior_failure_is_silent(caplog):
     with caplog.at_level(logging.INFO, logger="canopy_runner"):
         main_mod._note_success("stream:s1")
     assert caplog.text == ""
+
+
+# -- answering a blocked agent's dialog from the web -------------------------
+
+class _FakeMenuCDP:
+    """Stands in for emdash over CDP."""
+
+    def __init__(self, screen):
+        self.screen = screen
+        self.sent = []
+
+    def read_terminal(self, task, *, port=9222):
+        return self.screen
+
+    def send_keys(self, task, keys, *, port=9222):
+        self.sent.append((task, keys))
+        return {"ok": True}
+
+
+DIALOG = """\
+ Bash command
+   rm target.txt
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend
+"""
+
+NO_DIALOG = """\
+⏺ Bash(rm target.txt)
+  ⎿  Waiting…
+❯
+  ⏵⏵ auto mode on
+"""
+
+
+def test_answering_presses_the_option(monkeypatch):
+    fake = _FakeMenuCDP(DIALOG)
+    monkeypatch.setattr(main_mod, "cdp_control", fake)
+    main_mod._answer_menu("agent-task", 1)
+    assert fake.sent == [("agent-task", ["1", "\r"])]
+
+
+def test_refusing_sends_escape(monkeypatch):
+    fake = _FakeMenuCDP(DIALOG)
+    monkeypatch.setattr(main_mod, "cdp_control", fake)
+    main_mod._answer_menu("agent-task", None)
+    assert fake.sent == [("agent-task", ["\x1b"])]
+
+
+def test_a_stale_answer_is_dropped_rather_than_typed(monkeypatch):
+    """The dialog can vanish between the phone rendering it and a thumb reaching
+    it. A NUMBER typed at a session no longer showing a menu lands in its PROMPT,
+    where the agent reads it as an instruction."""
+    fake = _FakeMenuCDP(NO_DIALOG)
+    monkeypatch.setattr(main_mod, "cdp_control", fake)
+    main_mod._answer_menu("agent-task", 1)
+    assert fake.sent == []
+
+
+def test_an_option_not_on_the_dialog_is_dropped(monkeypatch):
+    """The menu on screen may have changed shape since it was rendered."""
+    fake = _FakeMenuCDP(DIALOG)
+    monkeypatch.setattr(main_mod, "cdp_control", fake)
+    main_mod._answer_menu("agent-task", 7)
+    assert fake.sent == []

@@ -13,7 +13,27 @@ import type { Draft, Message, SessionState, WsEvent } from "./protocol";
 // `draft.committed` carries only `user_message_id` (no assistant id to
 // pre-insert), so the assistant row is created lazily when its first stream
 // frame arrives.
+/** Frames that prove the agent is producing again.
+ *
+ *  `Notification` fires on the way IN to a wait and NOTHING fires on the way
+ *  out — approving a permission prompt emits no hook at all. So without this,
+ *  a session shows "needs you" for the rest of the turn, long after you
+ *  answered. Any row the agent emits afterwards is the proof the hook cannot
+ *  give. */
+const UNBLOCKING_FRAMES = new Set([
+  "chat.stream_start",
+  "chat.delta",
+  "chat.tool_use",
+  "chat.tool_result",
+]);
+
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
+  if (prev.activity === "blocked" && UNBLOCKING_FRAMES.has(frame.event)) {
+    // Dropping the menu with the state matters as much as the state itself —
+    // the dialog is gone, and buttons that answer a gone dialog send a stray
+    // keystroke into the prompt.
+    prev = { ...prev, activity: "working", menu: undefined };
+  }
   switch (frame.event) {
     case "session.state":
       return frame.data;
@@ -51,7 +71,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     }
 
     case "session.activity":
-      return { ...prev, activity: frame.data.state };
+      // The menu is cleared unless this frame carries one: a stale dialog is
+      // worse than none, because its buttons would answer a prompt that is no
+      // longer on screen.
+      return { ...prev, activity: frame.data.state, menu: frame.data.menu };
 
     case "chat.user_message": {
       // Someone typed into emdash, OR into this page. Both reach here, and that

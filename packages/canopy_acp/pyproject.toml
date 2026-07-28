@@ -1,0 +1,26 @@
+[project]
+name = "canopy-acp"
+version = "0.1.0"
+description = "Django-free Agent Client Protocol (ACP) client: JSON-RPC transport to claude-agent-acp, and the sparse-patch reducer that turns session/update into canopy's row shape. Shared by both runners."
+readme = "README.md"
+requires-python = ">=3.11"
+# Stdlib only, except the row contract itself — rows produced here must be
+# byte-identical to the hook path's, so the shape lives in one place.
+dependencies = ["canopy-transcript"]
+
+[tool.uv.sources]
+# Same editable path-dep wiring canopy_runner uses, resolved relative to this
+# package so `uv run` here works without publishing to an index.
+canopy-transcript = { path = "../canopy_transcript", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["canopy_acp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

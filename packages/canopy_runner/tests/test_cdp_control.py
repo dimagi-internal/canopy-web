@@ -177,3 +177,34 @@ def test_host_id_ignores_a_blank_pin(monkeypatch, tmp_path):
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "H2")
     monkeypatch.setattr(cdp_control.getpass, "getuser", lambda: "u2")
     assert cdp_control.host_id() == "u2@H2"
+
+
+def test_read_terminal_returns_the_rendered_text(monkeypatch):
+    """The screen is the only place an emdash session's dialog exists."""
+    calls = {}
+
+    def fake_run(command, args, **kw):
+        calls["command"], calls["args"] = command, args
+        return {"ok": True, "task": args["task"], "text": " Do you want to proceed?\n ❯ 1. Yes\n   2. No"}
+
+    monkeypatch.setattr(cdp_control, "_run", fake_run)
+    text = cdp_control.read_terminal("agent-x")
+    assert calls["command"] == "read-term"
+    assert calls["args"]["task"] == "agent-x"
+    assert "Do you want to proceed?" in text
+
+
+def test_read_terminal_tolerates_an_empty_screen(monkeypatch):
+    monkeypatch.setattr(cdp_control, "_run", lambda *a, **k: {"ok": True})
+    assert cdp_control.read_terminal("agent-x") == ""
+
+
+def test_send_keys_passes_each_key_separately(monkeypatch):
+    """Not insertText: a stray digit typed into the PROMPT of a session that is
+    not showing a menu is worse than a failed answer."""
+    calls = {}
+    monkeypatch.setattr(cdp_control, "_run",
+                        lambda c, a, **k: (calls.update(command=c, args=a), {"ok": True})[1])
+    cdp_control.send_keys("agent-x", ["3", "\r"])
+    assert calls["command"] == "send-keys"
+    assert calls["args"]["keys"] == ["3", "\r"]

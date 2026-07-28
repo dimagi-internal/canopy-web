@@ -234,6 +234,41 @@ try {
     await page.keyboard.press('Escape');   // Claude Code: Esc interrupts the running turn
     out({ ok: true, task });
 
+  } else if (command === 'read-term') {
+    // The rendered terminal, as TEXT. This is how canopy sees a dialog that only
+    // exists on screen: a hook can say an agent is blocked but never what it is
+    // asking, and emdash (not canopy) owns the session, so the menu lives here.
+    //
+    // Read the DOM rather than the PTY on purpose — emdash's xterm uses the DOM
+    // renderer, so it has already resolved the TUI's cursor-movement escapes into
+    // real cells. Parsing the raw stream instead welds words together, because
+    // Claude Code draws spaces as ESC[nC.
+    const { task } = args;
+    await openTask(task);
+    const text = await page.evaluate(() => {
+      const terms = [...document.querySelectorAll('.xterm')]
+        .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
+      const rows = terms[0] && terms[0].querySelector('.xterm-rows');
+      if (!rows) return null;
+      return [...rows.children].map(r => r.textContent).join('\n');
+    });
+    if (text === null) fail(`could not read the terminal for task "${task}"`);
+    out({ ok: true, task, text });
+
+  } else if (command === 'send-keys') {
+    // Answer a dialog. Keys are sent one at a time so a menu answer is exactly
+    // "3" then Enter, never a pasted string — insertText would put the digit in
+    // the prompt of a session that is NOT showing a menu.
+    const { task, keys } = args;
+    await openTask(task);
+    for (const key of keys) {
+      if (key === '\r') await page.keyboard.press('Enter');
+      else if (key === '\u001b') await page.keyboard.press('Escape');
+      else await page.keyboard.press(key);
+      await page.waitForTimeout(120);
+    }
+    out({ ok: true, task, sent: keys.length });
+
   } else {
     fail(`unknown command: ${command}`);
   }

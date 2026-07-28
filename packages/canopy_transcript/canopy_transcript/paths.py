@@ -32,8 +32,21 @@ _SUFFIX_RE = re.compile(r"-[0-9a-z]+$")
 
 
 def encode_project_dir(worktree: Path | str) -> str:
-    """Claude Code's ``~/.claude/projects/<name>`` encoding: '/' and '.' -> '-'."""
-    return str(worktree).replace("/", "-").replace(".", "-")
+    """Claude Code's ``~/.claude/projects/<name>`` encoding: '/', '.' and '_' -> '-'.
+
+    The underscore was missing until 2026-07-27 and is not cosmetic: a cwd
+    containing one resolved to a directory that does not exist, so the session
+    silently had no transcript — no durable rows, no backfill, no reset. It bit
+    a session run under ``packages/canopy_runtime``.
+
+    Verified against the live fleet rather than guessed: of 286 directories in
+    ``~/.claude/projects`` **none** contains an underscore, and the session run
+    in ``…/packages/canopy_runtime`` is stored as ``…-packages-canopy-runtime``.
+
+    Keep this in step with ``deploy/ec2-runner/cloud_runner.py::_encode_project_dir``,
+    which is the same function on the box that ships as a single file.
+    """
+    return str(worktree).replace("/", "-").replace(".", "-").replace("_", "-")
 
 
 def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:

@@ -60,12 +60,33 @@ export interface Participant {
   last_seen_at: string | null;
 }
 
+/** A dialog an agent is blocked on, read off its terminal.
+ *
+ *  `title` and `body` are what makes it answerable away from the keyboard:
+ *  "Do you want to proceed?" tells you nothing without the command it means. */
+export interface SessionMenu {
+  question: string;
+  title?: string;
+  body?: string;
+  selected?: number | null;
+  options: { number: number; label: string }[];
+}
+
 export interface SessionState {
   messages: Message[];
   /** Live agent activity, from the runner's turn-boundary hooks. Undefined when
    *  no hook has reported yet — the caller then falls back to the server's
-   *  coarser `running` flag. */
-  activity?: "working" | "idle";
+   *  coarser `running` flag.
+   *
+   *  "blocked" means the agent wants a human: a permission prompt, or an idle
+   *  wait for input. It is deliberately coarse — a hook observer cannot tell
+   *  those apart — but it is the difference between "still thinking, wait" and
+   *  "it is waiting on YOU", which previously rendered identically. */
+  activity?: "working" | "idle" | "blocked";
+  /** The dialog the agent is waiting on, when one could be read off its screen.
+   *  Absent when the agent is not blocked, or when the runner has no way to look
+   *  (no CDP) — "blocked" still arrives, it just has no buttons. */
+  menu?: SessionMenu;
   active_draft: Draft | null;
   participants: Participant[];
   presence_user_ids: number[];
@@ -91,7 +112,7 @@ export type WsEvent =
   | { event: "chat.stream_start"; data: { message_id: string; turn_index: number } }
   // The agent started or finished a turn. Distinct from tool events: it fires
   // while Claude is THINKING, before any content exists to show.
-  | { event: "session.activity"; data: { state: "working" | "idle" } }
+  | { event: "session.activity"; data: { state: "working" | "idle" | "blocked"; menu?: SessionMenu } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }

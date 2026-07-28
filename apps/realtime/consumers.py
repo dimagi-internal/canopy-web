@@ -22,14 +22,56 @@ from . import groups
 
 
 def _serialize_turn(turn: Turn) -> dict:
-    """The fields a runner needs to run a claimed turn, over the WS."""
+    """The fields a runner needs to run a claimed turn, over the WS.
+
+    Deliberately a subset of `schemas.TurnOut` (the REST claim's shape) — a
+    runner does not need a turn's timestamps or lease — but every field it DOES
+    carry must AGREE with TurnOut, and be derived the same way. This function
+    previously re-implemented that derivation from the columns alone:
+
+        target = turn.agent.slug if turn.agent_id else turn.project
+
+    A SESSION turn has `agent_id` NULL and `project` "" — its agent and repo
+    hang off `chat_session` (see Turn.target, which already handles all three
+    shapes). So every session turn claimed over the socket reported `target=""`
+    and carried no `origin_ref` at all. Downstream, in the cloud runner:
+
+      * `_chat_session_id()` returned "" -> `_turn_cwd` fell through to a
+        PER-TURN scratch dir. Claude Code resolves a session id by cwd path, so
+        every turn of a conversation cold-started — the exact amnesia
+        `--resume` continuity exists to remove.
+      * `_ship_transcript_rows()` returned early -> the conversation was never
+        written as durable Message rows. Observed live 2026-07-28: a turn ran to
+        `done`, retained its raw transcript, and left a session with zero
+        messages.
+
+    The REST claim path was always correct because it serializes TurnOut, which
+    is why only the WS-preferring cloud runner hit this. Read the values off the
+    model's own properties rather than restating the rules a third time.
+    """
+    cs = turn.chat_session if turn.chat_session_id else None
     return {
         "id": str(turn.id),
         "prompt": turn.prompt,
-        "target": turn.agent.slug if turn.agent_id else turn.project,
-        "agent_slug": turn.agent.slug if turn.agent_id else None,
-        "project": turn.project,
+        # Turn.target is THE definition — agent slug, else session's agent slug,
+        # else session's project, else the repo. Never restate it here.
+        "target": turn.target,
+        "agent_slug": (
+            turn.agent.slug if turn.agent_id
+            else (cs.agent.slug if cs is not None and cs.agent_id else None)
+        ),
+        "project": turn.project or (cs.project if cs is not None else ""),
         "routing": turn.routing,
+        # The routing source (spec 2026-07-27) — a runner that logs or reports
+        # what it claimed should be able to say what KIND of work it was.
+        "origin": turn.origin,
+        # THE identity of a conversation: origin_ref.chat_session_id. Its absence
+        # is what made a session turn unrecognizable as one. Never drop it.
+        "origin_ref": turn.origin_ref or {},
+        "workspace_slug": (
+            turn.agent.workspace_id if turn.agent_id
+            else (cs.workspace_id if cs is not None else turn.workspace_id)
+        ),
     }
 
 
@@ -212,6 +254,17 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
             "desired": message.get("desired"),
+        })
+
+    async def runner_menu_answer(self, message):
+        # runner.{id} group_send type="runner.menu_answer" — a human answered, from
+        # the web, the dialog an agent is blocked on. The runner presses the key in
+        # the session's terminal; the server never touches a terminal itself.
+        await self.send_json({
+            "type": "menu_answer",
+            "session_id": message.get("session_id"),
+            "session_key": message.get("session_key"),
+            "option": message.get("option"),
         })
 
     async def receive_json(self, content, **kwargs):

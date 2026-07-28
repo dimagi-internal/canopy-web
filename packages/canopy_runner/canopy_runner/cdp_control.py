@@ -137,6 +137,31 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     return _run("open-send", args)
 
 
+def read_terminal(task: str, *, port: int = 9222) -> str:
+    """The task's rendered terminal, as text.
+
+    This is how canopy sees a dialog that exists only on screen. A hook can say
+    an agent is blocked but never WHAT it is asking, and emdash owns the session,
+    so the menu is only in the terminal.
+
+    Reads the DOM, not the PTY: emdash's xterm uses the DOM renderer, so it has
+    already resolved the TUI's cursor-movement escapes into real cells. The raw
+    stream would need re-rendering (Claude Code draws spaces as ESC[nC, so
+    stripping ANSI welds words together).
+    """
+    return _run("read-term", {"task": task, "port": port}).get("text") or ""
+
+
+def send_keys(task: str, keys: list[str], *, port: int = 9222) -> dict:
+    """Press `keys` in the task's terminal, one at a time.
+
+    One at a time, not as inserted text: a menu answer must be exactly "3" then
+    Enter. Inserting a string would type the digit into the PROMPT of a session
+    that turned out not to be showing a menu.
+    """
+    return _run("send-keys", {"task": task, "keys": keys, "port": port})
+
+
 def interrupt(task: str, *, port: int = 9222) -> dict:
     """Press Escape in the task's emdash session — interrupts the running turn.
 
