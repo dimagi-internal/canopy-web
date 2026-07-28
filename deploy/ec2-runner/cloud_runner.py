@@ -55,6 +55,7 @@ import os
 import pathlib
 import signal
 import socket
+import shutil
 import subprocess
 import sys
 import threading
@@ -393,6 +394,228 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
     _log(f"transcript POST turn={turn_id[:8]} batch={seq} failed after "
          f"{TRANSCRIPT_POST_RETRIES} attempts; this slice is lost, continuing")
     return True
+
+
+# --------------------------------------------------------------------------
+# ACP executor
+# --------------------------------------------------------------------------
+# `claude -p` + stream-json parsing is canopy's own protocol, hand-rolled. ACP
+# is the standard that already specifies it — tool-call lifecycle with a status,
+# streamed reply text, thinking, tokens, rate limits — and it is what emdash
+# itself runs (`@agentclientprotocol/claude-agent-acp` wrapping the Agent SDK).
+#
+# Adopted HERE and not on the laptop because the cloud box has no emdash to
+# supervise it: a canopy-spawned ACP session on a laptop would be invisible to
+# emdash, which costs the jump-in that makes the laptop worth running. See
+# docs/superpowers/specs/2026-07-27-acp-adoption-design.md.
+#
+# Default OFF. `claude -p` is the proven path and stays the default until this
+# has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
+RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
+
+# A hard ceiling on ONE ACP turn. `claude -p` has no equivalent because the
+# subprocess exiting ends the turn; an ACP prompt is a request that could in
+# principle never resolve, and a turn that never returns holds its lease alive
+# forever (the lease renewer keeps beating), so the sweep never rescues it.
+# Generous — real turns run for many minutes — because this is a wedge guard,
+# not a policy.
+ACP_TURN_TIMEOUT_SECONDS = float(os.environ.get("ACP_TURN_TIMEOUT_SECONDS", "5400"))
+
+_ACP_CORE: object = False  # False = not yet attempted
+
+
+def _acp_core():
+    """canopy_acp, imported lazily and cached — same reason as _transcript_core:
+    the package lives in the repo this module clones, so it does not exist at
+    import time. Returns None when unavailable, and the caller falls back to
+    `claude -p` rather than failing the turn."""
+    global _ACP_CORE
+    if _ACP_CORE is not False:
+        return _ACP_CORE
+    try:
+        import canopy_acp  # noqa: PLC0415
+        _ACP_CORE = canopy_acp
+    except Exception as exc:  # noqa: BLE001
+        _log(f"canopy_acp unavailable ({exc}); ACP executor disabled")
+        _ACP_CORE = None
+    return _ACP_CORE
+
+
+def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
+            agent_slug: str | None = None, resume_session_id: str | None = None
+            ) -> tuple[bool, str, str]:
+    """Run one turn over ACP. Same contract as `run_claude`:
+    (ok, final_text, cli_session_id).
+
+    Deliberately identical in signature so the two are interchangeable at the
+    call site and the switch is one line — the point is to prove ACP against the
+    SAME harness, not to grow a second turn lifecycle.
+
+    Events are emitted in the shapes the ledger already carries (`assistant`,
+    `tool_start`, `tool_end`), so the client needs no change to render an
+    ACP-executed turn. `tool_start.id` is ACP's `toolCallId`, which IS the
+    transcript's `tool_use.id` — the same key `pairToolMessages` pairs on.
+
+    The durable transcript is untouched: an ACP session writes a normal
+    `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, so `_ship_transcript_rows`
+    works unchanged against the returned session id.
+    """
+    core = _acp_core()
+    if core is None:
+        _log(f"turn {turn_id[:8]}: ACP requested but unavailable — using claude -p")
+        return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                          resume_session_id=resume_session_id)
+
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    reducer = core.UpdateReducer()
+    # Guards the batch against the reader thread: updates arrive on the ACP
+    # reader, the flush happens on this one.
+    lock = threading.Lock()
+    batch: list = []
+    started: set = set()
+    seen_complete: set = set()
+    # `session/load` REPLAYS the entire prior conversation as ordinary updates.
+    # Emitting those would append the whole history to the ledger again on every
+    # resumed turn, and fold it into this turn's result text. Observed directly:
+    # a resumed turn re-emitted the previous turn's tool call and reply.
+    state = {"replaying": False}
+
+    def _emit_tool_start(call_id, call):
+        """One tool_start per call, carrying real arguments.
+
+        `tool_call` opens with `rawInput: {}` — the arguments arrive on a later
+        patch — so emitting on the opener ships a Bash row with no command.
+        Wait for the first update that HAS input, or for the call to finish
+        (a genuinely argument-less tool), whichever comes first. Ordering is
+        still guaranteed: on completion the start is appended before the end.
+        """
+        if call_id in started:
+            return
+        if not call.raw_input and not call.is_complete:
+            return
+        started.add(call_id)
+        batch.append({"kind": "tool_start", "payload": {
+            "id": call_id,
+            "name": call.tool_name or call.kind,
+            "input": call.raw_input,
+        }})
+
+    def on_update(_session_id, update):
+        if state["replaying"]:
+            return
+        kind = reducer.apply(update)
+        if kind is None:
+            return
+        with lock:
+            if kind == "agent_message_chunk":
+                text = _content_text_of(update)
+                if text:
+                    batch.append({"kind": "assistant", "payload": {"text": text}})
+            elif kind in ("tool_call", "tool_call_update"):
+                call_id = update.get("toolCallId") or ""
+                call = reducer.tool_call(call_id)
+                if call is None:
+                    return
+                _emit_tool_start(call_id, call)
+                # Emit tool_end ONCE, when the call actually reaches a terminal
+                # status — `tool_call_update` is a sparse patch and several
+                # arrive per call (see canopy_acp.updates).
+                if call.is_complete and call_id not in seen_complete:
+                    seen_complete.add(call_id)
+                    batch.append({"kind": "tool_end", "payload": {
+                        "tool_use_id": call_id,
+                        "is_error": call.is_error,
+                        "content": call.result_text,
+                    }})
+
+    def flush():
+        with lock:
+            if not batch:
+                return
+            pending, batch[:] = list(batch), []
+        try:
+            emit(pending)
+        except Exception as exc:  # noqa: BLE001 — the live stream may never cost a turn
+            _log(f"warn: could not emit ACP events for {turn_id[:8]}: {exc}")
+
+    agent = None
+    try:
+        agent = core.AcpAgent(cwd=workdir, env=_agent_env(agent_slug), on_update=on_update)
+        agent.start()
+        session_id = ""
+        if resume_session_id and _resume_target_exists(workdir, resume_session_id):
+            state["replaying"] = True
+            try:
+                agent.load_session(resume_session_id)
+                session_id = resume_session_id
+            except Exception as exc:  # noqa: BLE001
+                _log(f"turn {turn_id[:8]}: session/load failed ({exc}); starting fresh")
+            finally:
+                state["replaying"] = False
+                # Belt and braces: a replay update that lands just after the
+                # load reply would otherwise seed this turn's reply text with
+                # the last one's.
+                reducer.reset_stream_state()
+        if not session_id:
+            session_id = agent.new_session()
+        _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
+
+        pending = agent.prompt(prompt)
+        deadline = time.time() + ACP_TURN_TIMEOUT_SECONDS
+        result = None
+        while True:
+            try:
+                result = pending.result(timeout=TRANSCRIPT_FLUSH_SECONDS)
+                break
+            except TimeoutError:
+                flush()          # stream while the turn is still running
+                if time.time() > deadline:
+                    agent.cancel()
+                    raise RuntimeError(
+                        f"ACP turn exceeded {ACP_TURN_TIMEOUT_SECONDS}s") from None
+        flush()
+
+        stop = (result or {}).get("stopReason", "")
+        ok = stop in ("end_turn", "max_tokens")
+        final_text = reducer.assistant_text.strip() or f"turn ended: {stop or 'unknown'}"
+        if reducer.rate_limit:
+            _log(f"turn {turn_id[:8]}: rate limit {reducer.rate_limit.get('status')} "
+                 f"({reducer.rate_limit.get('rateLimitType')})")
+        return ok, final_text, session_id
+    except Exception as exc:  # noqa: BLE001 — a turn must fail, never crash the runner
+        flush()
+        _log(f"turn {turn_id[:8]}: ACP executor failed: {exc}")
+        return False, f"runner error (acp): {exc}", (agent.session_id if agent else "")
+    finally:
+        if agent is not None:
+            try:
+                agent.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _content_text_of(update: dict) -> str:
+    """The text of an `agent_message_chunk`, tolerant of both block shapes."""
+    content = update.get("content")
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) else ""
+    if isinstance(content, list):
+        return "".join(b.get("text", "") for b in content
+                       if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return ""
+
+
+def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
+                   resume_session_id=None) -> tuple[bool, str, str]:
+    """The one place a turn picks an executor."""
+    if RUNNER_EXECUTOR == "acp":
+        return run_acp(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                       resume_session_id=resume_session_id)
+    return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                      resume_session_id=resume_session_id)
 
 
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
@@ -833,33 +1056,66 @@ def clone_or_pull_canopy_web() -> bool:
         return False
 
 
-def _install_transcript_core(repo_dir: pathlib.Path) -> None:
-    """Install canopy_transcript from the freshly-cloned repo.
+def _install_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> None:
+    """Install one in-repo package from the freshly-cloned repo.
 
-    The runner is otherwise stdlib-only and ships as a single file, so this is
-    the one package it needs on the box — the transcript core both runners share
-    (spec 2026-07-27). Installed from the clone rather than an index so it is
-    always the same commit as the rest of this deploy.
+    The runner is otherwise stdlib-only and ships as a single file, so these are
+    the only packages it needs on the box. Installed from the clone rather than
+    an index so they are always the same commit as the rest of this deploy.
 
-    Best-effort by design: `_transcript_core()` degrades to "durable transcript
-    rows disabled" if the import fails, and the turn still runs and still
-    finishes. A bootstrap step that could brick execution is worse than a
-    missing observability feature.
+    Best-effort by design: every caller degrades to a named disabled feature if
+    the import later fails, and the turn still runs and still finishes. A
+    bootstrap step that could brick execution is worse than a missing feature.
     """
-    pkg = repo_dir / "packages" / "canopy_transcript"
+    pkg = repo_dir / "packages" / name
     if not pkg.is_dir():
-        _log(f"warn: {pkg} not in the clone; transcript rows disabled")
+        _log(f"warn: {pkg} not in the clone; {purpose} disabled")
         return
     for installer in (["uv", "pip", "install", "--system", str(pkg)],
                       [sys.executable, "-m", "pip", "install", str(pkg)]):
         try:
             subprocess.run(installer, check=True, timeout=180,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _log(f"installed canopy_transcript from {pkg} via {installer[0]}")
+            _log(f"installed {name} from {pkg} via {installer[0]}")
             return
         except Exception:  # noqa: BLE001 — try the next installer
             continue
-    _log("warn: could not install canopy_transcript; transcript rows disabled")
+    _log(f"warn: could not install {name}; {purpose} disabled")
+
+
+def _install_transcript_core(repo_dir: pathlib.Path) -> None:
+    """The packages this runner imports off the clone.
+
+    `canopy_acp` is installed unconditionally rather than only when
+    RUNNER_EXECUTOR=acp, so flipping the executor is an env change and a restart
+    rather than a redeploy — the point of a switch you can actually use.
+    """
+    _install_repo_package(repo_dir, "canopy_transcript", "transcript rows")
+    _install_repo_package(repo_dir, "canopy_acp", "the ACP executor")
+    _install_acp_adapter()
+
+
+def _install_acp_adapter() -> None:
+    """Install the Node ACP adapter the executor drives.
+
+    Skipped entirely unless RUNNER_EXECUTOR=acp: it costs an npm install and a
+    Node dependency on every boot, and the `claude -p` path needs neither.
+    `run_acp` falls back to `claude -p` when the adapter is missing, so a failure
+    here degrades rather than breaks.
+    """
+    if RUNNER_EXECUTOR != "acp":
+        return
+    if shutil.which("node") is None:
+        _log("warn: node not on PATH; the ACP executor will fall back to claude -p")
+        return
+    try:
+        subprocess.run(["npm", "install", "-g", "@agentclientprotocol/claude-agent-acp"],
+                       check=True, timeout=300,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _log("installed @agentclientprotocol/claude-agent-acp")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not install the ACP adapter ({exc}); "
+             "the ACP executor will fall back to claude -p")
 
 
 def bootstrap_agent_fleet() -> None:
@@ -951,7 +1207,17 @@ CLAUDE_PROJECTS_HOME = pathlib.Path.home() / ".claude" / "projects"
 
 
 def _encode_project_dir(cwd: pathlib.Path) -> str:
-    return str(cwd).replace("/", "-").replace(".", "-")
+    """Claude Code's ~/.claude/projects/<name> encoding: '/', '.' and '_' -> '-'.
+
+    The underscore was missing until 2026-07-27: a cwd containing one resolved
+    to a directory that does not exist, so the session silently had no
+    transcript at all. Verified against 286 live project dirs, none of which
+    contains an underscore. Byte-identical to
+    packages/canopy_transcript/canopy_transcript/paths.py::encode_project_dir —
+    keep the two in step (this file ships to the box as a single file, which is
+    why the duplication exists).
+    """
+    return str(cwd).replace("/", "-").replace(".", "-").replace("_", "-")
 
 
 def _resume_target_exists(cwd: pathlib.Path, session_id: str) -> bool:
@@ -1156,7 +1422,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
-                ok, text, cli_session_id = run_claude(
+                ok, text, cli_session_id = execute_prompt(
                     turn.get("prompt", ""), turn_id, emit, cwd=cwd,
                     agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
                 )

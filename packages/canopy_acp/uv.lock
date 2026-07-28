@@ -1,0 +1,19 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "canopy-acp"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "canopy-transcript" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "canopy-transcript", editable = "../canopy_transcript" }]
+
+[[package]]
+name = "canopy-transcript"
+version = "0.1.0"
+source = { editable = "../canopy_transcript" }
