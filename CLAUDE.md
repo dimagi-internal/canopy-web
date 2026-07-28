@@ -67,37 +67,50 @@ cd frontend && npm run build                     # Frontend type check + build
 cd frontend && npm run gen:api                   # Regenerate TypeScript types from OpenAPI schema
 ```
 
-**Always open PRs with auto-merge armed: `gh pr merge <n> --auto --squash`.** Many agents
-ship in parallel here, so `main` moves constantly and a PR goes stale within minutes of
-being opened. With auto-merge on, GitHub brings the branch up to date, re-runs CI against
-the merged result, and lands it — no human rebase loop. Without it you will hand-rebase
-the same PR several times (observed: three times in one afternoon).
+**Always open PRs with auto-merge armed: `gh pr merge <n> --auto`.** Many agents ship in
+parallel here, so `main` moves constantly and a PR goes stale within minutes of being
+opened. Without auto-merge you will hand-rebase the same PR several times (observed:
+three times in one afternoon).
 
-**Merge queue is now UNBLOCKED — but not yet enabled.** It requires an
-ORGANISATION-owned repository. That was the blocker while this repo was
-`jjackson/canopy-web` (adding a `merge_queue` rule returned `422 Invalid rule
-'merge_queue':` with no field named — the rule TYPE was rejected, not any
-parameter; established 2026-07-26 across three parameter shapes, don't re-spend
-that twenty minutes). The repo moved to `dimagi-internal/canopy-web` on
-2026-07-28, so the plan-level blocker is gone and the `merge_group` CI trigger
-is already in place. Enabling it is still a deliberate step, not automatic —
-add the `merge_queue` rule to the `main protection` ruleset when someone wants
-to own the rollout.
+**Do not pass `--squash` (or any strategy flag).** The merge queue owns the strategy now,
+and `gh` answers a strategy flag with `! The merge strategy for main is set by the merge
+queue` — which reads like a warning but leaves auto-merge UNARMED. Check it took:
+`gh pr view <n> --json autoMergeRequest`.
 
-**Known gap, accepted:** with `strict: true` and no queue, a PR whose base moved
-can sit `BEHIND` indefinitely — auto-merge USUALLY updates it, but not always
-(#413 stalled until nudged). The fix is one call:
-`gh api -X PUT repos/dimagi-internal/canopy-web/pulls/<n>/update-branch`. Deliberately
-not automated yet: it has bitten once.
+**The merge queue is ENABLED** (ruleset `main protection`, 2026-07-28). It needed an
+ORGANISATION-owned repo — the blocker while this was `jjackson/canopy-web`, where a
+`merge_queue` rule returned `422 Invalid rule 'merge_queue':` with no field named (the
+rule TYPE was rejected, not any parameter; established 2026-07-26 across three parameter
+shapes, don't re-spend that twenty minutes). The repo moved to
+`dimagi-internal/canopy-web` and the rule went in. Current parameters: `SQUASH`,
+`ALLGREEN` grouping, up to 5 entries, and a **5-minute minimum wait** — so a merged PR
+does not land instantly even with everything green.
+
+**A queue failure ejects your PR AND disarms auto-merge.** The queue builds your branch
+merged with `main` and runs CI on THAT, so it fails on things your PR alone never shows —
+including someone else's flaky test (observed 2026-07-28: a `ChatSessionsPanel` flake
+ejected an unrelated PR). Symptom: all your own checks green, `mergeStateStatus: CLEAN`,
+PR still open, `autoMergeRequest: null`. Fix: confirm the failure isn't yours
+(`gh run view <queue-run> --log-failed`; the queue's branch is
+`gh-readonly-queue/main/pr-<n>-<sha>`), then re-arm with `gh pr merge <n> --auto`.
+
+**`strict` is now OFF** (`strict_required_status_checks_policy: false`), deliberately: it
+was load-bearing only because nothing else re-tested a stale branch, and the queue does
+that properly by testing the merged result. Don't turn it back on to "be safe" — with a
+queue it just makes every PR wait on a branch update it no longer needs.
 
 Branch protection lives in ONE place: the `main protection` **ruleset** (requires a PR,
-both CI checks, `strict` so a branch must be current, and blocks deletion/force-push).
-There is deliberately no classic branch protection — having both meant two contradictory
-`strict` settings where the stricter silently won. `strict: true` is load-bearing, not
-bureaucracy: it is what makes auto-merge update a stale branch and re-test before landing,
-which is the only thing standing between parallel agents and a semantically broken `main`
-(no human reviews these). A merge queue was considered and rejected as redundant at this
-volume — revisit it if PRs start queueing behind each other's CI re-runs.
+both CI checks, the merge queue, and blocks deletion/force-push). There is deliberately
+no classic branch protection — having both meant two contradictory `strict` settings
+where the stricter silently won.
+
+**Deploys are not ordered by commit.** Several agents each trigger "Deploy to Labs"; the
+workflow's concurrency group serializes execution but a NEWER pending deploy CANCELS an
+older pending one, and an in-flight deploy of an OLDER sha can finish last. Observed
+2026-07-28. So after merging, confirm what actually shipped rather than assuming your run
+landed: `gh run list --workflow="Deploy to Labs (AWS)" --limit 3 --json headSha,conclusion`,
+and check the feature is really live (e.g. a new endpoint appears in
+`/api/openapi.json`).
 
 CI (`.github/workflows/ci.yml`) runs both on every PR and on push to main. Deploy is a separate manual job in the same workflow — trigger it from the Actions tab via "Run workflow"; the deploy step waits for the test jobs to pass before shipping. Walkthrough QA spec at `docs/walkthroughs/project-workbench.yaml` (run via `/walkthrough project-workbench`).
 
@@ -362,6 +375,18 @@ A `Session` is a durable conversation **with an agent** (agent-agnostic, workspa
 - `POST /api/canopy-sessions/{id}/reset` · `POST /api/canopy-sessions/reset` — **Reset a session (or every session you can see) from its transcript**: drop canopy's derived `Message` rows and re-derive them from the runner's `.jsonl`. A first-class action, not a repair — these rows are a CACHE of a file on the runner's disk (see the transcript-sourced bullet under Design Decisions). A refusal is a 200 with `ok:false` + a stable `reason` (`no_binding` — no pointer to a transcript; `runner_unreachable` — transient) rather than a 4xx. Bulk takes `dry_run` and `prune_ghosts` (the latter DELETES runner-discovered sessions with no binding: unshowable and unrebuildable, and re-created by the next report if their task is still open — chats a human started are never pruned). Bulk is scoped to the caller's visible workspaces. Same service behind the "Reset from transcript" button in the chat header and `manage.py reset_chat_state`, so the three surfaces can't drift. **`Turn`s and their event ledger are never touched** — canopy's own record of what it ran, derivable from nothing.
 - `GET /api/canopy-sessions/{id}` — Session + transcript. `POST /api/canopy-sessions/{id}/send` — Send a message (`text`, `client_id`, optional `placement`: `"wait"` pins to the offline bound runner, `{runner_id}` re-pins elsewhere).
 - `POST /api/canopy-sessions/{id}/place` — The chat banner's after-the-fact placement decision on an already-queued turn (bound runner went offline mid-flight) — same `placement` shape as `send`, applied to the existing turn rather than a new one.
+- `POST /api/canopy-sessions/{id}/answer-menu` — Answer the dialog a blocked agent is waiting on (`{"option": 1}`; `null` refuses, sent as Escape). Relays `runner.menu_answer` down the runner control channel; the runner re-reads the screen and presses the key. A refusal is a **200 with `ok:false` + a reason** (`unbound` / `unavailable`), not a 4xx — a menu goes stale between the phone rendering it and a thumb reaching it, which is ordinary rather than a client error.
+
+**A spawned `claude` must not inherit our session identity.** Anything that spawns the CLI
+strips `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_EXECPATH` /
+`CLAUDE_CODE_SESSION_ID` / `CLAUDE_CODE_CHILD_SESSION` / `CLAUDE_PID` / `CLAUDE_EFFORT`
+(`cloud_runner._child_safe_env`). Measured: a child spawned from inside a Claude Code
+session came up in the PARENT's permission mode (`auto`, self-approving) and announced
+*"Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker"* — and the
+transcript is canopy's durable record, so that turn runs, finishes, reports success and
+leaves nothing to persist. **`CLAUDE_CODE_OAUTH_TOKEN` is NOT in that list** and must
+never be: it is how the box authenticates, so a blanket `CLAUDE_CODE*` strip (the
+obvious-looking version of this fix) silently breaks every turn.
 
 **Execution:** `CHAT_STUB_EXECUTOR` (default `True` in dev; **`False` on labs**) — off means a session `Turn` stays QUEUED for a **session-capable** runner (`capabilities.sessions:true`) rather than the inline stub. The laptop runner (`packages/canopy_runner`) drives the agent's emdash session and **bridges** the reply back: `execute_chat_turn` + `chat_bridge.py` tail the Claude transcript and post assistant text as `TurnEvent`s. Chat therefore depends on a session-capable runner being online (else the turn waits). A chat turn **outlives the tick that started it**: the bridge is registered by `execute_chat_turn` and advanced by `main._pump_chat_bridges` once per tick, so the runner keeps heartbeating, claiming and reporting while an agent works (in-flight turn ids ride the heartbeat to renew the 900s lease). It finishes when the transcript says the agent handed the floor back — `chat_bridge.hands_back_to_human`, i.e. any terminal `message.stop_reason` other than `tool_use` — NOT when the file goes quiet. Completion was idle-based until 2026-07-26 and an agent turn is silent for as long as its longest tool call (296s in the session that exposed it), so the first `Bash` call ended every turn: chat showed the agent's opening line and dropped the answer (11 straight turns bridged 70-220 chars each, all preambles). Idle survives only as a 15-min backstop. See the reusable-chat-kit spec + `2026-07-16-*` Wave-4 specs.
 
@@ -454,6 +479,9 @@ Not a Ninja router — a FastMCP 3.x Streamable-HTTP ASGI app mounted in `config
 - **PWA navigate-fallback is fail-safe (allowlist SPA routes, not denylist server routes):** the service worker serves the precached SPA shell (`index.html`) for a navigation **only** when its path matches a known SPA route prefix; every other navigation goes to the network and reaches Django. This inverts the old "shell for everything minus a denylist" default, which silently swallowed any server route nobody remembered to denylist — a `<iframe src="/walkthrough/<id>/content">` (an iframe load **is** a navigation) rendered the whole SPA again inside itself (issue #345). The rule now fails safe: a **new server route** is excluded by construction (unknown ⇒ network); a **forgotten SPA route** only loses *offline* shell fallback (online it still resolves via the `spa_view` catch-all). The two regex lists (`NAVIGATE_FALLBACK_ALLOWLIST` / `NAVIGATE_FALLBACK_DENYLIST`) live in — and are unit-tested in — `frontend/src/pwa/navigation-fallback.ts`, and `vite.config.ts` imports them. Server-content streams that sit *under* an allowlisted SPA prefix (`/walkthrough/<id>/content`, legacy `/w/<uuid>/content`) are carved back out on the denylist (workbox: denylist wins), and those carve-outs end in `(?:\?.*)?$` because workbox matches `pathname + search` and the DDD console now embeds artifacts with a `?t=<share_token>`. See `docs/superpowers/specs/2026-07-23-pwa-navigation-fallback-fail-safe-design.md`.
 - **A chat is recorded the same way whatever surface it started on (`transcript_sourced`).** Where a conversation ORIGINATED says nothing about where its record belongs, but it used to decide it: a phone-created session took its durable rows from projecting a `Turn`'s events, so it captured only what happened INSIDE a turn — text typed straight into emdash never appeared, and neither did text an agent wrote after handing the floor back (a background job finishing). A session discovered in emdash had none of this; spec 2026-07-24 already made its transcript the sole durable source, ordinal-keyed. That split was an unfinished migration held in place by three `if origin == ORIGIN_RUNNER` branches. `services.transcript_sourced(session)` replaces them with the question that matters — is a real runner driving this, so does a transcript exist? — and phone chats inherit the working path: **sends author no second copy** of the user's line (it becomes durable as the transcript record the agent actually read; until then it lives in `Turn.prompt` + the client's optimistic echo), streamed transcript rows persist for any transcript-sourced session, and the ledger projection survives ONLY where there is no transcript (the dev stub). `origin` is back to meaning only "how this started". Sessions predating the flag stay ledger-sourced until reset — their dense counter (0,1,2…) would collide with transcript ordinals in the same `turn_index` column. **Recoverability ≠ listing:** a backfill resolves the transcript by worktree PATH under `~/.claude/projects` and never asks emdash, and Claude Code never deletes those files, so a task emdash deleted months ago still ships its full history (verified 2026-07-26: tasks absent from emdash's DB entirely, transcripts resolved, 545 and 607 records). Falling off the session report ends a session's listing, not its recoverability — conflating the two is what made reset look dangerous. See `POST /api/canopy-sessions/reset` above.
 - **Session liveness is polled; the runner FK is identity, not a flag.** `RunnerBinding` carries two things that were once conflated into one column: **`runner`** = which box this session lives on (durable — a report never nulls it), and **`live_seen_at`** = when the runner last reported it (the liveness clock, read against `SESSION_LIVE_WINDOW` = 3 min). Using the FK for both meant every closed task stripped its session of its identity, and the *only* durable retirement path was a closing signal that never fires — emdash **deletes** a closed task instead of setting `archived_at`, so `list_recently_archived_tasks` returns `[]` forever. Labs ended up with 71 "active" sessions: 14 real, 10 bound to a retired box, and **47 that could not say which runner they came from**. Polling is what makes this self-healing — the runner re-reports its whole open-task set on a guaranteed 10s heartbeat and skips the report entirely if it cannot read emdash, so absence is an observation (and a returning runner un-retires its own sessions with no repair step). Deliberately **not** extended to claim routing: a stale binding still pins its session to its holder rather than failing over, because continuing elsewhere means a fresh emdash session with none of the conversation's context — that stays the user's call via the placement banner (spec 2026-07-24). The stuck-send that motivated revisiting it was never routing but the banner failing **open**: `isBoundRunnerOffline` treated "not in the fleet list" as *unknown* when `GET /runners/` omits retired runners, so exactly the sessions that needed placement never offered it. See `apps/canopy_sessions/staleness.py` + `frontend/src/components/chat/runnerEligibility.ts`.
+- **ACP is the wire shape; emdash stays the laptop's executor.** `@agentclientprotocol/claude-agent-acp` (public npm, what emdash itself runs) already specifies what canopy invented: `tool_call`/`tool_call_update` with a status, `agent_message_chunk`, `agent_thought_chunk`, `plan`, `usage_update`, agent-authored tool titles, and — uniquely — subscription **rate-limit metadata** (`_claude/rateLimit`, `five_hour`), the only *predictive* signal the runner cascade could use instead of failing over reactively. The **cloud** runner can execute over it (`packages/canopy_acp`, `RUNNER_EXECUTOR=acp`, default off until it has run on a real box); the **laptop cannot and should not** — a canopy-spawned ACP session would be invisible to emdash, costing the jump-in that makes the laptop worth running. So the laptop keeps CDP+emdash and gains only the SHAPE. Two rules follow: `tool_call_update` is a **sparse patch** (merge by `toolCallId`; rendering one as a row ships half-empty tool calls), and `session/load` **replays the whole conversation** as updates, so a resumed turn must suppress them or it re-appends its own history to the ledger.
+- **A blocked agent's menu comes from two places and one payload.** A hook can say an agent is BLOCKED (`Notification`) but never *what* it is asking — no options, no command, no way to reply. On the **cloud**, ACP's `session/request_permission` carries all of it. On the **laptop** the dialog exists only on emdash's terminal, so the runner reads the rendered screen over CDP and parses it (`canopy_runner/menu.py`); `canopy_acp/menus.py` maps the ACP request onto the SAME dict, and a test asserts they're interchangeable — so the client never learns which produced it, and the parser is deletable the day emdash exposes its own ACP stream. Read the **DOM, not the PTY**: Claude Code draws spaces as `ESC[nC`, so stripping ANSI from the raw stream welds words together. Fail closed — numbered lines are the most common shape in an agent's own output, so a dialog needs a footer offering a way out; and re-read before pressing anything, because a stale number typed at a session with no dialog lands in its PROMPT, where the agent reads it as an instruction.
+- **In the fleet, permission dialogs basically never appear.** Sessions run `⏵⏵ bypass permissions on`, and the cloud runner passes `--dangerously-skip-permissions`. The menu you actually meet is **AskUserQuestion** — part of the conversation, independent of permission mode, and shaped differently (a description line under each option, a box rule *between* options, no `?` in the question, plus two options Claude Code appends itself). Test against that, not against a permission prompt.
 - **CloudFormation owns the task definition and service; the pipeline only passes an image tag.** The deploy workflow builds, registers a THROWAWAY task def to migrate on, then runs `aws cloudformation deploy --parameter-overrides ImageTag=<sha>` — CFN registers the real task definition and rolls the service. One writer per resource, so the stack can never drift from what is running.
   **This replaced a two-writer setup** where CFN *declared* `TaskDefinition` + `Service` while the workflow registered revisions and called `update-service` behind its back. The stack's `ImageTag` froze at the last apply — observed 2026-07-26 at **ten days and 118 revisions** — so a plain `aws cloudformation deploy` would re-register from the stale parameter and silently roll prod back, reported as success. `deploy/aws/apply-stack.sh` existed to pin around that and is now deleted, as is `render_taskdef.py`: it read the template OUTSIDE CloudFormation and silently dropped any env value that was an intrinsic (`!Ref` → gone, no error). CFN resolves intrinsics natively, so that bug class cannot recur.
   **The migration seam.** CFN's `Service` references its `TaskDefinition`, so an apply rolls both atomically and leaves nowhere to migrate. Hence the throwaway task def: built from the LIVE one with only the image swapped (no YAML parsing), migrations run on new code against the current schema, then CFN does the real roll. Its env is one deploy stale — only a problem if a deploy changes an env var AND a migration in that same deploy reads it. Migrations operate on schema and essentially never read settings; if it ever happens, deploy twice.
@@ -485,6 +513,7 @@ Design **specs** (the "why" record) live in `docs/superpowers/specs/`. The execu
 - `docs/superpowers/specs/2026-07-14-canopy-mobile-design.md` — canopy-mobile: one `/supervisor` surface consumed by the phone (PWA), the menubar's WKWebView, and the desktop browser; drives Phases 2-5
 - `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md` — Agent scheduled turns (recurring turns, supersede-as-give-up, the nag projection)
 - `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md` — Directed runner routing: `RunnerAssignment` as the per-agent routing authority (availability cascade + grace), `Turn.pinned_runner`, session-turn stickiness, readiness drills; supersedes `capabilities.agents` + `Agent.runner_preference` for agent-turn claim routing
+- `docs/superpowers/specs/2026-07-27-acp-adoption-design.md` — **ACP adoption**: the Agent Client Protocol is the standard canopy hand-rolled (emdash runs `@agentclientprotocol/claude-agent-acp`). Spiked green on subscription auth; an ACP session writes an ORDINARY transcript, so the durable path is untouched. Cloud-only by design — the laptop keeps emdash
 - `docs/superpowers/specs/2026-07-27-source-aware-runner-routing-design.md` — Source-aware routing: `Turn.origin` becomes the source vocabulary, and a `RunnerAssignment` row with a non-empty `source` is that source's priority runner (+ `strict`), composed into the same cascade. Layers onto the 2026-07-24 spec
 - `docs/designs/canopy-web-design.md` — Product design + glossary (open claw, skill, collection, eval suite, workspace session)
 - `docs/designs/ceo-plan-conversation-to-agent.md` — CEO review, scope decisions, deferred work
