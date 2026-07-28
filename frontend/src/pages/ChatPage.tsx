@@ -418,6 +418,20 @@ export function ChatPage() {
   // wait for input. It previously rendered as "running", which is the worst way
   // to get this wrong: you wait on an agent that is waiting on you.
   const liveBlocked = socket.state.activity === "blocked";
+  // The window between pressing send and the agent actually starting: the turn
+  // is enqueued, a runner has to claim it and (on a laptop) drive it into
+  // emdash before Claude sees a prompt at all. NOTHING could report during it —
+  // `activity` waits on a UserPromptSubmit hook that cannot fire until the
+  // prompt lands, and `running` comes from the session report, which lags a
+  // cycle. So a phone send showed no feedback for seconds and then jumped
+  // straight to running, which reads as the app having ignored you.
+  //
+  // `awaitingReply` is set the instant you press send, client-side with no
+  // round trip, so it is the only thing that can answer immediately. Shown as
+  // "queued" rather than folded into "running" because the distinction is the
+  // useful part: queued means canopy has not started your turn yet, running
+  // means the agent is thinking. Confusing the two hides where the delay is.
+  const liveQueued = socket.awaitingReply;
   const title = meta?.title?.trim() || 'Chat'
 
   return (
@@ -440,6 +454,11 @@ export function ChatPage() {
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
+          </span>
+        ) : liveQueued ? (
+          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-muted-foreground">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+            queued{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
         ) : meta?.runner_name ? (
           <span className="shrink-0 text-[12px] text-muted-foreground">
