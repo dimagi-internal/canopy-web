@@ -545,7 +545,7 @@ describe("blocked — the agent is waiting on YOU", () => {
     const state = sessionReducer(makeState(), {
       event: "session.activity",
       data: { state: "blocked" },
-    } as WsEvent);
+    });
     expect(state.activity).toBe("blocked");
   });
 
@@ -557,11 +557,16 @@ describe("blocked — the agent is waiting on YOU", () => {
     const blocked = sessionReducer(makeState(), {
       event: "session.activity",
       data: { state: "blocked" },
-    } as WsEvent);
+    });
     const after = sessionReducer(blocked, {
       event: "chat.tool_use",
-      data: { tool_message_id: "m1", turn_index: 3, block: { id: "toolu_1", name: "Bash" } },
-    } as WsEvent);
+      data: {
+        parent_message_id: null,
+        tool_message_id: "m1",
+        turn_index: 3,
+        block: { id: "toolu_1", name: "Bash" },
+      },
+    });
     expect(after.activity).toBe("working");
   });
 
@@ -571,11 +576,11 @@ describe("blocked — the agent is waiting on YOU", () => {
     const blocked = sessionReducer(makeState(), {
       event: "session.activity",
       data: { state: "blocked" },
-    } as WsEvent);
+    });
     const after = sessionReducer(blocked, {
       event: "presence.joined",
-      data: { participant: { user_id: 2, display_name: "Someone", last_seen_at: null } },
-    } as WsEvent);
+      data: { user_id: 2, display_name: "Someone" },
+    });
     expect(after.activity).toBe("blocked");
   });
 });
