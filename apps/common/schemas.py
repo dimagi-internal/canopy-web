@@ -43,6 +43,18 @@ class MeOut(StrictModel):
     avatar_url: str
 
 
+class PresencePreferenceOut(StrictModel):
+    """Response for GET/PATCH /api/me/presence-preference/."""
+
+    show_presence: bool
+
+
+class PresencePreferenceIn(StrictModel):
+    """Request body for PATCH /api/me/presence-preference/."""
+
+    show_presence: bool
+
+
 # --- Health ------------------------------------------------------------
 
 

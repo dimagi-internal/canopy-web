@@ -417,6 +417,24 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/presence-preference/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get the current user's presence visibility preference */
+        readonly get: operations["apps_common_api_get_presence_preference"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /** Set the current user's presence visibility preference */
+        readonly patch: operations["apps_common_api_set_presence_preference"];
+        readonly trace?: never;
+    };
     readonly "/api/health/": {
         readonly parameters: {
             readonly query?: never;
@@ -3742,6 +3760,22 @@ export interface components {
             readonly name: string;
             /** Avatar Url */
             readonly avatar_url: string;
+        };
+        /**
+         * PresencePreferenceOut
+         * @description Response for GET/PATCH /api/me/presence-preference/.
+         */
+        readonly PresencePreferenceOut: {
+            /** Show Presence */
+            readonly show_presence: boolean;
+        };
+        /**
+         * PresencePreferenceIn
+         * @description Request body for PATCH /api/me/presence-preference/.
+         */
+        readonly PresencePreferenceIn: {
+            /** Show Presence */
+            readonly show_presence: boolean;
         };
         /** HealthOut */
         readonly HealthOut: {
@@ -8840,6 +8874,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_common_api_get_presence_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PresencePreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly apps_common_api_set_presence_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PresencePreferenceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PresencePreferenceOut"];
                 };
             };
         };
