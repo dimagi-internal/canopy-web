@@ -131,7 +131,7 @@ def test_what_a_runner_may_fire_is_exactly_what_it_may_claim(fleet):
     runner = fleet["runner"]
     for agent in fleet["agents"].values():
         services.enqueue_turn(
-            agent=agent, origin=Turn.ORIGIN_CRON, idempotency_key=f"k-{agent.slug}"
+            agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"k-{agent.slug}"
         )
 
     syncable = _syncable_agent_slugs(runner)
@@ -152,7 +152,7 @@ def test_a_second_workspace_of_the_pairer_is_not_lost_to_the_runner_fk(fleet):
     assert "elsewhere" in _syncable_agent_slugs(runner)
 
     services.enqueue_turn(
-        agent=fleet["agents"]["elsewhere"], origin=Turn.ORIGIN_CRON, idempotency_key="k1"
+        agent=fleet["agents"]["elsewhere"], origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="k1"
     )
     assert _claimable_agent_slugs(runner) == {"elsewhere"}
 
@@ -168,7 +168,7 @@ def test_an_orphaned_runner_can_neither_fire_nor_claim(fleet):
     runner.save(update_fields=["paired_by"])
     for agent in fleet["agents"].values():
         services.enqueue_turn(
-            agent=agent, origin=Turn.ORIGIN_CRON, idempotency_key=f"o-{agent.slug}"
+            agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"o-{agent.slug}"
         )
 
     assert _syncable_agent_slugs(runner) == set()
@@ -186,7 +186,7 @@ def test_losing_a_membership_narrows_both_sides_together(fleet):
 
     for agent in fleet["agents"].values():
         services.enqueue_turn(
-            agent=agent, origin=Turn.ORIGIN_CRON, idempotency_key=f"r-{agent.slug}"
+            agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"r-{agent.slug}"
         )
 
     assert _syncable_agent_slugs(runner) == {"here"}

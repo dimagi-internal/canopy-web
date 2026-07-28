@@ -10,13 +10,39 @@ from ninja import Schema
 from pydantic import Field, field_validator
 
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
-# These are the values the DB columns accept (origin max_length=10, routing
+# These are the values the DB columns accept (origin max_length=32, routing
 # max_length=15); typing the INPUT schemas as Literals turns an out-of-set value
 # into a 422 at the API boundary instead of a Postgres "value too long" 500 that
 # SQLite CI can't reproduce. Output schemas stay `str` — they serialize values the
 # DB already validated, and a Literal there would break on any legacy row.
-Origin = Literal["board", "api", "slack", "cron", "manual", "email"]
+#
+# POST-able sources only. `canopy_web_chat` / `canopy_scheduler` are server-set
+# (one in-repo producer each) — a caller spelling them would borrow that source's
+# routing rule. Retired spellings are normalized, not rejected: the live fleet
+# posts `cron`/`manual` today and 422'ing them would break Echo/Ada mid-flight.
+Origin = Literal[
+    "api", "ace_web", "email", "slack",           # postable
+    "board", "cron", "manual", "drill",           # legacy, normalized below
+]
+# What a per-agent routing rule may name — the full vocabulary, including the
+# server-only sources (a rule NAMES a source, it does not produce one).
+RoutableSource = Literal[
+    "ace_web", "email", "canopy_scheduler", "canopy_web_chat", "slack", "api",
+]
 Routing = Literal["prefer_local", "local_only", "any"]
+
+
+def normalize_origin(value: str) -> str:
+    """Map a retired spelling onto its replacement. Shared by every input schema
+    carrying an `origin`, so the boundary can't normalize inconsistently.
+
+    `enqueue_turn` applies the SAME mapping, deliberately: TurnSpec.from_dict
+    parses stored Item JSON with no schema in the path, so a request-boundary-only
+    rule would miss every Item raised before this shipped.
+    """
+    from apps.harness.models import Turn
+
+    return Turn.LEGACY_ORIGIN_ALIASES.get(value, value)
 
 
 class RunnerIn(Schema):
@@ -200,6 +226,8 @@ class TurnIn(Schema):
     prompt: str = ""
     origin_ref: dict = {}
     routing: Routing = "prefer_local"
+
+    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
 
 class TurnOut(Schema):
@@ -536,6 +564,8 @@ class TurnSpecIn(Schema):
     origin_ref: dict[str, Any] = Field(default_factory=dict)
     routing: Routing = "prefer_local"
 
+    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
+
 
 class ItemIn(Schema):
     # No `notify` kind: an FYI asks nothing of you, and that is the timeline.
@@ -548,6 +578,8 @@ class ItemIn(Schema):
     batch_key: str = ""
     idempotency_key: str = Field(min_length=1, max_length=128)
     raised_by: uuid.UUID | None = None
+
+    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
 
 class ItemOut(Schema):

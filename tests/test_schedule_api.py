@@ -134,7 +134,7 @@ def test_delete_supersedes_open_occurrences_so_the_agent_is_not_wedged(client, a
     # The real proof: the executing-turn index now admits a new turn for the
     # agent. If the old turn were still executing, this insert would raise.
     Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="probe",
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="probe",
         status=Turn.RUNNING,
     )
 
@@ -185,7 +185,8 @@ def test_run_now_enqueues_a_manual_turn(client, agent):
     resp = client.post(f"/api/agents/echo/schedules/{sid}/run-now")
     assert resp.status_code == 202, resp.content
     turn = Turn.objects.get()
-    assert turn.origin == Turn.ORIGIN_MANUAL
+    assert turn.origin == Turn.ORIGIN_CANOPY_SCHEDULER
+    assert turn.origin_ref["manual"] is True  # off-cycle, but the same SOURCE
     assert turn.prompt == "/echo:manager-report"
 
 

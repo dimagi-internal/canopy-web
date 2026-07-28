@@ -59,7 +59,7 @@ def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
         RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
     drills = services.start_drill(r, [a1, a2])
     assert {d.outcome for d in drills} == {RunnerDrill.OUTCOME_PENDING}
-    turns = Turn.objects.filter(origin=Turn.ORIGIN_DRILL)
+    turns = Turn.objects.filter(origin=Turn.ORIGIN_API)
     assert turns.count() == 2
     assert all(t.pinned_runner_id == r.id for t in turns)
     assert "read-only" in turns.first().prompt.lower()
@@ -82,7 +82,7 @@ def test_failed_drill_turn_marks_drill_fail(django_user_model):
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
     [d] = services.start_drill(r, [a])
-    turn = Turn.objects.get(origin=Turn.ORIGIN_DRILL)
+    turn = Turn.objects.get(origin=Turn.ORIGIN_API)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_by=r)
     turn.refresh_from_db()
     services.finish_turn(turn, status=Turn.FAILED, result_note="claude auth expired")
@@ -102,7 +102,7 @@ def test_lost_drill_turn_marks_drill_fail(django_user_model):
     a = Agent.objects.create(slug="echo5", name="Echo5", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
     [d] = services.start_drill(r, [a])
-    turn = Turn.objects.get(origin=Turn.ORIGIN_DRILL)
+    turn = Turn.objects.get(origin=Turn.ORIGIN_API)
     Turn.objects.filter(pk=turn.pk).update(
         status=Turn.CLAIMED, claimed_by=r,
         lease_expires_at=timezone.now() - timezone.timedelta(minutes=5),

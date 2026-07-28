@@ -34,7 +34,7 @@ def test_fire_creates_a_cron_turn_and_advances_last_slot(schedule):
     turn, created = services.fire_schedule(schedule, SLOT_A)
 
     assert created is True
-    assert turn.origin == Turn.ORIGIN_CRON
+    assert turn.origin == Turn.ORIGIN_CANOPY_SCHEDULER
     assert turn.status == Turn.QUEUED
     assert turn.prompt == "/echo:manager-report"
     assert turn.origin_ref == {"schedule_id": schedule.id, "slot": SLOT_A.isoformat()}
@@ -51,7 +51,7 @@ def test_fire_is_idempotent_two_runners_one_turn(schedule):
     assert created_1 is True
     assert created_2 is False
     assert first.id == second.id
-    assert Turn.objects.filter(origin=Turn.ORIGIN_CRON).count() == 1
+    assert Turn.objects.filter(origin=Turn.ORIGIN_CANOPY_SCHEDULER).count() == 1
 
 
 def test_fire_supersedes_the_prior_unfinished_turn(schedule):
@@ -98,7 +98,7 @@ def test_release_stale_unwedges_the_agent(schedule, agent):
     assert turn.status == Turn.MISSED
     # Proof it is unwedged: a new executing turn is now insertable.
     Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="board-1", status=Turn.RUNNING
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="board-1", status=Turn.RUNNING
     )
 
 
@@ -152,7 +152,7 @@ def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
         status=Turn.RUNNING, claimed_at=timezone.now() - dt.timedelta(minutes=200)
     )
     queued = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="board-1"
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="board-1"
     )
     runner = Runner.objects.create(
         name="mac-a", kind=Runner.EMDASH, host="mac-a", status=Runner.ONLINE,
@@ -236,7 +236,7 @@ def test_run_now_does_not_advance_the_cadence(schedule):
     never does is consume a slot."""
     manual = services.run_schedule_now(schedule)
 
-    assert manual.origin == Turn.ORIGIN_MANUAL
+    assert manual.origin == Turn.ORIGIN_CANOPY_SCHEDULER
     assert manual.idempotency_key.startswith(f"sched:{schedule.id}:manual:")
     schedule.refresh_from_db()
     assert schedule.last_slot is None  # a manual run does not consume a slot

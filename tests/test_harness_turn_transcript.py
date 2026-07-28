@@ -27,7 +27,7 @@ pytestmark = pytest.mark.django_db
 def _turn(idempotency_key: str = "k1") -> Turn:
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     return Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key=idempotency_key
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key=idempotency_key
     )
 
 

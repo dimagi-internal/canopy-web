@@ -85,7 +85,7 @@ def test_pinned_turn_invisible_to_other_runners():
     RunnerAssignment.objects.create(agent=a, runner=r2, rank=0)
 
     turn, _ = services.enqueue_turn(
-        agent=a, origin=Turn.ORIGIN_DRILL, idempotency_key="p1", pinned_runner=r1,
+        agent=a, origin=Turn.ORIGIN_API, idempotency_key="p1", pinned_runner=r1,
     )
 
     assert services.claim_next_turn(r2) is None  # pinned elsewhere -> invisible
@@ -108,7 +108,7 @@ def test_pin_bypasses_assignments_but_not_tenancy():
     r_stranger = _runner("evil", stranger)
 
     turn, _ = services.enqueue_turn(
-        agent=a, origin=Turn.ORIGIN_DRILL, idempotency_key="p2", pinned_runner=r_stranger,
+        agent=a, origin=Turn.ORIGIN_API, idempotency_key="p2", pinned_runner=r_stranger,
     )
 
     assert services.claim_next_turn(r_stranger) is None  # tenant gate holds even when pinned

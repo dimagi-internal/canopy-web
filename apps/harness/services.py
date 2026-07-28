@@ -65,6 +65,13 @@ def enqueue_turn(
     fails it closed without one, so accepting it here would silently queue a turn
     nothing can ever run. Session turns derive tenancy from session.workspace.
     """
+    # One chokepoint for the retired spellings, because not every producer comes
+    # through a request schema: TurnSpec.from_dict parses origin as a free string
+    # out of Item JSON written before this deploy. The input schemas normalize too
+    # (so a caller gets a clean 422 on a genuinely unknown value rather than a
+    # silent rewrite); this is the leg that catches stored payloads and internal
+    # callers. Remove with the aliases, one release on.
+    origin = Turn.LEGACY_ORIGIN_ALIASES.get(origin, origin)
     if sum([bool(agent), bool(project), bool(session)]) != 1:
         raise ValueError("a turn targets exactly one of agent / project / session")
     if project and workspace is None:
@@ -150,7 +157,10 @@ def sweep_expired_leases() -> int:
             # Mirror that hook here for both sweep outcomes (finding M2): a
             # cancel-requested drill whose runner then disappears is just as
             # stranded as a plain lost one without this.
-            if turn.origin == Turn.ORIGIN_DRILL and status in (Turn.LOST, Turn.CANCELLED):
+            # A drill turn is identified by its RunnerDrill FK, not by its origin
+            # (drills are ordinary `api` turns that name a runner). The filter
+            # below no-ops for a non-drill turn.
+            if status in (Turn.LOST, Turn.CANCELLED):
                 summary = (
                     "drill turn cancelled (lease expired after cancel was requested)"
                     if status == Turn.CANCELLED
@@ -851,7 +861,9 @@ def finish_turn(
     # origin filter, so a queued drill can be cancelled out from under itself —
     # without this it would strand OUTCOME_PENDING forever, the same failure
     # mode this hook exists to prevent for FAILED.
-    if turn.origin == Turn.ORIGIN_DRILL and status in (Turn.FAILED, Turn.CANCELLED):
+    # Keyed on the RunnerDrill FK, not the origin: a drill is an ordinary `api`
+    # turn that names its runner, and the filter no-ops for a non-drill turn.
+    if status in (Turn.FAILED, Turn.CANCELLED):
         if status == Turn.CANCELLED:
             summary = "drill turn cancelled"
         else:
@@ -900,11 +912,11 @@ def cancel_turn(turn: Turn) -> Turn | None:
                 "payload": {"status": Turn.CANCELLED, "result_note": "cancelled"},
             }])
             # Mirror finish_turn's drill hook (bypassed above) so a queued
-            # drill cancelled this way doesn't strand OUTCOME_PENDING.
-            if turn.origin == Turn.ORIGIN_DRILL:
-                RunnerDrill.objects.filter(
-                    turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-                ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary="drill turn cancelled", finished_at=now)
+            # drill cancelled this way doesn't strand OUTCOME_PENDING. Keyed on
+            # the RunnerDrill FK — no-ops for a non-drill turn.
+            RunnerDrill.objects.filter(
+                turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
+            ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary="drill turn cancelled", finished_at=now)
             return turn
         # Lost the race: the turn is no longer QUEUED (claimed out from under
         # us, or already terminal). Fall through to the freshly-refreshed
@@ -964,7 +976,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
             supersede_open_turns(schedule, reason=f"superseded by slot {slot.isoformat()}")
         turn, created = enqueue_turn(
             agent=schedule.agent,
-            origin=Turn.ORIGIN_CRON,
+            origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=key,
             prompt=schedule.prompt,
             origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat()},
@@ -984,15 +996,18 @@ def run_schedule_now(schedule) -> Turn:
     clears the nag (it is the newest occurrence) while the slot turn sits queued
     and still owed, and the work runs a second time when it is claimed later.
 
-    origin=manual with a uuid-suffixed key, so an ad-hoc run never collides with
-    a real slot, and last_slot is untouched — the CADENCE is unaffected (the next
-    real slot still fires on time).
+    origin=canopy_scheduler with origin_ref["manual"]=True and a uuid-suffixed
+    key, so an ad-hoc run never collides with a real slot, and last_slot is
+    untouched — the CADENCE is unaffected (the next real slot still fires on
+    time). The manual flag lives in origin_ref rather than in origin because WHO
+    fired it is not a different SOURCE: both route as scheduler work, which is
+    the point of naming the source.
     """
     with transaction.atomic():
         supersede_open_turns(schedule, reason="superseded by a manual run")
         turn, _ = enqueue_turn(
             agent=schedule.agent,
-            origin=Turn.ORIGIN_MANUAL,
+            origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=f"sched:{schedule.id}:manual:{uuid.uuid4()}",
             prompt=schedule.prompt,
             origin_ref={"schedule_id": schedule.id, "manual": True},
@@ -1679,13 +1694,13 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
             f"“{schedule.name}” fired but was left unattended past "
             f"{schedule.grace_minutes}m. Implement to run it now, or skip."
         ),
-        "origin": Turn.ORIGIN_CRON,
+        "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
         "origin_ref": {
             "schedule_id": schedule.id, "turn_id": str(turn.id), "kind": "schedule_nag",
         },
         "dispatch": [{
             "prompt": schedule.prompt,
-            "origin": Turn.ORIGIN_MANUAL,
+            "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
             "origin_ref": {"schedule_id": schedule.id, "manual": True},
             "routing": schedule.routing,
         }],
@@ -1745,7 +1760,7 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
         report_url = f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
         turn, _created = enqueue_turn(
             agent=agent,
-            origin=Turn.ORIGIN_DRILL,
+            origin=Turn.ORIGIN_API,
             idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
             prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url),
             pinned_runner=runner,

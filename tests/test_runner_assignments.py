@@ -38,10 +38,13 @@ def test_drill_unique_per_pair_and_defaults_pending():
         RunnerDrill.objects.create(runner=r1, agent=a)
 
 
-def test_turn_pinned_runner_nullable_and_origin_drill():
+def test_turn_pinned_runner_degrades_to_normal_routing_on_delete():
+    # Was named "…_and_origin_drill": a drill USED to be an origin value. It is
+    # now an ordinary `api` turn that names its runner, identified by its
+    # RunnerDrill FK — the pin is the only part this test was ever exercising.
     a, r1 = _agent(), _runner()
     t = Turn.objects.create(
-        agent=a, origin=Turn.ORIGIN_DRILL, idempotency_key="k1", pinned_runner=r1
+        agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", pinned_runner=r1
     )
     r1.delete()
     t.refresh_from_db()
