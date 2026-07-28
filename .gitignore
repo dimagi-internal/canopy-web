@@ -47,3 +47,6 @@ frontend/playwright-report/
 
 # Canopy plugin vendored into the build context at deploy time (deploy.sh)
 /canopy/
+
+# superpowers brainstorm mockups (local only)
+.superpowers/
