@@ -48,11 +48,17 @@ class HookListener:
     testable without the runner's client, binding cache, or a live server.
     """
 
-    def __init__(self, *, port: int, nonce: str, resolve_session, forward):
+    def __init__(self, *, port: int, nonce: str, resolve_session, forward,
+                 read_menu=None):
         self.port = port
         self.nonce = nonce
         self._resolve_session = resolve_session
         self._forward = forward
+        # Injected: given a cwd, return the dialog on that session's screen (or
+        # None). Injected rather than imported so this module stays testable
+        # without CDP, emdash, or a live terminal — and so a runner with no CDP
+        # simply reports "blocked" with no menu instead of failing.
+        self._read_menu = read_menu
         self._server: ThreadingHTTPServer | None = None
         self.received = 0
         self.forwarded = 0
@@ -77,8 +83,20 @@ class HookListener:
                 # A state transition, not a chat row: index -1 so it is never
                 # persisted, and a dedicated kind the server maps to a status
                 # frame rather than a message.
+                #
+                # "blocked" alone is not actionable away from the keyboard — it
+                # says somebody is wanted, not what is being asked. Only on
+                # `blocked` do we go and LOOK at the screen, because that read
+                # costs a CDP round trip and this is the one state where the
+                # agent has stopped and is waiting.
+                payload_out: dict = {}
+                if activity == "blocked" and self._read_menu is not None:
+                    menu = self._safe_read_menu(cwd)
+                    if menu is not None:
+                        payload_out["menu"] = menu
                 self._send(session_id, [{"kind": f"activity:{activity}",
-                                         "seq": -1, "index": -1, "payload": {}}])
+                                         "seq": -1, "index": -1,
+                                         "payload": payload_out}])
                 self.forwarded += 1
                 return f"activity:{activity}"
             events = events_for_hook(payload)
@@ -101,6 +119,20 @@ class HookListener:
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("hook handling failed (non-fatal)", exc_info=True)
             return "error"
+
+    def _safe_read_menu(self, cwd: str):
+        """The dialog on this session's screen, or None.
+
+        Never raises and never blocks the report: reading the screen means
+        driving emdash over CDP, which can be slow, wedged, or looking at
+        another task. A menu we fail to read costs the phone its buttons — the
+        "blocked" state still ships, and the terminal can still answer.
+        """
+        try:
+            return self._read_menu(cwd)
+        except Exception:  # noqa: BLE001 — observability may never cost a turn
+            logger.debug("could not read the menu for %s", cwd, exc_info=True)
+            return None
 
     def _send(self, session_id: str, events: list[dict]) -> None:
         raise NotImplementedError  # set by `bind_sender`

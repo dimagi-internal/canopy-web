@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import {
   ChatPanel,
   PlacementBanner,
+  MenuPrompt,
   useSessionSocket,
   type PendingAttachment,
   type PlacementRunner,
@@ -17,6 +18,7 @@ import {
   requestBackfill,
   resetSession,
   placeTurn,
+  answerMenu,
   ChatApiError,
   type ChatSessionDetail,
   uploadAttachment,
@@ -408,6 +410,37 @@ export function ChatPage() {
     </div>
   )
 
+  // Answering the dialog a blocked agent is waiting on. The optimistic clear is
+  // deliberate: the runner re-reads the screen and refuses a stale answer, so the
+  // worst case is a menu that reappears — better than buttons that stay live
+  // against a dialog that is already gone.
+  const [answering, setAnswering] = useState(false)
+  const [answerError, setAnswerError] = useState('')
+  const onAnswerMenu = useCallback(
+    async (option: number | null) => {
+      if (!id) return
+      setAnswering(true)
+      setAnswerError('')
+      try {
+        const res = await answerMenu(id, option)
+        if (!res.ok) {
+          setAnswerError(
+            res.reason === 'unavailable'
+              ? 'That runner is offline — answer it in emdash.'
+              : res.reason === 'unbound'
+                ? 'This session has no runner to answer on.'
+                : 'Could not answer.',
+          )
+        }
+      } catch {
+        setAnswerError('Could not answer.')
+      } finally {
+        setAnswering(false)
+      }
+    },
+    [id],
+  )
+
   // undefined = no hook has reported for this session yet, so defer to the
   // server's coarser flag rather than asserting idle.
   const liveWorking =
@@ -503,7 +536,14 @@ export function ChatPage() {
           emptyState={emptyState}
           historySlot={historySlot}
           banner={
-            boundOffline ? (
+            socket.state.menu ? (
+              <MenuPrompt
+                menu={socket.state.menu}
+                busy={answering}
+                error={answerError}
+                onAnswer={onAnswerMenu}
+              />
+            ) : boundOffline ? (
               <PlacementBanner
                 runnerName={meta?.runner_name ?? ''}
                 eligibleRunners={placementRunners}

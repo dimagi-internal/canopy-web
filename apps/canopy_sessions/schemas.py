@@ -165,3 +165,13 @@ class ResetSummaryOut(Schema):
     skipped: list[ResetOut]
     pruned: list[dict]
     rows_dropped: int
+
+
+class MenuAnswerIn(Schema):
+    """Which option to press on a blocked agent's dialog.
+
+    `None` means refuse — sent as Escape. Deliberately nullable rather than a
+    magic number: every dialog offers Esc, and it is the only answer that is
+    safe when the option numbering is not what the client thought it was.
+    """
+    option: int | None = None

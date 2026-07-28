@@ -885,3 +885,35 @@ def project_events(turn: Turn, rows) -> int:
             index += 1
             created += 1
     return created
+
+
+def answer_menu(*, session: Session, option: int | None) -> str:
+    """Answer the dialog an agent is blocked on, from the web.
+
+    Returns "sent" | "unavailable" | "unbound", mirroring `request_backfill`'s
+    refusal shape rather than raising: a menu can go stale between the phone
+    rendering it and a thumb reaching it, and that is ordinary, not an error.
+
+    `option=None` means refuse, which the runner sends as Escape. Escape is the
+    one answer that is safe when the dialog is not what we think it is — a NUMBER
+    typed at a session that is no longer showing a menu lands in its prompt.
+
+    The keystroke itself is the runner's job: the server knows nothing about
+    terminals, and emdash (not canopy) owns the session.
+    """
+    from apps.harness.models import Runner  # framework->framework; lazy, import cycle
+
+    binding = getattr(session, "runner_binding", None)
+    if binding is None or binding.runner_id is None or not binding.session_key:
+        return "unbound"
+    reachable = {Runner.ONLINE, Runner.DEGRADED}
+    if binding.runner.live_status not in reachable:
+        return "unavailable"
+    from apps.realtime import groups
+    groups.publish(groups.runner_group(binding.runner_id), {
+        "type": "runner.menu_answer",
+        "session_id": str(session.id),
+        "session_key": binding.session_key,
+        "option": option,
+    })
+    return "sent"
