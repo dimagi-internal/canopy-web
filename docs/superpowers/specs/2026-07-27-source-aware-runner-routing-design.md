@@ -82,6 +82,14 @@ schedule — can still carry `canopy_scheduler`. Today `from_dict` takes `origin
 free string out of Item JSON and bypasses the `Origin` literal entirely; that hole
 closes in the items API view, which is where caller-supplied payloads actually enter.
 
+**Retired spellings normalize rather than 422.** The live fleet posts `cron` and
+`manual` today (agents raising Items, external enqueues), so rejecting them would
+break Echo and Ada the moment this deploys. The boundary maps `board`/`manual`/`drill`
+→ `api` and `cron` → `canopy_scheduler` — the same mapping the data migration applies
+to existing rows, shared as one constant so the two cannot disagree. `cron` therefore
+reaches a server-only value through its alias; that is a deliberate one-release shim,
+marked for removal once the fleet is confirmed clean.
+
 Once routing keys on origin, a caller-supplied origin is a routing input. The blast
 radius is bounded by the gates that already exist: you can only enqueue into your own
 workspace, and a rule only redirects that agent's work among runners you can see. Not
