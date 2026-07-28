@@ -122,7 +122,7 @@ WORK_DIR = os.environ.get("WORK_DIR", "/tmp/canopy-runner-work")
 # bootstrap_agent_fleet() below for why this runs from here and not cloud-init.
 AGENT_ROOT = os.environ.get("AGENT_ROOT", "/opt/agents")
 CANOPY_WEB_REPO_DIR = os.environ.get("CANOPY_WEB_REPO_DIR", "/opt/canopy-web")
-CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/jjackson/canopy-web.git")
+CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/dimagi-internal/canopy-web.git")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "15"))
 # App-level heartbeat cadence (keeps the lease + status fresh).
 HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "20"))
@@ -1075,7 +1075,7 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
 
 
 def clone_or_pull_canopy_web() -> bool:
-    """canopy-web is PUBLIC (github.com/jjackson/canopy-web) — this needs no
+    """canopy-web is PUBLIC (github.com/dimagi-internal/canopy-web) — this needs no
     credential, but it still runs from bootstrap_agent_fleet (after credential
     staging), not cloud-init, purely to keep the whole bootstrap sequence in
     one place with one log stream."""

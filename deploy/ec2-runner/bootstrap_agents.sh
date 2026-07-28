@@ -24,7 +24,7 @@ set -uo pipefail
 AGENT_SLUGS="${AGENT_SLUGS:-ace,ada,echo,eva,hal}"
 AGENT_ROOT="${AGENT_ROOT:-/opt/agents}"
 AGENT_REPO_ORG="${AGENT_REPO_ORG:-dimagi-internal}"
-CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/jjackson/canopy.git}"
+CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/dimagi-internal/canopy.git}"
 
 log()  { printf '[bootstrap-agents] %s\n' "$*"; }
 ok()   { printf '[bootstrap-agents] OK: %s\n' "$*"; }

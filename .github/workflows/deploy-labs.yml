@@ -20,10 +20,10 @@ name: Deploy to Labs (AWS)
 #
 # Required GitHub secrets (see deploy/aws + Phase 2 of the labs migration):
 #   AWS_ROLE_ARN         — the shared github-actions-labs-deploy OIDC role
-#                          (trust policy must allow repo:jjackson/canopy-web:*)
+#                          (trust policy must allow repo:dimagi-internal/canopy-web:*)
 #   LABS_SUBNET          — a labs VPC subnet id (for the one-off migration task)
 #   LABS_SECURITY_GROUP  — the labs security group id
-#   CANOPY_PLUGIN_TOKEN  — read-only token for the private jjackson/canopy plugin
+#   CANOPY_PLUGIN_TOKEN  — read-only token for the private dimagi-internal/canopy plugin
 #                          (optional; absent → /system shows an empty catalog)
 
 on:
@@ -106,7 +106,7 @@ jobs:
         run: |
           rm -rf canopy
           if [ -n "$CANOPY_PLUGIN_TOKEN" ]; then
-            if git clone --depth 1 "https://x-access-token:${CANOPY_PLUGIN_TOKEN}@github.com/jjackson/canopy.git" canopy; then
+            if git clone --depth 1 "https://x-access-token:${CANOPY_PLUGIN_TOKEN}@github.com/dimagi-internal/canopy.git" canopy; then
               rm -rf canopy/.git
               echo "Vendored canopy plugin into build context."
             else

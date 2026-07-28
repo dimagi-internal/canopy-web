@@ -4,7 +4,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jjackson/canopy-web.git",
+    "url": "git+https://github.com/dimagi-internal/canopy-web.git",
     "directory": "frontend/packages/canopy-ui"
   },
   "exports": {
