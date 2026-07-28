@@ -90,22 +90,29 @@ if _csv("RUNNER_PROJECTS"):
     RUNNER_CAPS["projects"] = _csv("RUNNER_PROJECTS")
 if _csv("RUNNER_AGENTS"):
     RUNNER_CAPS["agents"] = _csv("RUNNER_AGENTS")
-# Default OFF (opt-in, RUNNER_SESSIONS=1): this runner has no durable-record path
-# for a chat session yet. On labs (CHAT_STUB_EXECUTOR=False) every session is
-# stamped transcript_sourced at creation (apps/canopy_sessions/services.py
-# create_session), which means the reduced TurnEvents this runner posts to
-# /turns/{id}/events NEVER become durable Message rows (project_events short-
-# circuits to 0 for such a session) and the user's own line is never durably
-# written either (_send_transcript_sourced_message deliberately authors none).
-# The only durable path is POST /runners/{id}/session-stream with per-line
-# transcript ordinals -> services.persist_transcript_rows, which today has
-# exactly one caller: packages/canopy_runner/canopy_runner/client.py (the
-# laptop runner). Until THIS runner implements that same call (plus honoring
-# /runners/{id}/streams + /backfills), declaring sessions:true would make it
-# eligible to claim a real chat turn, stream a perfect-looking live reply, and
-# then silently lose the entire conversation the moment the user reloads the
-# page — worse than not claiming it at all. Flip this default only once
-# persist_transcript_rows (via session-stream/streams/backfills) is wired here.
+# The durable-record precondition below is now SATISFIED, and verified end to end
+# on cloud-ec2-1 (2026-07-28): a session turn ships its transcript rows via
+# POST /runners/{id}/session-stream -> services.persist_transcript_rows
+# (`_ship_transcript_rows`), lands ordinal-keyed Message rows, and resumes its
+# CLI session on the next turn. RUNNER_SESSIONS therefore defaults ON in
+# runner.cfn.yaml; this env default stays OFF so a runner started by hand,
+# outside the template, opts in deliberately.
+#
+# It took longer to be true than it looked, and both causes were invisible from
+# here — worth recording, because the original note blamed the wrong layer:
+#   * the WS claim frame (apps/realtime/consumers._serialize_turn) omitted
+#     origin_ref, so `_chat_session_id` came back "" and BOTH the stable
+#     per-session cwd and `_ship_transcript_rows` silently no-opped;
+#   * `canopy_transcript` was installed by a method Ubuntu 24.04 refuses
+#     (PEP 668 + no pip), so `_transcript_core()` returned None regardless.
+# The original risk was real: a runner that streams a perfect-looking live reply
+# and then loses the conversation is worse than one that never claims. That was
+# the OBSERVED behaviour here until both were fixed.
+#
+# Still not implemented: /runners/{id}/streams + /backfills. A viewer attached
+# mid-turn sees the reduced TurnEvent stream rather than a live transcript tail,
+# and a server-requested backfill is ignored. Neither loses history — the
+# transcript ships at turn end either way.
 RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", False)
 if RUNNER_SESSIONS:
     RUNNER_CAPS["sessions"] = True
@@ -1096,42 +1103,57 @@ def clone_or_pull_canopy_web() -> bool:
         return False
 
 
-def _install_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> None:
-    """Install one in-repo package from the freshly-cloned repo.
+def _expose_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> None:
+    """Put one in-repo package on `sys.path`, straight from the freshly-cloned repo.
 
-    The runner is otherwise stdlib-only and ships as a single file, so these are
-    the only packages it needs on the box. Installed from the clone rather than
-    an index so they are always the same commit as the rest of this deploy.
+    Taken from the clone rather than an index so it is always the same commit as
+    the rest of this deploy.
+
+    This used to `uv pip install --system` (falling back to `python3 -m pip`).
+    Both are dead on this AMI, and silently so — the failure was swallowed into
+    one `warn:` line while every dependent feature turned itself off:
+
+      * Ubuntu 24.04's system Python is PEP 668 externally-managed, so
+        `uv pip install --system` REFUSES ("hint: Virtual environments were not
+        considered due to the `--system` flag").
+      * `python3 -m pip` does not exist — the AMI ships no pip, and cloud-init's
+        apt list never adds python3-pip.
+
+    Observed 2026-07-28: `canopy_transcript` had never been importable on
+    cloud-ec2-1, so every session turn it ran wrote no durable rows at all.
+
+    `sys.path` rather than a venv or `--target` because these packages are
+    stdlib-only BY CONTRACT — canopy_transcript declares `dependencies = []`
+    with a comment explaining that this box has to resolve every dep it adds at
+    boot, and canopy_acp depends on nothing but canopy_transcript. So there is
+    nothing to resolve, and an installer is machinery in front of a path append.
+    A package here that grows a third-party dependency needs a deliberate
+    install strategy, and will announce itself as an ImportError in the named
+    degradation below rather than failing quietly.
 
     Best-effort by design: every caller degrades to a named disabled feature if
     the import later fails, and the turn still runs and still finishes. A
     bootstrap step that could brick execution is worse than a missing feature.
     """
     pkg = repo_dir / "packages" / name
-    if not pkg.is_dir():
+    if not (pkg / name).is_dir():
         _log(f"warn: {pkg} not in the clone; {purpose} disabled")
         return
-    for installer in (["uv", "pip", "install", "--system", str(pkg)],
-                      [sys.executable, "-m", "pip", "install", str(pkg)]):
-        try:
-            subprocess.run(installer, check=True, timeout=180,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _log(f"installed {name} from {pkg} via {installer[0]}")
-            return
-        except Exception:  # noqa: BLE001 — try the next installer
-            continue
-    _log(f"warn: could not install {name}; {purpose} disabled")
+    entry = str(pkg)
+    if entry not in sys.path:
+        sys.path.insert(0, entry)
+    _log(f"exposed {name} from {pkg}")
 
 
 def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     """The packages this runner imports off the clone.
 
-    `canopy_acp` is installed unconditionally rather than only when
+    `canopy_acp` is exposed unconditionally rather than only when
     RUNNER_EXECUTOR=acp, so flipping the executor is an env change and a restart
     rather than a redeploy — the point of a switch you can actually use.
     """
-    _install_repo_package(repo_dir, "canopy_transcript", "transcript rows")
-    _install_repo_package(repo_dir, "canopy_acp", "the ACP executor")
+    _expose_repo_package(repo_dir, "canopy_transcript", "transcript rows")
+    _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor")
     _install_acp_adapter()
 
 
