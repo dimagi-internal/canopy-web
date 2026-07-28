@@ -18,7 +18,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def _turn():
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
-    return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
 
 
 def test_append_events_fires_signal_after_commit():

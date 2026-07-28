@@ -13,8 +13,18 @@ const getAgentRunners = vi.fn<() => Promise<AgentRunnerOut[]>>()
 const putAgentRunners =
   vi.fn<(slug: string, rows: readonly { runnerId: string; enabled: boolean }[]) => Promise<AgentRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
+// RunnerAssignments now renders RunnerSourceRules (the per-source exception
+// list) beneath its chip row, and that child reads the same module. The mock
+// replaces '@/api/agents' wholesale, so it has to answer for the child too —
+// otherwise every render here dies on `getAgentRunnerRules is not a function`.
+// Empty rules: these tests are about the default order, and a rule-less agent
+// is the state they all describe.
+const getAgentRunnerRules = vi.fn(async () => [])
+const putAgentRunnerRules = vi.fn(async () => [])
 
-vi.mock('@/api/agents', () => ({ getAgentRunners, putAgentRunners }))
+vi.mock('@/api/agents', () => ({
+  getAgentRunners, putAgentRunners, getAgentRunnerRules, putAgentRunnerRules,
+}))
 vi.mock('@/api/harness', () => ({ listRunners }))
 
 const { RunnerAssignments } = await import('./RunnerAssignments')

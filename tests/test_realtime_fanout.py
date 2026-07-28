@@ -33,7 +33,7 @@ def _fixtures():
 
 def test_turn_event_fanout():
     _user, _ws, agent = _fixtures()
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
     layer = get_channel_layer()
     async_to_sync(layer.group_add)(groups.turn_group(turn.id), "turn-chan")
 

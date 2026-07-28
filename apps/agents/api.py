@@ -18,6 +18,8 @@ from .schemas import (
     AgentIn,
     AgentOut,
     AgentRunnerOut,
+    AgentRunnerRuleOut,
+    AgentRunnerRulesIn,
     AgentRunnerRowIn,
     AgentRunnersIn,
     AgentRuntimeOut,
@@ -193,7 +195,10 @@ def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
             ready=a.runner.ready,
             enabled=a.enabled,
         )
-        for a in agent.runner_assignments.select_related("runner")
+        # source="" ONLY: this endpoint is the DEFAULT ordered list. A source
+        # rule lives in the same table and would otherwise render as a phantom
+        # chip in the order row.
+        for a in agent.runner_assignments.filter(source="").select_related("runner")
     ]
 
 
@@ -240,12 +245,105 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
     with transaction.atomic():
-        RunnerAssignment.objects.filter(agent=agent).delete()
+        # source="" ONLY. Source rules live in this table too, and an unscoped
+        # delete here would destroy every one of them each time the default
+        # order was saved.
+        RunnerAssignment.objects.filter(agent=agent, source="").delete()
         RunnerAssignment.objects.bulk_create([
             RunnerAssignment(agent=agent, runner=by_id[row.runner_id], rank=i, enabled=row.enabled)
             for i, row in enumerate(rows_in)
         ])
     return list_agent_runners(request, slug)
+
+
+# ---- per-source routing rules (the exceptions to the ordered list above) ----
+@router.get("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
+            summary="List the agent's per-source routing rules")
+def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunnerRuleOut]:
+    """The per-source overrides on top of the default ordered list (spec
+    2026-07-27). One rule per source, max — the priority runner, and whether it is
+    the only one allowed to take that source's work."""
+    from django.db.models import Count
+
+    from apps.harness.models import Runner, RunnerAssignment, Turn
+
+    agent = _get_agent_or_404(request, slug)
+    # Per-source queued depth in one query — what the UI's "N turns are parked"
+    # warning renders next to a strict rule whose runner is offline.
+    queued = dict(
+        Turn.objects.filter(agent=agent, status=Turn.QUEUED)
+        .values_list("origin").annotate(n=Count("id"))
+    )
+    rows = (
+        RunnerAssignment.objects.filter(agent=agent).exclude(source="")
+        .select_related("runner").order_by("source")
+    )
+    return [
+        AgentRunnerRuleOut(
+            source=row.source,
+            runner_id=row.runner.id,
+            runner_name=row.runner.name,
+            kind=row.runner.kind,
+            strict=row.strict,
+            # Derived, like AgentRunnerOut: the stored status lies once a runner
+            # goes quiet (heartbeat writes ONLINE and nothing demotes it).
+            online=row.runner.live_status == Runner.ONLINE,
+            ready=row.runner.ready,
+            enabled=row.enabled,
+            queued_count=queued.get(row.source, 0),
+        )
+        for row in rows
+    ]
+
+
+@router.put("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
+            summary="Replace the agent's per-source routing rules")
+def replace_agent_runner_rules(
+    request: HttpRequest, slug: str, payload: AgentRunnerRulesIn
+) -> list[AgentRunnerRuleOut]:
+    """Wholesale replace, scoped to non-empty-source rows — the default ordered
+    list belongs to PUT /runners and is left alone.
+
+    A separate endpoint rather than a combined body so neither write can clobber
+    the other's rows (they share one table), and so the existing GET response
+    shape stays what the frontend already consumes.
+    """
+    from apps.harness.api import _runner_visibility_q
+    from apps.harness.models import Runner, RunnerAssignment
+
+    agent = _get_agent_or_404(request, slug)
+
+    # One rule per source. Caught here rather than left to the DB constraint so
+    # the caller gets a named reason instead of an IntegrityError 500.
+    sources = [r.source for r in payload.rules]
+    if len(sources) != len(set(sources)):
+        raise HttpError(422, "one rule per source: duplicate source in list")
+
+    # Same visibility predicate the default-list PUT gates on — a runner the
+    # caller can't see must 422 as unknown, never be attachable by guessed UUID.
+    ids = [r.runner_id for r in payload.rules]
+    runners = list(
+        Runner.objects.filter(id__in=ids)
+        .exclude(status=Runner.RETIRED)
+        .filter(_runner_visibility_q(request))
+    )
+    by_id = {r.id: r for r in runners}
+    missing = [str(rid) for rid in ids if rid not in by_id]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+
+    with transaction.atomic():
+        RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
+        RunnerAssignment.objects.bulk_create([
+            # rank=0: meaningless on a source row (the constraint allows exactly
+            # one per source), and the composition helper renumbers anyway.
+            RunnerAssignment(
+                agent=agent, runner=by_id[r.runner_id], rank=0,
+                source=r.source, strict=r.strict, enabled=r.enabled,
+            )
+            for r in payload.rules
+        ])
+    return list_agent_runner_rules(request, slug)
 
 
 # ---- syncs (Google-Doc backed) ----

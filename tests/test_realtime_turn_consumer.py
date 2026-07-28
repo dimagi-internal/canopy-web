@@ -25,7 +25,7 @@ def _member_turn():
     ws = Workspace.objects.create(slug="canopy", display_name="Canopy", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
     return user, turn
 
 

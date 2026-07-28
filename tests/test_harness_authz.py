@@ -319,7 +319,7 @@ def test_list_turns_excludes_other_tenants_project_and_session_turns(owner_clien
     Mirrors the same split-by-target-kind fix `claim_next_turn`
     (apps/harness/services.py) already applies to its own tenant_q."""
     Turn.objects.create(
-        project="secret-repo", workspace=workspace, origin=Turn.ORIGIN_MANUAL,
+        project="secret-repo", workspace=workspace, origin=Turn.ORIGIN_API,
         idempotency_key="p-secret", prompt="secret project prompt",
     )
     resp = stranger_client.get("/api/harness/turns/")

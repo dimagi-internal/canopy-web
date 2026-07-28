@@ -33,19 +33,19 @@ def test_a_turn_cannot_target_both_an_agent_and_a_project():
     with pytest.raises(IntegrityError):
         Turn.objects.create(
             agent=_agent(), project="canopy-web",
-            origin=Turn.ORIGIN_MANUAL, idempotency_key="both",
+            origin=Turn.ORIGIN_API, idempotency_key="both",
         )
 
 
 def test_a_turn_must_target_something():
     with pytest.raises(IntegrityError):
-        Turn.objects.create(origin=Turn.ORIGIN_MANUAL, idempotency_key="neither")
+        Turn.objects.create(origin=Turn.ORIGIN_API, idempotency_key="neither")
 
 
 def test_a_project_turn_needs_no_agent():
     t = Turn.objects.create(
         project="canopy-web", workspace=_ws(),
-        origin=Turn.ORIGIN_MANUAL, idempotency_key="p1", prompt="fix the header",
+        origin=Turn.ORIGIN_API, idempotency_key="p1", prompt="fix the header",
     )
     assert t.agent_id is None
     assert t.target == "canopy-web"
@@ -63,11 +63,11 @@ def test_two_project_turns_for_the_same_repo_both_execute():
     """
     ws = _ws()
     Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API,
         idempotency_key="p1", status=Turn.RUNNING,
     )
     Turn.objects.create(  # must not raise
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API,
         idempotency_key="p2", status=Turn.RUNNING,
     )
     assert Turn.objects.filter(project="canopy-web", status=Turn.RUNNING).count() == 2
@@ -78,18 +78,18 @@ def test_one_executing_turn_per_agent_still_holds_for_agents():
     loosened the agent invariant it was protecting."""
     a = _agent()
     Turn.objects.create(
-        agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="a1", status=Turn.RUNNING
+        agent=a, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING
     )
     with pytest.raises(IntegrityError):
         Turn.objects.create(
-            agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="a2", status=Turn.RUNNING
+            agent=a, origin=Turn.ORIGIN_API, idempotency_key="a2", status=Turn.RUNNING
         )
 
 
 def test_str_does_not_crash_on_a_project_turn():
     """__str__ read self.agent.slug unconditionally before agent could be NULL."""
     t = Turn.objects.create(
-        project="canopy-web", workspace=_ws(), origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=_ws(), origin=Turn.ORIGIN_API,
         idempotency_key="p1",
     )
     assert "canopy-web" in str(t)
@@ -97,7 +97,7 @@ def test_str_does_not_crash_on_a_project_turn():
 
 def test_target_prefers_the_agent_for_agent_turns():
     t = Turn.objects.create(
-        agent=_agent("hal"), origin=Turn.ORIGIN_BOARD, idempotency_key="a1"
+        agent=_agent("hal"), origin=Turn.ORIGIN_API, idempotency_key="a1"
     )
     assert t.target == "hal"
 
@@ -108,7 +108,7 @@ def test_turn_out_serializes_a_project_turn_without_dereferencing_a_null_agent()
     from apps.harness.schemas import TurnOut
 
     t = Turn.objects.create(
-        project="canopy-web", workspace=_ws(), origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=_ws(), origin=Turn.ORIGIN_API,
         idempotency_key="p1", prompt="fix the header",
     )
     out = TurnOut.from_orm(t)
@@ -121,7 +121,7 @@ def test_turn_out_still_serializes_an_agent_turn():
     from apps.harness.schemas import TurnOut
 
     out = TurnOut.from_orm(
-        Turn.objects.create(agent=_agent("hal"), origin=Turn.ORIGIN_BOARD, idempotency_key="a1")
+        Turn.objects.create(agent=_agent("hal"), origin=Turn.ORIGIN_API, idempotency_key="a1")
     )
     assert out.agent_slug == "hal"
     assert out.project == ""

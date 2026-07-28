@@ -19,6 +19,21 @@
 - **Backend tests:** `uv run pytest`. **Frontend:** `cd frontend && npm run build` (type check) and `npx vitest run <file>`.
 - **Migrations:** write them the obvious way; destructive is fine. They run before cutover.
 - **Commit after every task.** Open the PR with auto-merge armed: `gh pr merge <n> --auto --squash`.
+- **Line numbers in this plan are a hint, not an address.** `apps/harness/services.py` has moved since the plan was written (the nag block is ~1682/1688, `start_drill` ~1748). Locate every edit by its enclosing symbol and grep for the quoted line; never trust the number alone.
+
+## Prerequisite outside this repo
+
+**Nothing produces `ace_web` until ace-web is changed.** The headline case — ace-web
+delegated execution landing on the cloud runner — depends on ace-web's `turn_driver`
+POSTing `origin="ace_web"` to `/api/harness/turns/`. That lives in another repo and is
+not a task here. Until it ships, a strict `ace_web` rule routes **zero** turns while
+real ace-web work keeps arriving as `api` and following the default order — silently,
+because a rule on a source nothing produces is inert by design.
+
+Do this in the order: land this PR → change ace-web's `turn_driver` → verify on labs
+that an ace-web turn shows `origin: ace_web` in the turn log → only then add the strict
+rule. Task 8 Step 9 checks that the fleet is actually emitting the value before the
+feature is called done.
 
 ---
 
@@ -29,8 +44,8 @@ Replaces `board`/`cron`/`manual`/`drill` with the six-value source vocabulary, w
 **Files:**
 - Modify: `apps/harness/models.py:178-185` (the ORIGIN block), `:236` (`Turn.origin` field), `:526` (`Item.origin` field — line is inside `class Item`, find `origin = models.CharField(max_length=10, choices=Turn.ORIGIN_CHOICES)`)
 - Create: `apps/harness/migrations/0030_source_vocabulary.py`
-- Modify: `apps/harness/schemas.py:18` (the `Origin` literal)
-- Modify: `apps/harness/services.py:153`, `:854`, `:904` (drop drill origin pre-filters), `:967`, `:995` (schedule origins), `:1648`, `:1654` (nag origins), `:1714` (drill origin)
+- Modify: `apps/harness/schemas.py:18` (the `Origin` literal), `class TurnIn`, `class ItemIn`, `class TurnSpecIn`
+- Modify: `apps/harness/services.py` — `sweep_expired_leases`, `finish_turn`, `cancel_turn` (drop the drill origin pre-filters), `enqueue_turn` (the alias chokepoint), `fire_schedule`, `run_schedule_now`, `_raise_schedule_nag`, `start_drill`. Find each by symbol; the numbers in the steps below have drifted.
 - Modify: `apps/canopy_sessions/services.py:711`, `:795` (chat sends)
 - Modify: `frontend/src/components/activity/turnLog.ts:20-29`
 - Test: `tests/test_origin_vocabulary.py` (new), `frontend/src/components/activity/turnLog.test.ts`
@@ -280,13 +295,46 @@ def normalize_origin(value: str) -> str:
     return Turn.LEGACY_ORIGIN_ALIASES.get(value, value)
 ```
 
-Add the validator to both input schemas that carry an origin. In `class TurnIn` (after the field declarations):
+Add the validator to **all three** input schemas that carry an origin — `class TurnIn`, `class ItemIn`, and `class TurnSpecIn` (it declares `origin: Origin = "api"`, and it is the dispatch path, so it is not optional):
 
 ```python
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 ```
 
-Add the identical line to `class ItemIn`. Also add it to `class TurnSpecIn` if that schema declares an `origin` field — check with `grep -n "class TurnSpecIn" -A 10 apps/harness/schemas.py`; if it types `origin` as `Origin`, add the validator there too.
+- [ ] **Step 5b: Normalize at the `enqueue_turn` chokepoint too**
+
+The schema validator only sees values arriving through a request. `TurnSpec.from_dict`
+(`apps/harness/dispatch.py`) reads `origin` as a free string out of **stored** Item JSON,
+and `_raise_schedule_nag` writes `Turn.ORIGIN_MANUAL` into that JSON *today*. Every Item
+already open when this deploys would therefore enqueue a turn carrying a retired value —
+outside `ORIGIN_CHOICES`, matching no source rule, matching no turn-log filter, and
+invisible to every test that only exercises the API.
+
+In `apps/harness/services.py`, at the top of `enqueue_turn` (before the target check):
+
+```python
+    # One chokepoint for the retired spellings, because not every producer comes
+    # through a request schema: TurnSpec.from_dict parses origin as a free string
+    # out of Item JSON written before this deploy. The input schemas normalize too
+    # (so a caller gets a clean 422 on a genuinely unknown value rather than a
+    # silent rewrite); this is the leg that catches stored payloads and internal
+    # callers. Remove with the aliases, one release on.
+    origin = Turn.LEGACY_ORIGIN_ALIASES.get(origin, origin)
+```
+
+Add to `tests/test_origin_vocabulary.py`:
+
+```python
+def test_a_stored_dispatch_spec_with_a_retired_origin_still_enqueues_a_valid_one():
+    """Items raised before this deploy carry origin="manual" in their dispatch JSON,
+    and TurnSpec.from_dict hands it straight to enqueue_turn without a schema in the
+    path. A turn born with a retired origin matches no rule and no log filter."""
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
+    turn, _ = services.enqueue_turn(agent=agent, origin="manual", idempotency_key="legacy-1")
+    assert turn.origin == Turn.ORIGIN_API
+```
+
+(add `from apps.harness import services` to the test module's imports)
 
 - [ ] **Step 6: Repoint the producers**
 
@@ -305,6 +353,16 @@ Add the identical line to `class ItemIn`. Also add it to `class TurnSpecIn` if t
 # ~line 1714, in start_drill — a drill is an api turn that names its runner; the
 # RunnerDrill row is what identifies it.
             origin=Turn.ORIGIN_API,
+```
+
+`run_schedule_now`'s docstring still opens "origin=manual with a uuid-suffixed key" — update that sentence to name `canopy_scheduler` and point at `origin_ref["manual"]`, which is now the only thing distinguishing an off-cycle run from a fired slot:
+
+```python
+    origin=canopy_scheduler with origin_ref["manual"]=True and a uuid-suffixed key,
+    so an ad-hoc run never collides with a real slot, and last_slot is untouched —
+    the CADENCE is unaffected (the next real slot still fires on time). The manual
+    flag lives in origin_ref rather than in origin because WHO fired it is not a
+    different SOURCE: both route as scheduler work, which is the point.
 ```
 
 `apps/canopy_sessions/services.py` — both send paths (lines ~711 and ~795):
@@ -342,14 +400,18 @@ In `frontend/src/components/activity/turnLog.ts`, replace `originLabel` and its 
 
 ```ts
 /** The Trigger column: what caused this turn.
- * - canopy_scheduler → "canopy_scheduler · <fired slot>" (slot lives in origin_ref.slot)
+ * - canopy_scheduler → the fired slot, or "run now" when a human fired it
+ *   off-cycle (run_schedule_now sets origin_ref.manual and no launcher — both
+ *   are scheduler work, so the distinction lives in origin_ref, not in origin)
  * - anything with a launcher → "<origin> · <who enqueued it>" (the old `manual`
  *   branch — "manual" is now just an api turn, so the launcher is the signal)
  * - otherwise → the bare origin string */
 export function originLabel(turn: Turn): string {
   if (turn.origin === "canopy_scheduler") {
     const slot = turn.origin_ref?.slot;
-    return typeof slot === "string" ? `canopy_scheduler · ${slot}` : "canopy_scheduler";
+    if (typeof slot === "string") return `canopy_scheduler · ${slot}`;
+    if (turn.origin_ref?.manual) return "canopy_scheduler · run now";
+    return "canopy_scheduler";
   }
   if (turn.enqueued_by_email) {
     return `${turn.origin} · ${turn.enqueued_by_email}`;
@@ -374,6 +436,10 @@ In `frontend/src/components/activity/turnLog.test.ts`, replace the three `origin
   });
   it("passes email / api through as the bare origin", () => {
     expect(originLabel(turn({ origin: "email", enqueued_by_email: null }))).toBe("email");
+  });
+  it("names an off-cycle scheduler run", () => {
+    const t = turn({ origin: "canopy_scheduler", origin_ref: { manual: true } });
+    expect(originLabel(t)).toContain("run now");
   });
 ```
 
@@ -1103,7 +1169,37 @@ def test_a_turn_its_rule_can_run_is_not_reported(fleet):
     _stuck_turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
     assert services.unclaimable_queued_turns(fleet["user"]) == []
+
+
+def test_a_bound_session_turn_is_not_reported_when_its_holder_is_not_assigned(fleet):
+    """The refinement must mirror the claim loop's bound_to_me short-circuit.
+
+    A session bound to a runner claims on THAT runner regardless of assignments —
+    that is what stickiness means. Applying the per-source assignment check to it
+    would report a live chat as 'no runner is assigned; fix your routing' while
+    claiming takes it happily. Surviving runner_target_q is what IDENTIFIES the
+    binding holder, so 'it was already filtered' is exactly backwards here.
+    """
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    a, cloud = fleet["agent"], fleet["cloud"]
+    # cloud is assigned NOTHING for this agent — only the binding routes to it.
+    RunnerAssignment.objects.create(agent=a, runner=fleet["laptop"], rank=0)
+    Runner.objects.filter(pk=cloud.pk).update(capabilities={"sessions": True})
+    cloud.refresh_from_db()
+    session = Session.objects.create(agent=a, workspace=a.workspace, title="chat")
+    RunnerBinding.objects.create(session=session, runner=cloud, live_seen_at=timezone.now())
+    turn = Turn.objects.create(
+        chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key="c1"
+    )
+    Turn.objects.filter(pk=turn.pk).update(
+        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30)
+    )
+
+    assert services.unclaimable_queued_turns(fleet["user"]) == []
 ```
+
+Check `Session` / `RunnerBinding`'s actual required fields before running this — `grep -n "class Session" -A 30 apps/canopy_sessions/models.py` — and adjust the constructor kwargs rather than the assertion.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1112,7 +1208,14 @@ Expected: FAIL — `test_an_online_runner_excluded_by_a_strict_rule_does_not_mas
 
 - [ ] **Step 3: Refine coverage per (turn, runner)**
 
-In `unclaimable_queued_turns`, after the `ids = {t.id for t in queued}` line, add the row load, then replace `_covered_by`:
+First widen the `queued` queryset's `select_related` — the refinement below reads
+`t.chat_session.agent_id` and the binding, once per turn per runner:
+
+```python
+        .select_related("agent", "chat_session", "chat_session__runner_binding")
+```
+
+Then, after the `ids = {t.id for t in queued}` line, add the row load and replace `_covered_by`:
 
 ```python
     ids = {t.id for t in queued}
@@ -1135,25 +1238,44 @@ In `unclaimable_queued_turns`, after the `ids = {t.id for t in queued}` line, ad
             q = runner_target_q(r) | Q(pinned_runner=r)
             for t in (
                 Turn.objects.filter(pk__in=ids).filter(q)
-                .select_related("agent", "chat_session")
+                .select_related("agent", "chat_session", "chat_session__runner_binding")
             ):
-                # Then the SAME per-source refinement the claim loop applies. A
-                # runner assigned the agent but excluded by a strict rule for this
-                # turn's source does NOT cover it, and saying otherwise would mask
-                # a genuinely parked queue.
-                if t.pinned_runner_id != r.id:
-                    routed_agent = t.agent_id or (
-                        t.chat_session.agent_id if t.chat_session_id else None
-                    )
-                    if routed_agent:
-                        rows = assignment_rows_for(routed_agent, t.origin, defaults, priorities)
-                        if not any(rr.id == r.id for _rank, rr in rows):
-                            continue
-                out.add(t.pk)
+                # Then the SAME per-source refinement the claim loop applies —
+                # INCLUDING its two short-circuits, in the same order. A runner
+                # assigned the agent but excluded by a strict rule for this turn's
+                # source does NOT cover it, and saying otherwise would mask a
+                # genuinely parked queue.
+                if _refined_allows(r, t):
+                    out.add(t.pk)
         return out
 ```
 
-Note `runner_target_q` already excludes a bound session whose holder is someone else, so a bound session turn reaching this refinement is one this runner holds — its `routed_agent` check is harmless and keeps the unbound case correct.
+and add the shared refinement just above `_covered_by`, so it and the claim loop are one rule rather than two that agree:
+
+```python
+    def _refined_allows(r, t) -> bool:
+        # A pin trumps everything below it (claim_next_turn: `pinned_here`).
+        if t.pinned_runner_id == r.id:
+            return True
+        if t.chat_session_id:
+            # STICKINESS, mirroring claim_next_turn's bound_to_me short-circuit: a
+            # session bound to this runner claims on it regardless of assignments.
+            # Surviving runner_target_q is what IDENTIFIES the holder, so running
+            # the assignment check here would report a live chat as `config`
+            # ("no runner is assigned") while claiming takes it happily.
+            binding = getattr(t.chat_session, "runner_binding", None)
+            if binding is not None and binding.runner_id == r.id:
+                return True
+            routed_agent = t.chat_session.agent_id
+        else:
+            routed_agent = t.agent_id
+        if not routed_agent:
+            return True  # project turn / agentless session: runner_target_q had the last word
+        rows = assignment_rows_for(routed_agent, t.origin, defaults, priorities)
+        return any(rr.id == r.id for _rank, rr in rows)
+```
+
+(close over `defaults`/`priorities` like `_covered_by` does, and drop them from the call signature — shown as parameters above only to name the dependency.)
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1779,8 +1901,11 @@ export async function putAgentRunnerRules(
   const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },
     body: {
+      // Cast against the REQUEST body's source type, not the response's:
+      // AgentRunnerRuleOut.source is a plain `str` by the repo's
+      // output-schemas-stay-str rule, so casting to it type-checks nothing.
       rules: rules.map((r) => ({
-        source: r.source as AgentRunnerRuleOut['source'],
+        source: r.source as Schemas['AgentRunnerRuleIn']['source'],
         runner_id: r.runnerId,
         strict: r.strict,
       })),
@@ -1843,7 +1968,7 @@ function toRows(rules: readonly AgentRunnerRuleOut[]): RuleRow[] {
 export function nextRulesForAdd(
   rules: readonly RuleRow[], source: string, runnerId: string,
 ): RuleRow[] {
-  return [...toRows(rules as AgentRunnerRuleOut[] as never), { source, runnerId, strict: false }]
+  return [...rules, { source, runnerId, strict: false }]
 }
 
 export function nextRulesForRunner(
@@ -2061,8 +2186,14 @@ export function RunnerSourceRules({ agentSlug }: { agentSlug: string }): JSX.Ele
         )}
       </div>
 
+      {/* The precedence ladder, and the one place `enabled` means two things: a
+          runner switched OFF in Default order still takes the work of any source
+          that names it, because the rule is its own row with its own toggle. Left
+          unsaid, a greyed chip up top reads as "this box is off" while it is
+          quietly answering email. */}
       <p className="text-[10px] text-foreground-subtle">
         A named runner wins over a rule; a live chat stays on the box hosting it.
+        A rule still routes to its runner even when that runner is switched off above.
       </p>
 
       {error && <span className="text-[11px] text-destructive">{error}</span>}
@@ -2071,17 +2202,15 @@ export function RunnerSourceRules({ agentSlug }: { agentSlug: string }): JSX.Ele
 }
 ```
 
-- [ ] **Step 5: Fix the `nextRulesForAdd` cast**
+- [ ] **Step 5: Take the fleet as a prop instead of re-fetching it**
 
-The cast in Step 4's `nextRulesForAdd` is wrong — `toRows` takes API rows, but this helper receives `RuleRow[]`. Replace that function with:
-
-```tsx
-export function nextRulesForAdd(
-  rules: readonly RuleRow[], source: string, runnerId: string,
-): RuleRow[] {
-  return [...rules, { source, runnerId, strict: false }]
-}
-```
+Step 4's component calls `listRunners()` itself, but its parent `RunnerAssignments`
+already holds the fleet in state — and the Runners tab renders one `RunnerAssignments`
+per agent, so self-fetching costs one extra `GET /api/harness/runners/` per agent on
+every visit. Change the signature to
+`{ agentSlug, fleet }: { agentSlug: string; fleet: RunnerOut[] }`, drop the
+`listRunners` import and the `setFleet` state, and load only the rules in the effect.
+Pass it at the mount site in Step 7: `<RunnerSourceRules agentSlug={agentSlug} fleet={fleet} />`.
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -2116,7 +2245,7 @@ and close the new inner div plus append the rules editor immediately before the 
 
 ```tsx
       </div>
-      <RunnerSourceRules agentSlug={agentSlug} />
+      <RunnerSourceRules agentSlug={agentSlug} fleet={fleet} />
     </div>
 ```
 
@@ -2351,7 +2480,25 @@ Expected: all green. Then confirm the generated types are fresh:
 Run: `cd frontend && npm run gen:api:local && git diff --stat src/api/generated.ts`
 Expected: no diff (already regenerated in Tasks 5 and 6).
 
-- [ ] **Step 8: Commit and open the PR**
+- [ ] **Step 8: Record what is NOT yet live**
+
+Add to the PR body (see Step 9) and to the spec's status line: `ace_web` has no
+producer in this repo. The rule model, the API and the UI all ship here; the value
+starts appearing only once ace-web's `turn_driver` posts it. Do not add a strict
+`ace_web` rule on labs until the turn log actually shows the origin — a strict rule on
+a source nothing emits routes nothing, while the real work keeps flowing through `api`
+on the default order, and the two failures look identical from the Runners tab.
+
+Verification once ace-web ships (not part of this PR):
+
+```bash
+# on labs, after an ace-web delegated run
+curl -s "$CANOPY/api/harness/turns/?agent=ace" -H "Authorization: Bearer $PAT" \
+  | jq -r '.items[] | "\(.origin)\t\(.created_at)"' | head
+# expect `ace_web`, not `api`
+```
+
+- [ ] **Step 9: Commit and open the PR**
 
 ```bash
 git add tests/test_source_routing_e2e.py CLAUDE.md \
@@ -2392,4 +2539,11 @@ gh pr merge --auto --squash
 
 **Spec coverage:** vocabulary + both column widenings + remap (Task 1); boundary enforcement incl. the `TurnSpec.from_dict` hole (Task 1, Step 5 — validation lives in the input schemas, `from_dict` untouched); rule columns + constraints + composition (Task 2); claim wiring incl. strictness-past-grace and the session leg (Task 3); `unclaimable` parity (Task 4); `runner_id` (Task 5); rules API + the scoped delete (Task 6); UI option A incl. the parked warning and the precedence line (Task 7); the three real cases + docs (Task 8). Session binding, project turns, and retire-cascade are asserted as unchanged rather than modified, matching the spec's "what is unchanged" section.
 
-**One deliberate divergence from the spec, recorded here:** the spec says server-only origins are rejected at the boundary. The plan additionally *normalizes* the retired spellings (`board`/`manual`/`drill`/`cron`) instead of 422'ing them, because the live fleet posts them today and a hard rejection would break Echo and Ada the moment this deploys. `cron` therefore reaches `canopy_scheduler` through the alias — a one-release shim, flagged for removal in the model comment.
+**One deliberate divergence from the spec, recorded here:** the spec says server-only origins are rejected at the boundary. The plan additionally *normalizes* the retired spellings (`board`/`manual`/`drill`/`cron`) instead of 422'ing them, because the live fleet posts them today and a hard rejection would break Echo and Ada the moment this deploys. `cron` therefore reaches `canopy_scheduler` through the alias — a one-release shim, flagged for removal in the model comment. Normalization additionally happens at `enqueue_turn` (Task 1, Step 5b), not only in the input schemas: `TurnSpec.from_dict` parses stored Item JSON with no schema in the path, and Items open across the deploy carry the retired spellings.
+
+**Review pass, 2026-07-27 — folded in:**
+
+1. **`unclaimable`'s refinement must mirror the claim loop's `bound_to_me` short-circuit** (Task 4). Applying the per-source assignment check to a session bound to this runner reports a live chat as `config` while claiming takes it — the binding is what routes it, not the assignment. The original note ("runner_target_q already filtered it, so the check is harmless") had it backwards: surviving that filter is precisely what identifies the holder. Now shared as `_refined_allows`, with a regression test.
+2. **`ace_web` has no producer in this repo** — an out-of-repo prerequisite, now stated up front and re-checked in Task 8 rather than discovered when a strict rule silently routes nothing.
+3. **Alias normalization moved to a chokepoint** (above).
+4. Smaller: `select_related` for the new `chat_session`/binding reads; `TurnSpecIn`'s validator is unconditional; `run_schedule_now`'s docstring and the turn log's "run now" label (`origin_ref.manual` is now the only thing separating an off-cycle run from a fired slot); the rules editor takes the fleet as a prop rather than re-fetching it per agent; the source cast targets the request type; `nextRulesForAdd` is written correctly the first time; and the precedence line states that a rule outranks a runner switched off in Default order — the one place `enabled` means two things.

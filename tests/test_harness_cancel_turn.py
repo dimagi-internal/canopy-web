@@ -40,7 +40,7 @@ def cli(client, jj, canopy):
 
 def test_cancel_a_queued_project_turn(cli, canopy):
     turn = Turn.objects.create(
-        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k1"
     )
     resp = cli.post(f"/api/harness/turns/{turn.id}/cancel")
 
@@ -52,7 +52,7 @@ def test_cancel_a_queued_project_turn(cli, canopy):
 
 def test_cancel_a_queued_agent_turn(cli, canopy):
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
 
     assert cli.post(f"/api/harness/turns/{turn.id}/cancel").status_code == 200
     turn.refresh_from_db()
@@ -64,7 +64,7 @@ def test_cannot_cancel_a_running_turn(cli, canopy):
     Cancel is un-queue, not kill."""
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1", status=Turn.RUNNING
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1", status=Turn.RUNNING
     )
     resp = cli.post(f"/api/harness/turns/{turn.id}/cancel")
 
@@ -75,7 +75,7 @@ def test_cannot_cancel_a_running_turn(cli, canopy):
 
 def test_cancel_is_idempotent(cli, canopy):
     turn = Turn.objects.create(
-        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k1"
     )
     assert cli.post(f"/api/harness/turns/{turn.id}/cancel").status_code == 200
     # second cancel: already FAILED (terminal) -> still 200, no error
@@ -88,7 +88,7 @@ def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
     from django.utils import timezone
 
     turn = Turn.objects.create(
-        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k1"
     )
     cli.post(f"/api/harness/turns/{turn.id}/cancel")
 
@@ -102,7 +102,7 @@ def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
 def test_cannot_cancel_another_tenants_turn(client, canopy, jj):
     """_turn_or_404 gates the cancel: a non-member gets 404, not a cancel."""
     turn = Turn.objects.create(
-        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k1"
     )
     mallory = _user("mallory")
     _ws("mallory-space", mallory)
@@ -125,7 +125,7 @@ def test_cancel_turn_unqueues_as_cancelled(canopy):
     from apps.harness import services
 
     turn = Turn.objects.create(
-        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-1"
+        project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k-cancel-1"
     )
     out = services.cancel_turn(turn)
     assert out.status == Turn.CANCELLED
@@ -142,7 +142,7 @@ def test_cancel_turn_signals_running_turn(canopy, jj, monkeypatch):
         last_heartbeat_at=timezone.now(), capabilities={"agents": ["echo"]},
     )
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-2",
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-cancel-2",
         status=Turn.RUNNING, claimed_by=runner,
     )
     published = []
@@ -167,7 +167,7 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
         name="jj-mbp", kind=Runner.EMDASH, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-cancel-3",
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-cancel-3",
         status=Turn.RUNNING, claimed_by=runner,
         lease_expires_at=timezone.now() - dt.timedelta(minutes=1),
     )
@@ -195,7 +195,7 @@ def test_finish_turn_done_is_coerced_to_cancelled_when_cancel_was_requested(cano
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-i2-1",
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-i2-1",
         status=Turn.RUNNING, claimed_by=runner,
     )
     services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
@@ -218,7 +218,7 @@ def test_finish_turn_done_without_cancel_request_stays_done(canopy, jj):
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-i2-2",
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-i2-2",
         status=Turn.RUNNING, claimed_by=runner,
     )
 
@@ -243,7 +243,7 @@ def test_cancel_turn_race_guard_does_not_force_cancel_a_claimed_turn(canopy, jj,
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_MANUAL, idempotency_key="k-race-1", status=Turn.QUEUED,
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-race-1", status=Turn.QUEUED,
     )
     # Simulate the race: the in-memory `turn` object still reads QUEUED (as if
     # cancel_turn had just loaded it), but a runner claimed it in the DB in the

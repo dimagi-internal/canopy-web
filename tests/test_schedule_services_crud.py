@@ -121,14 +121,14 @@ def test_delete_supersedes_open_turns_then_removes(owner, agent):
     assert not AgentSchedule.objects.filter(pk=s.id).exists()
     # Proof it is unwedged: a new executing turn for the agent is insertable.
     Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="b1", status=Turn.RUNNING
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="b1", status=Turn.RUNNING
     )
 
 
 def test_run_now_enqueues_manual_turn(owner, agent):
     s = ss.create_schedule(owner, "eva", _fields())
     ss.run_schedule_now(owner, "eva", s.id)
-    assert Turn.objects.filter(origin=Turn.ORIGIN_MANUAL).count() == 1
+    assert Turn.objects.filter(origin=Turn.ORIGIN_CANOPY_SCHEDULER).count() == 1
 
 
 def test_preview_cron_returns_three(owner, agent):

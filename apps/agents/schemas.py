@@ -8,6 +8,9 @@ from typing import Literal
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
+# framework→framework: agents and harness are both framework tier, and the
+# source vocabulary has ONE definition (harness owns Turn.origin).
+from apps.harness.schemas import RoutableSource
 
 
 # ---- Agent ----
@@ -75,6 +78,45 @@ class AgentRunnersIn(StrictModel):
 
     runner_ids: list[uuid.UUID] | None = None
     runners: list[AgentRunnerRowIn] | None = None
+
+
+class AgentRunnerRuleOut(StrictModel):
+    """One per-source routing rule: the priority runner for a source, and whether
+    it is the ONLY runner allowed to take that source's work.
+
+    `source` stays a plain `str` here (not the literal) by the same rule the rest
+    of the API follows — an output schema serializes what the DB already holds, and
+    a Literal would break on a value retired later. `queued_count` is the agent's
+    queued turns from this source, which is what the UI's parked warning reads."""
+
+    source: str
+    runner_id: uuid.UUID
+    runner_name: str
+    kind: str
+    strict: bool
+    online: bool
+    ready: bool
+    enabled: bool = True
+    queued_count: int = 0
+
+
+class AgentRunnerRuleIn(StrictModel):
+    """One rule of the wholesale-replace body. `source` is typed as the routable
+    literal so an unknown source is a 422 here rather than a rule that silently
+    never matches anything — and so the generated TypeScript carries the union."""
+
+    source: RoutableSource
+    runner_id: uuid.UUID
+    strict: bool = False
+    enabled: bool = True
+
+
+class AgentRunnerRulesIn(StrictModel):
+    """Wholesale replace of an agent's source rules. Scoped to non-empty-source
+    rows: the default ordered list is the sibling endpoint's business, and neither
+    write may clobber the other's rows."""
+
+    rules: list[AgentRunnerRuleIn] = Field(default_factory=list)
 
 
 class AgentRuntimeOut(StrictModel):

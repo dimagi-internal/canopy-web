@@ -83,7 +83,8 @@ def test_run_now_audit_carries_schedule_name(member):
         _call("run_schedule_now", {"agent_slug": "eva", "schedule_id": sid})
     row = MCPAuditLog.objects.filter(tool="run_schedule_now").latest("id")
     assert "Weekly" in row.args_summary
-    assert Turn.objects.filter(origin=Turn.ORIGIN_MANUAL).count() == 1
+    # Run-now is scheduler work fired off-cycle, not a separate source.
+    assert Turn.objects.filter(origin=Turn.ORIGIN_CANOPY_SCHEDULER).count() == 1
 
 
 def test_non_member_gets_error_not_leak(member):

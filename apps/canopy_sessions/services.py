@@ -708,7 +708,7 @@ def send_message(
             origin_ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
-            origin=Turn.ORIGIN_API,
+            origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
             origin_ref=origin_ref,
@@ -792,7 +792,7 @@ def _send_transcript_sourced_message(
         origin_ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
-        origin=Turn.ORIGIN_API,
+        origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
         origin_ref=origin_ref,

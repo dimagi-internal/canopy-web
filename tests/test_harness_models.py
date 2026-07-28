@@ -24,44 +24,44 @@ def _runner(**kw):
 
 
 def test_turn_defaults_to_queued():
-    t = Turn.objects.create(agent=_agent(), origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    t = Turn.objects.create(agent=_agent(), origin=Turn.ORIGIN_API, idempotency_key="k1")
     assert t.status == Turn.QUEUED
     assert t.routing == Turn.PREFER_LOCAL
 
 
 def test_queued_turns_stack_freely():
     a = _agent()
-    Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
-    Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k2")  # no raise
+    Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1")
+    Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2")  # no raise
     assert Turn.objects.filter(agent=a, status=Turn.QUEUED).count() == 2
 
 
 def test_one_executing_turn_per_agent():
     a = _agent()
-    Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k1", status=Turn.CLAIMED)
+    Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", status=Turn.CLAIMED)
     with pytest.raises(IntegrityError):
-        Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k2", status=Turn.RUNNING)
+        Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2", status=Turn.RUNNING)
 
 
 def test_terminal_turn_frees_the_execution_slot():
     a = _agent()
-    t = Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k1", status=Turn.RUNNING)
+    t = Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", status=Turn.RUNNING)
     t.status = Turn.DONE
     t.save()
-    Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k2", status=Turn.CLAIMED)  # no raise
+    Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2", status=Turn.CLAIMED)  # no raise
 
 
 def test_idempotency_key_unique():
     a = _agent()
-    t = Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    t = Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1")
     t.status = Turn.DONE
     t.save()
     with pytest.raises(IntegrityError):
-        Turn.objects.create(agent=a, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+        Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1")
 
 
 def test_turn_event_seq_unique_per_turn():
-    t = Turn.objects.create(agent=_agent(), origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    t = Turn.objects.create(agent=_agent(), origin=Turn.ORIGIN_API, idempotency_key="k1")
     TurnEvent.objects.create(turn=t, seq=1, kind="status", payload={"s": "claimed"})
     with pytest.raises(IntegrityError):
         TurnEvent.objects.create(turn=t, seq=1, kind="status", payload={})
@@ -71,7 +71,7 @@ def test_finish_turn_accepts_missed():
     """MISSED is a terminal status distinct from LOST (infra failure)."""
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=a_workspace())
     turn = Turn.objects.create(
-        agent=agent, origin=Turn.ORIGIN_CRON, idempotency_key="k1", status=Turn.RUNNING
+        agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="k1", status=Turn.RUNNING
     )
     out = services.finish_turn(turn, status=Turn.MISSED, result_note="superseded")
 
