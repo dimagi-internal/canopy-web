@@ -6,7 +6,7 @@ produces for emdash — so what the runner reads over CDP is what these strings
 contain. Verified by roundtrip on 2026-07-28: the dialog below was detected,
 answered with a keystroke, and the file it asked about was actually deleted.
 """
-from canopy_runner.menu import answer_keys, find_menu
+from canopy_runner.menu import answer_keys, find_menu, find_menu_settled
 
 # Verbatim, as a terminal renders it. Note the leading spaces, the box rule, and
 # that option 2's text wraps concerns beyond the tool itself.
@@ -150,3 +150,70 @@ def test_an_option_outside_the_menu_is_refused():
     assert menu.allows(1) and menu.allows(3)
     assert not menu.allows(4)
     assert not menu.allows(0)
+
+
+def test_a_half_drawn_frame_is_retried_not_treated_as_no_dialog():
+    """Observed live: a read caught the TUI mid-render — options painted, footer
+    not yet — so the dialog did not parse and a real tap was dropped as stale.
+    Failing safe is right; silently doing nothing is not."""
+    frames = iter([
+        " ❯ 1. Yes\n   2. No\n",          # mid-render: no footer yet
+        PERMISSION,                        # settled
+    ])
+    found = find_menu_settled(lambda: next(frames), attempts=3, delay=0)
+    assert found is not None
+    assert found.question == "Do you want to proceed?"
+
+
+def test_a_screen_with_no_dialog_still_resolves_to_none():
+    assert find_menu_settled(lambda: BUSY, attempts=2, delay=0) is None
+
+
+# The menu that actually appears in the fleet. Captured live 2026-07-28 from an
+# emdash session running `⏵⏵ bypass permissions on` — where a PERMISSION dialog
+# can never render, so this is the shape that matters in practice. Note what it
+# does that the permission dialog does not: a description under each option, a
+# box rule BETWEEN options 3 and 4, a question with no "?", and two trailing
+# options Claude Code adds itself.
+ASK_USER_QUESTION = """\
+❯ Use the AskUserQuestion tool right now to ask me one question: "Pick a colour"
+  nothing else and do nothing else first.
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Colour
+Pick a colour
+❯ 1. Red
+     The colour red.
+  2. Blue
+     The colour blue.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+"""
+
+
+def test_the_menu_the_fleet_actually_shows_parses():
+    """Roundtrip-verified live: this dialog was detected off a real emdash
+    terminal, answered with option 1, and the transcript recorded
+    'Pick a colour'='Red' followed by the agent saying "You picked Red"."""
+    menu = find_menu(ASK_USER_QUESTION)
+    assert menu is not None
+    assert menu.question == "Pick a colour"
+    assert [(o.number, o.label) for o in menu.options] == [
+        (1, "Red"), (2, "Blue"), (3, "Type something."), (4, "Chat about this"),
+    ]
+    assert menu.selected == 1
+
+
+def test_option_descriptions_are_not_mistaken_for_options():
+    """Each option carries an indented description line. Treating one as an
+    option would shift every number, and the answer would select the wrong
+    thing — silently, since a number always presses something."""
+    menu = find_menu(ASK_USER_QUESTION)
+    assert all("The colour" not in o.label for o in menu.options)
+
+
+def test_a_rule_between_options_does_not_truncate_the_menu():
+    """The TUI drew a box rule between options 3 and 4. Stopping at it would hide
+    a real choice from the phone."""
+    assert len(find_menu(ASK_USER_QUESTION).options) == 4

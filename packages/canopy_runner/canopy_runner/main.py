@@ -577,7 +577,11 @@ def _answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) ->
     where the agent reads a bare "1" as an instruction. Double-taps and two
     people answering at once both land here.
     """
-    current = menu.find_menu(cdp.read_terminal(session_key, port=cdp_port))
+    # Re-read with a settle: a single read can catch the TUI mid-render, and
+    # dropping a human's tap because the footer had not painted yet is a bug
+    # they experience as "the button did nothing".
+    current = menu.find_menu_settled(
+        lambda: cdp.read_terminal(session_key, port=cdp_port))
     if current is None:
         logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
         return
