@@ -13,7 +13,24 @@ import type { Draft, Message, SessionState, WsEvent } from "./protocol";
 // `draft.committed` carries only `user_message_id` (no assistant id to
 // pre-insert), so the assistant row is created lazily when its first stream
 // frame arrives.
+/** Frames that prove the agent is producing again.
+ *
+ *  `Notification` fires on the way IN to a wait and NOTHING fires on the way
+ *  out — approving a permission prompt emits no hook at all. So without this,
+ *  a session shows "needs you" for the rest of the turn, long after you
+ *  answered. Any row the agent emits afterwards is the proof the hook cannot
+ *  give. */
+const UNBLOCKING_FRAMES = new Set([
+  "chat.stream_start",
+  "chat.delta",
+  "chat.tool_use",
+  "chat.tool_result",
+]);
+
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
+  if (prev.activity === "blocked" && UNBLOCKING_FRAMES.has(frame.event)) {
+    prev = { ...prev, activity: "working" };
+  }
   switch (frame.event) {
     case "session.state":
       return frame.data;

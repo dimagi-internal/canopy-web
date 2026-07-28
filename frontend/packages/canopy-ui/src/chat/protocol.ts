@@ -64,8 +64,13 @@ export interface SessionState {
   messages: Message[];
   /** Live agent activity, from the runner's turn-boundary hooks. Undefined when
    *  no hook has reported yet — the caller then falls back to the server's
-   *  coarser `running` flag. */
-  activity?: "working" | "idle";
+   *  coarser `running` flag.
+   *
+   *  "blocked" means the agent wants a human: a permission prompt, or an idle
+   *  wait for input. It is deliberately coarse — a hook observer cannot tell
+   *  those apart — but it is the difference between "still thinking, wait" and
+   *  "it is waiting on YOU", which previously rendered identically. */
+  activity?: "working" | "idle" | "blocked";
   active_draft: Draft | null;
   participants: Participant[];
   presence_user_ids: number[];
@@ -91,7 +96,7 @@ export type WsEvent =
   | { event: "chat.stream_start"; data: { message_id: string; turn_index: number } }
   // The agent started or finished a turn. Distinct from tool events: it fires
   // while Claude is THINKING, before any content exists to show.
-  | { event: "session.activity"; data: { state: "working" | "idle" } }
+  | { event: "session.activity"; data: { state: "working" | "idle" | "blocked" } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }

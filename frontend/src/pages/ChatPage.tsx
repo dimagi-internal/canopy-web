@@ -414,6 +414,10 @@ export function ChatPage() {
     socket.state.activity === undefined
       ? undefined
       : socket.state.activity === "working";
+  // The agent asked for a human and stopped — a permission prompt, or an idle
+  // wait for input. It previously rendered as "running", which is the worst way
+  // to get this wrong: you wait on an agent that is waiting on you.
+  const liveBlocked = socket.state.activity === "blocked";
   const title = meta?.title?.trim() || 'Chat'
 
   return (
@@ -427,7 +431,12 @@ export function ChatPage() {
             Claude is thinking and nothing has been output yet. The hook fires the
             instant the turn starts. Falls back to `meta.running` when no hook has
             spoken (an older runner, or forwarding off). */}
-        {(liveWorking ?? meta?.running) ? (
+        {liveBlocked ? (
+          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-warning">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+            needs you{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
+          </span>
+        ) : (liveWorking ?? meta?.running) ? (
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}

@@ -72,8 +72,18 @@ def test_a_failing_transport_never_raises_at_the_hook():
 
 def test_a_truly_unrelated_event_is_ignored():
     lis, sent = _listener()
-    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "ignored"
+    assert lis.handle_payload(_payload(hook_event_name="SessionStart")) == "ignored"
     assert sent == []
+
+
+def test_a_notification_reports_blocked():
+    """Notification used to be ignored. It is the only signal that the agent is
+    waiting on a HUMAN — a permission prompt, or an idle wait for input — and
+    without it such a session rendered exactly like one that was working, so you
+    waited on an agent that was waiting on you."""
+    lis, sent = _listener()
+    assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
+    assert sent and sent[0][1][0]["kind"] == "activity:blocked"
 
 
 def test_turn_boundaries_report_working_and_idle():
@@ -255,7 +265,7 @@ def test_install_covers_both_halves_of_the_lifecycle(tmp_path):
     hook_install.install(p, port=8787, nonce="a")
     hooks = json.loads(p.read_text())["hooks"]
     assert set(hook_install.HOOK_EVENTS) == {
-        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification"}
     for event in hook_install.HOOK_EVENTS:
         assert any(hook_install.MARKER in h["command"]
                    for e in hooks[event] for h in e["hooks"]), event

@@ -9,7 +9,6 @@ The one thing that DOES need a real agent — that claude-agent-acp speaks what 
 think it speaks — is in test_live_adapter.py, which skips when it isn't
 installed.
 """
-import io
 import json
 import threading
 
