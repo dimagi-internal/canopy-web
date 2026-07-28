@@ -109,10 +109,11 @@ if _csv("RUNNER_AGENTS"):
 # and then loses the conversation is worse than one that never claims. That was
 # the OBSERVED behaviour here until both were fixed.
 #
-# Still not implemented: /runners/{id}/streams + /backfills. A viewer attached
-# mid-turn sees the reduced TurnEvent stream rather than a live transcript tail,
-# and a server-requested backfill is ignored. Neither loses history — the
-# transcript ships at turn end either way.
+# /runners/{id}/streams + /backfills are implemented too, as of 2026-07-28
+# (_sync_session_streams / _drain_backfills), so an attached viewer gets a live
+# transcript tail rather than the reduced TurnEvent stream, and a
+# server-requested backfill rebuilds history. That closes the last gap against
+# packages/canopy_runner for session work.
 RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", False)
 if RUNNER_SESSIONS:
     RUNNER_CAPS["sessions"] = True
@@ -139,6 +140,11 @@ HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "20"))
 # heartbeat gated on recv() timing out would never fire and the runner would go
 # stale while still connected.
 WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
+# How often to tail the transcripts of sessions a viewer is attached to. This is
+# the live view's latency floor, so it is deliberately far tighter than
+# POLL_SECONDS (the turn-claim clock): at 15s a watcher sees a streaming reply
+# arrive in 15-second lumps. Costs one small GET /streams per tick when idle.
+STREAM_POLL_SECONDS = float(os.environ.get("STREAM_POLL_SECONDS", "3"))
 # How often the lease-renewal thread heartbeats WHILE a turn is executing (both
 # loops block inside run_claude() for the whole turn, so nothing else heartbeats
 # during that window). Must stay comfortably under DEFAULT_LEASE_SECONDS (900s,
@@ -1471,6 +1477,153 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
     _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
 
 
+# ── live streaming: /streams + /backfills ────────────────────────────────────
+# The observable half of attach/detach. `_ship_transcript_rows` above makes a
+# session's record DURABLE at turn end, which is enough for a conversation
+# nobody is watching. It is not enough for someone watching one: they would see
+# the reduced TurnEvent stream during the turn and the real rows only after it
+# finished. These two syncs close that, and bring this runner to parity with
+# packages/canopy_runner (whose _sync_session_streams / _drain_backfills this
+# mirrors deliberately — same server contract, same ordinal semantics).
+#
+# Resolution differs from the laptop's and that is the whole trick: a laptop
+# session is found by (project, emdash task), a cloud session by (cwd, CLI
+# session id). Both are known here without asking anyone — the cwd is
+# deterministic from the canopy session id (see _turn_cwd), and the CLI session
+# id is what `record_session` stored in RunnerBinding.session_key, which is
+# exactly what the stream descriptor hands back.
+_STREAM_READERS: dict[str, dict] = {}
+
+
+def _session_transcript_path(session_id: str, session_key: str):
+    """The CLI transcript backing a canopy session, or None if not resolvable yet."""
+    ct = _transcript_core()
+    if ct is None or not (session_id and session_key):
+        return None
+    cwd = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+    return ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
+
+
+def _post_stream_rows(runner_id: str, session_id: str, rows: list) -> bool:
+    """Ship conversational rows as live events. `seq == index` (the composite
+    transcript ordinal): monotonic per session forever, so WS-derived `seq:<n>`
+    message ids cannot collide across detaches, restarts or failovers."""
+    ct = _transcript_core()
+    if ct is None:
+        return False
+    events = [
+        {"kind": r["role"], "seq": r["index"], "index": r["index"],
+         "payload": ct.row_payload(r)}
+        for r in rows
+    ]
+    status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
+                     {"session_id": session_id, "events": events})
+    return status == 200
+
+
+def _sync_session_streams(runner_id: str) -> None:
+    """Tail every session a viewer is attached to and ship new rows.
+
+    The resume point is SERVER-side (`last_index`, the max persisted turn_index),
+    refreshed every tick as our own posts land. There is deliberately no local
+    offset checkpoint: a failed post drops the tailer, so the next tick
+    re-attaches from the server marker and a restart recovers identically.
+    Best-effort throughout — a hiccup here costs live latency, never history,
+    because the turn-end ship and the backfill both still run.
+    """
+    ct = _transcript_core()
+    if ct is None:
+        return
+    status, payload = _api("GET", f"/runners/{runner_id}/streams")
+    if status != 200 or not isinstance(payload, dict):
+        return
+    desired = {s["session_id"]: s for s in (payload.get("streams") or []) if s.get("session_id")}
+
+    for sid in list(_STREAM_READERS):  # drop tailers for sessions nobody watches
+        if sid not in desired:
+            _STREAM_READERS.pop(sid, None)
+
+    for sid, descriptor in desired.items():
+        st = _STREAM_READERS.setdefault(sid, {"reader": None, "count": 0})
+        st["session_key"] = descriptor.get("session_key") or ""
+        st["last_index"] = descriptor.get("last_index")
+        try:
+            if st["reader"] is None:
+                path = _session_transcript_path(sid, st["session_key"])
+                if path is None:
+                    continue  # not spawned yet, or a different box owns it
+                reader = ct.TailReader(str(path))
+                records = reader.read_new()
+                last = st["last_index"]
+                # No marker yet -> stream forward only; history is the backfill's job.
+                since = ct.end_index(len(records)) if last is None else int(last)
+                rows = ct.conversational_messages(records, since)
+                if rows and not _post_stream_rows(runner_id, sid, rows):
+                    continue  # nothing consumed — re-attach next tick
+                st["reader"], st["count"] = reader, len(records)
+                _log(f"stream {sid[:8]}: attached ({len(rows)} rows caught up)")
+                continue
+            new_records = st["reader"].read_new()
+            if not new_records:
+                continue
+            base = st["count"]
+            # The offset applies to the RECORD ordinal inside compose_index, never
+            # to the composite index — adding it there would shift a row into
+            # another record's slots.
+            rows = ct.conversational_messages(new_records, -1, record_offset=base)
+            if rows and not _post_stream_rows(runner_id, sid, rows):
+                st["reader"], st["count"] = None, 0  # don't advance past unshipped records
+                continue
+            st["count"] = base + len(new_records)
+        except Exception as exc:  # noqa: BLE001 — one bad session must not stop the rest
+            _log(f"stream {sid[:8]}: {exc}; will re-attach")
+            st["reader"], st["count"] = None, 0
+
+
+def _drain_backfills(runner_id: str) -> None:
+    """Ship a session's FULL history when the server asks for it, with ordinals,
+    so it upsert-fills the older rows around anything the live stream already
+    persisted."""
+    ct = _transcript_core()
+    if ct is None:
+        return
+    status, payload = _api("GET", f"/runners/{runner_id}/backfills")
+    if status != 200 or not isinstance(payload, dict):
+        return
+    for b in payload.get("backfills") or []:
+        sid = b.get("session_id") or ""
+        path = _session_transcript_path(sid, b.get("session_key") or "")
+        if not (sid and path):
+            continue  # unresolvable -> leave the request standing, server keeps the tail
+        try:
+            messages = ct.conversational_messages(ct.read_records(path), -1)
+            st, _ = _api("POST", f"/runners/{runner_id}/session-backfill",
+                         {"session_id": sid, "messages": messages})
+            _log(f"backfill {sid[:8]}: shipped {len(messages)} rows -> {st}")
+        except Exception as exc:  # noqa: BLE001
+            # A backfill that keeps failing never rebuilds history and never stops
+            # trying — exactly the case that must not be silent.
+            _log(f"backfill {sid[:8]} FAILED: {exc}")
+
+
+def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
+    """Both session-view syncs, in the order that minimises duplicate work: a
+    backfill rewrites the whole history, so run it before the incremental tail
+    advances its marker.
+
+    Streams run on their own fast clock (STREAM_POLL_SECONDS) because they ARE
+    the live view — at the turn-claim cadence a viewer would watch the reply
+    arrive in POLL_SECONDS-sized lumps. Backfills are request-driven and rare,
+    so they ride the slower clock and one cheap GET is all an idle tick costs.
+    """
+    try:
+        if with_backfills:
+            _drain_backfills(runner_id)
+        _sync_session_streams(runner_id)
+    except Exception as exc:  # noqa: BLE001 — never take the main loop down
+        _log(f"session view sync error: {exc}")
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
@@ -1545,6 +1698,9 @@ def run_over_rest(runner_id: str) -> None:
         # the others expire mid-run.
         _api("POST", f"/runners/{runner_id}/heartbeat",
              {"active_turn_ids": _in_flight_ids(), "host": RUNNER_HOST})
+        # Attached viewers are served on this path too — a runner that fell back
+        # to REST must not also silently stop being watchable.
+        _sync_session_views(runner_id)
         if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
             time.sleep(POLL_SECONDS)
             continue
@@ -1744,6 +1900,7 @@ def run_over_ws(runner_id: str) -> bool:
             last_beat = time.monotonic()
             _drain(ws, runner_id)  # anything already queued gets no wake
             last_poll = time.monotonic()
+            last_stream = 0.0
             while not _stop:
                 try:
                     raw = ws.recv()
@@ -1756,6 +1913,11 @@ def run_over_ws(runner_id: str) -> bool:
                         _drain(ws, runner_id)
                     elif mtype == "interject":
                         _log(f"interject turn={msg.get('turn_id')}: {msg.get('message')!r}")
+                    elif mtype == "stream":
+                        # Latency optimization only — /streams is polled below
+                        # regardless, so a dropped frame costs one tick, never
+                        # a permanently unattached viewer.
+                        _sync_session_views(runner_id)
                 elif raw == "":
                     break  # server closed the socket
                 if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
@@ -1772,7 +1934,12 @@ def run_over_ws(runner_id: str) -> bool:
                 # the WS path to parity.
                 if time.monotonic() - last_poll >= POLL_SECONDS:
                     _drain(ws, runner_id)
+                    _sync_session_views(runner_id)          # incl. backfills
                     last_poll = time.monotonic()
+                    last_stream = time.monotonic()
+                elif time.monotonic() - last_stream >= STREAM_POLL_SECONDS:
+                    _sync_session_views(runner_id, with_backfills=False)
+                    last_stream = time.monotonic()
         except Exception as exc:
             _log(f"ws loop error: {exc}")
         finally:

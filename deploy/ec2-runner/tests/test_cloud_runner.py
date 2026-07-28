@@ -1302,3 +1302,280 @@ def test_expose_repo_package_rejects_a_bare_project_dir(cloud_runner, tmp_path, 
     before = list(cloud_runner.sys.path)
     cloud_runner._expose_repo_package(tmp_path, "canopy_transcript", "transcript rows")
     assert cloud_runner.sys.path == before
+
+
+# ── live session views: /streams + /backfills ───────────────────────────────
+# The runner made a session's record durable at TURN END, which serves a
+# conversation nobody is watching. Someone watching one saw the reduced
+# TurnEvent stream during the turn and the real rows only after it finished.
+# These cover the attach/tail/detach cycle that closes that.
+
+
+class _FakeCore:
+    """Stands in for canopy_transcript. Only the surface the runner uses."""
+
+    TRANSCRIPT = "/fake/transcript.jsonl"
+
+    def __init__(self, records=None, resolvable=True):
+        self.records = records if records is not None else ["r0", "r1"]
+        self.resolvable = resolvable
+        self.resolved_with = []
+
+    # -- paths --
+    def resolve_cli_transcript(self, cwd, session_id, claude_home=None):
+        self.resolved_with.append((str(cwd), session_id))
+        return self.TRANSCRIPT if self.resolvable else None
+
+    # -- rows --
+    def end_index(self, n):
+        return 1000 + n
+
+    def conversational_messages(self, records, since, record_offset=0):
+        return [
+            {"role": "assistant", "index": 10 + i + record_offset, "text": str(r)}
+            for i, r in enumerate(records)
+        ]
+
+    def row_payload(self, row):
+        return {"text": row["text"]}
+
+    def read_records(self, path):
+        return self.records
+
+    class TailReader:
+        def __init__(self, path):
+            self.path = path
+            self._batches = [["a", "b"]]
+
+        def read_new(self):
+            return self._batches.pop(0) if self._batches else []
+
+
+def _wire(mod, monkeypatch, core, api):
+    monkeypatch.setattr(mod, "_transcript_core", lambda: core)
+    monkeypatch.setattr(mod, "_api", api)
+    mod._STREAM_READERS.clear()
+
+
+def test_stream_sync_attaches_and_ships_rows(cloud_runner, monkeypatch):
+    core = _FakeCore()
+    posted = []
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "sess-1", "session_key": "cli-9",
+                                      "project": "", "last_index": 5}]}
+        if method == "POST" and path.endswith("/session-stream"):
+            posted.append(body)
+            return 200, {"count": len(body["events"])}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("runner-1")
+
+    assert len(posted) == 1
+    assert posted[0]["session_id"] == "sess-1"
+    # seq MUST equal the composite transcript ordinal, or WS-derived seq:<n>
+    # message ids collide across detaches/restarts.
+    assert all(e["seq"] == e["index"] for e in posted[0]["events"])
+    # Resolution is (deterministic cwd from the canopy session id, CLI session id
+    # from the descriptor) — the cloud analogue of the laptop's project+task.
+    cwd, cli = core.resolved_with[0]
+    assert cwd.endswith("sessions/sess-1") and cli == "cli-9"
+
+
+def test_stream_sync_uses_server_marker_not_a_local_checkpoint(cloud_runner, monkeypatch):
+    core = _FakeCore()
+    seen_since = []
+    orig = core.conversational_messages
+
+    def spy(records, since, record_offset=0):
+        seen_since.append(since)
+        return orig(records, since, record_offset=record_offset)
+
+    core.conversational_messages = spy
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": 42}]}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert seen_since[0] == 42
+
+
+def test_stream_sync_with_no_marker_streams_forward_only(cloud_runner, monkeypatch):
+    # last_index None => a fresh attach must NOT replay history; that is the
+    # backfill's job. end_index(len(records)) is the "everything already seen" marker.
+    core = _FakeCore()
+    seen_since = []
+    orig = core.conversational_messages
+    core.conversational_messages = lambda r, s, record_offset=0: (
+        seen_since.append(s) or orig(r, s, record_offset=record_offset))
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": None}]}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert seen_since[0] == core.end_index(2)
+
+
+def test_stream_sync_drops_tailers_for_detached_sessions(cloud_runner, monkeypatch):
+    core = _FakeCore()
+    streams = [{"session_id": "s", "session_key": "k", "last_index": 1}]
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": streams}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert "s" in cloud_runner._STREAM_READERS
+    streams.clear()  # viewer detached
+    cloud_runner._sync_session_streams("r")
+    assert cloud_runner._STREAM_READERS == {}
+
+
+def test_failed_post_drops_the_reader_so_the_next_tick_recatches(cloud_runner, monkeypatch):
+    # No local offset checkpoint: an unshipped batch must not advance `count`,
+    # or those rows are lost for good.
+    core = _FakeCore()
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": 1}]}
+        if path.endswith("/session-stream"):
+            return 500, None
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert cloud_runner._STREAM_READERS["s"]["reader"] is None
+    assert cloud_runner._STREAM_READERS["s"]["count"] == 0
+
+
+def test_stream_sync_skips_an_unresolvable_transcript(cloud_runner, monkeypatch):
+    # Turn not spawned yet, or another box owns it — retry next tick, never crash.
+    core = _FakeCore(resolvable=False)
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": 1}]}
+        raise AssertionError("must not post without a transcript")
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert cloud_runner._STREAM_READERS["s"]["reader"] is None
+
+
+def test_backfill_ships_full_history(cloud_runner, monkeypatch):
+    core = _FakeCore(records=["x", "y", "z"])
+    posted = []
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/backfills"):
+            return 200, {"backfills": [{"session_id": "s", "session_key": "k"}]}
+        if method == "POST" and path.endswith("/session-backfill"):
+            posted.append(body)
+            return 200, {"written": len(body["messages"])}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._drain_backfills("r")
+    assert len(posted) == 1 and len(posted[0]["messages"]) == 3
+
+
+def test_a_broken_session_does_not_stop_the_others(cloud_runner, monkeypatch):
+    # One session's exception must not starve every other watcher on the box.
+    core = _FakeCore()
+    calls = {"n": 0}
+    real_resolve = core.resolve_cli_transcript
+
+    def flaky(cwd, session_id, claude_home=None):
+        calls["n"] += 1
+        if session_id == "bad":
+            raise RuntimeError("boom")
+        return real_resolve(cwd, session_id, claude_home=claude_home)
+
+    core.resolve_cli_transcript = flaky
+    posted = []
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [
+                {"session_id": "s1", "session_key": "bad", "last_index": 1},
+                {"session_id": "s2", "session_key": "good", "last_index": 1},
+            ]}
+        if path.endswith("/session-stream"):
+            posted.append(body)
+            return 200, {}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert [p["session_id"] for p in posted] == ["s2"]
+
+
+def test_sync_session_views_can_skip_backfills(cloud_runner, monkeypatch):
+    # The fast stream clock must not drag a /backfills GET along with it.
+    core = _FakeCore()
+    paths = []
+
+    def api(method, path, body=None):
+        paths.append(path)
+        if path.endswith("/streams"):
+            return 200, {"streams": []}
+        return 200, {"backfills": []}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_views("r", with_backfills=False)
+    assert not any(p.endswith("/backfills") for p in paths)
+    paths.clear()
+    cloud_runner._sync_session_views("r")
+    assert any(p.endswith("/backfills") for p in paths)
+
+
+def test_session_views_survive_a_missing_transcript_core(cloud_runner, monkeypatch):
+    # canopy_transcript unavailable => named degradation, not an exception on the
+    # main loop.
+    monkeypatch.setattr(cloud_runner, "_transcript_core", lambda: None)
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("must not call the API without the transcript core")))
+    cloud_runner._sync_session_views("r")
+
+
+def test_a_failed_steady_state_post_does_not_advance_the_offset(cloud_runner, monkeypatch):
+    """The row-losing branch. On attach a failure just leaves the reader unset,
+    but in steady state `count` is the ONLY record of how far the tailer got —
+    advancing it past a batch the server never accepted drops those rows for
+    good, and nothing ever re-reads them (TailReader only returns NEW bytes)."""
+    core = _FakeCore()
+    ok = {"v": True}
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": 1}]}
+        if path.endswith("/session-stream"):
+            return (200, {}) if ok["v"] else (500, None)
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+
+    # Tick 1: attach succeeds, tailer is live and has consumed 2 records.
+    cloud_runner._sync_session_streams("r")
+    st = cloud_runner._STREAM_READERS["s"]
+    assert st["reader"] is not None and st["count"] == 2
+
+    # Tick 2: a fresh batch arrives and the post fails.
+    st["reader"]._batches = [["c", "d"]]
+    ok["v"] = False
+    cloud_runner._sync_session_streams("r")
+
+    st = cloud_runner._STREAM_READERS["s"]
+    assert st["reader"] is None, "a failed post must drop the tailer"
+    assert st["count"] == 0, "count must not advance past records the server never took"
