@@ -643,7 +643,8 @@ def claim_pending_attachments(session, message=None) -> list[dict]:
     ]
 
 def send_message(
-    *, session: Session, text: str, user, client_id: str = "", placement: str | None = None
+    *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
+    origin: str | None = None,
 ) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
@@ -659,6 +660,12 @@ def send_message(
     new chat, the `requested_runner_id` stashed at create time). See
     `_resolve_placement`.
 
+    `origin`: which SOURCE of work this send is, the key source-aware routing
+    composes a runner list on (spec 2026-07-27). None means the default — a
+    human typing in canopy's own chat UI. ace-web passes `ace_web` so its
+    delegated runs can be routed (and read) as what they are rather than
+    disappearing into the chat source.
+
     For an origin=runner session the TRANSCRIPT is the sole durable source
     (spec 2026-07-24): the user's words reach the DB when the runner ships the
     transcript record they became, keyed on its ordinal. Persisting a second
@@ -666,9 +673,11 @@ def send_message(
     send, so this path writes no row — the frontend already echoes the message
     optimistically (draft.committed), and a transient Message keeps the contract.
     """
+    origin = origin or Turn.ORIGIN_CANOPY_WEB_CHAT
     if transcript_sourced(session):
         return _send_transcript_sourced_message(
-            session=session, text=text, client_id=client_id, placement=placement
+            session=session, text=text, client_id=client_id, placement=placement,
+            origin=origin,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -708,7 +717,7 @@ def send_message(
             origin_ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
-            origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+            origin=origin,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
             origin_ref=origin_ref,
@@ -755,7 +764,8 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
 
 
 def _send_transcript_sourced_message(
-    *, session: Session, text: str, client_id: str = "", placement: str | None = None
+    *, session: Session, text: str, client_id: str = "", placement: str | None = None,
+    origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -792,7 +802,7 @@ def _send_transcript_sourced_message(
         origin_ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
-        origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+        origin=origin,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
         origin_ref=origin_ref,

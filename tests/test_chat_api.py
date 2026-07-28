@@ -382,3 +382,38 @@ def test_runner_online_reflects_binding_liveness(client, ctx):
         last_heartbeat_at=timezone.now() - dt.timedelta(hours=2)
     )
     assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is False
+
+
+# ---- origin at the request boundary (spec 2026-07-27) ----
+
+
+def test_send_accepts_ace_web_origin(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
+                      content_type="application/json").json()["id"]
+    r = client.post(f"/api/canopy-sessions/{sid}/send",
+                    data={"text": "run it", "origin": "ace_web"},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert Turn.objects.get(pk=r.json()["turn_id"]).origin == Turn.ORIGIN_ACE_WEB
+
+
+def test_send_without_origin_stays_canopy_web_chat(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
+                      content_type="application/json").json()["id"]
+    r = client.post(f"/api/canopy-sessions/{sid}/send", data={"text": "hi"},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert Turn.objects.get(pk=r.json()["turn_id"]).origin == Turn.ORIGIN_CANOPY_WEB_CHAT
+
+
+def test_send_refuses_a_server_only_origin(client):
+    # canopy_web_chat / canopy_scheduler have exactly one in-repo producer each;
+    # a caller spelling one would borrow that source's routing rule. The shared
+    # schemas.Origin literal is what enforces it — not a second gate here.
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
+                      content_type="application/json").json()["id"]
+    for bad in ("canopy_web_chat", "canopy_scheduler", "nonsense"):
+        r = client.post(f"/api/canopy-sessions/{sid}/send",
+                        data={"text": "hi", "origin": bad},
+                        content_type="application/json")
+        assert r.status_code == 422, f"{bad}: {r.status_code} {r.content}"

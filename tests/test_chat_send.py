@@ -295,3 +295,35 @@ def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     turn.refresh_from_db()
     assert turn.pinned_runner_id == original_pin
     assert turn.pinned_runner_id != foreign_runner.id
+
+
+# ---- origin: the ace_web producer (spec 2026-07-27 source-aware runner routing) ----
+# ace-web delegates run execution to canopy (spec 2026-07-26). Until it could say
+# so, its turns arrived as `canopy_web_chat` — indistinguishable from a human
+# typing in the web UI — so a routing rule on `ace_web` had nothing to match and
+# the source-aware routing spec shipped with its ace_web PRODUCER missing.
+
+
+def test_send_defaults_to_canopy_web_chat_origin():
+    user, _ws, _agent, session = _ctx()
+    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    assert turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
+
+
+def test_send_carries_an_explicit_origin():
+    user, _ws, _agent, session = _ctx()
+    _msg, turn = chat.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
+    assert turn.origin == Turn.ORIGIN_ACE_WEB
+
+
+def test_transcript_sourced_send_carries_the_origin_too():
+    # The path labs actually takes: every session is stamped transcript_sourced at
+    # creation, so a run dispatched by ace-web lands in _send_transcript_sourced_
+    # message. Threading the origin through only the durable path would leave
+    # production exactly as broken as before.
+    user, _ws, _agent, session = _ctx()
+    session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    assert chat.transcript_sourced(session)
+    _msg, turn = chat.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
+    assert turn.origin == Turn.ORIGIN_ACE_WEB

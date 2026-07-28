@@ -8097,6 +8097,8 @@ export interface components {
             readonly client_id: string;
             /** Placement */
             readonly placement?: string | null;
+            /** Origin */
+            readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
         };
         /**
          * TurnOutMinimal
