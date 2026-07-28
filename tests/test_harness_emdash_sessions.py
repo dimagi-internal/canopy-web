@@ -208,3 +208,103 @@ def test_list_is_newest_first_by_last_interacted_at():
     rows = c.get("/api/harness/sessions").json()
     tasks = [r["emdash_task"] for r in rows]
     assert tasks == ["newer", "older"]
+
+
+def test_the_report_corrects_an_autotitled_session():
+    """A session created on the phone is autotitled (first message, truncated)
+    before any emdash task exists, so it kept a sentence for a name while the
+    sidebar showed the task. The first fix went into `record_session`, which only
+    runs when a TURN is routed — this is the path that runs every ~10s, and
+    missing it is why the repair never happened (observed 2026-07-27, after
+    shipping it)."""
+    from django.test import Client
+
+    from apps.canopy_sessions.models import Message, RunnerBinding, Session
+
+    jj = _user("jj-title")
+    ws = _ws("dimagi-title", jj)
+    runner = _runner(jj, ws)
+    title = "I think we basically implemented everything"
+    session = Session.objects.create(workspace=ws, created_by=jj, title=title)
+    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+                           plaintext=title)
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="canopy-web-api-7716",
+                                 thread_key="emdash:canopy-web-api-7716",
+                                 host=runner.host)
+    c = Client(); c.force_login(jj)
+    _report(c, runner.id, [{"emdash_task": "canopy-web-api-7716", "project": "canopy-web"}])
+    session.refresh_from_db()
+    assert session.title == "canopy-web-api-7716"
+
+
+def test_the_report_never_clobbers_a_title_a_human_chose():
+    from django.test import Client
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    jj = _user("jj-human")
+    ws = _ws("dimagi-human", jj)
+    runner = _runner(jj, ws)
+    session = Session.objects.create(workspace=ws, created_by=jj, title="Ship the release")
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="canopy-web-api-7716",
+                                 thread_key="emdash:canopy-web-api-7716",
+                                 host=runner.host)
+    c = Client(); c.force_login(jj)
+    _report(c, runner.id, [{"emdash_task": "canopy-web-api-7716", "project": "canopy-web"}])
+    session.refresh_from_db()
+    assert session.title == "Ship the release"
+
+
+def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
+    """The report is how canopy knows which sessions are alive. Shipping the
+    retitle unguarded 500'd the WHOLE report on labs, so every session on that
+    runner stopped being reported — a cosmetic nicety took out the liveness
+    signal for the entire machine.
+
+    Simulated by making the repair itself raise: the report must still succeed
+    and still upsert the binding."""
+    from django.test import Client
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
+    from apps.harness import services as hsvc
+
+    jj = _user("jj-safe")
+    ws = _ws("dimagi-safe", jj)
+    runner = _runner(jj, ws)
+    session = Session.objects.create(workspace=ws, created_by=jj, title="A sentence")
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="task-x",
+                                 thread_key="emdash:task-x", host=runner.host)
+
+    def boom(*a, **k):
+        raise RuntimeError("retitle exploded")
+
+    monkeypatch.setattr(hsvc, "_title_is_derived", boom)
+    c = Client(); c.force_login(jj)
+    resp = _report(c, runner.id, [{"emdash_task": "task-x", "project": "canopy-web"}])
+    assert resp.status_code == 200, "a broken retitle must not fail the report"
+    # And the liveness half still happened.
+    binding = RunnerBinding.objects.get(session=session)
+    assert binding.live_seen_at is not None
+
+
+# NOT TESTED HERE, deliberately — and worth recording why.
+#
+# The production failure was:
+#   TransactionManagementError: select_for_update cannot be used outside of a
+#   transaction
+# raised by POST /runners/{id}/sessions on labs, every ~10s, taking the liveness
+# signal for a whole machine down with it (2026-07-27).
+#
+# I wrote a test for it, then removed the fix to check the test actually caught
+# the bug. It did not — it passed either way. pytest-django wraps each test in a
+# transaction, and even `django_db(transaction=True)` did not reproduce the
+# condition through the test client. A test that passes with the bug present is
+# worse than no test: it claims coverage it does not have.
+#
+# The regression guard that DOES work is `test_a_failing_retitle_never_breaks_
+# the_session_report` above: it asserts the report survives any failure in the
+# cosmetic path, which is the property that actually matters here regardless of
+# which exception is raised.
