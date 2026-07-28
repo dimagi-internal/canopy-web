@@ -100,7 +100,20 @@ export function RunnerDetail({
         {row('status', runner.status ?? 'unknown')}
       </div>
 
-      <RunnerDrills runnerId={runner.id} />
+      {/* Owner-only surface. The fleet list is workspace-scoped since
+          _runner_read_q, so this view can open a runner the caller did not pair;
+          drilling POSTs AS that runner and even the drill list is owner-gated, so
+          rendering the panel would produce a 404 rather than a control. Say whose
+          box it is instead — "nothing here" is indistinguishable from a broken
+          page, and naming the owner makes "ask them to declare it" a next step. */}
+      {runner.can_manage ? (
+        <RunnerDrills runnerId={runner.id} />
+      ) : (
+        <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
+          Read-only — this runner was paired by {runner.paired_by_email ?? 'someone else'}, who
+          can drill it or change what it declares.
+        </p>
+      )}
 
       {/* The fleet-wide routing matrix, expandable per agent — no cheap query for
           "agents that route to just this runner" now that assignments are

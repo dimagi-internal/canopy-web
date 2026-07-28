@@ -102,6 +102,16 @@ class RunnerOut(Schema):
     # tenant. Surfaced so the supervisor can show the meaningful owner instead of
     # implying a single-workspace serving scope.
     paired_by_email: str | None
+    # Whether THIS caller may mutate the runner (declare capabilities, retire,
+    # heartbeat/claim as it) — a property of the (caller, runner) pair, so
+    # list_runners stamps it on each row; a Ninja resolver only sees the row.
+    #
+    # Defaults True because every OTHER route returning a RunnerOut resolves its
+    # runner through `_runner_or_404`, which IS the act-on gate — reaching one of
+    # those responses at all proves the caller can manage it. Only the list can
+    # legitimately contain a runner the caller may not act on, and only the list
+    # sets this per row.
+    can_manage: bool = True
     # None when this runner has never been drilled (not "zero of zero pass") —
     # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
     drill_rollup: DrillRollup | None = None

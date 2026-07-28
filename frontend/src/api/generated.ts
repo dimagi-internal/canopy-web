@@ -2059,11 +2059,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * List my runners
-         * @description The supervisor's runner status. Filters on the exact same
-         *     _runner_visibility_q predicate _runner_or_404 gates on — a runner you
-         *     cannot act on must not be listed. Retired runners are excluded at lookup,
-         *     as everywhere else.
+         * List the fleet I can see
+         * @description The supervisor's runner status, and the fleet read every preflight makes.
+         *
+         *     Scoped by TENANT (`_runner_read_q`), not by who paired what: a member who
+         *     paired nothing used to list nothing, which reads identically to "this
+         *     workspace has no runners" and is the wrong answer to draw a conclusion from.
+         *     Each row carries `can_manage` for the ownership half. Retired runners are
+         *     excluded at lookup, as everywhere else.
          */
         readonly get: operations["apps_harness_api_list_runners"];
         readonly put?: never;
@@ -7333,6 +7336,11 @@ export interface components {
             readonly workspace: string | null;
             /** Paired By Email */
             readonly paired_by_email: string | null;
+            /**
+             * Can Manage
+             * @default true
+             */
+            readonly can_manage: boolean;
             readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
         };
         /** RunnerIn */
