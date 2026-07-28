@@ -152,7 +152,7 @@ def test_a_runner_named_only_by_a_rule_can_claim_that_source(fleet):
 def test_a_rule_never_crosses_the_tenant_boundary(fleet):
     """An outsider's runner named by a rule still claims nothing: the rule composes
     the list, the workspace gate decides who may act at all."""
-    a, cloud = fleet["agent"], fleet["cloud"]
+    a = fleet["agent"]
     outsider = get_user_model().objects.create_user(username="mal", email="mal@evil.com")
     theirs = Runner.objects.create(
         name="mal-box", kind=Runner.CLOUD, paired_by=outsider, status=Runner.ONLINE,
