@@ -202,4 +202,4 @@ def test_same_tenant_runner_syncs_and_fires(victim_ws, victim_schedule):
         content_type="application/json",
     )
     assert fired.status_code == 201, fired.content
-    assert Turn.objects.get().origin == Turn.ORIGIN_CRON
+    assert Turn.objects.get().origin == Turn.ORIGIN_CANOPY_SCHEDULER

@@ -6767,7 +6767,7 @@ export interface components {
              * @default api
              * @enum {string}
              */
-            readonly origin: "board" | "api" | "slack" | "cron" | "manual" | "email";
+            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -6805,7 +6805,7 @@ export interface components {
              * @default api
              * @enum {string}
              */
-            readonly origin: "board" | "api" | "slack" | "cron" | "manual" | "email";
+            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -7615,7 +7615,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            readonly origin: "board" | "api" | "slack" | "cron" | "manual" | "email";
+            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
             /** Idempotency Key */
             readonly idempotency_key: string;
             /**

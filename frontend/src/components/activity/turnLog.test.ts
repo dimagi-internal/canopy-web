@@ -9,7 +9,7 @@ function turn(over: Partial<Turn>): Turn {
     project: "",
     target: "eva",
     workspace_slug: "alpha",
-    origin: "manual",
+    origin: "api",
     status: "done",
     routing: "prefer_local",
     prompt: "",
@@ -37,13 +37,19 @@ describe("agentLabel", () => {
 });
 
 describe("originLabel", () => {
-  it("labels a cron turn with its fired slot from origin_ref", () => {
-    const t = turn({ origin: "cron", origin_ref: { slot: "2026-07-20T13:00:00Z" } });
-    expect(originLabel(t)).toContain("cron");
+  it("surfaces the fired slot for a scheduler turn", () => {
+    const t = turn({ origin: "canopy_scheduler", origin_ref: { slot: "2026-07-20T13:00:00Z" } });
+    expect(originLabel(t)).toContain("canopy_scheduler");
     expect(originLabel(t)).toContain("2026"); // the slot is surfaced
   });
-  it("labels a manual turn with the enqueuer email", () => {
-    expect(originLabel(turn({ origin: "manual", enqueued_by_email: "jj@dimagi.com" }))).toContain("jj@dimagi.com");
+  it("names an off-cycle scheduler run", () => {
+    // run_schedule_now is scheduler work too — WHO fired it is not a different
+    // source, so the distinction lives in origin_ref, not in origin.
+    const t = turn({ origin: "canopy_scheduler", origin_ref: { manual: true } });
+    expect(originLabel(t)).toContain("run now");
+  });
+  it("names the launcher when a human enqueued it", () => {
+    expect(originLabel(turn({ origin: "api", enqueued_by_email: "jj@dimagi.com" }))).toContain("jj@dimagi.com");
   });
   it("passes email / api through as the bare origin", () => {
     expect(originLabel(turn({ origin: "email", enqueued_by_email: null }))).toBe("email");
@@ -52,15 +58,15 @@ describe("originLabel", () => {
 });
 
 describe("matchesTurnFilters", () => {
-  const t = turn({ agent_slug: "eva", origin: "cron", status: "done" });
+  const t = turn({ agent_slug: "eva", origin: "canopy_scheduler", status: "done" });
   it("matches when all filters are null (identity)", () => {
     expect(matchesTurnFilters(t, { agent: null, origin: null, status: null })).toBe(true);
   });
   it("matches when every set filter agrees", () => {
-    expect(matchesTurnFilters(t, { agent: "eva", origin: "cron", status: "done" })).toBe(true);
+    expect(matchesTurnFilters(t, { agent: "eva", origin: "canopy_scheduler", status: "done" })).toBe(true);
   });
   it("rejects when any set filter disagrees (AND)", () => {
-    expect(matchesTurnFilters(t, { agent: "eva", origin: "manual", status: null })).toBe(false);
+    expect(matchesTurnFilters(t, { agent: "eva", origin: "api", status: null })).toBe(false);
   });
   it("filters project turns by their project:<name> agent label", () => {
     const p = turn({ agent_slug: null, project: "canopy-web" });

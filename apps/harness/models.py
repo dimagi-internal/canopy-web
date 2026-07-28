@@ -175,13 +175,41 @@ class Turn(models.Model):
     TERMINAL = {DONE, FAILED, LOST, MISSED, CANCELLED}
     NON_TERMINAL = {QUEUED, CLAIMED, RUNNING, NEEDS_HUMAN}
 
-    ORIGIN_BOARD, ORIGIN_API, ORIGIN_SLACK, ORIGIN_CRON, ORIGIN_MANUAL, ORIGIN_EMAIL, ORIGIN_DRILL = (
-        "board", "api", "slack", "cron", "manual", "email", "drill",
-    )
+    # THE SOURCE VOCABULARY (spec 2026-07-27-source-aware-runner-routing).
+    # `origin` is not just provenance any more — it is what per-agent routing
+    # rules key on, so the values are the words the operator sees in the routing
+    # UI and the turn log. `api` stays the honest catch-all; everything that had
+    # a real producer got named.
+    ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_CANOPY_WEB_CHAT = "api", "ace_web", "canopy_web_chat"
+    ORIGIN_CANOPY_SCHEDULER, ORIGIN_EMAIL, ORIGIN_SLACK = "canopy_scheduler", "email", "slack"
     ORIGIN_CHOICES = [
-        (ORIGIN_BOARD, "Board"), (ORIGIN_API, "API"), (ORIGIN_SLACK, "Slack"),
-        (ORIGIN_CRON, "Cron"), (ORIGIN_MANUAL, "Manual"), (ORIGIN_EMAIL, "Email"),
-        (ORIGIN_DRILL, "Drill"),
+        (ORIGIN_API, "API"), (ORIGIN_ACE_WEB, "ace-web"),
+        (ORIGIN_CANOPY_WEB_CHAT, "canopy-web chat"),
+        (ORIGIN_CANOPY_SCHEDULER, "canopy scheduler"),
+        (ORIGIN_EMAIL, "Email"), (ORIGIN_SLACK, "Slack"),
+    ]
+    # What an external caller may POST. The rest are set by exactly one in-repo
+    # producer each, and letting a caller spell them would let it borrow another
+    # source's routing rule. Enforced at the request boundary (schemas.Origin),
+    # NOT in TurnSpec.from_dict — server-authored dispatch specs (the schedule
+    # nag) legitimately carry `canopy_scheduler`.
+    POSTABLE_ORIGINS = {ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_EMAIL, ORIGIN_SLACK}
+    # Retired values the live fleet may still be posting. Normalized (same mapping
+    # migration 0030 applied to existing rows) rather than 422'd, so shipping this
+    # does not break Echo/Ada mid-flight. Applied BOTH at the request boundary and
+    # in enqueue_turn: TurnSpec.from_dict parses stored Item JSON with no schema in
+    # the path, and Items open across the deploy carry the old spellings. Remove
+    # one release after the fleet is confirmed clean.
+    LEGACY_ORIGIN_ALIASES = {
+        "board": ORIGIN_API, "manual": ORIGIN_API, "drill": ORIGIN_API,
+        "cron": ORIGIN_CANOPY_SCHEDULER,
+    }
+    # What a per-agent routing rule may name. Every value: a rule on a source
+    # nothing produces is inert, not harmful, and `slack` is deliberately
+    # reserved for the producer that does not exist yet.
+    ROUTABLE_ORIGINS = [
+        ORIGIN_ACE_WEB, ORIGIN_EMAIL, ORIGIN_CANOPY_SCHEDULER,
+        ORIGIN_CANOPY_WEB_CHAT, ORIGIN_SLACK, ORIGIN_API,
     ]
 
     PREFER_LOCAL, LOCAL_ONLY, ANY = "prefer_local", "local_only", "any"
@@ -233,7 +261,7 @@ class Turn(models.Model):
         "Item", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="dispatched_turns",
     )
-    origin = models.CharField(max_length=10, choices=ORIGIN_CHOICES)
+    origin = models.CharField(max_length=32, choices=ORIGIN_CHOICES)
     origin_ref = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True, default="")
     routing = models.CharField(max_length=15, choices=ROUTING_CHOICES, default=PREFER_LOCAL)
@@ -523,7 +551,7 @@ class Item(models.Model):
                   "a turn (an email poll, a manual post).",
     )
 
-    origin = models.CharField(max_length=10, choices=Turn.ORIGIN_CHOICES)
+    origin = models.CharField(max_length=32, choices=Turn.ORIGIN_CHOICES)
     origin_ref = models.JSONField(default=dict, blank=True)
 
     kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=REVIEW)

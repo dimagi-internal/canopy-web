@@ -75,7 +75,7 @@ async def test_authenticated_supervisor_connect_and_snapshot():
 async def test_authenticated_turn_tail_replay_then_live():
     def setup():
         user, agent = _seed()
-        turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+        turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
         services.append_events(turn, [{"kind": "assistant", "payload": {"text": "old"}}])
         return turn, _make_session(user)
 

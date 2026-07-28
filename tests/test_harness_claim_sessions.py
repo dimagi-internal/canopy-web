@@ -116,7 +116,7 @@ def test_busy_session_exclude_does_not_strand_project_turns():
     runner = _runner(jj, kind=Runner.CLOUD, capabilities={"projects": ["canopy-web"], "sessions": True})
     _session_turn(_session(ws, jj), "sx", status=Turn.RUNNING)  # a busy session exists
     pturn = Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL, idempotency_key="p1"
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
     claimed = services.claim_next_turn(runner)

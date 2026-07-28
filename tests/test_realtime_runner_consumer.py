@@ -73,7 +73,7 @@ async def test_enqueue_wakes_the_runner():
 
     @database_sync_to_async
     def _enqueue():
-        services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_MANUAL,
+        services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_API,
                               idempotency_key="w1", prompt="hi")
 
     await _enqueue()
@@ -88,7 +88,7 @@ async def test_claim_over_ws_returns_a_turn():
 
     @database_sync_to_async
     def _enqueue():
-        services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_MANUAL,
+        services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_API,
                               idempotency_key="c1", prompt="do the thing")
 
     await _enqueue()  # queued before connect — so no wake reaches this socket
@@ -119,7 +119,7 @@ async def test_run_turn_end_to_end_over_ws():
 
     @database_sync_to_async
     def _enqueue():
-        t, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_MANUAL,
+        t, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_API,
                                      idempotency_key="run1", prompt="go")
         return t
 
@@ -158,7 +158,7 @@ async def test_cannot_touch_a_turn_it_did_not_claim():
 
     @database_sync_to_async
     def _foreign_turn():
-        t, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_MANUAL,
+        t, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_API,
                                      idempotency_key="foreign", prompt="x")
         return str(t.id)
 

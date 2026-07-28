@@ -46,7 +46,7 @@ def test_a_projects_only_runner_claims_a_project_turn():
     ws = _ws("canopy", jj)
     runner = _runner(jj)
     turn = Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API,
         idempotency_key="p1", prompt="fix the header",
     )
 
@@ -76,7 +76,7 @@ def test_a_runner_paired_by_a_non_member_cannot_claim_another_tenants_project_tu
     attacker = _runner(mallory, name="mallory-box")
 
     Turn.objects.create(
-        project="canopy-web", workspace=victim_ws, origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=victim_ws, origin=Turn.ORIGIN_API,
         idempotency_key="p1",
     )
 
@@ -90,7 +90,7 @@ def test_a_project_turn_with_no_workspace_is_not_claimable():
     _ws("canopy", jj)
     runner = _runner(jj)
     Turn.objects.create(
-        project="canopy-web", workspace=None, origin=Turn.ORIGIN_MANUAL,
+        project="canopy-web", workspace=None, origin=Turn.ORIGIN_API,
         idempotency_key="p1",
     )
 
@@ -108,10 +108,10 @@ def test_a_busy_agent_does_not_block_a_project_turn():
 
     # Echo is mid-turn — that must serialize ECHO, and nothing else.
     Turn.objects.create(
-        agent=echo, origin=Turn.ORIGIN_BOARD, idempotency_key="a1", status=Turn.RUNNING
+        agent=echo, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING
     )
     project_turn = Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL, idempotency_key="p1"
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
     claimed = services.claim_next_turn(runner)
@@ -128,7 +128,7 @@ def test_pausing_an_agent_does_not_pause_the_repos():
     runner = _runner(jj, capabilities={"agents": ["echo"], "projects": ["canopy-web"]})
     Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     project_turn = Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL, idempotency_key="p1"
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
     claimed = services.claim_next_turn(runner, exclude_slugs=["echo"])
@@ -142,7 +142,7 @@ def test_a_runner_not_declaring_a_project_does_not_claim_it():
     ws = _ws("canopy", jj)
     runner = _runner(jj, capabilities={"projects": ["some-other-repo"]})
     Turn.objects.create(
-        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_MANUAL, idempotency_key="p1"
+        project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
     assert services.claim_next_turn(runner) is None

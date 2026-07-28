@@ -14,16 +14,21 @@ export function agentLabel(turn: Turn): string {
 }
 
 /** The Trigger column: what caused this turn.
- * - cron   → "cron · <fired slot>" (the slot lives in origin_ref.slot)
- * - manual → "manual · <who enqueued it>"
- * - email/api (or anything else) → the bare origin string */
+ * - canopy_scheduler → the fired slot, or "run now" when a human fired it
+ *   off-cycle (run_schedule_now sets origin_ref.manual and no launcher — both
+ *   are scheduler work, so the distinction lives in origin_ref, not in origin)
+ * - anything with a launcher → "<origin> · <who enqueued it>" (the old `manual`
+ *   branch — "manual" is now just an api turn, so the launcher is the signal)
+ * - otherwise → the bare origin string */
 export function originLabel(turn: Turn): string {
-  if (turn.origin === "cron") {
+  if (turn.origin === "canopy_scheduler") {
     const slot = turn.origin_ref?.slot;
-    return typeof slot === "string" ? `cron · ${slot}` : "cron";
+    if (typeof slot === "string") return `canopy_scheduler · ${slot}`;
+    if (turn.origin_ref?.manual) return "canopy_scheduler · run now";
+    return "canopy_scheduler";
   }
-  if (turn.origin === "manual" && turn.enqueued_by_email) {
-    return `manual · ${turn.enqueued_by_email}`;
+  if (turn.enqueued_by_email) {
+    return `${turn.origin} · ${turn.enqueued_by_email}`;
   }
   return turn.origin;
 }

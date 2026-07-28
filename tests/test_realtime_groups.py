@@ -30,7 +30,7 @@ def test_user_can_read_turn_by_workspace_membership():
     ws = Workspace.objects.create(slug="canopy", display_name="Canopy", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=owner)
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
 
     assert groups.user_can_read_turn(owner, turn) is True
     outsider = User.objects.create_user("no", "no@dimagi.com", "pw")
@@ -47,7 +47,7 @@ def test_user_cannot_read_workspaceless_turn():
     user_can_read_turn still has to hold for the kinds that can be NULL."""
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     turn = Turn.objects.create(
-        project="canopy-web", origin=Turn.ORIGIN_MANUAL, idempotency_key="k1"
+        project="canopy-web", origin=Turn.ORIGIN_API, idempotency_key="k1"
     )
     assert turn.workspace_id is None
     assert groups.user_can_read_turn(user, turn) is False
@@ -57,7 +57,7 @@ def test_user_cannot_read_workspaceless_turn():
 def test_superuser_can_read_any_turn():
     su = User.objects.create_superuser("admin", "admin@dimagi.com", "pw")
     agent = Agent.objects.create(slug="loner", name="Loner", workspace=a_workspace())
-    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_BOARD, idempotency_key="k1")
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
     assert groups.user_can_read_turn(su, turn) is True
 
 
