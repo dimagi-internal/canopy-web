@@ -7636,6 +7636,8 @@ export interface components {
              * @enum {string}
              */
             readonly routing: "prefer_local" | "local_only" | "any";
+            /** Runner Id */
+            readonly runner_id?: string | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {

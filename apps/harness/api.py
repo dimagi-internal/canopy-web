@@ -684,6 +684,21 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
                     )
                 raise HttpError(404, "workspace not found")
 
+    pinned = None
+    if payload.runner_id is not None:
+        # Same visibility predicate _runner_or_404 / list_runners gate on: a runner
+        # the caller cannot see must 422 as unknown, never be attachable because
+        # its UUID was guessed. Retired runners are excluded too — pinning to one
+        # strands the turn forever, since nothing can claim it.
+        pinned = (
+            Runner.objects.exclude(status=Runner.RETIRED)
+            .filter(_runner_visibility_q(request))
+            .filter(id=payload.runner_id)
+            .first()
+        )
+        if pinned is None:
+            raise HttpError(422, f"unknown or retired runner id: {payload.runner_id}")
+
     turn, created = services.enqueue_turn(
         agent=agent,
         project=payload.project,
@@ -694,6 +709,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         origin_ref=payload.origin_ref,
         routing=payload.routing,
         enqueued_by=request.user,  # the human launching a manual / composer turn
+        pinned_runner=pinned,
     )
     return Status(201 if created else 200, turn)
 
