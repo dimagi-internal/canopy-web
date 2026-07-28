@@ -20,6 +20,44 @@
 // clicks so it works while emdash is backgrounded (no foreground focus needed).
 import { chromium } from 'playwright-core';
 
+
+// WHICH terminal is "the" terminal. Injected as source into page.evaluate calls
+// so focusing and reading can never disagree about it.
+//
+// The old rule — first element with width > 0 — admitted everything: measured on
+// a live emdash, 17 .xterm nodes ALL passed it, of which 16 were 16x16 ghosts
+// parked off-screen (top: -617) for other tasks. It picked the right one only
+// because DOM order happened to put it first, which is luck, not a rule. That
+// selector also drives open-send and interrupt, so a wrong pick types a human's
+// message — or a menu answer — into someone else's pane.
+//
+// Size is the honest signal: a mounted-but-hidden pane is tiny and off-screen, a
+// real one fills the pane. Among genuinely-sized terminals (a split, or a shell
+// tab beside the agent) prefer the one that looks like a CLAUDE session, since
+// that is the only one where a prompt or a menu answer means anything; fall back
+// to the largest.
+const ACTIVE_TERM_FN = `
+function activeTerm() {
+  const real = [...document.querySelectorAll('.xterm')].filter(t => {
+    if (t.offsetParent === null) return false;
+    const r = t.getBoundingClientRect();
+    return r.width > 200 && r.height > 200 && r.bottom > 0 && r.right > 0;
+  });
+  if (!real.length) return null;
+  const byArea = real.slice().sort((a, b) => {
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return (rb.width * rb.height) - (ra.width * ra.height);
+  });
+  if (byArea.length === 1) return byArea[0];
+  const claudeish = byArea.find(t => {
+    const rows = t.querySelector('.xterm-rows');
+    const text = rows ? rows.textContent || '' : '';
+    return /[⏺✻⎿]/.test(text) || /esc to interrupt|shift\\+tab to cycle/i.test(text);
+  });
+  return claudeish || byArea[0];
+}
+`;
+
 const command = process.argv[2];
 const args = JSON.parse(process.argv[3] || '{}');
 const port = args.port || 9222;
@@ -91,16 +129,14 @@ const openTask = async (task) => {
   // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
   // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
   // task's pane) when several are mounted.
-  const focused = await page.evaluate(() => {
-    const terms = [...document.querySelectorAll('.xterm')]
-      .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
-    const term = terms[0];
+  const focused = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+    const term = activeTerm();
     const ta = (term && term.querySelector('.xterm-helper-textarea'))
       || document.querySelector('textarea[aria-label="Terminal input"]');
     if (!ta) return false;
     ta.focus();
     return true;
-  });
+  })()`);
   if (!focused) fail(`could not focus the terminal input for task "${task}"`);
 };
 
@@ -245,13 +281,12 @@ try {
     // Claude Code draws spaces as ESC[nC.
     const { task } = args;
     await openTask(task);
-    const text = await page.evaluate(() => {
-      const terms = [...document.querySelectorAll('.xterm')]
-        .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
-      const rows = terms[0] && terms[0].querySelector('.xterm-rows');
+    const text = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+      const term = activeTerm();
+      const rows = term && term.querySelector('.xterm-rows');
       if (!rows) return null;
       return [...rows.children].map(r => r.textContent).join('\n');
-    });
+    })()`);
     if (text === null) fail(`could not read the terminal for task "${task}"`);
     out({ ok: true, task, text });
 
@@ -261,6 +296,22 @@ try {
     // the prompt of a session that is NOT showing a menu.
     const { task, keys } = args;
     await openTask(task);
+    // Refuse if the pane in view is not a Claude session. emdash renders only the
+    // ACTIVE terminal at full size, so if the human has a SHELL tab selected in
+    // this task, that shell is what "largest" resolves to — and pressing "3" then
+    // Enter there RUNS something. Reading the wrong pane costs a menu; typing
+    // into it is the one outcome worth failing for, so this command alone
+    // requires a positive identification instead of falling back.
+    const isClaude = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+      const term = activeTerm();
+      const rows = term && term.querySelector('.xterm-rows');
+      const text = rows ? rows.textContent || '' : '';
+      return /[⏺✻⎿]/.test(text) || /esc to interrupt|shift\\+tab to cycle|bypass permissions/i.test(text);
+    })()`);
+    if (!isClaude) {
+      fail(`NOT_A_CLAUDE_PANE: the visible terminal for "${task}" is not a Claude session ` +
+           `(a shell tab is probably selected) — refusing to send keys into it`);
+    }
     for (const key of keys) {
       if (key === '\r') await page.keyboard.press('Enter');
       else if (key === '\u001b') await page.keyboard.press('Escape');
