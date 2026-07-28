@@ -726,6 +726,21 @@ def list_turns(
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related("agent", "claimed_by").order_by("-created_at")
     if agent:
+        # Resolve the TARGET before filtering. The tenant filter below would
+        # otherwise express a permission denial as an empty list — 200 [] — which
+        # is indistinguishable from "this agent has never run", while the sibling
+        # route /api/agents/<slug>/tasks/ answers the same denial with 404.
+        #
+        # That divergence is load-bearing, not cosmetic: agents legitimately hold
+        # different permission sets, so a fleet survey routinely asks about agents
+        # it cannot see, and every one of them read back as healthy-and-idle. Ada's
+        # `conduct` reads this endpoint per agent to spot stuck turns.
+        # (`agent_health` is incidentally safe — it resolves /api/agents/<slug>/
+        # first, which already 404s.)
+        #
+        # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
+        # be used to enumerate which tenants' agents exist (see _agent_or_404).
+        _agent_or_404(request, agent)
         qs = qs.filter(agent__slug=agent)
     if status:
         qs = qs.filter(status__in=status.split(","))
