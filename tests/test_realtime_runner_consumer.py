@@ -248,3 +248,75 @@ async def test_send_message_interjects_the_running_runner():
     assert interject["message"] == "actually, stop and do X"
     assert interject["turn_id"] == str(running.id)
     await comm.disconnect()
+
+
+# --- a SESSION turn over the socket ------------------------------------------
+# Observed on the live cloud runner 2026-07-28: a session-targeted turn claimed
+# over the WS ran and finished, but wrote ZERO durable Message rows and
+# cold-started in a per-turn scratch dir. Both because `_serialize_turn`
+# reimplemented a subset of TurnOut and lost the two fields a session turn is
+# identified by. The REST claim path (full TurnOut) was always fine, which is
+# why only the WS-preferring cloud runner hit it.
+async def test_claim_over_ws_carries_a_session_turns_identity():
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue_session_turn():
+        from apps.canopy_sessions import services as chat
+
+        runner.capabilities = {**runner.capabilities, "sessions": True}
+        runner.save(update_fields=["capabilities"])
+        session = chat.create_session(workspace=ws, created_by=user, agent=agent)
+        _msg, turn = chat.send_message(session=session, text="hello", user=user)
+        return session, turn
+
+    session, _turn = await _enqueue_session_turn()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+
+    await comm.send_json_to({"action": "claim"})
+    frame = await comm.receive_json_from(timeout=2)
+    claimed = frame["turn"]
+    assert claimed is not None, "a session-capable runner must be able to claim a session turn"
+
+    # origin_ref.chat_session_id is THE invariant identity of a conversation. The
+    # runner keys its stable per-session workdir on it (so `claude --resume`
+    # works at all) and ships the transcript back under it (so the conversation
+    # becomes durable rows). Without it both silently no-op.
+    assert claimed["origin_ref"]["chat_session_id"] == str(session.id)
+    # A session turn has agent_id NULL and project "" — its agent hangs off the
+    # session. Deriving target from the columns alone reported "".
+    assert claimed["target"] == "echo"
+    assert claimed["agent_slug"] == "echo"
+    assert claimed["workspace_slug"] == ws.slug
+    await comm.disconnect()
+
+
+async def test_ws_claim_agrees_with_the_rest_claim_payload():
+    # The two claim paths must not disagree about a turn's identity — that
+    # divergence IS this bug. Pin the overlap rather than the WS shape alone.
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue():
+        services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_ACE_WEB,
+                              idempotency_key="parity-1", prompt="p",
+                              origin_ref={"marker": "keep-me"})
+
+    await _enqueue()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "claim"})
+    claimed = (await comm.receive_json_from(timeout=2))["turn"]
+
+    @database_sync_to_async
+    def _rest_shape(turn_id):
+        from apps.harness.schemas import TurnOut
+
+        return TurnOut.from_orm(Turn.objects.get(pk=turn_id)).dict()
+
+    rest = await _rest_shape(claimed["id"])
+    for field in ("target", "agent_slug", "project", "routing", "origin", "origin_ref",
+                  "workspace_slug", "prompt"):
+        assert claimed[field] == rest[field], f"{field} disagrees: {claimed[field]!r} vs {rest[field]!r}"
+    await comm.disconnect()
