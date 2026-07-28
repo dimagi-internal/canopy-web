@@ -232,11 +232,17 @@ def _kind_allows(runner: Runner, routing: str) -> bool:
 CASCADE_GRACE_SECONDS = 60
 
 
-def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn, assignment_map: dict, now) -> bool:
-    """assignment_map: {agent_id: [(rank, Runner), ...] ordered by rank}. False when
-    this runner is not in the agent's list; True when it is and either every
-    better-ranked runner is unavailable or the turn has aged past the grace."""
-    rows = assignment_map.get(agent_id) or []
+def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
+                                 defaults: dict, priorities: dict, now) -> bool:
+    """False when this runner is not in the agent's list FOR THIS TURN'S SOURCE;
+    True when it is and either every better rank is unavailable or the turn has
+    aged past the grace.
+
+    The list is composed per (agent, origin) — a strict source rule yields a
+    single-entry list, so every other runner reads as "not in the list" and the
+    grace has nobody to promote.
+    """
+    rows = assignment_rows_for(agent_id, turn.origin, defaults, priorities)
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
         return False
@@ -245,8 +251,8 @@ def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn, assignmen
     return not any(r.is_available for rank, r in rows if rank < mine)
 
 
-def _assignment_allows(runner: Runner, turn: Turn, assignment_map: dict, now) -> bool:
-    return _assignment_allows_for_agent(runner, turn.agent_id, turn, assignment_map, now)
+def _assignment_allows(runner: Runner, turn: Turn, defaults: dict, priorities: dict, now) -> bool:
+    return _assignment_allows_for_agent(runner, turn.agent_id, turn, defaults, priorities, now)
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
@@ -557,17 +563,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     agent_ids = {t.agent_id for t in candidates if t.agent_id} | {
         t.chat_session.agent_id for t in candidates if t.chat_session_id and t.chat_session.agent_id
     }
-    assignment_map: dict = {}
-    if agent_ids:
-        # enabled=True only: a disabled row must neither claim (it's excluded from
-        # `rows`, so `mine` in _assignment_allows_for_agent comes back None) nor
-        # count as a better-ranked availability blocker for a lower enabled rank.
-        rows = (
-            RunnerAssignment.objects.filter(agent_id__in=agent_ids, enabled=True)
-            .select_related("runner").order_by("rank")
-        )
-        for row in rows:
-            assignment_map.setdefault(row.agent_id, []).append((row.rank, row.runner))
+    # One query for every candidate agent's rows, split into the default list and
+    # the per-source priorities; the per-turn composition below is in-memory.
+    # enabled=True only, filtered inside the loader: a disabled row must neither
+    # claim (it is absent from the composed list, so `mine` comes back None) nor
+    # count as a better-ranked availability blocker for a lower enabled rank.
+    defaults, priorities = load_assignment_rows(agent_ids)
     now = timezone.now()
     for turn in candidates:
         pinned_here = turn.pinned_runner_id == runner.id
@@ -575,14 +576,16 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             if not _kind_allows(runner, turn.routing):
                 continue
             if turn.agent_id:
-                if not _assignment_allows(runner, turn, assignment_map, now):
+                if not _assignment_allows(runner, turn, defaults, priorities, now):
                     continue
             if turn.chat_session_id:
                 sess = turn.chat_session
                 binding = getattr(sess, "runner_binding", None)
                 bound_to_me = binding is not None and binding.runner_id == runner.id
                 if not bound_to_me and sess.agent_id:
-                    if not _assignment_allows_for_agent(runner, sess.agent_id, turn, assignment_map, now):
+                    if not _assignment_allows_for_agent(
+                        runner, sess.agent_id, turn, defaults, priorities, now
+                    ):
                         continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
