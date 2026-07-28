@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { mintDebugSession, type MintDebugSessionResponse } from '@/api/debug'
 import { aiStatus as fetchAiStatus, aiAuthStart, aiAuthComplete, aiAuthPoll } from '@/api/ai'
+import { getPresencePreference, setPresencePreference } from '@/api/presence'
+import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 
@@ -17,6 +19,11 @@ export function SettingsPage() {
   const [tokenPreview, setTokenPreview] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Presence visibility. Defaults to visible (matches the backend default
+  // when no preference row exists yet) so the checkbox never flashes
+  // unchecked before the fetch resolves.
+  const [showPresence, setShowPresence] = useState(true)
+
   const refreshStatus = useCallback(() => {
     fetchAiStatus().then(setAiStatus).catch(() => {})
   }, [])
@@ -24,6 +31,32 @@ export function SettingsPage() {
   useEffect(() => {
     refreshStatus()
   }, [refreshStatus])
+
+  useEffect(() => {
+    getPresencePreference()
+      .then((pref) => setShowPresence(pref.show_presence))
+      .catch(() => {
+        // Presence is an enhancement — a failed fetch just leaves the
+        // default (visible) in place rather than surfacing an error here.
+      })
+  }, [])
+
+  async function togglePresence(next: boolean) {
+    setShowPresence(next) // optimistic
+    try {
+      await setPresencePreference(next)
+      // The presence socket only re-reads visibility on its next
+      // `presence.enter` (i.e. the next navigation) — tell every open tab's
+      // socket to reconnect right now so opting out takes effect
+      // immediately instead of leaving the user visible until each tab
+      // happens to navigate. See AppLayout's PresenceHeaderBadge +
+      // usePresenceReconnectNonce.
+      notifyPresencePreferenceChanged()
+    } catch {
+      // Revert the optimistic update — the change didn't actually persist.
+      setShowPresence(!next)
+    }
+  }
 
   // Poll for auth completion while awaiting code (browser might complete it)
   useEffect(() => {
@@ -189,6 +222,35 @@ export function SettingsPage() {
           </p>
         </div>
       )}
+
+      {/* Presence */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <h2 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Presence</h2>
+        <div className="flex items-start gap-3">
+          <input
+            id="presence-toggle"
+            type="checkbox"
+            checked={showPresence}
+            onChange={(e) => void togglePresence(e.target.checked)}
+            aria-describedby="presence-toggle-help"
+            className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary"
+          />
+          <div>
+            {/* The <label> holds ONLY the control's name — its content is
+                what screen readers announce as the checkbox's accessible
+                name. The help sentence lives in its own <p>, wired in via
+                aria-describedby instead of nesting inside the label, so the
+                accessible name stays "Show me as viewing" rather than the
+                whole two-sentence blob. */}
+            <label htmlFor="presence-toggle" className="block text-sm text-foreground-secondary cursor-pointer">
+              Show me as viewing
+            </label>
+            <p id="presence-toggle-help" className="text-xs text-muted-foreground">
+              When off, you can still see who else is viewing a page, but they cannot see you.
+            </p>
+          </div>
+        </div>
+      </div>
 
       <DebugAccessPanel />
     </div>

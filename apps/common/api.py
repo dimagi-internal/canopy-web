@@ -7,6 +7,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
+from apps.realtime.models import PresencePreference, show_presence_for
 
 from .schemas import (
     AiAuthCompleteIn,
@@ -18,6 +19,8 @@ from .schemas import (
     AiSwitchOut,
     HealthOut,
     MeOut,
+    PresencePreferenceIn,
+    PresencePreferenceOut,
 )
 
 ai_router = Router(auth=session_auth, tags=["ai"])
@@ -52,6 +55,32 @@ def me(request: HttpRequest) -> MeOut:
         name=(user.get_full_name() or user.username or user.email),
         avatar_url=avatar_url,
     )
+
+
+# --- /me/presence-preference/ (auth) ----------------------------
+
+
+@common_router.get(
+    "/me/presence-preference/",
+    response=PresencePreferenceOut,
+    summary="Get the current user's presence visibility preference",
+)
+def get_presence_preference(request: HttpRequest) -> PresencePreferenceOut:
+    return PresencePreferenceOut(show_presence=show_presence_for(request.user))
+
+
+@common_router.patch(
+    "/me/presence-preference/",
+    response=PresencePreferenceOut,
+    summary="Set the current user's presence visibility preference",
+)
+def set_presence_preference(
+    request: HttpRequest, payload: PresencePreferenceIn
+) -> PresencePreferenceOut:
+    PresencePreference.objects.update_or_create(
+        user=request.user, defaults={"show_presence": payload.show_presence}
+    )
+    return PresencePreferenceOut(show_presence=payload.show_presence)
 
 
 # --- AI backend (auth) -----------------------------------------

@@ -1,10 +1,14 @@
 import { useEffect, useState, useRef } from 'react'
 import { Outlet, Link, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { PresenceBadge, pageKeyFor, usePresence } from 'canopy-ui/presence'
 import { aiStatus, aiSwitch } from '@/api/ai'
 import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
 import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
+import { wsUrl } from '@/lib/wsUrl'
+import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
+import { canopyPresenceRules } from '@/presence/routes'
 
 // `tenant` items live under /w/:workspace; the rest are personal/global (root).
 const NAV_ITEMS = [
@@ -208,6 +212,27 @@ function WorkspaceSwitcher() {
   )
 }
 
+// One presence socket per tab, mounted here so it persists across
+// navigation (usePresence re-keys on pathname change without reconnecting).
+//
+// Keyed by `reconnectNonce` from the parent: the PresenceConsumer only
+// re-reads the user's visibility preference on `presence.enter` — i.e. on
+// the NEXT navigation (see apps/realtime/presence_consumer.py). A user who
+// just opted out via the Settings toggle would otherwise still show as
+// visible on whatever page they're already on, until they happen to
+// navigate somewhere. Bumping `reconnectNonce` changes this component's
+// `key`, which makes React tear down the old instance (closing its socket
+// in the `usePresence` cleanup) and mount a fresh one — a full reconnect
+// that sends a brand new `presence.enter` under the just-saved preference.
+// Simplest correct fix that needs no new imperative API on the shared
+// `usePresence` hook from canopy-ui.
+function PresenceHeaderBadge() {
+  const { pathname } = useLocation()
+  const location = pageKeyFor('canopy', pathname, canopyPresenceRules)
+  const { viewers } = usePresence({ url: wsUrl('ws/presence/'), location })
+  return <PresenceBadge viewers={viewers} />
+}
+
 export function AppLayout() {
   const { workspace } = useParams()
   return (
@@ -222,6 +247,9 @@ function AppShell() {
   const auth = useAuth()
   const { active } = useWorkspace()
   const [mobileOpen, setMobileOpen] = useState(false)
+  // See `PresenceHeaderBadge` above for why bumping this forces a full
+  // socket reconnect rather than something lighter.
+  const presenceReconnectNonce = usePresenceReconnectNonce()
 
   // Anonymous visitors only ever reach the app shell on a public link route
   // (/walkthrough/:id, /review/:id — see AuthProvider). Every nav destination
@@ -281,6 +309,7 @@ function AppShell() {
               ))}
             </nav>
             <WorkspaceSwitcher />
+            {isAuthed && <PresenceHeaderBadge key={presenceReconnectNonce} />}
             <UserMenu />
             {isAuthed && (
             <button

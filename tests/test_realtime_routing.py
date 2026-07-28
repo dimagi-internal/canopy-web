@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from apps.realtime.consumers import RunnerConsumer, SupervisorConsumer, TurnConsumer
+from apps.realtime.presence_consumer import PresenceConsumer
 from apps.realtime.routing import websocket_urlpatterns
 
 
@@ -17,7 +18,7 @@ def _match(path: str):
 
 
 def test_routes_registered():
-    assert len(websocket_urlpatterns) == 3
+    assert len(websocket_urlpatterns) == 4
 
 
 def test_turn_route_resolves():
@@ -30,6 +31,10 @@ def test_runner_route_resolves():
 
 def test_supervisor_route_resolves():
     assert _match("ws/supervisor/") is SupervisorConsumer
+
+
+def test_presence_route_resolves():
+    assert _match("ws/presence/") is PresenceConsumer
 
 
 def test_unknown_route_unmatched():

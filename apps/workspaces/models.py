@@ -16,8 +16,44 @@ from __future__ import annotations
 import secrets
 
 from django.conf import settings
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
+
+#: The charset a workspace slug may use. Identical to ace-web's `SLUG_RE`, so
+#: the two sibling deployments agree on what a tenant may be called.
+#:
+#: This is a TENANCY invariant, not a cosmetic one. A slug is an addressing
+#: token: it appears in URLs, in Channels group names, and inside the presence
+#: page key `<app>:<workspace>:<resource>`, which is parsed with a bounded
+#: `split(":", 2)`. The resource segment legitimately contains colons
+#: (`opp:bednet/run-001`, `session:<id>`), so a slug containing one is
+#: irreducibly ambiguous with a shorter workspace plus a colon-bearing
+#: resource — `canopy:acme:eu:activity` reads equally well as workspace
+#: `acme:eu` and as workspace `acme` + resource `eu:activity`. Nothing in the
+#: presence layer can disambiguate that after the fact, so such a slug must
+#: never come into existence. See apps/realtime/presence_keys.py.
+SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
+
+validate_slug = RegexValidator(
+    # `\Z`, not `$` (and not `SLUG_PATTERN` verbatim): Python's `re` special-
+    # cases `$` to also match immediately before a single trailing `\n`, so
+    # `RegexValidator`'s `.search()`-based check would let `"acme\n"` through
+    # even though the pattern "looks" fully anchored — `\Z` matches only the
+    # true end of the string, with no such exception. This is deliberately a
+    # SEPARATE pattern from the exported `SLUG_PATTERN` (which schemas.py
+    # feeds straight into Pydantic's `Field(pattern=...)`): Pydantic v2
+    # compiles `pattern=` with the Rust `regex` crate, which does not
+    # recognize `\Z` (only lowercase `\z`) and would fail to compile — and
+    # doesn't need the fix anyway, since Rust's `$` has no trailing-newline
+    # quirk to begin with. See tests/test_trailing_newline_slug.py.
+    regex=r"^[a-z0-9][a-z0-9-]*\Z",
+    message=(
+        "Slug must start with a lowercase letter or digit and contain only "
+        "lowercase letters, digits and hyphens."
+    ),
+    code="invalid_slug",
+)
 
 
 def generate_invite_token() -> str:
@@ -26,7 +62,7 @@ def generate_invite_token() -> str:
 
 
 class Workspace(models.Model):
-    slug = models.CharField(primary_key=True, max_length=64)
+    slug = models.CharField(primary_key=True, max_length=64, validators=[validate_slug])
     display_name = models.CharField(max_length=200)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -49,6 +85,23 @@ class Workspace(models.Model):
 
     def __str__(self) -> str:
         return f"{self.display_name} ({self.slug})"
+
+    def save(self, *args, **kwargs):
+        """Enforce the slug charset on the SAVE path, not just in the schema.
+
+        `WorkspaceCreateIn` guards the API, but a shell, a management command
+        or an ad-hoc script goes straight to `Workspace.objects.create()` — and
+        an out-of-charset slug minted that way is exactly as dangerous as one
+        minted over HTTP (see SLUG_PATTERN). Validation is scoped to the slug
+        so this stays a tenancy guard rather than a surprise `full_clean()` on
+        every field of an otherwise-valid save.
+        """
+        self.full_clean(
+            exclude=[f.name for f in self._meta.fields if f.name != "slug"],
+            validate_unique=False,
+            validate_constraints=False,
+        )
+        super().save(*args, **kwargs)
 
 
 class WorkspaceMembership(models.Model):
