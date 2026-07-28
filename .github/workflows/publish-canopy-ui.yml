@@ -6,7 +6,7 @@ name: Publish canopy-ui
 # Auth is OIDC Trusted Publishing — NO stored token. GitHub Actions mints a
 # short-lived OIDC token that npm trusts, so there's no NPM_TOKEN secret to leak.
 # One-time setup on npmjs: the canopy-ui package → Settings → Trusted Publisher →
-# GitHub Actions → repo `jjackson/canopy-web`, workflow `publish-canopy-ui.yml`.
+# GitHub Actions → repo `dimagi-internal/canopy-web`, workflow `publish-canopy-ui.yml`.
 #
 # Trigger by pushing a tag like `canopy-ui-v0.3.0`, or manually via the Actions
 # tab (workflow_dispatch). Bump the version in
