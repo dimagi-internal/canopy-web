@@ -134,6 +134,59 @@ async def test_idle_flag_round_trips(fake_redis):
 
 
 @pytest.mark.asyncio
+async def test_idle_merge_one_active_tab_means_present_idle_first(fake_redis):
+    """One idle connection + one active connection for the SAME user: the user
+    counts as present (idle=False) — one active tab is enough. Writes the idle
+    connection FIRST so an implementation that just keeps the last-seen value
+    (instead of ORing "not idle" across all of the user's connections) fails
+    here even though it might pass the mirrored ordering below."""
+    await presence_store.touch(
+        "ace:ws:p", user_id=7, connection_id="c-idle", name="A", email="a@x.com",
+        sub_location="", idle=True,
+    )
+    await presence_store.touch(
+        "ace:ws:p", user_id=7, connection_id="c-active", name="A", email="a@x.com",
+        sub_location="", idle=False,
+    )
+    entries = await presence_store.roster("ace:ws:p")
+    assert len(entries) == 1
+    assert entries[0]["idle"] is False
+
+
+@pytest.mark.asyncio
+async def test_idle_merge_one_active_tab_means_present_active_first(fake_redis):
+    """Mirror of the above with the connections touched in the OPPOSITE order —
+    active tab written FIRST, idle tab written SECOND. hgetall's field order is
+    not guaranteed, and a last-seen-wins implementation would pass exactly one
+    of these two orderings; both must pass for the merge to be order-independent."""
+    await presence_store.touch(
+        "ace:ws:p", user_id=7, connection_id="c-active", name="A", email="a@x.com",
+        sub_location="", idle=False,
+    )
+    await presence_store.touch(
+        "ace:ws:p", user_id=7, connection_id="c-idle", name="A", email="a@x.com",
+        sub_location="", idle=True,
+    )
+    entries = await presence_store.roster("ace:ws:p")
+    assert len(entries) == 1
+    assert entries[0]["idle"] is False
+
+
+@pytest.mark.asyncio
+async def test_idle_merge_all_connections_idle_reports_idle(fake_redis):
+    """Only when EVERY connection for the user is idle does the roster report
+    the user as idle."""
+    for conn in ("c1", "c2"):
+        await presence_store.touch(
+            "ace:ws:p", user_id=7, connection_id=conn, name="A", email="a@x.com",
+            sub_location="", idle=True,
+        )
+    entries = await presence_store.roster("ace:ws:p")
+    assert len(entries) == 1
+    assert entries[0]["idle"] is True
+
+
+@pytest.mark.asyncio
 async def test_touch_is_a_noop_without_redis(monkeypatch):
     async def _no_redis():
         return None
