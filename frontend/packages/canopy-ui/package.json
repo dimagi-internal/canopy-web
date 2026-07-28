@@ -12,6 +12,7 @@
     "./lib": "./src/lib/index.ts",
     "./ui": "./src/ui/index.ts",
     "./chat": "./src/chat/index.ts",
+    "./presence": "./src/presence/index.ts",
     "./shell": "./src/shell/index.ts",
     "./tokens": "./src/tokens/index.ts",
     "./tokens/preset.css": "./src/tokens/preset.css",
