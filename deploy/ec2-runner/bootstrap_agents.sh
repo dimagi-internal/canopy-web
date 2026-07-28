@@ -192,6 +192,81 @@ clone_or_pull() {  # url dest
   fi
 }
 
+# ── an agent's OWN plugin + provisioner ─────────────────────────────────────────
+# Cloning an agent's repo and rendering its .env is not the same as making the
+# agent USABLE. An agent whose capability set ships as a Claude Code plugin
+# (skills, slash commands AND mcpServers, declared in .claude-plugin/) has none
+# of it until the plugin is installed — step 4 only ever installed `canopy`.
+#
+# Observed on cloud-ec2-1, 2026-07-28: a turn targeting `ace` had no /ace:*
+# commands and no ace MCP tools at all, because the ACE plugin was never
+# installed. `claude plugin list` showed canopy and nothing else.
+#
+# Both helpers are declarative on the agent side: an agent OPTS IN by shipping
+# `.claude-plugin/marketplace.json` / `bin/<slug>-setup`. Nothing here knows
+# anything ACE-specific, and an agent that ships neither is untouched.
+
+install_agent_plugin() {
+  local slug="$1" dest="$2"
+  [[ -f "$dest/.claude-plugin/marketplace.json" ]] || return 0
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "$slug: claude CLI not on PATH — plugin not installed"
+    return 0
+  fi
+  # Directory source: the marketplace IS the clone, so `git pull` above is also
+  # how the plugin updates. No second copy to keep in sync.
+  if claude plugin marketplace list 2>/dev/null | grep -qE "(^|[[:space:]])${slug}\$"; then
+    ok "$slug: marketplace already added"
+  else
+    claude plugin marketplace add "$dest" >/dev/null 2>&1 \
+      && ok "$slug: added marketplace from $dest" \
+      || { warn "$slug: claude plugin marketplace add failed"; return 0; }
+  fi
+  if claude plugin list 2>/dev/null | grep -q "${slug}@${slug}"; then
+    ok "$slug: plugin already installed"
+  else
+    claude plugin install "${slug}@${slug}" >/dev/null 2>&1 \
+      && ok "$slug: installed plugin ${slug}@${slug}" \
+      || warn "$slug: claude plugin install ${slug}@${slug} failed"
+  fi
+}
+
+run_agent_provisioner() {
+  local slug="$1" dest="$2"
+  local setup="$dest/bin/${slug}-setup"
+  [[ -x "$setup" || -f "$setup" ]] || return 0
+
+  # The agent's own installer knows what it needs (service-account key documents,
+  # npm deps, CLI jars). Reimplementing any of that here would fork it.
+  local data_dir="$HOME/.claude/plugins/data/${slug}-${slug}"
+  mkdir -p "$data_dir"
+  if CLAUDE_PLUGIN_DATA="$data_dir" timeout 900 bash "$setup" --skip-doctor >/dev/null 2>&1; then
+    ok "$slug: ran bin/${slug}-setup"
+  else
+    warn "$slug: bin/${slug}-setup failed or timed out — agent may be partially ready"
+  fi
+
+  # A DIRECTORY-source plugin runs from the clone, not from
+  # plugins/cache/<mp>/<plugin>/<version>/ — so the cache-path derivation an MCP
+  # server uses to find its data dir yields nothing, and it falls back to
+  # <plugin-root>/.gws-sa-key.json. The provisioner wrote the canonical data-dir
+  # copy (right for a git-source install); mirror it to the fallback so BOTH
+  # layouts resolve.
+  #
+  # Without this the MCP server starts, exposes its tools, and every call fails
+  # with Google's "Method doesn't allow unregistered callers" — which reads like
+  # a permissions problem and is really a path problem. Verified: staging this
+  # file is what turned that error into a successful Drive listing.
+  if [[ -f "$data_dir/gws-sa-key.json" ]]; then
+    install -m 600 "$data_dir/gws-sa-key.json" "$dest/.gws-sa-key.json" 2>/dev/null \
+      && ok "$slug: staged service-account key at the plugin root" \
+      || warn "$slug: could not stage the service-account key at $dest"
+  fi
+  if [[ -f "$data_dir/.env" && ! -f "$dest/.env" ]]; then
+    install -m 600 "$data_dir/.env" "$dest/.env" 2>/dev/null || true
+  fi
+}
+
 bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
@@ -227,6 +302,9 @@ bootstrap_one_agent() {
   else
     warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
   fi
+
+  install_agent_plugin "$slug" "$dest"
+  run_agent_provisioner "$slug" "$dest"
 
   # The gog OAuth-client credential FILE (not an env var): a single 1Password
   # field materialized with native `op read` (no second injector). The shared
@@ -276,8 +354,38 @@ bootstrap_one_agent() {
   READY_AGENTS+=("$slug")
 }
 
+# Plugin MCP servers are declared as `npx tsx <plugin-root>/mcp/<server>.ts`, and
+# Claude Code spawns them with cwd set to the TURN's working directory — which,
+# for a session turn, is a bare scratch dir with no node_modules. `npx` then
+# tries to fetch tsx from the registry on every server start and races Claude
+# Code's ~30s MCP connection timeout, so the tools silently never appear ("those
+# MCP servers are still connecting"). Same trap ace-web recorded in
+# docs/learnings/mcp-bootstrap-container-traps.md.
+#
+# A global tsx makes that resolution instant (measured on this box: 0.46s from a
+# cwd with no node_modules, versus a registry install). Idempotent and cheap, so
+# it runs on every bootstrap rather than only at instance creation — cloud-init's
+# runcmd fires once per INSTANCE, and this file has to work on the boxes already
+# running.
+ensure_plugin_runtime() {
+  command -v npm >/dev/null 2>&1 || { warn "npm not on PATH — skipping tsx"; return 0; }
+  if command -v tsx >/dev/null 2>&1; then
+    ok "tsx already on PATH (plugin MCP servers resolve without a registry fetch)"
+    return 0
+  fi
+  # --prefix "$HOME/.local", NOT a bare `npm i -g`: this script runs as the
+  # SERVICE user (ubuntu), which cannot write /usr/lib/node_modules, so a plain
+  # global install fails with EACCES. $HOME/.local/bin is already first on the
+  # runner unit's PATH (see runner.cfn.yaml), so a binary here is found by the
+  # `npx` that plugin MCP servers spawn.
+  npm i -g --prefix "$HOME/.local" tsx >/dev/null 2>&1 \
+    && ok "installed tsx into $HOME/.local (plugin MCP servers resolve locally)" \
+    || warn "could not install tsx — plugin MCP servers may time out connecting"
+}
+
 step3_agents() {
   log "step 3: per-agent clone + provision + gmail token"
+  ensure_plugin_runtime
   mkdir -p "$AGENT_ROOT"
   local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
   for slug in "${slugs[@]}"; do
