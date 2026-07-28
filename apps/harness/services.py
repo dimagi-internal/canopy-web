@@ -172,6 +172,52 @@ def sweep_expired_leases() -> int:
     return count
 
 
+def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
+    """Load every ENABLED assignment row for these agents in one query, split into
+    the two shapes routing needs: the per-agent default list (rank-ordered) and the
+    per-(agent, source) priority row.
+
+    enabled=False is filtered here, once, so a disabled row can neither claim nor
+    count as a better-ranked availability blocker — and a disabled SOURCE row means
+    the rule is simply off, falling back to the default list.
+    """
+    defaults: dict = {}
+    priorities: dict = {}
+    if not agent_ids:
+        return defaults, priorities
+    rows = (
+        RunnerAssignment.objects.filter(agent_id__in=agent_ids, enabled=True)
+        .select_related("runner").order_by("rank")
+    )
+    for row in rows:
+        if row.source:
+            priorities[(row.agent_id, row.source)] = row
+        else:
+            defaults.setdefault(row.agent_id, []).append((row.rank, row.runner))
+    return defaults, priorities
+
+
+def assignment_rows_for(agent_id, origin: str, defaults: dict, priorities: dict) -> list:
+    """THE ordered runner list for one (agent, source) pair — what the availability
+    cascade then walks. Pure: no queries, no clock.
+
+    Ranks are renumbered from 0 because the cascade compares them to decide who
+    blocks whom; a source row's stored rank is meaningless (one row per source) and
+    leaving it would put two runners at rank 0, each apparently blocking the other.
+    """
+    base = defaults.get(agent_id) or []
+    row = priorities.get((agent_id, origin))
+    if row is None:
+        return [(i, r) for i, (_rank, r) in enumerate(base)]
+    if row.strict:
+        # That runner or nothing: the turn waits rather than degrading. Everyone
+        # else is absent from the list, so the wedged-runner grace cannot promote
+        # them either — which is what makes "and nowhere else" actually hold.
+        return [(0, row.runner)]
+    rest = [r for _rank, r in base if r.id != row.runner_id]
+    return [(0, row.runner)] + [(i + 1, r) for i, r in enumerate(rest)]
+
+
 def _kind_allows(runner: Runner, routing: str) -> bool:
     if routing == Turn.LOCAL_ONLY:
         return runner.kind in (Runner.EMDASH, Runner.REMOTE)
