@@ -651,11 +651,39 @@ class RunnerAssignment(models.Model):
     # lower rank. Distinct from removal — the operator's "x" toggles this
     # instead of deleting the row, so re-enabling doesn't lose the rank.
     enabled = models.BooleanField(default=True)
+    # THE SOURCE RULE (spec 2026-07-27). "" = this row belongs to the agent's
+    # DEFAULT ordered list (the pre-existing behaviour). Non-empty = this row is
+    # the single priority runner for that source, and `rank` is meaningless on it
+    # (the uniqueness constraint below allows exactly one). The column is kept
+    # rather than dropped so an ordered per-source list needs no second migration.
+    #
+    # Note `enabled` then means two things across the two row kinds: a runner
+    # switched off in the default list is still live for any source that names
+    # it, because the rule is its own row with its own toggle. Pinned by
+    # tests/test_source_rules.py and stated in the Runners-tab UI.
+    source = models.CharField(max_length=32, blank=True, default="")
+    # Only meaningful on a source row. False: the priority runner goes first and
+    # the default list follows beneath it. True: that runner or nothing — the turn
+    # waits rather than degrading, which is the point for a source whose work can
+    # only happen on one box (mailbox credentials, local files).
+    strict = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["agent_id", "rank"]
         constraints = [
-            models.UniqueConstraint(fields=["agent", "runner"], name="one_assignment_per_agent_runner"),
+            # One DEFAULT row per runner (what one_assignment_per_agent_runner
+            # meant before source rules existed) …
+            models.UniqueConstraint(
+                fields=["agent", "runner"],
+                condition=models.Q(source=""),
+                name="one_default_assignment_per_agent_runner",
+            ),
+            # … and exactly one priority runner per (agent, source).
+            models.UniqueConstraint(
+                fields=["agent", "source"],
+                condition=~models.Q(source=""),
+                name="one_priority_runner_per_agent_source",
+            ),
         ]
 
 
