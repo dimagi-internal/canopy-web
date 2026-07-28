@@ -30,6 +30,7 @@ from .schemas import (
     AttachmentOut,
     BackfillStateOut,
     MessageOut,
+    MenuAnswerIn,
     MessagePageOut,
     PlaceIn,
     SendIn,
@@ -341,6 +342,23 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return turn
+
+
+@router.post(
+    "/{session_id}/answer-menu", response=dict,
+    summary="Answer the dialog an agent is blocked on",
+)
+def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswerIn):
+    """Approve or refuse a permission prompt from the web.
+
+    A refusal is a 200 with `ok:false` and a stable reason, not a 4xx: the dialog
+    can go stale between the phone rendering it and a thumb reaching it, and the
+    runner can go offline in between — both ordinary, neither a client error.
+    Same shape `reset` uses for the same reason.
+    """
+    session = _session_or_404(request, session_id)
+    outcome = services.answer_menu(session=session, option=payload.option)
+    return {"ok": outcome == "sent", "reason": "" if outcome == "sent" else outcome}
 
 
 @router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")

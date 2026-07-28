@@ -104,3 +104,22 @@ def test_an_activity_event_becomes_a_status_frame():
         frames = stream_map.turn_event_to_frames(
             {"kind": kind, "seq": -1, "payload": {}}, lambda seq: f"seq:{seq}")
         assert frames == [{"event": "session.activity", "data": {"state": state}}]
+
+
+def test_a_blocked_activity_carries_its_menu():
+    """"blocked" alone says somebody is wanted, not what is being asked — and
+    without the question and its options there is nothing a phone can answer."""
+    menu = {"question": "Do you want to proceed?", "title": "Bash command",
+            "body": "rm target.txt",
+            "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]}
+    frames = turn_event_to_frames(
+        {"kind": "activity:blocked", "seq": -1, "payload": {"menu": menu}}, _rid)
+    assert frames == [{"event": "session.activity",
+                       "data": {"state": "blocked", "menu": menu}}]
+
+
+def test_an_activity_without_a_menu_is_unchanged():
+    """A runner with no CDP, or one whose read failed, still reports the state —
+    the frame must not grow a null menu the client has to special-case."""
+    frames = turn_event_to_frames({"kind": "activity:blocked", "seq": -1, "payload": {}}, _rid)
+    assert frames == [{"event": "session.activity", "data": {"state": "blocked"}}]

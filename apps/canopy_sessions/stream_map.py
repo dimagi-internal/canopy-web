@@ -25,8 +25,15 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # now" — which nothing else could: between a prompt and the first tool
         # call Claude is thinking and emits no content at all, so the session read
         # as idle for the most interesting part of a turn.
-        return [{"event": "session.activity",
-                 "data": {"state": kind.split(":", 1)[1]}}]
+        data = {"state": kind.split(":", 1)[1]}
+        # A "blocked" event may carry the dialog the agent is waiting on. The
+        # runner reads it off the session's screen, because a hook can say
+        # somebody is wanted but never what is being asked — and without the
+        # question and its options, "blocked" is not answerable from a phone.
+        menu = payload.get("menu")
+        if isinstance(menu, dict) and menu:
+            data["menu"] = menu
+        return [{"event": "session.activity", "data": data}]
     if kind == "user":
         # Text a human typed straight into emdash. It reaches no web client any
         # other way — there was no optimistic echo, because no web client sent

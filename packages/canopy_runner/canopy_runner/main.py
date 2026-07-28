@@ -29,7 +29,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import chat_bridge, emdash, hook_install, transcript
+from . import cdp_control, chat_bridge, emdash, hook_install, menu, transcript
 from .client import Client, ClientError
 import canopy_transcript as transcript_core
 
@@ -532,6 +532,79 @@ def _resolve_hook_session(cwd: str) -> str:
     return ""
 
 
+def _hook_task_name(cwd: str) -> str:
+    """The emdash task backing this cwd, or "" — the handle CDP drives by."""
+    if not cwd:
+        return ""
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
+    if parsed is None:
+        return ""
+    project, task = parsed
+    for candidate in transcript_core.emdash_task_candidates(task):
+        if _hook_sessions.get((project, candidate)):
+            return candidate
+    return ""
+
+
+# The two functions below take the CDP module as an argument so the whole
+# chain — screen in, keystrokes out — is testable against a captured terminal
+# with no emdash, no browser and no Playwright. The `cdp_control`-bound wrappers
+# under them are what the runner actually calls.
+
+
+def _read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
+    """The dialog on `task`'s screen as a plain dict, or None."""
+    if not task:
+        return None
+    found = menu.find_menu(cdp.read_terminal(task, port=cdp_port))
+    if found is None:
+        return None
+    return {
+        "question": found.question,
+        "title": found.title,
+        "body": found.body,
+        "selected": found.selected,
+        "options": [{"number": o.number, "label": o.label} for o in found.options],
+    }
+
+
+def _answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> None:
+    """Press a human's answer into `session_key`'s terminal.
+
+    Re-reads the screen FIRST and refuses an option that is not on it. A menu can
+    go stale between the phone rendering it and a thumb reaching it — and a
+    NUMBER typed at a session no longer showing a dialog lands in its prompt,
+    where the agent reads a bare "1" as an instruction. Double-taps and two
+    people answering at once both land here.
+    """
+    current = menu.find_menu(cdp.read_terminal(session_key, port=cdp_port))
+    if current is None:
+        logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
+        return
+    number = None if option is None else int(option)
+    if not current.allows(number):
+        logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
+                       number, session_key, len(current.options))
+        return
+    cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port)
+    logger.info("answered the dialog on %s with %s", session_key,
+                "Esc" if number is None else f"option {number}")
+
+
+def _read_hook_menu(cwd: str, *, cdp_port: int):
+    """The dialog on this session's screen, or None.
+
+    Only called when a session reports BLOCKED: a hook can say an agent wants a
+    human but never what it is asking, and emdash owns the session, so the
+    question and its options exist only on the terminal.
+    """
+    return _read_hook_menu_from(cdp_control, _hook_task_name(cwd), cdp_port=cdp_port)
+
+
+def _answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> None:
+    _answer_menu_with(cdp_control, session_key, option, cdp_port=cdp_port)
+
+
 def _start_hook_listener(cfg: Config, client: Client):
     """Install the user-level hook and start the loopback listener.
 
@@ -553,6 +626,7 @@ def _start_hook_listener(cfg: Config, client: Client):
         port=cfg.hook_port, nonce=nonce,
         resolve_session=_resolve_hook_session,
         forward=lambda: cfg.forward_sessions,
+        read_menu=lambda cwd: _read_hook_menu(cwd, cdp_port=cfg.cdp_port),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(
@@ -928,6 +1002,17 @@ def main() -> None:
     def _on_control(msg: dict) -> None:
         if msg.get("type") == "cancel" and msg.get("turn_id"):
             CANCELLED_TURNS.add(str(msg["turn_id"]))
+        elif msg.get("type") == "menu_answer" and msg.get("session_key"):
+            # A human answered, from the web, the dialog an agent is blocked on.
+            # Runs on the wake-listener thread and must never raise: this socket
+            # also carries cancel and wake, and losing it would cost the runner
+            # its liveness for a keystroke.
+            try:
+                _answer_menu(str(msg["session_key"]), msg.get("option"),
+                             cdp_port=cfg.cdp_port)
+            except Exception:  # noqa: BLE001
+                logger.warning("menu answer failed for %s", msg.get("session_key"),
+                               exc_info=True)
 
     waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id, on_control=_on_control)
     wake_on = waker.start()

@@ -11,6 +11,7 @@ export type {
   MessageStatus,
   Draft,
   Participant,
+  SessionMenu,
   SessionState,
   WsAction,
   WsEvent,
@@ -43,6 +44,7 @@ export {
 
 // Presentational components
 export { ChatPanel, type ChatPanelProps } from "./ChatPanel";
+export { MenuPrompt, type MenuPromptProps } from "./MenuPrompt";
 export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";

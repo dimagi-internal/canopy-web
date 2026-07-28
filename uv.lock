@@ -428,6 +428,23 @@ dependencies = [
 requires-dist = [{ name = "croniter", specifier = ">=6.0,<7.0" }]
 
 [[package]]
+name = "canopy-runner"
+version = "0.1.0"
+source = { editable = "packages/canopy_runner" }
+dependencies = [
+    { name = "canopy-cron" },
+    { name = "canopy-transcript" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "canopy-cron", editable = "packages/canopy_cron" },
+    { name = "canopy-transcript", editable = "packages/canopy_transcript" },
+    { name = "websocket-client", marker = "extra == 'realtime'", specifier = ">=1.8,<2" },
+]
+provides-extras = ["realtime"]
+
+[[package]]
 name = "canopy-transcript"
 version = "0.1.0"
 source = { editable = "packages/canopy_transcript" }
@@ -462,6 +479,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "canopy-runner" },
     { name = "daphne" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -477,6 +495,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.34,<2.0" },
     { name = "canopy-agent-runs", editable = "packages/canopy_agent_runs" },
     { name = "canopy-cron", editable = "packages/canopy_cron" },
+    { name = "canopy-runner", marker = "extra == 'dev'", editable = "packages/canopy_runner" },
     { name = "canopy-transcript", editable = "packages/canopy_transcript" },
     { name = "channels", specifier = ">=4.1,<5.0" },
     { name = "channels-redis", specifier = ">=4.2,<5.0" },

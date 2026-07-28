@@ -584,3 +584,45 @@ describe("blocked — the agent is waiting on YOU", () => {
     expect(after.activity).toBe("blocked");
   });
 });
+
+describe("the dialog an agent is blocked on", () => {
+  const MENU = {
+    question: "Do you want to proceed?",
+    title: "Bash command",
+    body: "rm target.txt",
+    options: [{ number: 1, label: "Yes" }, { number: 2, label: "No" }],
+  };
+
+  it("is carried with the blocked state", () => {
+    const state = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked", menu: MENU },
+    });
+    expect(state.menu?.options).toHaveLength(2);
+    expect(state.menu?.body).toBe("rm target.txt");
+  });
+
+  it("is dropped when the agent starts producing again", () => {
+    // Buttons that answer a dialog no longer on screen send a stray keystroke
+    // into the prompt — worse than showing nothing.
+    const blocked = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked", menu: MENU },
+    });
+    const after = sessionReducer(blocked, {
+      event: "chat.tool_use",
+      data: { parent_message_id: null, tool_message_id: "m1", turn_index: 3, block: { id: "t1" } },
+    });
+    expect(after.activity).toBe("working");
+    expect(after.menu).toBeUndefined();
+  });
+
+  it("is cleared by a later activity frame that has no menu", () => {
+    const blocked = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked", menu: MENU },
+    });
+    const idle = sessionReducer(blocked, { event: "session.activity", data: { state: "idle" } });
+    expect(idle.menu).toBeUndefined();
+  });
+});

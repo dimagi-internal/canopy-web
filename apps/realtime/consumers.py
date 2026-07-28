@@ -214,6 +214,17 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "desired": message.get("desired"),
         })
 
+    async def runner_menu_answer(self, message):
+        # runner.{id} group_send type="runner.menu_answer" — a human answered, from
+        # the web, the dialog an agent is blocked on. The runner presses the key in
+        # the session's terminal; the server never touches a terminal itself.
+        await self.send_json({
+            "type": "menu_answer",
+            "session_id": message.get("session_id"),
+            "session_key": message.get("session_key"),
+            "option": message.get("option"),
+        })
+
     async def receive_json(self, content, **kwargs):
         action = content.get("action")
         if action == "claim":

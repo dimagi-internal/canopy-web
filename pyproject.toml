@@ -58,6 +58,14 @@ dev = [
     # hang into a normal failed-test report.
     "pytest-timeout>=2.3,<3.0",
     "ruff>=0.4,<1.0",
+    # TEST-ONLY, and only for one suite: tests/test_menu_roundtrip_e2e.py runs
+    # the blocked-agent dialog across every seam — runner reads a screen, server
+    # maps the event, answer becomes keystrokes. Neither package can import the
+    # other by design (the runner is Django-free; the server does not depend on
+    # the runner), so the one test that spans both needs the runner present.
+    # Deliberately in `dev` and nowhere near the runtime dependency list: this
+    # must never become a way for apps/* to import canopy_runner.
+    "canopy-runner",
     "schemathesis>=3.30,<4.0",
     # dev-only: channels.testing.WebsocketCommunicator imports daphne's live
     # test harness at package import time. Prod serves WS via uvicorn, not daphne.
@@ -80,6 +88,8 @@ canopy-cron = { path = "packages/canopy_cron", editable = true }
 # The transcript core: in-repo, standalone, installable. Both runners depend on it
 # directly; the server uses it for the ordinal scheme.
 canopy-transcript = { path = "packages/canopy_transcript", editable = true }
+# Test-only (see the dev extra): the cross-seam menu test imports it.
+canopy-runner = { path = "packages/canopy_runner", editable = true }
 
 [tool.setuptools.packages.find]
 include = ["apps*", "config*"]

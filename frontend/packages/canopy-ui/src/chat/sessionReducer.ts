@@ -29,7 +29,10 @@ const UNBLOCKING_FRAMES = new Set([
 
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
   if (prev.activity === "blocked" && UNBLOCKING_FRAMES.has(frame.event)) {
-    prev = { ...prev, activity: "working" };
+    // Dropping the menu with the state matters as much as the state itself —
+    // the dialog is gone, and buttons that answer a gone dialog send a stray
+    // keystroke into the prompt.
+    prev = { ...prev, activity: "working", menu: undefined };
   }
   switch (frame.event) {
     case "session.state":
@@ -68,7 +71,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     }
 
     case "session.activity":
-      return { ...prev, activity: frame.data.state };
+      // The menu is cleared unless this frame carries one: a stale dialog is
+      // worse than none, because its buttons would answer a prompt that is no
+      // longer on screen.
+      return { ...prev, activity: frame.data.state, menu: frame.data.menu };
 
     case "chat.user_message": {
       // Someone typed into emdash, OR into this page. Both reach here, and that
