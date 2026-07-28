@@ -19,12 +19,18 @@ name: Deploy to Labs (AWS)
 # rolls the service.
 #
 # Required GitHub secrets (see deploy/aws + Phase 2 of the labs migration):
-#   AWS_ROLE_ARN         — the shared github-actions-labs-deploy OIDC role
-#                          (trust policy must allow repo:dimagi-internal/canopy-web:*)
+#   AWS_ROLE_ARN         — the shared github-actions-labs-deploy OIDC role.
+#                          Since this repo was transferred into the org (2026-07-28)
+#                          GitHub mints its OIDC token with an IMMUTABLE subject —
+#                          repo:dimagi-internal@272902307/canopy-web@1193139337:* —
+#                          NOT the name-based repo:dimagi-internal/canopy-web:*.
+#                          The trust policy must allow the immutable form; the
+#                          name-based one silently fails with "Not authorized to
+#                          perform sts:AssumeRoleWithWebIdentity". Check the live
+#                          value with:
+#                            gh api repos/dimagi-internal/canopy-web/actions/oidc/customization/sub
 #   LABS_SUBNET          — a labs VPC subnet id (for the one-off migration task)
 #   LABS_SECURITY_GROUP  — the labs security group id
-#   CANOPY_PLUGIN_TOKEN  — read-only token for the private dimagi-internal/canopy plugin
-#                          (optional; absent → /system shows an empty catalog)
 
 on:
   workflow_dispatch:
@@ -96,24 +102,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Vendor the private canopy plugin into the build context so apps.system
-      # can render the /system catalog. Absent → /system degrades to an empty
-      # catalog (the build still succeeds). Mirrors the retired deploy.sh step;
-      # the ./canopy dir is picked up by the Dockerfile's `COPY . .`.
+      # Vendor the canopy plugin into the build context so apps.system can
+      # render the /system catalog. canopy is PUBLIC (dimagi-internal/canopy), so
+      # this needs no credentials — it used to clone via a CANOPY_PLUGIN_TOKEN PAT
+      # back when the repo was private. Clone failure → /system degrades to an
+      # empty catalog (the build still succeeds). Mirrors the retired deploy.sh
+      # step; the ./canopy dir is picked up by the Dockerfile's `COPY . .`.
       - name: Vendor canopy plugin
-        env:
-          CANOPY_PLUGIN_TOKEN: ${{ secrets.CANOPY_PLUGIN_TOKEN }}
         run: |
           rm -rf canopy
-          if [ -n "$CANOPY_PLUGIN_TOKEN" ]; then
-            if git clone --depth 1 "https://x-access-token:${CANOPY_PLUGIN_TOKEN}@github.com/dimagi-internal/canopy.git" canopy; then
-              rm -rf canopy/.git
-              echo "Vendored canopy plugin into build context."
-            else
-              echo "::warning::canopy plugin clone failed — /system will show an empty catalog."
-            fi
+          if git clone --depth 1 https://github.com/dimagi-internal/canopy.git canopy; then
+            rm -rf canopy/.git
+            echo "Vendored canopy plugin into build context."
           else
-            echo "::warning::CANOPY_PLUGIN_TOKEN not set — /system will show an empty catalog."
+            echo "::warning::canopy plugin clone failed — /system will show an empty catalog."
           fi
 
       - uses: aws-actions/configure-aws-credentials@v6
