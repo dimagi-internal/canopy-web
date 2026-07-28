@@ -112,4 +112,19 @@ describe('usePresence', () => {
     expect(result.current.viewers).toEqual([])
     expect(FakeSocket.last).toBeNull()
   })
+
+  it('swallows a synchronous WebSocket constructor throw and stays on an empty roster', () => {
+    class ThrowingSocket {
+      constructor() {
+        throw new Error('mixed content: refused to connect to insecure WebSocket')
+      }
+    }
+    vi.stubGlobal('WebSocket', ThrowingSocket as unknown as typeof WebSocket)
+
+    let hook!: ReturnType<typeof renderHook<{ viewers: unknown[] }, void>>
+    expect(() => {
+      hook = renderHook(() => usePresence({ url: 'ws://x/ws/presence/', location: LOC }))
+    }).not.toThrow()
+    expect(hook.result.current.viewers).toEqual([])
+  })
 })

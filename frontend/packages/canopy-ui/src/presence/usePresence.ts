@@ -57,7 +57,18 @@ export function usePresence({ url, location }: UsePresenceOptions): { viewers: V
     }
 
     function open() {
-      const sock = new WebSocket(url)
+      let sock: WebSocket
+      try {
+        sock = new WebSocket(url)
+      } catch {
+        // Synchronous construction failure (malformed URL, mixed-content
+        // scheme mismatch, …): treat exactly like any other connection
+        // failure — stay on the empty roster and retry on the normal
+        // reconnect cadence, never propagate.
+        setViewers([])
+        if (!closedByCleanup) reconnectTimer = setTimeout(open, RECONNECT_MS)
+        return
+      }
       wsRef.current = sock
       sock.onopen = () => {
         enter()
