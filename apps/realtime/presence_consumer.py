@@ -10,7 +10,10 @@ Two rules carry the security weight of this surface:
    could observe who is viewing a workspace they cannot access. Membership
    is checked LIVE on every `presence.enter`, never cached for the life of
    the connection: a long-lived socket must not keep granting access to a
-   workspace the user has since been removed from.
+   workspace the user has since been removed from. A REJECTED enter (bad
+   key or lost membership) also tears down any group the connection
+   currently holds — otherwise a member revoked mid-session would keep
+   receiving their old workspace's roster broadcasts until they disconnect.
 2. Visibility is enforced HERE, not on the client. An opted-out user joins
    the group (so they still see others) but is never written to Redis, so
    no client — tampered, stale, or otherwise — can expose them. Like
@@ -45,7 +48,7 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
         self.sub_location = ""
         self.visible = False
         self.idle = False
-        self._last_broadcast_idle = None
+        self._last_broadcast_idle = False
 
         user = self.scope.get("user")
         if not getattr(user, "is_authenticated", False):
@@ -77,7 +80,12 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
 
         parsed = presence_keys.parse_page_key(page_key)
         if parsed is None:
-            return  # malformed — drop silently, never confirm key shapes
+            # Malformed — drop silently, never confirm key shapes. Still
+            # tear down any group this connection currently holds: a
+            # rejected enter must never leave a stale subscription in place
+            # (see the non-member branch below for why this matters).
+            await self._leave_current()
+            return
         app, workspace, resource = parsed
         # Rebuild the canonical form from the (whitespace-stripped) parsed
         # parts rather than trusting the raw client string — parse_page_key
@@ -91,7 +99,18 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
                 self.user, workspace
             )
             if not member:
-                return  # not a member — drop silently, no existence leak
+                # Not a member — drop silently, no existence leak. ALSO tear
+                # down whatever group this connection currently holds:
+                # without this, a member whose access to their CURRENT
+                # workspace is revoked mid-session keeps receiving that
+                # workspace's roster broadcasts (and stays writeable in its
+                # Redis hash) until they disconnect or the TTL expires, even
+                # though every subsequent enter is correctly rejected from
+                # here on. No frame is sent back to this client either way —
+                # the departure broadcast this triggers only reaches the
+                # OTHER viewers of the page being left.
+                await self._leave_current()
+                return
 
         if canonical_key != self.page_key:
             await self._leave_current()
@@ -102,7 +121,7 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
             # page must not carry over "idle" from whatever page the user
             # was previously parked on.
             self.idle = False
-            self._last_broadcast_idle = None
+            self._last_broadcast_idle = False
 
         # Re-read fresh on every enter (see module docstring rule 2) — this
         # is the ONLY place visibility is (re-)computed for this connection.

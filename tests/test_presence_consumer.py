@@ -282,3 +282,175 @@ async def test_navigating_to_a_new_page_removes_you_from_the_old_rosters(member_
     assert len(await presence_store.roster("canopy:test-ws:opp:b")) == 1
 
     await communicator.disconnect()
+
+
+# -- Fix-round-2 regressions: each of these must fail if its corresponding
+# fix is reverted. See task-7-report.md's "Fix round 2" section for the
+# mutant-by-mutant verification that they actually do. --
+
+
+@pytest.mark.asyncio
+async def test_visibility_is_re_read_on_every_enter_not_cached_at_connect(member_user):
+    """Regression for a connect-time `self.visible` snapshot: opting out
+    mid-connection must stop future writes on the very next enter, not just
+    at the next reconnect."""
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:a",
+        "sub_location": "Page A",
+    })
+    msg_a = await communicator.receive_json_from(timeout=2)
+    assert [v["email"] for v in msg_a["data"]["viewers"]] == [member_user.email]
+
+    await _acreate_pref(member_user)  # opt out mid-connection, no reconnect
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:b",
+        "sub_location": "Page B",
+    })
+    msg_b = await communicator.receive_json_from(timeout=2)
+    assert msg_b["data"]["viewers"] == []
+
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_membership_is_re_checked_on_every_enter_not_cached_at_connect(member_user):
+    """Regression for a connect-time `self.workspaces` snapshot: a
+    membership revoked mid-connection must reject the very next enter into
+    that workspace, not just the next reconnect."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:a",
+        "sub_location": "Page A",
+    })
+    await communicator.receive_json_from(timeout=2)  # still a member here
+
+    await database_sync_to_async(
+        WorkspaceMembership.objects.filter(workspace_id="test-ws", user=member_user).delete
+    )()
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:b",
+        "sub_location": "Page B",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+
+    from apps.realtime import presence_store
+
+    assert await presence_store.roster("canopy:test-ws:opp:b") == []
+
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_member_is_torn_down_from_their_old_page_too(member_user):
+    """Regression for the teardown-on-reject fix: a rejected enter (here,
+    lost membership) must leave the connection's PREVIOUS group as well —
+    otherwise a revoked member keeps receiving that workspace's roster
+    broadcasts until they disconnect or the Redis TTL expires."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:a",
+        "sub_location": "Page A",
+    })
+    await communicator.receive_json_from(timeout=2)
+
+    await database_sync_to_async(
+        WorkspaceMembership.objects.filter(workspace_id="test-ws", user=member_user).delete
+    )()
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:b",
+        "sub_location": "Page B",
+    })
+    assert await communicator.receive_nothing(timeout=1)
+
+    from apps.realtime import presence_store
+
+    assert await presence_store.roster("canopy:test-ws:opp:a") == []
+
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_variant_keys_land_in_the_same_roster(member_user, second_member_user):
+    """Regression for using the raw client string instead of the canonical
+    (stripped) key: two connections entering the "same" page with different
+    whitespace must join the SAME group/Redis key, not silently fragment
+    the roster across two."""
+    comm1, connected1 = await _connect(member_user)
+    comm2, connected2 = await _connect(second_member_user)
+    assert connected1
+    assert connected2
+
+    await comm1.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy: test-ws :activity",
+        "sub_location": "",
+    })
+    msg1 = await comm1.receive_json_from(timeout=2)
+    assert msg1["data"]["page_key"] == "canopy:test-ws:activity"
+
+    await comm2.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:activity",
+        "sub_location": "",
+    })
+    # If the two connections joined different groups (raw string used as the
+    # key), comm1 never gets notified of comm2's entry and this times out.
+    msg1_updated = await comm1.receive_json_from(timeout=2)
+    msg2 = await comm2.receive_json_from(timeout=2)
+
+    expected = {member_user.email, second_member_user.email}
+    assert {v["email"] for v in msg1_updated["data"]["viewers"]} == expected
+    assert {v["email"] for v in msg2["data"]["viewers"]} == expected
+
+    await comm1.disconnect()
+    await comm2.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_idle_state_does_not_leak_across_navigation(member_user):
+    """Regression for not resetting self.idle / self._last_broadcast_idle on
+    a page-key change: going idle on page A must not show as idle the
+    instant the user arrives on page B."""
+    communicator, connected = await _connect(member_user)
+    assert connected
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:a",
+        "sub_location": "Page A",
+    })
+    await communicator.receive_json_from(timeout=2)
+
+    await communicator.send_json_to({"type": "presence.heartbeat", "idle": True})
+    idle_msg = await communicator.receive_json_from(timeout=2)
+    assert idle_msg["data"]["viewers"][0]["idle"] is True
+
+    await communicator.send_json_to({
+        "type": "presence.enter",
+        "page_key": "canopy:test-ws:opp:b",
+        "sub_location": "Page B",
+    })
+    msg_b = await communicator.receive_json_from(timeout=2)
+    assert msg_b["data"]["viewers"][0]["idle"] is False
+
+    await communicator.disconnect()
