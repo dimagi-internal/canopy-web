@@ -1,7 +1,7 @@
 # Source-aware runner routing
 
 **Date:** 2026-07-27
-**Status:** Approved design, pre-implementation
+**Status:** Shipped — except the `ace_web` PRODUCER, which lives in ace-web (`turn_driver`) and is not this repo's change. Until it posts `origin=ace_web`, a rule on that source is inert.
 **Builds on:** `2026-07-24-directed-runner-routing-design.md` (RunnerAssignment as the routing authority, the availability cascade, pins, drills)
 **Related:** `2026-07-25-cloud-agent-bootstrap-design.md` (the cloud runner this exists to target)
 
