@@ -226,6 +226,11 @@ class TurnIn(Schema):
     prompt: str = ""
     origin_ref: dict = {}
     routing: Routing = "prefer_local"
+    # Name the box explicitly. A pin bypasses assignments and source rules — never
+    # the tenant gate, never one_executing_turn_per_agent. This is what retired the
+    # `drill` origin: a drill is an api turn that names its runner, identified by
+    # its RunnerDrill row rather than by a magic origin value.
+    runner_id: uuid.UUID | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
