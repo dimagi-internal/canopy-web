@@ -73,6 +73,23 @@ class Runner(models.Model):
     # another process (e.g. a DDD run) checks out a branch in the runner's shared
     # checkout. The UI shouts when this is non-empty and != "main".
     code_branch = models.CharField(max_length=200, blank=True, default="")
+    # The runner package's own version string, self-reported. Legible only — the
+    # staleness comparison uses `code_sha` (a version number depends on a human
+    # remembering to bump it, and is therefore decorative on the day they forget,
+    # which is the day it matters).
+    code_version = models.CharField(max_length=64, blank=True, default="")
+    # The sha of the last commit that touched the runner's OWN source
+    # (`packages/canopy_runner/canopy_runner/`) — NOT the repo HEAD, which moves on
+    # every canopy-web commit and would mark every runner stale on a CSS change.
+    # `settings.RUNNER_CODE_SHA` holds the same quantity computed at image-build
+    # time, and the supervisor alerts when both are non-empty and differ.
+    #
+    # Empty means UNKNOWN and must stay silent: a source checkout with no git, a
+    # shallow clone, the cloud runner (a different program with its own
+    # deployment). A staleness alert fired on partial information is worse than
+    # no alert — and this repo has paid for NULL/empty-means-something predicates
+    # before (see the six tenancy predicates that grew a "means allow" leg).
+    code_sha = models.CharField(max_length=64, blank=True, default="")
     # The human who paired this runner. Load-bearing for authz AND for tenancy:
     # `_runner_visibility_q` requires paired_by to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`

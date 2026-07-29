@@ -62,11 +62,26 @@ class Client:
 
     def heartbeat(self, runner_id: str, active_turn_ids: list[str], degraded: bool = False,
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
-                  code_branch: str = "") -> dict:
+                  code_branch: str | None = None, code_version: str | None = None,
+                  code_sha: str | None = None) -> dict:
+        """Report liveness. Code provenance is stamped HERE, not by callers.
+
+        `services.heartbeat` assigns these unconditionally, so any heartbeat that
+        omits one RESETS it server-side. There are six call sites in the loop
+        (lease renewal, the CDP-down leg, drain-one, pause…) and four historically
+        passed no branch at all — so the wrong-branch banner would blink off
+        whenever one of those landed between two loop ticks. Defaulting to None
+        and filling it in once, here, makes that unmissable rather than a
+        convention every future call site has to remember.
+        """
+        from . import provenance
         _, payload = self._call(
             "POST", f"/runners/{runner_id}/heartbeat",
             {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
-             "host": host, "ready": ready, "ready_note": ready_note, "code_branch": code_branch},
+             "host": host, "ready": ready, "ready_note": ready_note,
+             "code_branch": provenance.code_branch() if code_branch is None else code_branch,
+             "code_version": provenance.version() if code_version is None else code_version,
+             "code_sha": provenance.code_sha() if code_sha is None else code_sha},
         )
         return payload or {}
 

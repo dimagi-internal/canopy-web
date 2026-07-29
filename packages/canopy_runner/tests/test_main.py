@@ -352,7 +352,8 @@ def test_drain_one_refuses_to_claim_when_cdp_down(monkeypatch, tmp_path):
             self.ready_note = None
 
         def heartbeat(self, runner_id, active, degraded=False, note="", host="",
-                      ready=True, ready_note="", code_branch=""):
+                      ready=True, ready_note="", code_branch="", code_version="",
+                      code_sha=""):
             self.beats += 1
             self.degraded = degraded
             self.ready = ready
@@ -382,9 +383,11 @@ class _CdpLoopClient:
         self.heartbeats = []
 
     def heartbeat(self, runner_id, active, degraded=False, note="", host="",
-                  ready=True, ready_note="", code_branch=""):
+                  ready=True, ready_note="", code_branch="", code_version="",
+                  code_sha=""):
         self.heartbeats.append({"degraded": degraded, "note": note,
-                                "ready": ready, "ready_note": ready_note})
+                                "ready": ready, "ready_note": ready_note,
+                                "code_version": code_version, "code_sha": code_sha})
 
     def report_sessions(self, runner_id, sessions, archived=None):
         pass

@@ -15,7 +15,6 @@ requires-dist = [{ name = "croniter", specifier = ">=6.0,<7.0" }]
 
 [[package]]
 name = "canopy-runner"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "canopy-cron" },

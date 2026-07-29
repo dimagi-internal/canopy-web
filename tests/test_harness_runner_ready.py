@@ -82,3 +82,49 @@ def test_heartbeat_persists_and_serves_code_branch(user, ws):
     assert resp.json()["code_branch"] == "ddd/external-reviewer-suggest-290"
     r.refresh_from_db()
     assert r.code_branch == "ddd/external-reviewer-suggest-290"
+
+
+def test_heartbeat_persists_and_serves_code_provenance(user, ws):
+    """The runner self-reports the version + sha of the code it is EXECUTING, so the
+    supervisor can say "that box is behind" rather than only "that checkout is on a
+    branch" (spec 2026-07-28)."""
+    r = _runner(user, ws)
+    c = Client()
+    c.force_login(user)
+    resp = c.post(
+        f"/api/harness/runners/{r.id}/heartbeat",
+        {"active_turn_ids": [], "code_version": "0.2.0", "code_sha": "a" * 40},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["code_version"] == "0.2.0"
+    assert resp.json()["code_sha"] == "a" * 40
+    r.refresh_from_db()
+    assert r.code_version == "0.2.0" and r.code_sha == "a" * 40
+
+
+def test_code_provenance_is_optional_so_older_runners_keep_working(user, ws):
+    """A runner that predates this — or the cloud runner, which is a different
+    program entirely — sends neither field. That must stay a normal heartbeat, and
+    must read as UNKNOWN (empty), never as a guess: the supervisor stays silent on
+    an empty sha rather than alerting on partial information."""
+    r = _runner(user, ws)
+    c = Client()
+    c.force_login(user)
+    resp = c.post(f"/api/harness/runners/{r.id}/heartbeat", {"active_turn_ids": []},
+                  content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["code_version"] == "" and resp.json()["code_sha"] == ""
+
+
+def test_runner_out_carries_the_servers_expected_sha(user, ws, settings):
+    """The client compares like with like, so the server's own expectation rides the
+    row. Denormalized deliberately — see RunnerOut.expected_code_sha."""
+    settings.RUNNER_CODE_SHA = "b" * 40
+    r = _runner(user, ws)
+    c = Client()
+    c.force_login(user)
+    resp = c.get("/api/harness/runners/")
+    assert resp.status_code == 200, resp.content
+    rows = [row for row in resp.json() if row["id"] == str(r.id)]
+    assert rows and rows[0]["expected_code_sha"] == "b" * 40

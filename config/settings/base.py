@@ -371,6 +371,18 @@ ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
 # executes it (real claude). The one knob that flips chat from stub to cloud runner.
 CHAT_STUB_EXECUTOR = env.bool("CHAT_STUB_EXECUTOR", default=True)
 
+# --- Runner code provenance (apps/harness, spec 2026-07-28) ---
+# The sha of the last commit that touched `packages/canopy_runner/canopy_runner/`,
+# computed by the deploy workflow and baked into the image. A laptop runner reports
+# the SAME quantity on its heartbeat, and the supervisor alerts when the two differ —
+# i.e. that box is executing runner code older than what shipped.
+#
+# NOT the repo HEAD: HEAD moves on every canopy-web commit, so comparing it would
+# demand a runner reinstall for a frontend CSS change. Empty (dev, a shallow clone,
+# an image built without the build-arg) disables the comparison entirely rather than
+# guessing — the alert must never fire on partial information.
+RUNNER_CODE_SHA = env("RUNNER_CODE_SHA", default="")
+
 # Key for at-rest field encryption (per-runner credentials — apps/common/encryption.py).
 # Empty → derived from SECRET_KEY (fine for dev). Set explicitly in production so the
 # encryption key can rotate independently of SECRET_KEY.

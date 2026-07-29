@@ -7332,6 +7332,12 @@ export interface components {
             readonly host: string;
             /** Code Branch */
             readonly code_branch: string;
+            /** Code Version */
+            readonly code_version: string;
+            /** Code Sha */
+            readonly code_sha: string;
+            /** Expected Code Sha */
+            readonly expected_code_sha: string;
             /** Workspace */
             readonly workspace: string | null;
             /** Paired By Email */
@@ -7470,6 +7476,16 @@ export interface components {
              * @default
              */
             readonly code_branch: string;
+            /**
+             * Code Version
+             * @default
+             */
+            readonly code_version: string;
+            /**
+             * Code Sha
+             * @default
+             */
+            readonly code_sha: string;
         };
         /** TurnOut */
         readonly TurnOut: {
