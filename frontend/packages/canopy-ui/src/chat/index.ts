@@ -28,7 +28,6 @@ export {
   type UseSessionSocketResult,
 } from "./useSessionSocket";
 export { useStickyBottom } from "./useStickyBottom";
-export { useDictation, type DictationHandle } from "./useDictation";
 
 // Draft idle helpers
 export { IDLE_THRESHOLD_MS, isDraftIdle, msUntilDraftIdle } from "./drafts";
