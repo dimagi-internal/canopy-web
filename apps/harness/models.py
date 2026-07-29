@@ -36,9 +36,13 @@ class Runner(models.Model):
     ONLINE, STALE, DISCONNECTED, DEGRADED, RETIRED = (
         "online", "stale", "disconnected", "degraded", "retired",
     )
+    # DERIVED ONLY — never stored in `status`, which holds what the runner last
+    # self-reported. Served by `live_status` so that every existing consumer of
+    # "is this box online?" gets the pause for free (see `paused` below).
+    PAUSED = "paused"
     STATUS_CHOICES = [
         (ONLINE, "Online"), (STALE, "Stale"), (DISCONNECTED, "Disconnected"),
-        (DEGRADED, "Degraded"), (RETIRED, "Retired"),
+        (DEGRADED, "Degraded"), (RETIRED, "Retired"), (PAUSED, "Paused"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -61,6 +65,37 @@ class Runner(models.Model):
     # Defaults True so an un-upgraded runner reads as able to fire, matching prior behavior.
     ready = models.BooleanField(default=True)
     ready_note = models.CharField(max_length=200, blank=True, default="")
+    # THE pause state — one value, settable from either end, and the source of
+    # truth for both. Jonathan runs the fleet under two macOS accounts for
+    # token-limit failover (see `host`), and moving work off a rate-limited account
+    # means silencing its runner from the other one; nothing could do that before,
+    # because ~/.canopy there is owned by the other account.
+    #
+    # Set it remotely via /pause + /unpause, or locally by dropping the runner's
+    # `~/.canopy/PAUSED` sentinel (the menu-bar toggle). The local file is a CONTROL
+    # SURFACE, not a second state: the runner turns a change to it into a call to
+    # those same endpoints, and otherwise mirrors this column back down. That is why
+    # they cannot drift — there is only ever one value, and this is it.
+    #
+    # The runner reports its local file as an EDGE (on change), never as a level on
+    # every heartbeat. A level would re-assert "not paused" five seconds after any
+    # remote pause and silently lift it.
+    #
+    # A pause is NOT a liveness state and NOT a decommission. `retire` was the only
+    # reachable lever and is the wrong one: it deletes RunnerAssignment rows that
+    # `unretire` explicitly does not restore, and it 404s the daemon's own
+    # heartbeat/claim calls (it cost jj-mbp-cdp ten sessions on 2026-07-25). This is
+    # reversible by construction and destroys nothing.
+    #
+    # Deliberately NOT touched by `heartbeat()`: the runner reports liveness, the
+    # operator decides work. A box that keeps heartbeating stays paused until a
+    # human unpauses it, which is the entire point.
+    paused = models.BooleanField(
+        default=False,
+        help_text="Operator pause: the runner stays live but claims nothing.",
+    )
+    paused_note = models.CharField(max_length=200, blank=True, default="")
+    paused_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
     # macOS user @ hostname that owns this runner. Load-bearing for session reuse:
     # emdash sessions are per-macOS-account (separate emdash4.db, worktrees, transcripts),
@@ -178,6 +213,22 @@ class Runner(models.Model):
         and RunnerOut serves this rather than the raw column. `degraded` is
         different: the runner self-reports it, so it survives as long as the
         runner is still fresh enough to be reporting anything at all.
+
+        PAUSED is served from here rather than as a separate flag consumers must
+        remember to check, and that placement IS the feature. Every existing
+        question of the form "is this box online?" — `claim_next_turn`'s first
+        guard, `is_available`, the cascade's `reachable` split, the agents API's
+        `online` column, the realtime snapshot — runs through `live_status`. Serving
+        it here makes all of them honor the pause with no edit and, more to the
+        point, leaves no way to write a NEW caller that misses it. The alternative
+        (a `paused` bool beside an otherwise-`online` row) is precisely the shape
+        that made this bug expensive in the first place: the runner's local sentinel
+        keeps heartbeating `online` + `ready`, so every status-based check waved a
+        parked box straight through.
+
+        It ranks BELOW the liveness checks deliberately. A paused box whose
+        heartbeat has lapsed is `stale` — "asleep" is the more useful and more
+        honest answer than "parked", and the pause is still there when it wakes.
         """
         if self.status == self.RETIRED:
             return self.RETIRED
@@ -185,6 +236,8 @@ class Runner(models.Model):
             return self.DISCONNECTED
         if timezone.now() - self.last_heartbeat_at > HEARTBEAT_ONLINE_WINDOW:
             return self.STALE
+        if self.paused:
+            return self.PAUSED
         return self.status
 
     @property

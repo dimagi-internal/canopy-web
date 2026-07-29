@@ -6,6 +6,7 @@ import uuid
 from django.db import models, transaction
 from django.db.models import Q
 from django.http import HttpRequest, StreamingHttpResponse
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -28,6 +29,7 @@ from .schemas import (
     EmdashSessionOut,
     UnclaimableTurnOut,
     HeartbeatIn,
+    PauseIn,
     RecordSessionIn,
     ReportSessionsIn,
     ResolveSessionIn,
@@ -463,6 +465,70 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
     if runner.status == Runner.RETIRED:
         runner.status = Runner.DISCONNECTED
         runner.save(update_fields=["status"])
+    return runner
+
+
+@router.post("/runners/{runner_id}/pause", response=RunnerOut)
+def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
+    """Stop ROUTING work to this runner, without decommissioning it.
+
+    The remote half of the runner's local `~/.canopy/PAUSED` sentinel, which only
+    a human on that machine could ever drop. Jonathan runs the fleet under two
+    macOS accounts for token-limit failover (Runner.host), and moving work off a
+    rate-limited account means silencing its runner FROM THE OTHER ONE — impossible
+    until now, because ~/.canopy there is owned by the other account. The only
+    reachable lever was `retire`, which is a decommission: it deletes
+    RunnerAssignment rows `unretire` does not restore, and it 404s the daemon's own
+    heartbeat and claim calls. This destroys nothing and is reversible by
+    construction.
+
+    ENFORCED SERVER-SIDE, so it does not depend on the runner cooperating or even
+    being up to date: `live_status` reports PAUSED, and `claim_next_turn`'s first
+    guard already refuses anything that is not ONLINE. A paused runner may poll as
+    often as it likes and will simply never be handed a turn. That also means a
+    pause takes effect against an OLD runner binary with no deploy on that box.
+
+    It outranks a PIN. `claim_next_turn` returns before pin matching, deliberately:
+    a pin is operator intent, but so is a pause, and it is the more specific and
+    more recent one. Letting a pin resurrect a parked box would re-open the exact
+    hole this closes — work landing on an account that must not spend tokens. A
+    turn pinned to a paused runner stays QUEUED (queued turns never expire) and
+    lands when it comes back.
+
+    Pause stops STARTING work, never finishing it: an executing turn keeps its
+    lease and reports completion normally, matching the local sentinel's behavior.
+
+    Idempotent — pausing an already-paused runner refreshes the note and returns
+    200 rather than erroring, so a retry after a dropped response is safe.
+    """
+    runner = _runner_or_404(request, runner_id)
+    if not runner.paused:
+        runner.paused_at = timezone.now()
+    runner.paused = True
+    runner.paused_note = (payload.note or "")[:200]
+    runner.save(update_fields=["paused", "paused_note", "paused_at"])
+    return runner
+
+
+@router.post("/runners/{runner_id}/unpause", response=RunnerOut)
+def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
+    """Resume routing to a paused runner. The exact inverse of /pause — it clears
+    the flag and nothing else, because /pause destroyed nothing to restore.
+
+    Contrast `unretire`, which cannot undo its own side effects (the deleted
+    assignment rows) and says so. That asymmetry is the whole argument for pause
+    existing as its own verb rather than people reaching for retire.
+
+    Does NOT assert liveness: the runner comes back to whatever its heartbeat says
+    it is, exactly as `unretire` restores DISCONNECTED rather than ONLINE. Liveness
+    is observed, never asserted. Idempotent on an already-running runner.
+    """
+    runner = _runner_or_404(request, runner_id)
+    if runner.paused:
+        runner.paused = False
+        runner.paused_note = ""
+        runner.paused_at = None
+        runner.save(update_fields=["paused", "paused_note", "paused_at"])
     return runner
 
 

@@ -129,6 +129,13 @@ def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
             calls.append("claim")
             return None
 
+        def set_paused(self, runner_id, paused, note=""):
+            # The local sentinel is now pushed UP as a command on the one shared
+            # pause state, rather than being a second state the server never hears
+            # about. Recorded so the assertion below can prove it happened.
+            calls.append(f"set_paused:{paused}")
+            return {"paused": paused}
+
     class StopLoopError(Exception):
         pass
 
@@ -145,6 +152,11 @@ def test_global_pause_sentinel_blocks_schedule_firing(tmp_path, monkeypatch):
     assert "heartbeat" in calls  # still alive-but-idle to the control plane
     assert "sync_schedules" not in calls  # ...but fired nothing
     assert "claim" not in calls
+    # ...and the local pause reached the control plane, so the SERVER also stops
+    # routing to this box. Before, a local sentinel was invisible up there: the
+    # runner kept reporting online+ready and every status-based check waved it
+    # through as a candidate.
+    assert "set_paused:True" in calls
 
 
 def test_unpaused_loop_fires_schedules_every_poll(tmp_path, monkeypatch):

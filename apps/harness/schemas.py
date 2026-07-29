@@ -90,6 +90,14 @@ class RunnerOut(Schema):
     status_note: str
     ready: bool
     ready_note: str
+    # Served alongside `status` (which already reads "paused" via live_status)
+    # because the two answer different questions: `status` says the box is not
+    # taking work, these say a HUMAN decided that and why. A client that only
+    # renders status still behaves correctly — that is the point of deriving it
+    # in live_status — but it cannot explain itself without these.
+    paused: bool
+    paused_note: str
+    paused_at: dt.datetime | None
     last_heartbeat_at: dt.datetime | None
     capabilities: dict
     host: str
@@ -172,6 +180,14 @@ class RunnerOut(Schema):
             pending=sum(1 for d in rows if d.outcome == "pending"),
             last_finished_at=max((d.finished_at for d in rows if d.finished_at), default=None),
         )
+
+
+class PauseIn(Schema):
+    # Why this box is parked, for whoever finds it idle later. A pause with no
+    # reason is indistinguishable from a broken runner at a glance, and the
+    # cost of THIS feature going wrong is a box that stays silent long after
+    # the reason expired.
+    note: str = ""
 
 
 class HeartbeatIn(Schema):
