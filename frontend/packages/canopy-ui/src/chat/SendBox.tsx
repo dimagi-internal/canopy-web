@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -7,11 +6,9 @@ import {
   type ReactNode,
 } from "react";
 import type React from "react";
-import { Mic, Square } from "lucide-react";
 
 import type { Draft } from "./protocol";
 import { isDraftIdle, msUntilDraftIdle } from "./drafts";
-import { useDictation } from "./useDictation";
 import { Button } from "../ui/button";
 
 /** An attachment the composer is holding, uploaded but not yet sent. */
@@ -123,21 +120,6 @@ export function SendBox({
   }, [canEdit, isHolder]);
 
   const body = localBody;
-  // Mirrors localBody so a caller that writes twice before React re-renders
-  // (SpeechRecognition can finalize two utterances in one tick) reads what the
-  // previous write produced rather than a body from the last paint.
-  const bodyRef = useRef(localBody);
-  bodyRef.current = localBody;
-
-  const commit = useCallback(
-    (value: string) => {
-      bodyRef.current = value;
-      setLocalBody(value);
-      onUpdate(value);
-    },
-    [onUpdate],
-  );
-
   const blocked = Boolean(disabledReason);
   // Sending needs a draft (`chat.send` commits the SERVER's copy, so there must
   // be one) AND a live socket. The socket check is load-bearing now that the
@@ -152,29 +134,10 @@ export function SendBox({
     !isStreaming &&
     !blocked;
 
-  const handleChange = (value: string) => commit(value);
-
-  // Dictation writes into the same local-first draft the keyboard writes into,
-  // so a spoken message and a typed one are the same message. Only FINALIZED
-  // utterances land here — interim text is displayed beside the mic and never
-  // enters the draft, which syncs to the server on every change.
-  const appendDictated = useCallback(
-    (text: string) => {
-      const prev = bodyRef.current.trimEnd();
-      commit(prev ? `${prev} ${text}` : text);
-    },
-    [commit],
-  );
-  const dictation = useDictation(appendDictated);
-  const canDictate = dictation.supported && canEdit && !blocked;
-
-  // The mic can lose its right to write mid-utterance — a teammate takes the
-  // draft, or the host blocks the composer. Hiding the button would otherwise
-  // leave recognition running with no visible way to end it.
-  const dictationStop = dictation.stop;
-  useEffect(() => {
-    if (!canDictate) dictationStop();
-  }, [canDictate, dictationStop]);
+  const handleChange = (value: string) => {
+    setLocalBody(value);
+    onUpdate(value);
+  };
 
   const canAttach = typeof onAttach === "function" && canEdit && !blocked;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,14 +159,9 @@ export function SendBox({
   };
 
   const handleSend = () => {
-    // A message that has been sent is finished being dictated. Leaving the mic
-    // hot would drop the next sentence into an empty composer with nothing on
-    // screen saying why it was still listening.
-    dictation.stop();
     // Clear locally rather than waiting for the server's cleared draft to
     // echo back: that echo carries last_editor === us, which the adopt rule
     // above (correctly) ignores, so nothing else would empty the box.
-    bodyRef.current = "";
     setLocalBody("");
     onSend();
   };
@@ -293,62 +251,36 @@ export function SendBox({
           className="w-full resize-none rounded-md border border-input bg-transparent p-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
         />
         <div className="mt-1 flex items-center justify-end gap-2">
-          <div className="mr-auto flex min-w-0 items-center gap-2">
-            {canAttach && (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  className="hidden"
-                  data-testid="attachment-input"
-                  onChange={(e) => {
-                    take(e.target.files);
-                    e.target.value = "";  // same file twice in a row must re-fire
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  attach
-                </Button>
-              </>
-            )}
-            {canDictate && (
+          {canAttach && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                data-testid="attachment-input"
+                onChange={(e) => {
+                  take(e.target.files);
+                  e.target.value = "";  // same file twice in a row must re-fire
+                }}
+              />
               <Button
                 type="button"
-                variant={dictation.listening ? "destructive" : "outline"}
-                size="icon-sm"
-                aria-label={
-                  dictation.listening ? "Stop dictation" : "Start dictation"
-                }
-                aria-pressed={dictation.listening}
-                onClick={dictation.toggle}
+                variant="outline"
+                size="sm"
+                className="mr-auto"
+                onClick={() => fileInputRef.current?.click()}
               >
-                {dictation.listening ? (
-                  <Square className="size-3 fill-current" aria-hidden />
-                ) : (
-                  <Mic aria-hidden />
-                )}
+                attach
               </Button>
-            )}
-            {dictation.listening && (
-              // Italic because these words are provisional — the recognizer
-              // rewrites them until it finalizes the phrase.
-              <span className="min-w-0 truncate text-xs text-muted-foreground italic">
-                {dictation.interim || "Listening…"}
-              </span>
-            )}
-            {blocked && (
-              <span className="text-xs text-muted-foreground">
-                {disabledReason}
-              </span>
-            )}
-          </div>
+            </>
+          )}
+          {blocked && (
+            <span className="mr-auto text-xs text-muted-foreground">
+              {disabledReason}
+            </span>
+          )}
           {isStreaming ? (
             <Button
               type="button"
