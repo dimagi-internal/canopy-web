@@ -14,12 +14,20 @@ from .schemas import PushSubscribeIn, PushUnsubscribeIn, VapidKeyOut
 router = Router(auth=session_auth, tags=["push"])
 
 
+def _push_configured() -> bool:
+    """BOTH keys, deliberately: sending checks only the private key
+    (services.send_to_user), so a public-key-only deployment used to accept
+    subscriptions here and then silently never send — half-configured must
+    read as not configured."""
+    return bool(settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY)
+
+
 @router.get("/vapid-public-key", response=VapidKeyOut, summary="The VAPID public key")
 def vapid_public_key(request: HttpRequest) -> VapidKeyOut:
     """The browser needs this to subscribe. Not a secret — it ships in the JS
-    bundle anyway. 503 when unset so a push-less deployment says so plainly
-    rather than handing the browser an empty key it would fail on."""
-    if not settings.VAPID_PUBLIC_KEY:
+    bundle anyway. 503 when unconfigured so a push-less deployment says so
+    plainly rather than handing the browser an empty key it would fail on."""
+    if not _push_configured():
         raise HttpError(503, "push is not configured")
     return VapidKeyOut(public_key=settings.VAPID_PUBLIC_KEY)
 
@@ -30,7 +38,7 @@ def subscribe(request: HttpRequest, payload: PushSubscribeIn):
     subscribe() call, and its keys rotate — so update rather than insert, and
     re-point the row at the caller: the endpoint belongs to the BROWSER, not the
     person, so on a shared device it must follow whoever is logged in now."""
-    if not settings.VAPID_PUBLIC_KEY:
+    if not _push_configured():
         raise HttpError(503, "push is not configured")
     PushSubscription.objects.update_or_create(
         endpoint=payload.endpoint,

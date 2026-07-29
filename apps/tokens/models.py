@@ -154,7 +154,7 @@ class AppCredential(models.Model):
     call is a no-op against it (`ensure_member` is create-only). Without
     this ordering, auto-join running first would silently create the row at
     `editor` regardless of a `viewer` grant — `provision_role` would not be
-    a durable ceiling. See docs/superpowers/plans/
+    a durable ceiling. See docs/archive/plans/
     2026-07-26-tenant-scoped-provisioning.md (design + F3 fix).
     """
 

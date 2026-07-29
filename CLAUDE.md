@@ -513,7 +513,7 @@ Authoring: `python manage.py import_storyboard storyboard.yaml --workspace <slug
 - `POST /api/push/subscribe` — Register this browser (upsert by endpoint)
 - `DELETE /api/push/subscribe` — Unregister this browser (idempotent)
 
-The two keys gate SEPARATELY: empty `VAPID_PUBLIC_KEY` 503s the endpoints; empty `VAPID_PRIVATE_KEY` skips sends (`services.py` checks only it) — so a deployment with just the public key accepts subscriptions and silently never sends. Set both, plus `VAPID_SUBJECT` (a `mailto:` URL, rides as `vapid_claims.sub`).
+Push needs BOTH keys: either one empty → the endpoints 503 (`_push_configured`) and sends are skipped. Gated on both deliberately — the endpoints once checked only the public key, so a public-key-only deployment accepted subscriptions and silently never sent. Also set `VAPID_SUBJECT` (a `mailto:` URL, rides as `vapid_claims.sub`).
 
 ### System (`apps/system`)
 - `GET /api/system/overview` — Capability catalog: the canopy plugin's skills/agents/commands, read live from the plugin.

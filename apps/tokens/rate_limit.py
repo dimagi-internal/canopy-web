@@ -14,7 +14,7 @@ write limit.
 Default: 30 exchanges per 60s per credential. Tune via settings:
     TOKEN_EXCHANGE_LIMIT (int), TOKEN_EXCHANGE_WINDOW_SECONDS (int).
 
-See docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md (F2).
+See docs/archive/plans/2026-07-26-tenant-scoped-provisioning.md (F2).
 """
 from __future__ import annotations
 

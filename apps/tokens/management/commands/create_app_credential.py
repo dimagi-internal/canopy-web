@@ -3,7 +3,7 @@
 Usage:
     uv run python manage.py create_app_credential --name ace-web --domains dimagi.com,dimagi-associate.com
 
-    # Grant tenant-scoped provisioning power at creation time (see docs/superpowers/plans/
+    # Grant tenant-scoped provisioning power at creation time (see docs/archive/plans/
     # 2026-07-26-tenant-scoped-provisioning.md): the app's exchange calls may
     # add allowlisted-domain users to this ONE workspace, at this role.
     # --role may never be "owner", and requires --workspace (F7 — otherwise a
