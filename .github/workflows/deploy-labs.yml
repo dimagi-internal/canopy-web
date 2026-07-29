@@ -119,7 +119,7 @@ jobs:
           # identity, not a position: without this the supervisor can only say a
           # runner "differs" and was rendering that as "behind" — including for a
           # box installed from main ahead of the deploy, i.e. the most current one.
-          TS="$(git log -1 --format=%ct -- packages/canopy_runner/canopy_runner)"
+          TS="$(git log -1 --format=%ct -- runner/canopy_runner/canopy_runner)"
           echo "committed_at=${TS:-0}" >> "$GITHUB_OUTPUT"
           echo "Runner source last changed at ${SHA:-<none>} (${TS:-0})"
 
