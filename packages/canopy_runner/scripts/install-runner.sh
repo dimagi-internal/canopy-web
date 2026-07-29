@@ -209,10 +209,23 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
   install_job "$LABEL" "$TMP/runner.plist" || exit 1
 
   if [ "$DO_AUTO_UPDATE" -eq 1 ]; then
-    # The timer job runs the installer FROM THE REPO — the script is not part of
-    # the wheel, and a copy frozen at install time could never fix itself.
-    INSTALLER="$REPO/packages/canopy_runner/scripts/install-runner.sh"
-    if [ -x "$INSTALLER" ]; then
+    # Install THIS script to a stable, self-describing path and point the timer
+    # job at that — not at the copy in the repo.
+    #
+    # macOS names every entry in System Settings › Login Items › "App Background
+    # Activity" after the basename of ProgramArguments[0]. Pointing at the repo
+    # made canopy's updater show up as `install-runner.sh` — "Item from
+    # unidentified developer" — a bare shell script running from a git checkout,
+    # indistinguishable at a glance from something you would want to kill, and
+    # with nothing tying it to canopy. It now reads `canopy-runner-update`.
+    #
+    # Copied from the SNAPSHOT ($TMP), not the working tree, for the same reason
+    # everything else here is: what gets installed is the ref, never whatever
+    # happens to be checked out. That also means a `git checkout` in the repo can
+    # no longer change the script the timer executes — only an install can.
+    INSTALLER="$HOME/.canopy/canopy-runner-update"
+    mkdir -p "$HOME/.canopy"
+    if install -m 755 "$TMP/packages/canopy_runner/scripts/install-runner.sh" "$INSTALLER"; then
       sed -e "s|__INSTALLER__|$INSTALLER|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" \
         "$TMP/packages/canopy_runner/launchd/$UPDATER_LABEL.plist.template" > "$TMP/updater.plist"
       # A failed updater is NOT fatal: the runner itself is installed and running,
@@ -220,7 +233,7 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
       install_job "$UPDATER_LABEL" "$TMP/updater.plist" \
         || echo "WARNING: auto-update job not installed; updates stay manual." >&2
     else
-      echo "WARNING: $INSTALLER not found/executable — auto-update job not installed." >&2
+      echo "WARNING: could not install $INSTALLER — auto-update job not installed." >&2
     fi
   fi
 fi
