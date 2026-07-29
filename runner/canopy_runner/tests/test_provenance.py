@@ -151,3 +151,65 @@ def test_an_explicit_value_still_wins(monkeypatch):
     assert c.payloads[0]["code_sha"] == ""
     assert c.payloads[0]["code_branch"] == "odd"
     assert c.payloads[0]["code_version"] == "9.9.9"
+
+
+# --- code_committed_at: the ORDER a sha cannot carry -----------------------------
+#
+# `code_sha != expected` means DIFFERENT. The supervisor rendered that as
+# "behind", which is one of three possibilities stated as if it were the only
+# one — and on 2026-07-29 it told the operator to update the most current box in
+# the fleet, because that box had been installed from main ahead of the deploy.
+# This is the quantity that makes the direction knowable, taken from the same
+# `git log -1` that already yields the sha.
+
+
+def test_committed_at_prefers_the_stamped_build(monkeypatch):
+    monkeypatch.setattr(_build_info, "COMMITTED_AT", 1753000000)
+    monkeypatch.setattr(provenance.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not consult git when stamped"))
+    assert provenance.code_committed_at() == 1753000000
+
+
+def test_committed_at_falls_back_to_the_same_git_log_as_the_sha(monkeypatch):
+    """Same commit, same path scope — a timestamp from a DIFFERENT commit than
+    the sha would order two things that were never being compared."""
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(stdout="1753999999\n", stderr="", returncode=0)
+
+    monkeypatch.setattr(_build_info, "COMMITTED_AT", 0)
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run)
+    assert provenance.code_committed_at() == 1753999999
+
+    src = str(provenance.runner_src_dir())
+    assert captured["cmd"][:5] == ["git", "-C", src, "log", "-1"]
+    assert captured["cmd"][-2:] == ["--", src]  # path-scoped, like the sha
+
+
+def test_committed_at_is_zero_when_git_fails(monkeypatch):
+    """0 = unknown, and unknown orders nothing: the consumer degrades to the
+    direction-less 'differs' rather than inventing a direction."""
+    monkeypatch.setattr(_build_info, "COMMITTED_AT", 0)
+    monkeypatch.setattr(provenance.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(stdout="", stderr="x", returncode=128))
+    assert provenance.code_committed_at() == 0
+
+
+def test_committed_at_survives_garbage_output(monkeypatch):
+    """A non-numeric answer is unknown, not a crash — a heartbeat must never
+    depend on git behaving."""
+    monkeypatch.setattr(_build_info, "COMMITTED_AT", 0)
+    monkeypatch.setattr(provenance.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(stdout="not-a-number\n", stderr="", returncode=0))
+    assert provenance.code_committed_at() == 0
+
+
+def test_committed_at_survives_git_being_absent(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(_build_info, "COMMITTED_AT", 0)
+    monkeypatch.setattr(provenance.subprocess, "run", boom)
+    assert provenance.code_committed_at() == 0

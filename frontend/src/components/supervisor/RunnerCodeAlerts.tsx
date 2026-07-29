@@ -16,6 +16,10 @@ function headline({ kind, unreachable }: RunnerCodeAlert): string {
       ? '⚠ Offline runner stuck on wrong branch'
       : '⚠ Runner on wrong branch — stale code'
   }
+  // Nothing is broken and there is nothing to run: this box is NEWER than what
+  // shipped, so the deploy is what catches up. Deliberately not "⚠", not
+  // destructive, and not actionable.
+  if (kind === 'ahead') return 'Runner is ahead of the deploy'
   return unreachable ? '⚠ Offline runner is out of date' : '⚠ Runner is out of date'
 }
 
@@ -38,11 +42,28 @@ export function RunnerCodeAlerts({
             role="alert"
             data-testid={`runner-code-alert-${r.id}`}
             data-alert-kind={kind}
-            className="rounded-lg border-2 border-destructive bg-destructive/15 p-3 text-destructive"
+            className={
+              kind === 'ahead'
+                ? 'rounded-lg border border-border bg-muted p-3 text-muted-foreground'
+                : 'rounded-lg border-2 border-destructive bg-destructive/15 p-3 text-destructive'
+            }
           >
             <p className="text-[13px] font-bold uppercase tracking-wide">{headline(alert)}</p>
 
-            {kind === 'branch' ? (
+            {kind === 'ahead' ? (
+              <p className="mt-1 text-[13px] leading-snug">
+                <span className="font-semibold">{r.name}</span> is running runner code from{' '}
+                <span className="rounded bg-foreground/10 px-1 font-mono font-semibold">
+                  {r.code_sha.slice(0, 12)}
+                </span>
+                , which is <span className="font-semibold">newer</span> than the{' '}
+                <span className="rounded bg-foreground/10 px-1 font-mono font-semibold">
+                  {r.expected_code_sha.slice(0, 12)}
+                </span>{' '}
+                the server expects. Nothing to do — the next deploy catches up. (If it stays
+                this way, someone installed a branch here on purpose.)
+              </p>
+            ) : kind === 'branch' ? (
               <p className="mt-1 text-[13px] leading-snug">
                 <span className="font-semibold">{r.name}</span>{' '}
                 {unreachable ? 'last reported branch' : 'is running on branch'}{' '}
@@ -88,13 +109,18 @@ export function RunnerCodeAlerts({
               </p>
             )}
 
-            <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
-              {unreachable ? 'Bring it back on that machine:' : 'Run this on that machine:'}
-              <br />
-              <span className="font-mono">{kind === 'branch' ? BRANCH_CMD : UPDATE_CMD}</span>
-            </p>
+            {kind !== 'ahead' && (
+              <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
+                {unreachable ? 'Bring it back on that machine:' : 'Run this on that machine:'}
+                <br />
+                <span className="font-mono">{kind === 'branch' ? BRANCH_CMD : UPDATE_CMD}</span>
+              </p>
+            )}
 
-            {unreachable && (
+            {/* Retire is the escape hatch for an alert that can never clear on its
+                own. An `ahead` runner clears on the next deploy, so offering to
+                permanently destroy its row would be wildly disproportionate. */}
+            {unreachable && kind !== 'ahead' && (
               <>
                 <button
                   type="button"

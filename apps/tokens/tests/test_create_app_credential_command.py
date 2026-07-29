@@ -1,5 +1,5 @@
 """Tests for `manage.py create_app_credential --workspace/--role` (Task 1,
-Step 4 of docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md)."""
+Step 4 of docs/archive/plans/2026-07-26-tenant-scoped-provisioning.md)."""
 from __future__ import annotations
 
 import io

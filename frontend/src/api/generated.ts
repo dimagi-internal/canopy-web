@@ -2214,6 +2214,84 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/pause": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Pause Runner
+         * @description Stop ROUTING work to this runner, without decommissioning it.
+         *
+         *     The remote half of the runner's local `~/.canopy/PAUSED` sentinel, which only
+         *     a human on that machine could ever drop. Jonathan runs the fleet under two
+         *     macOS accounts for token-limit failover (Runner.host), and moving work off a
+         *     rate-limited account means silencing its runner FROM THE OTHER ONE — impossible
+         *     until now, because ~/.canopy there is owned by the other account. The only
+         *     reachable lever was `retire`, which is a decommission: it deletes
+         *     RunnerAssignment rows `unretire` does not restore, and it 404s the daemon's own
+         *     heartbeat and claim calls. This destroys nothing and is reversible by
+         *     construction.
+         *
+         *     ENFORCED SERVER-SIDE, so it does not depend on the runner cooperating or even
+         *     being up to date: `live_status` reports PAUSED, and `claim_next_turn`'s first
+         *     guard already refuses anything that is not ONLINE. A paused runner may poll as
+         *     often as it likes and will simply never be handed a turn. That also means a
+         *     pause takes effect against an OLD runner binary with no deploy on that box.
+         *
+         *     It outranks a PIN. `claim_next_turn` returns before pin matching, deliberately:
+         *     a pin is operator intent, but so is a pause, and it is the more specific and
+         *     more recent one. Letting a pin resurrect a parked box would re-open the exact
+         *     hole this closes — work landing on an account that must not spend tokens. A
+         *     turn pinned to a paused runner stays QUEUED (queued turns never expire) and
+         *     lands when it comes back.
+         *
+         *     Pause stops STARTING work, never finishing it: an executing turn keeps its
+         *     lease and reports completion normally, matching the local sentinel's behavior.
+         *
+         *     Idempotent — pausing an already-paused runner refreshes the note and returns
+         *     200 rather than erroring, so a retry after a dropped response is safe.
+         */
+        readonly post: operations["apps_harness_api_pause_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/unpause": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Unpause Runner
+         * @description Resume routing to a paused runner. The exact inverse of /pause — it clears
+         *     the flag and nothing else, because /pause destroyed nothing to restore.
+         *
+         *     Contrast `unretire`, which cannot undo its own side effects (the deleted
+         *     assignment rows) and says so. That asymmetry is the whole argument for pause
+         *     existing as its own verb rather than people reaching for retire.
+         *
+         *     Does NOT assert liveness: the runner comes back to whatever its heartbeat says
+         *     it is, exactly as `unretire` restores DISCONNECTED rather than ONLINE. Liveness
+         *     is observed, never asserted. Idempotent on an already-running runner.
+         */
+        readonly post: operations["apps_harness_api_unpause_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/heartbeat": {
         readonly parameters: {
             readonly query?: never;
@@ -2744,8 +2822,8 @@ export interface paths {
         /**
          * The VAPID public key
          * @description The browser needs this to subscribe. Not a secret — it ships in the JS
-         *     bundle anyway. 503 when unset so a push-less deployment says so plainly
-         *     rather than handing the browser an empty key it would fail on.
+         *     bundle anyway. 503 when unconfigured so a push-less deployment says so
+         *     plainly rather than handing the browser an empty key it would fail on.
          */
         readonly get: operations["apps_push_api_vapid_public_key"];
         readonly put?: never;
@@ -7330,6 +7408,12 @@ export interface components {
             readonly ready: boolean;
             /** Ready Note */
             readonly ready_note: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Paused Note */
+            readonly paused_note: string;
+            /** Paused At */
+            readonly paused_at: string | null;
             /** Last Heartbeat At */
             readonly last_heartbeat_at: string | null;
             /** Capabilities */
@@ -7346,6 +7430,10 @@ export interface components {
             readonly code_sha: string;
             /** Expected Code Sha */
             readonly expected_code_sha: string;
+            /** Code Committed At */
+            readonly code_committed_at: number;
+            /** Expected Code Committed At */
+            readonly expected_code_committed_at: number;
             /** Workspace */
             readonly workspace: string | null;
             /** Paired By Email */
@@ -7447,6 +7535,14 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** PauseIn */
+        readonly PauseIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -7494,6 +7590,11 @@ export interface components {
              * @default
              */
             readonly code_sha: string;
+            /**
+             * Code Committed At
+             * @default 0
+             */
+            readonly code_committed_at: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
         };
@@ -11895,6 +11996,54 @@ export interface operations {
         };
     };
     readonly apps_harness_api_unretire_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_pause_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PauseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_unpause_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

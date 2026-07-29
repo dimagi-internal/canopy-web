@@ -133,7 +133,7 @@ def test_exchange_rejects_domain_absent_from_oauth_allowlist():
 # ──────────────────────────────────────────────────────────────────────
 # Tenant-scoped provisioning: AppCredential.provision_workspace /
 # provision_role. The workspace is never client input — it comes only
-# from the credential row (see docs/superpowers/plans/
+# from the credential row (see docs/archive/plans/
 # 2026-07-26-tenant-scoped-provisioning.md, Task 1).
 # ──────────────────────────────────────────────────────────────────────
 

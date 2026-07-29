@@ -66,6 +66,9 @@ RUN SECRET_KEY=build-placeholder \
 # whole image each time. Empty (local builds) disables the comparison.
 ARG RUNNER_CODE_SHA=""
 ENV RUNNER_CODE_SHA=$RUNNER_CODE_SHA
+# Committer epoch of that same commit — the ordering the sha can't carry.
+ARG RUNNER_CODE_COMMITTED_AT="0"
+ENV RUNNER_CODE_COMMITTED_AT=$RUNNER_CODE_COMMITTED_AT
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

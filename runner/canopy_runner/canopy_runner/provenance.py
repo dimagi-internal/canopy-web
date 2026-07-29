@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import __version__
 
-__all__ = ["version", "code_branch", "code_sha", "runner_src_dir"]
+__all__ = ["version", "code_branch", "code_sha", "code_committed_at", "runner_src_dir"]
 
 _BRANCH_TTL_SECONDS = 15
 _last_branch_check = 0.0
@@ -102,6 +102,42 @@ def code_sha() -> str:
         return ""
 
 
+@functools.cache
+def code_committed_at() -> int:
+    """Committer epoch of the commit `code_sha()` names — the ORDER a sha lacks.
+
+    A sha is an identity, so `code_sha != expected` can only say DIFFERENT. The
+    supervisor was rendering that as "behind", which is one of three possibilities
+    (older, newer, divergent) asserted as though it were the only one — and on
+    2026-07-29 it told the operator to update the most current box in the fleet,
+    which had been installed from main ahead of the deploy that ships it. An alert
+    that fires on the box you just fixed is one you learn to ignore.
+
+    A timestamp rather than a version number, for the reason `code_version` is
+    documented as decorative: it needs no human to remember it. `--format=%ct` on
+    the same path-scoped `git log -1` that already yields `%H`, so the two always
+    describe the SAME commit — a timestamp from a different commit would order two
+    things nobody is comparing.
+
+    0 means UNKNOWN and orders nothing; consumers fall back to a direction-less
+    "differs" rather than guessing. Cached for the process's lifetime for exactly
+    the reason `code_sha` is: it describes the code that was IMPORTED.
+    """
+    from . import _build_info
+    stamped = getattr(_build_info, "COMMITTED_AT", 0)
+    if stamped:
+        return int(stamped)
+    try:
+        src = runner_src_dir()
+        out = subprocess.run(
+            ["git", "-C", str(src), "log", "-1", "--format=%ct", "--", str(src)],
+            capture_output=True, text=True, timeout=5,
+        )
+        return int(out.stdout.strip()) if out.returncode == 0 else 0
+    except Exception:  # noqa: BLE001 — incl. a non-numeric stdout; never break a heartbeat
+        return 0
+
+
 def _reset_for_tests() -> None:
     global _last_branch_check, _cached_branch
     _last_branch_check = 0.0
@@ -109,3 +145,4 @@ def _reset_for_tests() -> None:
     # getattr: a test may have monkeypatched code_sha with a plain function, and
     # teardown ordering means this can run while that patch is still in place.
     getattr(code_sha, "cache_clear", lambda: None)()
+    getattr(code_committed_at, "cache_clear", lambda: None)()

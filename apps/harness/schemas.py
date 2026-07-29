@@ -90,6 +90,14 @@ class RunnerOut(Schema):
     status_note: str
     ready: bool
     ready_note: str
+    # Served alongside `status` (which already reads "paused" via live_status)
+    # because the two answer different questions: `status` says the box is not
+    # taking work, these say a HUMAN decided that and why. A client that only
+    # renders status still behaves correctly — that is the point of deriving it
+    # in live_status — but it cannot explain itself without these.
+    paused: bool
+    paused_note: str
+    paused_at: dt.datetime | None
     last_heartbeat_at: dt.datetime | None
     capabilities: dict
     host: str
@@ -103,6 +111,11 @@ class RunnerOut(Schema):
     # a page that already has this one. `can_manage` sets the precedent for a
     # derived, non-column field on this schema.
     expected_code_sha: str
+    # The two halves of the ORDERING, mirroring the sha pair above: without them
+    # `code_sha != expected_code_sha` can only say "different", and the supervisor
+    # was rendering that as "behind" (see Runner.code_committed_at).
+    code_committed_at: int
+    expected_code_committed_at: int
 
     workspace: str | None
     # The human who paired the runner. This — NOT `workspace` — is what governs
@@ -132,6 +145,16 @@ class RunnerOut(Schema):
         return getattr(settings, "RUNNER_CODE_SHA", "") or ""
 
     @staticmethod
+    def resolve_expected_code_committed_at(obj) -> int:
+        from django.conf import settings
+        try:
+            return int(getattr(settings, "RUNNER_CODE_COMMITTED_AT", 0) or 0)
+        except (TypeError, ValueError):
+            # A malformed build arg must not 500 the whole runners list — unknown
+            # (0) simply means the alert keeps today's direction-less behaviour.
+            return 0
+
+    @staticmethod
     def resolve_workspace(obj) -> str | None:
         return obj.workspace_id
 
@@ -159,6 +182,14 @@ class RunnerOut(Schema):
         )
 
 
+class PauseIn(Schema):
+    # Why this box is parked, for whoever finds it idle later. A pause with no
+    # reason is indistinguishable from a broken runner at a glance, and the
+    # cost of THIS feature going wrong is a box that stays silent long after
+    # the reason expired.
+    note: str = ""
+
+
 class HeartbeatIn(Schema):
     active_turn_ids: list[str] = []
     degraded: bool = False
@@ -171,6 +202,9 @@ class HeartbeatIn(Schema):
     # The sha of the last commit touching the runner's own source. Compared against
     # settings.RUNNER_CODE_SHA; empty means unknown and never alerts.
     code_sha: str = ""
+    # Committer epoch of that same commit. 0 = unknown; see Runner.code_committed_at
+    # for why an ORDER is needed on top of the identity a sha gives.
+    code_committed_at: int = 0
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot

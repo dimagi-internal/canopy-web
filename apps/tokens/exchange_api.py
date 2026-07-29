@@ -127,7 +127,7 @@ def token_exchange(request, payload: TokenExchangeIn):
         # first makes the later auto-join call a no-op against it, rather
         # than auto-join silently creating it at `editor` first and making
         # a `viewer` grant a no-op instead. See
-        # AppCredential's docstring and docs/superpowers/plans/
+        # AppCredential's docstring and docs/archive/plans/
         # 2026-07-26-tenant-scoped-provisioning.md.
         if app.provision_workspace_id:
             _membership, created = wsvc.ensure_member(

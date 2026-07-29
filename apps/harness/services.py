@@ -109,7 +109,7 @@ def enqueue_turn(
 def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
-    code_version: str = "", code_sha: str = "",
+    code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None,
 ) -> Runner:
     """`projects` is the runner REPORTING which repos it can drive (spec
@@ -135,9 +135,10 @@ def heartbeat(
     runner.code_branch = code_branch
     runner.code_version = code_version
     runner.code_sha = code_sha
+    runner.code_committed_at = code_committed_at
     fields = [
         "last_heartbeat_at", "status", "status_note", "ready", "ready_note", "code_branch",
-        "code_version", "code_sha",
+        "code_version", "code_sha", "code_committed_at",
     ]
     if projects is not None:
         # Strip blanks even though the runner does too: a session turn has
@@ -524,6 +525,16 @@ def unclaimable_queued_turns(user) -> list[dict]:
 
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
                     exclude_slugs: list[str] | None = None) -> Turn | None:
+    # Covers the operator PAUSE too: `live_status` returns PAUSED for a parked
+    # runner, so this one guard is the whole server-side enforcement. Spelled out
+    # because it is easy to read this line as a pure liveness check and then
+    # "helpfully" add a pause bypass somewhere below.
+    #
+    # Note WHERE it sits: above pin matching, so a pause outranks a pin. Both are
+    # operator intent, but the pause is the more specific and more recent one, and
+    # a pin that could resurrect a parked box would re-open exactly the hole pause
+    # closes — work landing on an account that must not spend tokens. The pinned
+    # turn stays QUEUED (queued turns never expire) and lands on unpause.
     if runner.live_status != Runner.ONLINE:
         return None
     sweep_expired_leases()

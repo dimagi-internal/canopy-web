@@ -262,3 +262,152 @@ def test_ensure_sidecar_deps_fails_when_npm_claims_success_but_installs_nothing(
                         lambda *a, **k: SimpleNamespace(stdout="", stderr="", returncode=0))
     with pytest.raises(cdp_control.CDPError):
         cdp_control.ensure_sidecar_deps()
+
+
+# -- the evaluated JS must be valid, which node --check cannot tell us ---------
+
+def _evaluate_bodies():
+    """Every string this sidecar hands to page.evaluate, as Playwright sees it."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
+           / "emdash_control.mjs").read_text()
+    helpers = {name: (re.search(rf"const {name} = String\.raw`([\s\S]*?)`;", src) or [None, ""])[1]
+               for name in ("ACTIVE_TERM_FN", "COMPOSER_FN")}
+    bodies = []
+    for m in re.findall(r"page\.evaluate\(String\.raw`([\s\S]*?)`\)", src):
+        for name, helper_src in helpers.items():
+            m = m.replace("${" + name + "}", helper_src)
+        bodies.append(m)
+    return bodies
+
+
+def test_every_evaluate_string_is_valid_javascript():
+    """`node --check` passes on a file whose TEMPLATE contents are broken, because
+    the template is a valid string literal either way. What Playwright receives is
+    the PROCESSED text — and a plain template ate the escapes: `\\n` became a real
+    newline (unterminated string -> "SyntaxError: Invalid or unexpected token" at
+    runtime) and `\\s` collapsed to a literal `s`, turning every `\\s*` into "zero
+    or more letter s". The collision guard silently stopped matching and nothing
+    in CI noticed. String.raw is what prevents it; this test is what catches a
+    regression.
+    """
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:                       # CI without node: nothing to assert
+        return
+    bodies = _evaluate_bodies()
+    assert bodies, "no page.evaluate(String.raw`…`) sites found — did the shape change?"
+    for i, body in enumerate(bodies, start=1):
+        check = subprocess.run(
+            [node, "-e", "new Function('return ' + require('fs').readFileSync(0, 'utf8'))"],
+            input=body, capture_output=True, text=True, timeout=30)
+        assert check.returncode == 0, f"evaluate #{i} is invalid JS: {check.stderr[:300]}"
+
+
+def test_the_evaluate_sites_use_string_raw():
+    """A plain backtick here reintroduces the escape-eating bug."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
+           / "emdash_control.mjs").read_text()
+    assert "page.evaluate(`" not in src, "use String.raw` for evaluate source"
+    assert len(re.findall(r"page\.evaluate\(String\.raw`", src)) >= 4
+
+
+# -- composer detection: the collision guard's core, exercised under node ------
+#
+# The scan is a pure function over the rendered viewport rows (COMPOSER_FN in
+# emdash_control.mjs), so these fixtures ARE the bug reports: the fresh-session
+# layout below is the measured live state that made readLine() return '' for a
+# composer holding text (canopy-web #521 — composer at row 13 of 38, rows 24-37
+# all empty, and the old scan only looked at the last 14 rows).
+
+def _composer_fn_source():
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
+           / "emdash_control.mjs").read_text()
+    m = re.search(r"const COMPOSER_FN = String\.raw`([\s\S]*?)`;", src)
+    assert m, "COMPOSER_FN not found in emdash_control.mjs"
+    return m.group(1)
+
+
+def _composer(rows):
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    script = (_composer_fn_source()
+              + "\nconst rows = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              + "\nprocess.stdout.write(JSON.stringify(composerText(rows)));")
+    out = subprocess.run([node, "-e", script], input=json.dumps(rows),
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, f"composerText crashed: {out.stderr[:300]}"
+    return json.loads(out.stdout)
+
+
+_RULE = "─" * 90
+_STATUS = "  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+
+def _fresh_session(*composer_rows):
+    """Measured live 2026-07-29: a fresh session draws its TUI at the TOP of the
+    pane — composer around row 13 of 38, everything below the status bar empty."""
+    return (["  word: ready. Then do nothing further and wait.", "",
+             "⏺ ready", "", "✻ Worked for 3s", "",
+             _RULE, *composer_rows, _RULE, _STATUS] + [""] * 24)
+
+
+def test_fresh_session_planted_text_is_found():
+    # THE #521 repro: planted text in a fresh session's composer, far above the
+    # bottom of the pane. The old last-14-rows scan returned '' here.
+    r = _composer(_fresh_session("❯ hi "))
+    assert r == {"found": True, "text": "hi"}
+
+
+def test_filled_session_bottom_composer():
+    rows = (["⏺ some transcript"] * 30
+            + [_RULE, "❯ okay so any changes we should do here?", _RULE,
+               _STATUS + " · esc to interrupt", "", ""])
+    r = _composer(rows)
+    assert r == {"found": True, "text": "okay so any changes we should do here?"}
+
+
+def test_empty_composer_reads_empty_not_missing():
+    # An empty composer is '❯' + NBSP + trailing spaces. That is EMPTY (send),
+    # never NOT-VISIBLE (refuse) — conflating them would wedge every send.
+    r = _composer(_fresh_session("❯   "))
+    assert r == {"found": True, "text": ""}
+
+
+def test_wrapped_composer_joins_rows():
+    r = _composer(_fresh_session("❯ a long unsent line that", "  wraps onto more rows"))
+    assert r["found"] is True
+    assert r["text"] == "a long unsent line that wraps onto more rows"
+
+
+def test_scrollback_prompt_without_rule_is_not_the_composer():
+    # Historical user messages also render with a ❯ prefix, but never with a box
+    # rule directly above. A stale frame showing only transcript must read as
+    # NOT VISIBLE, not as a collision with an old message.
+    rows = ["⏺ doing things", "", "❯ an old user message in scrollback",
+            "", "⏺ more output", "✻ Worked for 12m 35s"]
+    r = _composer(rows)
+    assert r == {"found": False, "text": ""}
+
+
+def test_clipped_frame_has_no_composer():
+    # The live state observed on a just-switched-to pane: transcript ends mid-
+    # frame, no composer, no status bar. Must be NOT VISIBLE so open-send fails
+    # closed instead of blind-appending into the off-screen composer.
+    rows = ["⏺ transcript"] * 38
+    r = _composer(rows)
+    assert r == {"found": False, "text": ""}
+
+
+def test_legacy_gt_marker_still_matches():
+    r = _composer(_fresh_session("> typed with the old marker"))
+    assert r == {"found": True, "text": "typed with the old marker"}

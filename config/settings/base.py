@@ -382,6 +382,9 @@ CHAT_STUB_EXECUTOR = env.bool("CHAT_STUB_EXECUTOR", default=True)
 # an image built without the build-arg) disables the comparison entirely rather than
 # guessing — the alert must never fire on partial information.
 RUNNER_CODE_SHA = env("RUNNER_CODE_SHA", default="")
+# Committer epoch of that same commit — what lets the supervisor say "behind"
+# rather than merely "different" (a sha is an identity, not a position).
+RUNNER_CODE_COMMITTED_AT = env.int("RUNNER_CODE_COMMITTED_AT", default=0)
 
 # Key for at-rest field encryption (per-runner credentials — apps/common/encryption.py).
 # Empty → derived from SECRET_KEY (fine for dev). Set explicitly in production so the

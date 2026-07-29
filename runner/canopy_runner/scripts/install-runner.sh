@@ -33,9 +33,10 @@ LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
 
-# Kept for the stage-2 handover below: the updater runs this script from the
-# WORKING TREE, so by the time we know the target ref we may discover the
-# archived tree carries a different installer than the one executing.
+# Kept for the stage-2 handover below: the updater runs a COPY of this script
+# frozen at the last install, so by the time we know the target ref we may
+# discover the archived tree carries a different installer than the one
+# executing.
 ORIG_ARGS=("$@")
 
 while [ $# -gt 0 ]; do
@@ -114,6 +115,10 @@ fi
 # commit that touched the runner's OWN source, NOT the repo HEAD (which moves on
 # every canopy-web commit and would mark every runner stale on a CSS change).
 RUNNER_SHA="$(git -C "$REPO" log -1 --format=%H "$REF" -- "$RUNNER_SRC")"
+# Committer epoch of the SAME commit. The sha says WHICH code; this says WHEN, and
+# only the pair can tell "this box is behind" from "this box is ahead of the
+# deploy" — which the supervisor was reporting as the former either way.
+RUNNER_COMMITTED_AT="$(git -C "$REPO" log -1 --format=%ct "$REF" -- "$RUNNER_SRC")"
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$RUNNER_SHA" ]; then
   echo "==> ref $REF | runner source at ${RUNNER_SHA:0:12}"
@@ -131,11 +136,12 @@ trap 'rm -rf "$TMP"' EXIT
 git -C "$REPO" archive "$REF" | tar -x -C "$TMP"
 
 # --- stage-2 handover -------------------------------------------------------
-# The updater plist runs this script from the WORKING TREE, and nothing in this
-# flow updates that tree — only refs are fetched. So when the repo layout moves
-# (this script's own path included), a stale working-tree copy would build from
-# directories the archived ref no longer has. If the archived ref carries a
-# different installer, hand over to THAT copy: it knows its own layout. The
+# The updater plist runs ~/.canopy/canopy-runner-update — a copy of this script
+# frozen at the LAST install, which nothing between installs refreshes. So when
+# the repo layout moves (this script's own path included), that stale copy would
+# build from directories the archived ref no longer has. If the archived ref
+# carries a different installer, hand over to THAT copy: it knows its own
+# layout, and installs itself over the frozen copy on its way out. The
 # guard env stops recursion; the mktemp copy survives `rm -rf $TMP` (exec never
 # runs the EXIT trap) and is one tiny file /tmp cleanup reaps.
 if [ -z "${CANOPY_INSTALLER_STAGE2:-}" ]; then
@@ -160,6 +166,7 @@ from __future__ import annotations
 
 SHA = "$RUNNER_SHA"
 BUILT_AT = "$BUILT_AT"
+COMMITTED_AT = ${RUNNER_COMMITTED_AT:-0}
 EOF
 
 echo "==> building wheels"
@@ -237,10 +244,23 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
   install_job "$LABEL" "$TMP/runner.plist" || exit 1
 
   if [ "$DO_AUTO_UPDATE" -eq 1 ]; then
-    # The timer job runs the installer FROM THE REPO — the script is not part of
-    # the wheel, and a copy frozen at install time could never fix itself.
-    INSTALLER="$REPO/runner/canopy_runner/scripts/install-runner.sh"
-    if [ -x "$INSTALLER" ]; then
+    # Install THIS script to a stable, self-describing path and point the timer
+    # job at that — not at the copy in the repo.
+    #
+    # macOS names every entry in System Settings › Login Items › "App Background
+    # Activity" after the basename of ProgramArguments[0]. Pointing at the repo
+    # made canopy's updater show up as `install-runner.sh` — "Item from
+    # unidentified developer" — a bare shell script running from a git checkout,
+    # indistinguishable at a glance from something you would want to kill, and
+    # with nothing tying it to canopy. It now reads `canopy-runner-update`.
+    #
+    # Copied from the SNAPSHOT ($TMP), not the working tree, for the same reason
+    # everything else here is: what gets installed is the ref, never whatever
+    # happens to be checked out. That also means a `git checkout` in the repo can
+    # no longer change the script the timer executes — only an install can.
+    INSTALLER="$HOME/.canopy/canopy-runner-update"
+    mkdir -p "$HOME/.canopy"
+    if install -m 755 "$TMP/runner/canopy_runner/scripts/install-runner.sh" "$INSTALLER"; then
       sed -e "s|__INSTALLER__|$INSTALLER|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" \
         "$TMP/runner/canopy_runner/launchd/$UPDATER_LABEL.plist.template" > "$TMP/updater.plist"
       # A failed updater is NOT fatal: the runner itself is installed and running,
@@ -248,7 +268,7 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
       install_job "$UPDATER_LABEL" "$TMP/updater.plist" \
         || echo "WARNING: auto-update job not installed; updates stay manual." >&2
     else
-      echo "WARNING: $INSTALLER not found/executable — auto-update job not installed." >&2
+      echo "WARNING: could not install $INSTALLER — auto-update job not installed." >&2
     fi
   fi
 fi

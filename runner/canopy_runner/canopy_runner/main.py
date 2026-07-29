@@ -62,6 +62,92 @@ def _reset_cdp_health_state() -> None:
     _cdp_down_signalled = False
 
 
+def _pause_paths(cfg: Config) -> tuple[Path, Path]:
+    """(sentinel, mirror). The sentinel is the human-facing control surface the
+    menu-bar app toggles; the mirror is what we last knew it to be, so a CHANGE can
+    be told from a steady state across restarts."""
+    d = Path(cfg.state_path).parent if cfg.state_path else Path.home() / ".canopy"
+    return d / "PAUSED", d / ".pause-mirror"
+
+
+def reconcile_pause(cfg, client, server_paused: bool) -> bool:
+    """Keep the local sentinel and the server's `paused` as ONE state, and return
+    what is now in force.
+
+    The rule: a local CHANGE is a command, anything else defers to the server.
+
+        local != mirror  ->  the human just toggled the file: push it up.
+        otherwise        ->  the server is truth: write the file to match.
+
+    Both directions are needed and neither is symmetric with the other. Without
+    the edge, a remote pause would be lifted five seconds later by a box whose
+    file happens to be absent — the level-report clobber. Without the mirror, we
+    could not tell "the human just deleted the file" (an unpause command) from
+    "the file was never there and the pause came from the server" (obey it), and
+    the local file could then only ever ADD a pause, which breaks the menu-bar
+    toggle's off position.
+
+    The mirror records what was last SUCCESSFULLY SYNCED, never merely what is in
+    force. That distinction is load-bearing: if a failed push still advanced the
+    mirror, the next tick would see local == mirror, fall into the server-wins
+    branch, and DELETE the sentinel the human just dropped — silently undoing a
+    pause because one HTTP call failed. Leaving it unmoved makes the edge persist
+    and retry on the next tick instead.
+
+    On any error, err toward PAUSED (`local or server_paused`). Pausing is the
+    conservative direction here: the cost of wrongly pausing is idleness someone
+    notices, and the cost of wrongly running is tokens on an account that must not
+    spend them.
+    """
+    sentinel, mirror = _pause_paths(cfg)
+    try:
+        local = sentinel.exists()
+        synced = mirror.exists()
+    except OSError:
+        # No readable local signal at all — the server's answer is the only one
+        # there is, and it is the copy `claim_next_turn` enforces anyway.
+        return server_paused
+
+    if local != synced:
+        # A local EDGE — the human toggled the file. That is a command, and it is
+        # the newest intent, so it wins this tick even against a disagreeing server.
+        try:
+            client.set_paused(cfg.runner_id, local,
+                              note="paused locally (~/.canopy/PAUSED)" if local else "")
+            _write_flag(mirror, local)
+            logger.warning("pause: local sentinel %s — pushed to the control plane",
+                           "set" if local else "cleared")
+            return local
+        except Exception:  # noqa: BLE001 — never kill the loop over this
+            # Mirror deliberately NOT advanced: retry on the next tick.
+            logger.warning("pause: could not push the local change; erring toward "
+                           "paused until it lands", exc_info=True)
+            return local or server_paused
+
+    if local != server_paused:
+        # No local change, so the server is truth — write it back down so the
+        # menu-bar app shows the real state rather than a stale toggle.
+        try:
+            _write_flag(sentinel, server_paused)
+            _write_flag(mirror, server_paused)
+            logger.info("pause: applied the control plane's state locally (paused=%s)",
+                        server_paused)
+        except OSError:
+            logger.warning("pause: could not mirror the server state to %s", sentinel)
+            return local or server_paused
+    return server_paused
+
+
+def _write_flag(path: Path, present: bool) -> None:
+    """A boolean stored as a file's existence — the shape the menu-bar app and
+    `touch ~/.canopy/PAUSED` already speak."""
+    if present:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    else:
+        path.unlink(missing_ok=True)
+
+
 def _paused_agents(cfg: Config) -> set[str]:
     """Per-agent pause: agent slugs with a `PAUSED.<slug>` sentinel next to the state
     file (dropped by the menu-bar app). Distinct from the global `PAUSED` file, which
@@ -230,18 +316,18 @@ def run_once(cfg: Config, client: Client) -> str:
         # ("what can this runner do right now"), same tick. The degraded and paused
         # heartbeats below deliberately omit it: omission is a no-op server-side,
         # and a runner that isn't claiming has no use for a refreshed list.
-        client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
-                         ready=_ready, ready_note=_rnote,
-                         projects=sessions.reported_projects(cfg))
+        me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
+                              ready=_ready, ready_note=_rnote,
+                              projects=sessions.reported_projects(cfg))
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
         # control plane + menu-bar app read ("alive but can't execute"). It's a status field,
         # overwritten each tick, so it is not spam.
-        client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
-                         note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
-                         host=host, ready=False,
-                         ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}")
+        me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
+                              note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
+                              host=host, ready=False,
+                              ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}")
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -259,6 +345,23 @@ def run_once(cfg: Config, client: Client) -> str:
     sessions.maybe_report_sessions(cfg, client)
     streams.sync_session_streams(cfg, client)
     streams.drain_backfills(cfg, client)
+
+    # THE PAUSE. One state, settable from either end: reconcile the local sentinel
+    # with the server's `paused` (read off the heartbeat response we just got), and
+    # obey whatever is in force.
+    #
+    # Gating HERE, above the inbox and schedule triggers, is the point. The server
+    # already refuses to hand a paused runner any turn, so routing is safe without
+    # us — but both of those triggers ENQUEUE turns rather than executing them, so
+    # a runner that kept polling while parked would build a backlog it cannot touch
+    # and then stampede the instant it resumes. That is the same hazard the
+    # per-agent pause names in `check_schedules`.
+    #
+    # It sits AFTER the in-flight reporting above, deliberately: a pause stops
+    # STARTING work, it never abandons work already running.
+    if reconcile_pause(cfg, client, bool((me or {}).get("paused"))):
+        return "paused"
+
     paused = _paused_agents(cfg)
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
@@ -548,38 +651,37 @@ def main() -> None:
     paused = False
     while True:
         _beat()
-        if pause_file.exists():
-            if not paused:
-                logger.warning("PAUSED — sentinel %s present; skipping all work (no claim, no "
-                               "inbox, no tokens). Resume via the menu-bar app or remove the file.",
-                               pause_file)
-                paused = True
-            try:
-                client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT),
-                                 note="paused", host=host)
-            except Exception:  # noqa: BLE001
-                pass
-            # Pause stops STARTING work, it doesn't abandon work already running: a
-            # reply mid-flight when the sentinel dropped still gets carried back and
-            # its turn closed, instead of hanging EXECUTING until the pause lifts.
-            chat_pump.pump_chat_bridges(cfg, client)
-            time.sleep(cfg.poll_seconds)
-            continue
-        if paused:
-            logger.info("RESUMED — pause sentinel cleared; back to normal polling")
-            paused = False
-            idle_streak = 0
+        # The pause is NOT short-circuited here any more, and that is deliberate.
+        # This branch used to `continue` before run_once, which meant a local
+        # sentinel could never be pushed up — the local file and the server's
+        # `paused` were two states with no path between them. run_once now
+        # heartbeats, pumps in-flight replies, reconciles the two, and returns
+        # "paused" without starting anything, which is everything this branch did
+        # plus the sync. One place owns the rule.
         try:
             result = run_once(cfg, client)
         except Exception:  # noqa: BLE001 — the loop must survive anything
             logger.exception("run_once crashed; continuing")
             result = "crashed"
+        # Announce the pause TRANSITIONS loudly and exactly once each. A parked
+        # runner is indistinguishable from a dead one in the log otherwise, and
+        # "nobody remembered to unpause it" is the way this feature hurts you.
+        if result == "paused" and not paused:
+            logger.warning("PAUSED — skipping all work (no claim, no inbox, no schedules, "
+                           "no tokens). Resume via the menu-bar app, `canopy runner unpause`, "
+                           "or by removing %s.", pause_file)
+            paused = True
+        elif result != "paused" and paused:
+            logger.info("RESUMED — back to normal polling")
+            paused = False
+            idle_streak = 0
         # One scannable line per cycle. Idle is quiet (a heartbeat every ~15 min so the
         # log shows the runner is alive without flooding); everything else logs at INFO.
         # "cdp_down" is quiet like "idle" — the throttled WARNING in run_once and the
         # degraded heartbeat already carry the reason, so logging it every tick would be the
-        # per-tick spam the preflight is meant to avoid.
-        if result in ("idle", "cdp_down"):
+        # per-tick spam the preflight is meant to avoid. "paused" is quiet for the same
+        # reason: its transition is already a WARNING just above.
+        if result in ("idle", "cdp_down", "paused"):
             idle_streak += 1
             if idle_streak % max(1, (900 // max(cfg.poll_seconds, 1))) == 0:
                 logger.info("cycle: %s (x%d) — runner alive, nothing claimed", result, idle_streak)

@@ -120,6 +120,12 @@ them together would make the two modules import each other.
      within 30 minutes. `launchctl bootout gui/$(id -u)/com.canopy.runner.updater`
      first, or install with `--no-auto-update`.
 
+   The timer runs `~/.canopy/canopy-runner-update` (a copy of this script placed
+   there by the install) rather than the script in your checkout — macOS names
+   background items after the executable, so pointing at the repo made canopy's
+   updater show up in System Settings › Login Items as `install-runner.sh` from
+   an "unidentified developer".
+
    Its log is `~/.canopy/updater.log`. Ask any box what it thinks with
    `canopy-runner update-check --config ~/.canopy/runner.json`, which prints
    `current|stale|busy|unknown <expected-sha>` and never writes anything.
