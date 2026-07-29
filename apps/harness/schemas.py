@@ -171,6 +171,19 @@ class HeartbeatIn(Schema):
     # The sha of the last commit touching the runner's own source. Compared against
     # settings.RUNNER_CODE_SHA; empty means unknown and never alerts.
     code_sha: str = ""
+    # The repos this runner can actually drive, OBSERVED (emdash's own projects
+    # table on a laptop; the configured list on a cloud box) rather than typed by
+    # a human at pairing — which drifted silently and only ever toward "cannot
+    # run". Replaces `capabilities["projects"]` wholesale when present.
+    #
+    # None (absent) and [] mean DIFFERENT things and the difference is the whole
+    # safety property: absent = "I could not tell this tick" (an unreadable emdash
+    # DB) and leaves the stored list alone; [] = "I genuinely have none" (a fresh
+    # box) and empties it. Treating absence as empty would blank the list and make
+    # every repo turn on this runner unclaimable — the `replace_reported_sessions`
+    # drift, one notch worse. It also makes rollout free: a runner on old code
+    # sends nothing and keeps its list.
+    projects: list[str] | None = None
 
 
 class ResolveSessionIn(Schema):

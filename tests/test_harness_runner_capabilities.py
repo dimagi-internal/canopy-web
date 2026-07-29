@@ -1,8 +1,13 @@
 """PATCH /api/harness/runners/{id} — update a paired runner's capabilities.
 
-The only prior way to add `projects` to a runner was to re-pair, which mints a
-new runner and orphans the old one's RunnerBindings. This lets a runner opt into
-driving repos in place.
+The only prior way to change a capability was to re-pair, which mints a new
+runner and orphans the old one's RunnerBindings. This lets a runner opt into
+driving new agents in place.
+
+`projects` is NO LONGER one of them (spec 2026-07-28). It is reported by the
+runner on every heartbeat from what the box actually has, so a hand-written value
+is a ghost edit — 200 to the caller, overwritten seconds later, and a dispatch
+into a hole. It is refused here and preserved across writes that omit it.
 """
 from __future__ import annotations
 
@@ -43,7 +48,25 @@ def _patch(client, runner_id, caps):
     )
 
 
-def test_owner_adds_projects_to_a_paired_runner():
+def test_owner_adds_agents_to_a_paired_runner():
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+    c = Client()
+    c.force_login(jj)
+
+    resp = _patch(c, runner.id, {"agents": ["echo", "ada"], "sessions": True})
+
+    assert resp.status_code == 200, resp.content
+    runner.refresh_from_db()
+    assert runner.agent_slugs() == ["echo", "ada"]
+    assert runner.session_capable() is True
+
+
+def test_writing_projects_by_hand_is_refused():
+    """The retired half. A 200 here would be a lie the caller acts on: the next
+    heartbeat replaces the value, so the repo they think they just declared is
+    still undispatchable. The message names the real fix instead."""
     jj = _user("jj")
     ws = _ws("dimagi", jj)
     runner = _runner(jj, ws)
@@ -52,24 +75,43 @@ def test_owner_adds_projects_to_a_paired_runner():
 
     resp = _patch(c, runner.id, {"agents": ["echo"], "projects": ["canopy-web"]})
 
-    assert resp.status_code == 200, resp.content
+    assert resp.status_code == 422
     runner.refresh_from_db()
-    assert runner.project_names() == ["canopy-web"]
-    assert runner.agent_slugs() == ["echo"]
+    assert runner.project_names() == []
+    assert runner.agent_slugs() == ["echo"]  # the whole write is rejected, not half of it
 
 
-def test_replacement_is_wholesale():
-    """Sending {} clears capabilities — the caller owns the full set, like the
-    skill catalog's PUT. No accidental merge that leaves stale entries."""
+def test_replacement_is_wholesale_for_the_keys_patch_owns():
+    """Sending {} clears the capabilities the caller owns — no accidental merge
+    that leaves stale entries."""
     jj = _user("jj")
     ws = _ws("dimagi", jj)
     runner = _runner(jj, ws)
     c = Client()
     c.force_login(jj)
 
-    _patch(c, runner.id, {"projects": ["canopy-web"]})
+    _patch(c, runner.id, {"sessions": True})
     runner.refresh_from_db()
     assert runner.agent_slugs() == []  # the prior agents entry is gone
+    assert runner.session_capable() is True
+
+
+def test_a_capabilities_write_does_not_drop_the_reported_projects():
+    """`projects` belongs to the runner now, so a wholesale write of the OTHER
+    keys must not take it out as a side effect — that would unroute every repo
+    turn until the next heartbeat, for a caller who never mentioned projects."""
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws, )
+    runner.capabilities = {"agents": ["echo"], "projects": ["canopy-web"]}
+    runner.save(update_fields=["capabilities"])
+    c = Client()
+    c.force_login(jj)
+
+    _patch(c, runner.id, {"agents": ["ada"]})
+
+    runner.refresh_from_db()
+    assert runner.agent_slugs() == ["ada"]
     assert runner.project_names() == ["canopy-web"]
 
 

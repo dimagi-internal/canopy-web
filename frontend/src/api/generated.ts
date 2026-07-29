@@ -2126,11 +2126,19 @@ export interface paths {
          * @description Replace a runner's capabilities (owner-gated via _runner_or_404).
          *
          *     Capabilities are set at pairing and were otherwise immutable — the only way to
-         *     add `projects` to an existing runner was to re-pair, which mints a NEW runner
+         *     add a capability to an existing runner was to re-pair, which mints a NEW runner
          *     and orphans the old one's RunnerBindings. This lets a paired runner opt into
-         *     driving repos (or new agents) in place. capabilities is a routing hint, not a
-         *     security boundary (the workspace gates), so replacing it changes what the
-         *     runner PULLS, never what it may reach.
+         *     driving new agents in place. capabilities is a routing hint, not a security
+         *     boundary (the workspace gates), so replacing it changes what the runner PULLS,
+         *     never what it may reach.
+         *
+         *     EXCEPT `projects`, which the runner now REPORTS on every heartbeat (spec
+         *     2026-07-28). Accepting a hand-written value would be accepting a ghost edit:
+         *     the next heartbeat overwrites it seconds later, so the caller sees a 200,
+         *     believes the repo is declared, and dispatches into a hole. A 422 naming the
+         *     real fix is the honest answer. `projects` is also PRESERVED across a write that
+         *     omits it — it belongs to the runner now, so a capabilities PATCH must not drop
+         *     it as a side effect.
          */
         readonly patch: operations["apps_harness_api_update_runner_capabilities"];
         readonly trace?: never;
@@ -7486,6 +7494,8 @@ export interface components {
              * @default
              */
             readonly code_sha: string;
+            /** Projects */
+            readonly projects?: readonly string[] | null;
         };
         /** TurnOut */
         readonly TurnOut: {

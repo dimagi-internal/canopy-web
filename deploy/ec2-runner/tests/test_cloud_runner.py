@@ -110,9 +110,61 @@ def test_pair_or_load_reuse_syncs_capabilities(cloud_runner, monkeypatch, tmp_pa
     assert ("POST", "/runners/existing-rid/heartbeat") in methods_paths
     assert ("PATCH", "/runners/existing-rid") in methods_paths
     patch_body = next(b for m, p, b in calls if p == "/runners/existing-rid")
-    assert patch_body == {"capabilities": cloud_runner.RUNNER_CAPS}
+    # `projects` is REPORTED on the heartbeat now (spec 2026-07-28), so the server
+    # 422s a PATCH that carries it — sending one would silently lose the agents/
+    # sessions sync riding along in the same call.
+    assert "projects" not in patch_body["capabilities"]
+    assert patch_body["capabilities"] == {
+        k: v for k, v in cloud_runner.RUNNER_CAPS.items() if k != "projects"
+    }
     # A reused runner is never re-paired via POST /runners/.
     assert all(p != "/runners/" for _m, p in methods_paths)
+
+
+def test_pair_or_load_reuse_reports_projects_on_the_heartbeat(
+    cloud_runner, monkeypatch, tmp_path
+):
+    """A cloud box has no emdash to observe, so its configured list IS its truth —
+    but it still has to REPORT it, because the PATCH route no longer accepts it.
+    Without this a redeploy that changes RUNNER_PROJECTS would never take effect."""
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"runner_id": "existing-rid"}')
+    monkeypatch.setattr(cloud_runner, "STATE_FILE", state_file)
+    monkeypatch.setattr(cloud_runner, "RUNNER_CAPS",
+                        {"projects": ["canopy-web"], "sessions": True})
+
+    calls = []
+    monkeypatch.setattr(
+        cloud_runner, "_api",
+        lambda method, path, body=None: (calls.append((method, path, body)), (200, {}))[1],
+    )
+    cloud_runner.pair_or_load()
+
+    beat = next(b for _m, p, b in calls if p.endswith("/heartbeat"))
+    assert beat["projects"] == ["canopy-web"]
+
+
+def test_a_cloud_box_with_no_configured_projects_reports_an_empty_list(
+    cloud_runner, monkeypatch, tmp_path
+):
+    """[] is the honest report for a box that declares none — and it is safe here
+    in a way it never is on a laptop: this list is read from env, so it cannot
+    fail to be read. The omit-on-failure rule protects an emdash READ; there is no
+    read to fail."""
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"runner_id": "existing-rid"}')
+    monkeypatch.setattr(cloud_runner, "STATE_FILE", state_file)
+    monkeypatch.setattr(cloud_runner, "RUNNER_CAPS", {"sessions": True})
+
+    calls = []
+    monkeypatch.setattr(
+        cloud_runner, "_api",
+        lambda method, path, body=None: (calls.append((method, path, body)), (200, {}))[1],
+    )
+    cloud_runner.pair_or_load()
+
+    beat = next(b for _m, p, b in calls if p.endswith("/heartbeat"))
+    assert beat["projects"] == []
 
 
 # ── transcript batching ──────────────────────────────────────────────────────
