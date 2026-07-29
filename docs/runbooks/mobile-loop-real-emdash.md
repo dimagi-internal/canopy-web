@@ -13,22 +13,25 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
 
 ## Preconditions
 
-- **Daemon code is current.** The daemon runs `canopy_runner` from `~/emdash-projects/canopy-web`.
-  Update it (it is typically on a detached HEAD):
+- **Daemon code is current.** The runner is an INSTALLED package, not a checkout (#512) —
+  a `git pull` in `~/emdash-projects/canopy-web` no longer changes what the daemon runs.
+  Update it with the installer, which builds a snapshot of `origin/main`:
   ```
-  git -C ~/emdash-projects/canopy-web checkout main && git -C ~/emdash-projects/canopy-web pull
+  packages/canopy_runner/scripts/install-runner.sh
   ```
+  `RunnerOut.code_sha` vs `expected_code_sha` on the Runners tab tells you whether a given
+  box is behind.
 - **emdash is running with the CDP port open** (`--remote-debugging-port=9222`, the runner's
   `cdp_port`).
-- **The runner declares the target project.** Add it in place — no re-pair, which would
-  orphan the runner's SessionLinks:
+- **The target project is OPEN IN EMDASH on that box.** There is nothing to declare: the
+  runner reports `capabilities["projects"]` from emdash's own projects table on every
+  heartbeat, and `PATCH .../runners/<id>` **422s** a hand-written `projects` (it would be
+  overwritten seconds later). Open the repo as a project in emdash and it becomes routable
+  within a tick. Confirm with:
   ```
-  CANOPY_PAT=<raw> CANOPY_URL=https://labs.connect.dimagi.com/canopy \
-    curl -s -X PATCH "$CANOPY_URL/api/harness/runners/<runner-id>" \
-      -H "Authorization: Bearer $CANOPY_PAT" -H "Content-Type: application/json" \
-      -d '{"capabilities": {"agents": ["ace","ada","echo","eva","hal"], "projects": ["canopy-web"]}}'
+  canopy project runners <repo>          # who would claim it now
   ```
-  (Keep the existing agents list; you are only adding `projects`.)
+  On a CLOUD runner, which has no emdash, the equivalent is its `RUNNER_PROJECTS` env.
 - **Use a SCRATCH emdash task**, not a real work session, for the first run. Note its exact
   task name (what shows in the emdash sidebar). The `thread_key` is `emdash:<that-name>`.
 
@@ -64,5 +67,7 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
 
 - The turn is one-shot; nothing recurring was started. If you dispatched but decide not to
   run it: `POST /api/harness/turns/<id>/cancel`.
-- To stop the runner claiming repo turns again until you're ready, remove `projects` from
-  its capabilities (`PATCH .../runners/<id>` with `{"capabilities": {"agents": [...]}}`).
+- To stop the runner claiming repo turns again, you can no longer edit its capabilities —
+  the list is reported, so it would come straight back on the next heartbeat. Close the
+  project in emdash (it stops being reported), or pause the runner entirely via the
+  menu-bar app / the pause sentinel, which stops it claiming anything.
