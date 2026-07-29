@@ -359,6 +359,21 @@ restarts the daemon, so not mid-turn. `--ref <branch>` installs something else d
 the previously committed literal named one source directory while the runner imports three
 packages, so it could not actually start the runner and the live copy had been hand-patched.
 
+**The laptop runner AUTO-UPDATES itself** via a second launchd job
+(`com.canopy.runner.updater`, `StartInterval` 1800), installed by the same script
+(`--no-auto-update` to skip). Three rules make it safe: it tracks the **deployed**
+`expected_code_sha`, never `origin/main` (so it only installs what has been through
+CI + the merge queue + a deploy, and can't leave the box permanently mismatched
+against the server); it **defers while a turn is in flight** (the daemon publishes
+an in-flight count to `~/.canopy/in-flight` each tick, because a chat turn is
+bridged ACROSS ticks and a restart would strand the reply); and it is a **separate
+job**, because a self-updating runner that shipped a crash-looping version could
+never update again — an independent timer means shipping a fix rescues every box.
+`canopy-runner update-check` answers `current|stale|busy|unknown` and is READ-ONLY
+(it must never heartbeat — that would forge liveness for a daemon that may be dead).
+Log: `~/.canopy/updater.log`. Testing a branch on a box? Bootout the updater first,
+or it reverts you to the deployed sha within 30 minutes.
+
 **Runner code provenance.** The heartbeat carries `code_version` (the package's
 `__version__`, legible) and `code_sha` — **the sha of the last commit touching
 `packages/canopy_runner/canopy_runner/`**, NOT the repo HEAD. The server holds the same

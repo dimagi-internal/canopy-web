@@ -71,6 +71,29 @@ for the schema drift that causes such a failure.
 
    It restarts the daemon, so avoid running it mid-turn.
 
+   It also installs a second launchd job, `com.canopy.runner.updater`, which
+   **auto-updates this box** every 30 minutes (`--no-auto-update` to skip).
+   What it does and does not do:
+
+   - It tracks the **deployed** runner sha (`expected_code_sha` off this
+     runner's own row), never `origin/main` — so it only ever installs code
+     that has been through CI, the merge queue and a deploy. A merged runner
+     change reaches the fleet when canopy-web is deployed, not at merge.
+   - It **never restarts mid-turn**: the daemon publishes an in-flight count
+     each tick and the updater defers while anything is in flight.
+   - It is a **separate** job on purpose. A runner that updated itself could
+     ship a version that crash-loops on startup and then never update again —
+     it would never heartbeat, never learn it was behind, and stay bricked.
+     An independent timer keeps checking whatever state the runner is in, so
+     shipping a fix is enough to rescue every box.
+   - Testing a branch on a box? The updater will revert it to the deployed sha
+     within 30 minutes. `launchctl bootout gui/$(id -u)/com.canopy.runner.updater`
+     first, or install with `--no-auto-update`.
+
+   Its log is `~/.canopy/updater.log`. Ask any box what it thinks with
+   `canopy-runner update-check --config ~/.canopy/runner.json`, which prints
+   `current|stale|busy|unknown <expected-sha>` and never writes anything.
+
    The `realtime` extra (the WebSocket wake listener — instant claims instead of
    up to a 5s poll delay) is installed as part of this, into the tool venv's own
    interpreter. It used to be a hand-run `pip install --user` against whichever

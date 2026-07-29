@@ -93,6 +93,14 @@ class Client:
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 
+    def list_runners(self) -> list[dict]:
+        """The fleet this token can see. READ-ONLY, and the only call the updater
+        makes: it needs `expected_code_sha` off its own row, and must never
+        heartbeat (that would stamp the runner ONLINE and overwrite the provenance
+        the real daemon reports — forging liveness for a daemon that may be dead)."""
+        _, payload = self._call("GET", "/runners/")
+        return payload if isinstance(payload, list) else []
+
     def resolve_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
                         project: str = "", workspace: str = "") -> dict:
         """Ask the control plane whether THIS runner can reuse an existing emdash

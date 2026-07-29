@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE — rendered to ~/Library/LaunchAgents/com.canopy.runner.updater.plist by
+  scripts/install-runner.sh. Do not load this file directly.
+
+  A SEPARATE job from the runner, and that is the whole design. If the runner
+  updated itself, a version that crash-loops on startup could never update again:
+  it never heartbeats, never learns it is behind, and the box stays bricked until
+  a human notices. An independent timer keeps checking regardless of what state
+  the runner is in, so shipping a fix is enough to rescue every box automatically.
+
+  It runs the INSTALLER, not the runner: `uv tool install --force` replaces the
+  runner's venv, and a process cannot safely have its own interpreter and modules
+  swapped out from under it mid-run. The shell script lives in the repo checkout,
+  which this job therefore depends on — but note it can only ever install what
+  `--if-stale` resolves from the control plane, so a stray branch checked out in
+  that repo still cannot change WHAT gets installed.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.canopy.runner.updater</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__INSTALLER__</string>
+    <string>--if-stale</string>
+    <string>--repo</string>
+    <string>__REPO__</string>
+  </array>
+  <!-- Not RunAtLoad: the installer restarts the runner, and load happens at login
+       and on every re-install — neither is a moment to bounce a working daemon. -->
+  <key>StartInterval</key><integer>1800</integer>
+  <key>StandardOutPath</key><string>__HOME__/.canopy/updater.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.canopy/updater.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd's default PATH has neither uv (~/.local/bin) nor git/node
+         (Homebrew), and this job needs all three. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

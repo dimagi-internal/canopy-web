@@ -5,6 +5,8 @@
 #   packages/canopy_runner/scripts/install-runner.sh                 # origin/main
 #   packages/canopy_runner/scripts/install-runner.sh --ref my-branch # deliberately, a branch
 #   packages/canopy_runner/scripts/install-runner.sh --no-launchd    # install only, don't touch the daemon
+#   packages/canopy_runner/scripts/install-runner.sh --if-stale      # auto-update mode (the timer job)
+#   packages/canopy_runner/scripts/install-runner.sh --no-auto-update # skip installing the timer job
 #
 # Why a snapshot and not the working tree: the daemon used to execute from
 # ~/emdash-projects/canopy-web via PYTHONPATH, so any `git checkout` in that
@@ -24,15 +26,22 @@ set -euo pipefail
 REPO="${CANOPY_WEB_REPO:-$HOME/emdash-projects/canopy-web}"
 REF="origin/main"
 DO_LAUNCHD=1
+DO_AUTO_UPDATE=1
+IF_STALE=0
 RUNNER_SRC="packages/canopy_runner/canopy_runner"
 LABEL="com.canopy.runner"
+UPDATER_LABEL="com.canopy.runner.updater"
+CONFIG="$HOME/.canopy/runner.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
     --repo) REPO="${2:?--repo needs a path}"; shift 2 ;;
+    --config) CONFIG="${2:?--config needs a path}"; shift 2 ;;
     --no-launchd) DO_LAUNCHD=0; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --no-auto-update) DO_AUTO_UPDATE=0; shift ;;
+    --if-stale) IF_STALE=1; shift ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -43,10 +52,58 @@ command -v uv >/dev/null || { echo "uv not found — https://docs.astral.sh/uv/"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \
   || { echo "not a git checkout: $REPO (set CANOPY_WEB_REPO)" >&2; exit 1; }
 
+# --- auto-update mode -------------------------------------------------------
+# Ask the INSTALLED runner whether this box should update right now, and pin the
+# install to the sha the control plane expects.
+#
+# Pinning matters: this must NOT track origin/main. The expected sha is the runner
+# source in the DEPLOYED image — already through CI, the merge queue and a deploy.
+# Installing main instead would run code nothing has deployed, and would leave
+# code_sha != expected_code_sha permanently, so the staleness banner would fire
+# forever on exactly the boxes auto-updating correctly.
+if [ "$IF_STALE" -eq 1 ]; then
+  CHECK_BIN="$(uv tool dir --bin 2>/dev/null)/canopy-runner"
+  [ -x "$CHECK_BIN" ] || CHECK_BIN="$(command -v canopy-runner || true)"
+  if [ -z "$CHECK_BIN" ] || [ ! -x "$CHECK_BIN" ]; then
+    echo "$(date -u +%FT%TZ) --if-stale: no installed runner to check; nothing to do."
+    exit 0
+  fi
+  [ -f "$CONFIG" ] || { echo "$(date -u +%FT%TZ) --if-stale: no config at $CONFIG."; exit 0; }
+  read -r STATUS EXPECTED <<<"$("$CHECK_BIN" update-check --config "$CONFIG" 2>&1 | tail -1)"
+  case "$STATUS" in
+    stale)
+      echo "$(date -u +%FT%TZ) --if-stale: behind — installing ${EXPECTED:0:12}"
+      REF="$EXPECTED"
+      ;;
+    current|busy|unknown)
+      # All "do nothing", and all exit 0: this runs on a timer, so a non-zero
+      # exit for the ordinary case would fill launchd's log with false failures
+      # and train everyone to ignore it.
+      echo "$(date -u +%FT%TZ) --if-stale: $STATUS — nothing to do."
+      exit 0
+      ;;
+    *)
+      # Anything else is the installed runner not understanding `update-check` —
+      # i.e. it predates auto-update. Fail CLOSED (an unparseable answer is not
+      # evidence of anything) but say why, because "nothing to do" forever would
+      # otherwise look exactly like a healthy up-to-date box.
+      echo "$(date -u +%FT%TZ) --if-stale: update-check unavailable from $CHECK_BIN" >&2
+      echo "    (it answered: ${STATUS:-<nothing>}). This runner predates auto-update;" >&2
+      echo "    run install-runner.sh once by hand to pick it up." >&2
+      exit 0
+      ;;
+  esac
+fi
+
 echo "==> fetching $REPO"
 git -C "$REPO" fetch --quiet origin || echo "    (fetch failed — using local refs)"
-git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}" >/dev/null \
-  || { echo "no such ref: $REF" >&2; exit 1; }
+if ! git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}" >/dev/null; then
+  # In auto-update mode this is survivable and self-correcting (the sha may not
+  # have reached this clone yet), so log and wait for the next cycle rather than
+  # failing loudly every 30 minutes.
+  [ "$IF_STALE" -eq 1 ] && { echo "    ref $REF not in this clone yet; will retry."; exit 0; }
+  echo "no such ref: $REF" >&2; exit 1
+fi
 
 # The provenance the runner reports and the server compares against: the last
 # commit that touched the runner's OWN source, NOT the repo HEAD (which moves on
@@ -100,52 +157,71 @@ BIN="$(uv tool dir --bin 2>/dev/null)/canopy-runner"
 echo "==> provisioning the CDP sidecar's node deps"
 "$BIN" install-sidecar
 
-if [ "$DO_LAUNCHD" -eq 1 ]; then
-  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-  echo "==> rendering $PLIST"
-  mkdir -p "$HOME/Library/LaunchAgents"
-  # Render to a staging file and VALIDATE before going anywhere near the running
-  # job. Writing straight to $PLIST and then booting out means a malformed
-  # render leaves the daemon stopped with nothing to bootstrap — an "update"
-  # that silently kills the fleet's laptop. Validate first, swap last.
-  sed -e "s|__CANOPY_RUNNER_BIN__|$BIN|g" -e "s|__HOME__|$HOME|g" \
-    "$TMP/packages/canopy_runner/launchd/$LABEL.plist.template" > "$TMP/rendered.plist"
-  plutil -lint "$TMP/rendered.plist" >/dev/null \
-    || { echo "rendered plist is not valid — leaving the running daemon alone" >&2; exit 1; }
-  cp "$TMP/rendered.plist" "$PLIST"
+# Render a plist template, validate it, then reload the job. Shared by the runner
+# and the updater so their failure handling can't drift.
+#
+# Render to a staging file and VALIDATE before going anywhere near the running
+# job: writing straight to the live path and then booting out means a malformed
+# render leaves the job stopped with nothing to bootstrap — an "update" that
+# silently kills the fleet's laptop. Validate first, swap last.
+#
+# `bootout` returns BEFORE launchd has finished tearing the job down, and a
+# bootstrap issued into a domain still holding the old job fails with
+# `Bootstrap failed: 5: Input/output error`, leaving it STOPPED. Hit on the very
+# first real install (2026-07-29); a hand-run retry seconds later succeeded with
+# no other change — the signature of a race, not a bad plist. So wait for the
+# domain to clear, then retry anyway, because the print check races too.
+install_job() {
+  local label="$1" src="$2" dest="$HOME/Library/LaunchAgents/$1.plist"
+  local uid_n booted=0 err="" attempt
+  uid_n="$(id -u)"
 
-  # bootout+bootstrap rather than kickstart: ProgramArguments changed, and
-  # launchd keeps the OLD definition until the job is reloaded.
-  #
-  # `bootout` returns BEFORE launchd has finished tearing the job down, and a
-  # bootstrap issued into a domain still holding the old job fails with
-  # `Bootstrap failed: 5: Input/output error` — leaving the daemon STOPPED.
-  # Hit on the very first real install (2026-07-29); a hand-run retry seconds
-  # later succeeded with no other change, which is the signature of a race
-  # rather than a bad plist. So: wait for the domain to actually clear, then
-  # retry anyway, because the print check races too.
-  UID_N="$(id -u)"
-  launchctl bootout "gui/$UID_N/$LABEL" 2>/dev/null || true
+  echo "==> rendering $dest"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  plutil -lint "$src" >/dev/null \
+    || { echo "rendered plist for $label is not valid — leaving the running job alone" >&2; return 1; }
+  cp "$src" "$dest"
+
+  launchctl bootout "gui/$uid_n/$label" 2>/dev/null || true
   for _ in $(seq 1 20); do
-    launchctl print "gui/$UID_N/$LABEL" >/dev/null 2>&1 || break
+    launchctl print "gui/$uid_n/$label" >/dev/null 2>&1 || break
     sleep 0.5
   done
-
-  booted=0
-  err=""
   for attempt in $(seq 1 5); do
-    if err="$(launchctl bootstrap "gui/$UID_N" "$PLIST" 2>&1)"; then booted=1; break; fi
+    if err="$(launchctl bootstrap "gui/$uid_n" "$dest" 2>&1)"; then booted=1; break; fi
     [ "$attempt" -lt 5 ] && sleep 1
   done
   if [ "$booted" -eq 1 ]; then
-    echo "==> restarted $LABEL"
-  else
-    # Loud, and non-zero: the daemon is now STOPPED, which is the one outcome
-    # nobody would notice on their own until turns stopped being claimed.
-    echo "ERROR: launchctl bootstrap failed after 5 attempts — the runner is NOT running." >&2
-    echo "       launchd said: $err" >&2
-    echo "       Retry with: launchctl bootstrap gui/$UID_N $PLIST" >&2
-    exit 1
+    echo "==> (re)started $label"
+    return 0
+  fi
+  # Loud, and non-zero: the job is now STOPPED, which is the one outcome nobody
+  # notices on their own until turns stop being claimed.
+  echo "ERROR: launchctl bootstrap failed after 5 attempts — $label is NOT running." >&2
+  echo "       launchd said: $err" >&2
+  echo "       Retry with: launchctl bootstrap gui/$uid_n $dest" >&2
+  return 1
+}
+
+if [ "$DO_LAUNCHD" -eq 1 ]; then
+  sed -e "s|__CANOPY_RUNNER_BIN__|$BIN|g" -e "s|__HOME__|$HOME|g" \
+    "$TMP/packages/canopy_runner/launchd/$LABEL.plist.template" > "$TMP/runner.plist"
+  install_job "$LABEL" "$TMP/runner.plist" || exit 1
+
+  if [ "$DO_AUTO_UPDATE" -eq 1 ]; then
+    # The timer job runs the installer FROM THE REPO — the script is not part of
+    # the wheel, and a copy frozen at install time could never fix itself.
+    INSTALLER="$REPO/packages/canopy_runner/scripts/install-runner.sh"
+    if [ -x "$INSTALLER" ]; then
+      sed -e "s|__INSTALLER__|$INSTALLER|g" -e "s|__REPO__|$REPO|g" -e "s|__HOME__|$HOME|g" \
+        "$TMP/packages/canopy_runner/launchd/$UPDATER_LABEL.plist.template" > "$TMP/updater.plist"
+      # A failed updater is NOT fatal: the runner itself is installed and running,
+      # and losing auto-update is strictly less bad than aborting the install.
+      install_job "$UPDATER_LABEL" "$TMP/updater.plist" \
+        || echo "WARNING: auto-update job not installed; updates stay manual." >&2
+    else
+      echo "WARNING: $INSTALLER not found/executable — auto-update job not installed." >&2
+    fi
   fi
 fi
 
