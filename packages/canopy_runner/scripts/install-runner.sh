@@ -116,14 +116,35 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
 
   # bootout+bootstrap rather than kickstart: ProgramArguments changed, and
   # launchd keeps the OLD definition until the job is reloaded.
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  if launchctl bootstrap "gui/$(id -u)" "$PLIST"; then
+  #
+  # `bootout` returns BEFORE launchd has finished tearing the job down, and a
+  # bootstrap issued into a domain still holding the old job fails with
+  # `Bootstrap failed: 5: Input/output error` — leaving the daemon STOPPED.
+  # Hit on the very first real install (2026-07-29); a hand-run retry seconds
+  # later succeeded with no other change, which is the signature of a race
+  # rather than a bad plist. So: wait for the domain to actually clear, then
+  # retry anyway, because the print check races too.
+  UID_N="$(id -u)"
+  launchctl bootout "gui/$UID_N/$LABEL" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    launchctl print "gui/$UID_N/$LABEL" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+
+  booted=0
+  err=""
+  for attempt in $(seq 1 5); do
+    if err="$(launchctl bootstrap "gui/$UID_N" "$PLIST" 2>&1)"; then booted=1; break; fi
+    [ "$attempt" -lt 5 ] && sleep 1
+  done
+  if [ "$booted" -eq 1 ]; then
     echo "==> restarted $LABEL"
   else
     # Loud, and non-zero: the daemon is now STOPPED, which is the one outcome
     # nobody would notice on their own until turns stopped being claimed.
-    echo "ERROR: launchctl bootstrap failed — the runner is NOT running." >&2
-    echo "       Retry with: launchctl bootstrap gui/$(id -u) $PLIST" >&2
+    echo "ERROR: launchctl bootstrap failed after 5 attempts — the runner is NOT running." >&2
+    echo "       launchd said: $err" >&2
+    echo "       Retry with: launchctl bootstrap gui/$UID_N $PLIST" >&2
     exit 1
   fi
 fi
