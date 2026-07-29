@@ -626,11 +626,27 @@ def _start_hook_listener(cfg: Config, client: Client):
     from .hook_listener import HookListener
 
     nonce = uuid.uuid4().hex
+    # NO read_menu here, deliberately. Reading a session's screen means driving
+    # emdash over CDP, and `openTask` CLICKS the task in the sidebar and focuses
+    # its terminal — so wiring it to a hook meant every Notification yanked
+    # emdash to whatever agent had just asked for input, mid-typing.
+    #
+    # Reported 2026-07-28, twice: focus taken, a few characters typed into the
+    # newly-focused prompt, then the message that was meant for that task never
+    # arrived. The second half is the collision guard working exactly as designed
+    # — `open_and_send` found unsent text, refused to clobber it, and defaulted to
+    # a fresh session — so this bug MANUFACTURED the leaked-keystroke case that
+    # guard exists to catch.
+    #
+    # A menu can still be read on demand (`cdp_control.read_terminal`), where the
+    # task switch is something a human just asked for. It cannot be read on a
+    # signal, because there is no way to read a NON-active task: emdash marks no
+    # task as current in the DOM (checked — no aria-current, no data-state), so
+    # identifying whose screen you are looking at requires activating it first.
     listener = HookListener(
         port=cfg.hook_port, nonce=nonce,
         resolve_session=_resolve_hook_session,
         forward=lambda: cfg.forward_sessions,
-        read_menu=lambda cwd: _read_hook_menu(cwd, cdp_port=cfg.cdp_port),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

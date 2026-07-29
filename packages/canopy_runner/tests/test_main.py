@@ -651,3 +651,37 @@ def test_an_option_not_on_the_dialog_is_dropped(monkeypatch):
     monkeypatch.setattr(main_mod, "cdp_control", fake)
     main_mod._answer_menu("agent-task", 7)
     assert fake.sent == []
+
+
+def test_the_hook_listener_never_reads_the_screen_by_itself(monkeypatch, tmp_path):
+    """Reading a session's screen drives emdash over CDP, and `openTask` CLICKS
+    the task and focuses its terminal. Wired to a hook, that yanked emdash to
+    whatever agent had just asked for input — mid-typing, twice, reported
+    2026-07-28. Nothing on the hook path may steal focus.
+    """
+    cfg = Config(base_url="http://x", token="t", runner_id="r",
+                 emdash_db=str(tmp_path / "emdash.db"),
+                 hook_port=8799, forward_sessions=True)
+    captured = {}
+
+    class _Listener:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def bind_sender(self, _s):
+            pass
+
+        def start(self):
+            pass
+
+    import canopy_runner.hook_listener as hl
+    monkeypatch.setattr(hl, "HookListener", _Listener)
+    monkeypatch.setattr(main_mod.hook_install, "install", lambda *a, **k: True)
+    monkeypatch.setattr(main_mod.Path, "home", classmethod(lambda cls: tmp_path))
+
+    class _Client:
+        def post_session_stream(self, *a, **k):
+            pass
+
+    main_mod._start_hook_listener(cfg, _Client())
+    assert "read_menu" not in captured or captured["read_menu"] is None
