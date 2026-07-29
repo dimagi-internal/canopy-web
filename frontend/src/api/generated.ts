@@ -7346,6 +7346,10 @@ export interface components {
             readonly code_sha: string;
             /** Expected Code Sha */
             readonly expected_code_sha: string;
+            /** Code Committed At */
+            readonly code_committed_at: number;
+            /** Expected Code Committed At */
+            readonly expected_code_committed_at: number;
             /** Workspace */
             readonly workspace: string | null;
             /** Paired By Email */
@@ -7494,6 +7498,11 @@ export interface components {
              * @default
              */
             readonly code_sha: string;
+            /**
+             * Code Committed At
+             * @default 0
+             */
+            readonly code_committed_at: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
         };

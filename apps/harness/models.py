@@ -90,6 +90,21 @@ class Runner(models.Model):
     # no alert — and this repo has paid for NULL/empty-means-something predicates
     # before (see the six tenancy predicates that grew a "means allow" leg).
     code_sha = models.CharField(max_length=64, blank=True, default="")
+    # Committer epoch of that same commit — the ORDER a sha cannot carry.
+    #
+    # `code_sha != expected` means DIFFERENT, and the supervisor was reporting it
+    # as "behind": one of three possibilities (older, newer, divergent) stated as
+    # if it were the only one. Observed 2026-07-29 — a laptop installed from
+    # origin/main between a runner change landing and the deploy that ships it
+    # was flagged "update this box" while being the most current in the fleet.
+    # Telling someone to fix the newest box is how a real alert gets ignored.
+    #
+    # A timestamp, not a counter, because it needs no human to maintain it and no
+    # release ceremony: `git log -1 --format=%ct` on the same path that already
+    # yields %H. 0 means UNKNOWN and orders nothing — the alert then degrades to
+    # today's direction-less "different" rather than going quiet, since a runner
+    # too old to report this is the one most likely to be genuinely behind.
+    code_committed_at = models.BigIntegerField(default=0)
     # The human who paired this runner. Load-bearing for authz AND for tenancy:
     # `_runner_visibility_q` requires paired_by to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`

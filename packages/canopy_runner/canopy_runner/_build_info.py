@@ -18,3 +18,6 @@ from __future__ import annotations
 # than guessing; a staleness alert on incomplete information is worse than none.
 SHA = ""
 BUILT_AT = ""
+# Committer epoch of the commit named by SHA. 0 = unstamped/unknown, which orders
+# nothing — consumers fall back to a direction-less "differs" rather than guessing.
+COMMITTED_AT = 0

@@ -109,7 +109,7 @@ def enqueue_turn(
 def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
-    code_version: str = "", code_sha: str = "",
+    code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None,
 ) -> Runner:
     """`projects` is the runner REPORTING which repos it can drive (spec
@@ -135,9 +135,10 @@ def heartbeat(
     runner.code_branch = code_branch
     runner.code_version = code_version
     runner.code_sha = code_sha
+    runner.code_committed_at = code_committed_at
     fields = [
         "last_heartbeat_at", "status", "status_note", "ready", "ready_note", "code_branch",
-        "code_version", "code_sha",
+        "code_version", "code_sha", "code_committed_at",
     ]
     if projects is not None:
         # Strip blanks even though the runner does too: a session turn has
