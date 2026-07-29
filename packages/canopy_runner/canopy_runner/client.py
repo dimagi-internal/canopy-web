@@ -96,6 +96,18 @@ class Client:
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 
+    def set_paused(self, runner_id: str, paused: bool, note: str = "") -> dict:
+        """Push a LOCAL pause change up as a command on the one shared state.
+
+        Called only when the `~/.canopy/PAUSED` sentinel CHANGES, never on a level
+        every tick: the server is the source of truth, and a runner re-asserting
+        "not paused" every five seconds would silently lift any remote pause the
+        moment it landed.
+        """
+        path = f"/runners/{runner_id}/{'pause' if paused else 'unpause'}"
+        _, payload = self._call("POST", path, {"note": note} if paused else {})
+        return payload or {}
+
     def list_runners(self) -> list[dict]:
         """The fleet this token can see. READ-ONLY, and the only call the updater
         makes: it needs `expected_code_sha` off its own row, and must never

@@ -525,6 +525,16 @@ def unclaimable_queued_turns(user) -> list[dict]:
 
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
                     exclude_slugs: list[str] | None = None) -> Turn | None:
+    # Covers the operator PAUSE too: `live_status` returns PAUSED for a parked
+    # runner, so this one guard is the whole server-side enforcement. Spelled out
+    # because it is easy to read this line as a pure liveness check and then
+    # "helpfully" add a pause bypass somewhere below.
+    #
+    # Note WHERE it sits: above pin matching, so a pause outranks a pin. Both are
+    # operator intent, but the pause is the more specific and more recent one, and
+    # a pin that could resurrect a parked box would re-open exactly the hole pause
+    # closes — work landing on an account that must not spend tokens. The pinned
+    # turn stays QUEUED (queued turns never expire) and lands on unpause.
     if runner.live_status != Runner.ONLINE:
         return None
     sweep_expired_leases()
