@@ -144,6 +144,18 @@ def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = N
         logger.warning("scheduling unavailable this tick (claiming + inbox continue): %s", exc)
 
 
+def _mark_in_flight(cfg: Config, *, extra: int = 0) -> None:
+    """Publish how much work this runner is carrying, for the auto-updater.
+
+    Chat turns are bridged ACROSS ticks (chat_bridge.IN_FLIGHT), so the count is
+    not derivable from anything the updater can see from outside the process —
+    hence a marker file rather than, say, asking the server which turns it thinks
+    are executing (that answer lags, and is wrong in exactly the crash cases)."""
+    from . import update as update_mod
+
+    update_mod.mark_busy(cfg, len(chat_bridge.IN_FLIGHT) + extra)
+
+
 def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
     """Claim at most one eligible turn and route it to an emdash session. The shared
     core of both the loop's iteration and the single-turn primitive, so they can't
@@ -157,6 +169,11 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         return "idle"
     if turn is None:
         return "idle"
+    # Hold the in-flight marker across the WHOLE claim→execute window, not just the
+    # per-tick count: the auto-updater restarts this daemon, and an agent turn is
+    # routed synchronously inside this call. Restarting here would leave the turn
+    # EXECUTING with nothing to finish it, waiting out the lease sweep.
+    _mark_in_flight(cfg, extra=1)
     try:
         return execute.execute_turn(
             cfg, client, cfg.runner_id, turn,
@@ -179,6 +196,7 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         # way — and it just keeps a module-level set growing unbounded for the life
         # of the process).
         CANCELLED_TURNS.discard(turn["id"])
+        _mark_in_flight(cfg)
 
 
 # Per-session incremental tail readers, keyed by emdash_task — the byte-offset change
@@ -939,6 +957,21 @@ def verify_emdash(cfg_path: Path) -> int:
     return 0
 
 
+def update_check(cfg_path: Path) -> int:
+    """Print `<status> <expected_sha>` for install-runner.sh --if-stale.
+
+    One line, machine-first, so the shell can branch without parsing prose.
+    Always exits 0: this runs on a timer, and a non-zero exit for the ordinary
+    "nothing to do" case would make launchd's log a wall of false failures."""
+    from . import update as update_mod
+
+    cfg = Config.load(cfg_path)
+    client = Client(cfg.base_url, cfg.token)
+    status, expected = update_mod.update_status(cfg, client)
+    print(f"{status} {expected or '-'}")
+    return 0
+
+
 def install_sidecar() -> int:
     """Provision the CDP sidecar's node deps. Exit code, for the CLI."""
     from . import cdp_control as cdp
@@ -995,6 +1028,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--drain-one", action="store_true",
                             help="claim + run exactly ONE queued turn, then exit")
 
+    update_parser = subparsers.add_parser(
+        "update-check",
+        help="print '<current|stale|busy|unknown> <expected_sha>' — whether this box "
+             "should install a newer runner right now (read-only; never heartbeats)",
+    )
+    update_parser.add_argument("--config", required=True)
+
     subparsers.add_parser(
         "install-sidecar",
         help="install the CDP sidecar's node deps next to the installed sidecar "
@@ -1017,6 +1057,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     command = args.command or "run"
+
+    if command == "update-check":
+        raise SystemExit(update_check(Path(args.config)))
 
     if command == "install-sidecar":
         raise SystemExit(install_sidecar())
@@ -1075,6 +1118,9 @@ def main() -> None:
             hb_file.write_text(str(time.time()))
         except OSError:
             pass
+        # Separate file, not a richer heartbeat: the menu-bar app parses that one
+        # as a bare float, so changing its shape would break a shipped Swift binary.
+        _mark_in_flight(cfg)
 
     # RC3: a WS wake-listener lets the loop claim the INSTANT a turn is enqueued
     # instead of waiting out poll_seconds. Additive + best-effort — polling stays the
