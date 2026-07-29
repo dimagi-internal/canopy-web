@@ -229,6 +229,40 @@ def _session_changed(cfg: Config, sessions: list[dict]) -> bool:
     return changed
 
 
+def _reported_projects(cfg: Config) -> list[str] | None:
+    """The repos this box can drive, for the heartbeat to report — or None if we
+    could not tell this tick.
+
+    `capabilities["projects"]` is the allowlist `claim_next_turn` matches repo
+    turns against. It used to be typed by a human at pairing and nothing kept it
+    true, so a turn at `canopy` sat QUEUED forever while the repo sat in emdash's
+    own projects table (labs, 2026-07-28). Now the box answers for itself, every
+    tick, and the list cannot drift.
+
+    None is NOT []. None means "unreadable — leave the server's list alone"; []
+    means "I genuinely have none" and empties it. Collapsing the two would let one
+    unreadable emdash DB blank the list and make every repo turn on this runner
+    unclaimable — the same shape as the drift that once blanked the supervisor by
+    reporting zero sessions, with more of the fleet behind it.
+    """
+    try:
+        return emdash.list_projects(cfg.emdash_db)
+    except emdash.EmdashReadError:
+        # WARNING, not debug: the silent-degradation class verify-emdash exists
+        # for. Omitting the field is safe; omitting it *quietly* is how a routing
+        # outage ends up with no breadcrumb.
+        logger.warning(
+            "emdash project read FAILED — omitting the project report so the server keeps "
+            "the list it already has. Run `canopy-runner verify-emdash` to check for "
+            "schema drift.",
+            exc_info=True,
+        )
+        return None
+    except Exception:  # noqa: BLE001
+        logger.debug("project list failed (non-fatal, omitting)", exc_info=True)
+        return None
+
+
 def _maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -> None:
     """Report the open emdash sessions the phone can continue. CHANGE-DRIVEN: reports
     the instant a shown session's transcript grows (so the phone reflects live emdash
@@ -791,8 +825,13 @@ def run_once(cfg: Config, client: Client) -> str:
         _ready, _rnote = readiness.compute(cfg)
         # Report in-flight chat turns so the server renews their lease: a bridged
         # turn now outlives the tick that started it, and an unrenewed lease is swept.
+        # Report the repos this box can drive alongside readiness — same question
+        # ("what can this runner do right now"), same tick. The degraded and paused
+        # heartbeats below deliberately omit it: omission is a no-op server-side,
+        # and a runner that isn't claiming has no use for a refreshed list.
         client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
-                         ready=_ready, ready_note=_rnote)
+                         ready=_ready, ready_note=_rnote,
+                         projects=_reported_projects(cfg))
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -856,7 +895,10 @@ def drain_one(cfg: Config, client: Client) -> str:
                          ready=False, ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}")
         return "cdp_down"
     _ready, _rnote = readiness.compute(cfg)
-    client.heartbeat(cfg.runner_id, [], host=host_id(), ready=_ready, ready_note=_rnote)
+    # Report here too: this path claims, and claiming against a stale project list
+    # is exactly the failure this reporting exists to remove.
+    client.heartbeat(cfg.runner_id, [], host=host_id(), ready=_ready, ready_note=_rnote,
+                     projects=_reported_projects(cfg))
     action = _claim_and_execute(cfg, client, _paused_agents(cfg))
     _drain_chat_bridges(cfg, client)  # one-shot: pump the reply out before exiting
     return action

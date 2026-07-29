@@ -63,7 +63,7 @@ class Client:
     def heartbeat(self, runner_id: str, active_turn_ids: list[str], degraded: bool = False,
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
                   code_branch: str | None = None, code_version: str | None = None,
-                  code_sha: str | None = None) -> dict:
+                  code_sha: str | None = None, projects: list[str] | None = None) -> dict:
         """Report liveness. Code provenance is stamped HERE, not by callers.
 
         `services.heartbeat` assigns these unconditionally, so any heartbeat that
@@ -73,16 +73,24 @@ class Client:
         whenever one of those landed between two loop ticks. Defaulting to None
         and filling it in once, here, makes that unmissable rather than a
         convention every future call site has to remember.
+
+        `projects` is the OPPOSITE contract, and deliberately so: the repos this
+        box can drive, where None OMITS the field entirely and the server treats
+        absence as "no report, keep the list you have". It cannot be defaulted
+        here the way provenance is — only the caller knows whether it actually
+        read emdash. Pass an empty LIST only when the box genuinely has none;
+        never [] for a failed read, which would blank the list and make every
+        repo turn on this runner unclaimable.
         """
         from . import provenance
-        _, payload = self._call(
-            "POST", f"/runners/{runner_id}/heartbeat",
-            {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
-             "host": host, "ready": ready, "ready_note": ready_note,
-             "code_branch": provenance.code_branch() if code_branch is None else code_branch,
-             "code_version": provenance.version() if code_version is None else code_version,
-             "code_sha": provenance.code_sha() if code_sha is None else code_sha},
-        )
+        body = {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
+                "host": host, "ready": ready, "ready_note": ready_note,
+                "code_branch": provenance.code_branch() if code_branch is None else code_branch,
+                "code_version": provenance.version() if code_version is None else code_version,
+                "code_sha": provenance.code_sha() if code_sha is None else code_sha}
+        if projects is not None:
+            body["projects"] = projects
+        _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 
     def resolve_session(self, runner_id: str, agent_slug: str, thread_key: str, *,

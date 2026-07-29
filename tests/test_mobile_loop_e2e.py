@@ -4,6 +4,7 @@ stubbed. Real HTTP (live_server), real Bearer PAT, real claim + execute_turn.
 """
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -44,10 +45,29 @@ def _seed():
     return user, ws, raw, runner
 
 
+def _emdash_db(tmp_path, *projects: str) -> str:
+    """A real (tiny) emdash DB holding the projects this box can drive.
+
+    The runner REPORTS its project list from this table on every healthy heartbeat
+    (spec 2026-07-28), so a test that stubs emdash as healthy while leaving no DB
+    behind is simulating a box that can drive nothing — and the turn it enqueues
+    would correctly never be claimed. The fake has to be as real as the claim it
+    makes.
+    """
+    path = tmp_path / "emdash.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript("CREATE TABLE projects (id TEXT, name TEXT, path TEXT);")
+    for i, name in enumerate(projects):
+        conn.execute("INSERT INTO projects VALUES (?,?,?)", (f"p{i}", name, f"/x/{name}"))
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
 def _cfg(base_url: str, raw: str, runner_id, tmp_path) -> Config:
     return Config(
         base_url=base_url, token=raw, runner_id=str(runner_id),
-        emdash_db=str(tmp_path / "emdash.db"), state_path=str(tmp_path / "state.json"),
+        emdash_db=_emdash_db(tmp_path, "canopy-web"), state_path=str(tmp_path / "state.json"),
     )
 
 

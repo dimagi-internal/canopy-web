@@ -110,7 +110,22 @@ def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
     code_version: str = "", code_sha: str = "",
+    projects: list[str] | None = None,
 ) -> Runner:
+    """`projects` is the runner REPORTING which repos it can drive (spec
+    2026-07-28) — the answer emdash already had, replacing a list a human typed
+    once at pairing and nothing kept true.
+
+    `None` is not `[]`. None means "I could not tell this tick" and must leave the
+    stored list untouched; [] means "I genuinely have none". Collapsing the two
+    would let one unreadable emdash DB blank the list and make every repo turn on
+    this runner unclaimable — `replace_reported_sessions` learned this with
+    sessions, where "swallowing the error is what let a schema drift blank the
+    supervisor with nothing in the log".
+
+    Only the one key is written. `sessions` gates chat routing and `agents` is
+    still read by older paths; replacing the whole dict would unwire both.
+    """
     now = timezone.now()
     runner.last_heartbeat_at = now
     runner.status = Runner.DEGRADED if degraded else Runner.ONLINE
@@ -120,10 +135,20 @@ def heartbeat(
     runner.code_branch = code_branch
     runner.code_version = code_version
     runner.code_sha = code_sha
-    runner.save(update_fields=[
+    fields = [
         "last_heartbeat_at", "status", "status_note", "ready", "ready_note", "code_branch",
         "code_version", "code_sha",
-    ])
+    ]
+    if projects is not None:
+        # Strip blanks even though the runner does too: a session turn has
+        # project="", so a stray "" here would match EVERY session turn via
+        # `project__in`. Cheap, and the server should not need the report to be
+        # well-formed to stay safe.
+        cleaned = [p.strip() for p in projects if p and p.strip()]
+        if cleaned != runner.capabilities.get("projects"):
+            runner.capabilities = {**runner.capabilities, "projects": cleaned}
+            fields.append("capabilities")
+    runner.save(update_fields=fields)
     if active_turn_ids:
         Turn.objects.filter(
             pk__in=active_turn_ids,

@@ -384,10 +384,11 @@ class _CdpLoopClient:
 
     def heartbeat(self, runner_id, active, degraded=False, note="", host="",
                   ready=True, ready_note="", code_branch="", code_version="",
-                  code_sha=""):
+                  code_sha="", projects=None):
         self.heartbeats.append({"degraded": degraded, "note": note,
                                 "ready": ready, "ready_note": ready_note,
-                                "code_version": code_version, "code_sha": code_sha})
+                                "code_version": code_version, "code_sha": code_sha,
+                                "projects": projects})
 
     def report_sessions(self, runner_id, sessions, archived=None):
         pass
@@ -433,6 +434,42 @@ def test_cdp_healthy_claims_and_executes(monkeypatch, tmp_path):
     assert run_once(_cdp_loop_cfg(tmp_path), client) == "created:t-1:task"
     assert client.claims == 1
     assert client.heartbeats[-1]["degraded"] is False  # healthy heartbeat
+
+
+def test_a_healthy_tick_reports_the_repos_this_box_can_drive(monkeypatch, tmp_path):
+    """The heartbeat carries `projects`, or the box never tells anyone what it has
+    and `capabilities.projects` is back to being a list somebody typed once (spec
+    2026-07-28). This cfg's emdash DB does not exist — a true "no emdash here",
+    which reports [] rather than omitting: the runner is CLAIMING on this path, and
+    [] is an answer where None is a refusal to answer."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: "created:t-1:task",
+    )
+    client = _CdpLoopClient(turns=[{"id": "t-1", "agent_slug": "eva"}])
+    run_once(_cdp_loop_cfg(tmp_path), client)
+    assert client.heartbeats[-1]["projects"] == []
+
+
+def test_an_unreadable_emdash_omits_projects_rather_than_reporting_none_at_all(
+    monkeypatch, tmp_path
+):
+    """The safety property, at the wiring level. A read failure must send NOTHING
+    (server keeps its list), never [] (server blanks it and every repo turn on this
+    runner becomes unclaimable)."""
+    _stub_cdp(monkeypatch, healthy=True)
+    monkeypatch.setattr(
+        main_mod.emdash, "list_projects",
+        lambda db: (_ for _ in ()).throw(main_mod.emdash.EmdashReadError("drift")),
+    )
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: "created:t-1:task",
+    )
+    client = _CdpLoopClient(turns=[{"id": "t-1", "agent_slug": "eva"}])
+    run_once(_cdp_loop_cfg(tmp_path), client)
+    assert client.heartbeats[-1]["projects"] is None
 
 
 def test_cdp_unhealthy_skips_claim_and_burns_nothing(monkeypatch, tmp_path):

@@ -172,6 +172,44 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
         raise EmdashReadError(f"emdash open-session read failed: {exc}") from exc
 
 
+def list_projects(db_path: str) -> list[str]:
+    """READ-ONLY: the NAMES of every project emdash holds — the repos this box can
+    actually drive.
+
+    This is what `capabilities["projects"]` should have been all along. Declared by
+    hand at pairing, that list drifted the only way that matters: silently, and
+    toward "cannot run". A turn at `canopy` sat QUEUED forever because nobody had
+    typed `canopy` into it, while the repo sat right here in this table (labs,
+    2026-07-28). An agent's slug and a repo's name are the same thing to the runner
+    — both name an emdash project (`execute.py`: `agent_slug or project`) — so this
+    one read answers both halves of "what can this box drive".
+
+    Sorted so the reported list is stable: it is compared against the stored one on
+    every heartbeat, and sqlite's insertion order would otherwise look like a change
+    on every restart.
+
+    Empty names are dropped here rather than left for the server to strip: a session
+    turn has project="", so a stray "" in capabilities would make this runner match
+    EVERY session turn via `project__in`.
+
+    Same contract as the reads above, and it matters more here than anywhere: a
+    MISSING db returns [] ("no emdash on this box" is a true answer), but a real
+    read failure RAISES, so the caller omits the field instead of asserting "I can
+    drive nothing". Reporting [] on a drifted schema would blank the stored list and
+    make every repo turn on this runner unclaimable — the same shape as the drift
+    that once blanked the supervisor via `replace_reported_sessions`, one notch
+    worse.
+    """
+    if not Path(db_path).exists():
+        return []
+    try:
+        with _db(db_path) as conn:
+            rows = conn.execute("SELECT name FROM projects ORDER BY name").fetchall()
+    except sqlite3.Error as exc:
+        raise EmdashReadError(f"emdash project read failed: {exc}") from exc
+    return [r["name"] for r in rows if r["name"]]
+
+
 def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
     """READ-ONLY: the NAMES of recently-archived emdash tasks, newest-archived first.
 

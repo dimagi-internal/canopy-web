@@ -381,14 +381,34 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     """Replace a runner's capabilities (owner-gated via _runner_or_404).
 
     Capabilities are set at pairing and were otherwise immutable — the only way to
-    add `projects` to an existing runner was to re-pair, which mints a NEW runner
+    add a capability to an existing runner was to re-pair, which mints a NEW runner
     and orphans the old one's RunnerBindings. This lets a paired runner opt into
-    driving repos (or new agents) in place. capabilities is a routing hint, not a
-    security boundary (the workspace gates), so replacing it changes what the
-    runner PULLS, never what it may reach.
+    driving new agents in place. capabilities is a routing hint, not a security
+    boundary (the workspace gates), so replacing it changes what the runner PULLS,
+    never what it may reach.
+
+    EXCEPT `projects`, which the runner now REPORTS on every heartbeat (spec
+    2026-07-28). Accepting a hand-written value would be accepting a ghost edit:
+    the next heartbeat overwrites it seconds later, so the caller sees a 200,
+    believes the repo is declared, and dispatches into a hole. A 422 naming the
+    real fix is the honest answer. `projects` is also PRESERVED across a write that
+    omits it — it belongs to the runner now, so a capabilities PATCH must not drop
+    it as a side effect.
     """
     runner = _runner_or_404(request, runner_id)
-    runner.capabilities = payload.capabilities
+    if "projects" in payload.capabilities:
+        raise HttpError(
+            422,
+            "`projects` is reported by the runner, not set by hand — it is replaced "
+            "on every heartbeat from what the box actually has. To make a repo "
+            "routable, open it as a project in emdash on that runner (or set "
+            "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
+        )
+    reported = runner.capabilities.get("projects")
+    caps = dict(payload.capabilities)
+    if reported is not None:
+        caps["projects"] = reported
+    runner.capabilities = caps
     runner.save(update_fields=["capabilities"])
     return runner
 
@@ -462,6 +482,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         code_branch=payload.code_branch,
         code_version=payload.code_version,
         code_sha=payload.code_sha,
+        projects=payload.projects,
     )
 
 

@@ -286,8 +286,16 @@ def pair_or_load() -> str:
         rid = json.loads(STATE_FILE.read_text()).get("runner_id")
         if rid:
             # Confirm it still exists (a heartbeat 404 means it was retired).
+            # `projects` rides the heartbeat, not the PATCH below: the server
+            # treats that key as REPORTED (spec 2026-07-28) and 422s a hand-written
+            # one. This box has no emdash to observe, so its configured list IS the
+            # observation — but it still has to be reported, or a redeploy that
+            # changes RUNNER_PROJECTS would never take effect. Safe to send [] here
+            # where a laptop must not: this comes from env, so there is no read to
+            # fail and no way to mistake "cannot tell" for "have none".
             status, _ = _api("POST", f"/runners/{rid}/heartbeat",
-                              {"active_turn_ids": [], "host": RUNNER_HOST})
+                              {"active_turn_ids": [], "host": RUNNER_HOST,
+                               "projects": list(RUNNER_CAPS.get("projects") or [])})
             if status == 200:
                 _log(f"reusing runner {rid}")
                 # Capabilities were historically fixed at pairing time; re-pairing
@@ -296,7 +304,12 @@ def pair_or_load() -> str:
                 # id and orphan this one's RunnerBindings. PATCH in place instead
                 # (apps/harness/api.py::update_runner_capabilities) so a redeploy
                 # with a new env always reflects the CURRENT declared capabilities.
-                _api("PATCH", f"/runners/{rid}", {"capabilities": RUNNER_CAPS})
+                #
+                # MINUS `projects`, which the heartbeat above just reported: that
+                # route 422s a hand-written `projects` now, and the failure would
+                # take the agents/sessions sync down with it — they share one call.
+                _api("PATCH", f"/runners/{rid}",
+                     {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
                 return rid
     body = {"name": RUNNER_NAME, "kind": "cloud", "capabilities": RUNNER_CAPS, "host": RUNNER_HOST}
     if RUNNER_WORKSPACE:
