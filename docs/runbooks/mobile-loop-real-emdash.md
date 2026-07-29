@@ -17,7 +17,7 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
   a `git pull` in `~/emdash-projects/canopy-web` no longer changes what the daemon runs.
   Update it with the installer, which builds a snapshot of `origin/main`:
   ```
-  packages/canopy_runner/scripts/install-runner.sh
+  runner/canopy_runner/scripts/install-runner.sh
   ```
   `RunnerOut.code_sha` vs `expected_code_sha` on the Runners tab tells you whether a given
   box is behind.

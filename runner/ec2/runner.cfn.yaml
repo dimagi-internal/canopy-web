@@ -5,7 +5,7 @@ Description: >
   runs `claude -p` on each. Secrets (the claude OAuth token + the canopy PAT) are
   read from Secrets Manager by the instance role at boot — never baked into the
   template. cloud_runner.py is ALSO delivered via Secrets Manager (up.sh publishes it
-  there); single source of truth is deploy/ec2-runner/cloud_runner.py.
+  there); single source of truth is runner/ec2/cloud_runner.py.
 
 Parameters:
   SshCidr:
@@ -55,7 +55,7 @@ Parameters:
     Default: 'ace,ada,echo,eva,hal'
     Description: >
       Comma-separated agent slugs to BOOTSTRAP on this box (clone + `canopy
-      provision` + gmail token) — deploy/ec2-runner/bootstrap_agents.sh's
+      provision` + gmail token) — runner/ec2/bootstrap_agents.sh's
       AGENT_SLUGS. Distinct from RunnerAgents: this is what gets PROVISIONED
       here; RunnerAgents is what this runner may CLAIM turns for. Usually the
       same set, but a box can bootstrap the whole fleet while only claiming a

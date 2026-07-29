@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 # Menu ANSWERING moved out of main.py into hooks.py (the hook-shaped half);
-# menu.py stays the pure parser. See packages/canopy_runner/README.md § Layout.
+# menu.py stays the pure parser. See runner/canopy_runner/README.md § Layout.
 from canopy_runner import hooks as runner_hooks
 from canopy_runner.hook_listener import HookListener
 from apps.canopy_sessions.stream_map import turn_event_to_frames

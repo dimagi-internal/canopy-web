@@ -38,7 +38,7 @@ WEB_FAVICON = REPO / "frontend" / "public" / "favicon.svg"
 
 # tree.py (pure geometry) + render_tree_svg (pure SVG) are the shape source of truth.
 # They live HERE, beside their only consumer. They used to sit inside
-# packages/canopy_runner and were therefore built into the runner wheel and
+# runner/canopy_runner and were therefore built into the runner wheel and
 # installed onto every box in the fleet — 112 lines of icon geometry the daemon
 # never imports.
 sys.path.insert(0, str(BRAND))

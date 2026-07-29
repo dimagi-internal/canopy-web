@@ -903,7 +903,7 @@ def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
     `append_transcript`) — a 200 with silently TRUNCATED content, no error,
     exactly the corrupted-derivation failure mode F5's idempotency work
     exists to prevent. Worse, this repo's own runner client
-    (`packages/canopy_runner`, `urllib.request`) sends no `Accept-Encoding`
+    (`runner/canopy_runner`, `urllib.request`) sends no `Accept-Encoding`
     and does no decoding at all — it would treat raw gzip bytes as JSONL.
     Streaming plaintext removes the wire-format gamble entirely: every
     caller sees the same bytes `read_transcript` would return, with none of

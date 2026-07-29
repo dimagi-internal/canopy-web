@@ -49,12 +49,12 @@ dev = [
     "pytest>=8.0,<9.0",
     "pytest-django>=4.8,<5.0",
     "pytest-asyncio>=0.23,<1.0",
-    # A lock-ordering regression in deploy/ec2-runner/cloud_runner.py's
+    # A lock-ordering regression in runner/ec2/cloud_runner.py's
     # threading (transcript_lock / transcript_post_lock) can deadlock rather
     # than fail — verified in review: reintroducing an inverse acquisition
     # order hangs the concurrency tests, and with no per-test timeout that
     # hangs the whole CI job instead of failing it. `--timeout` markers on
-    # those tests (see deploy/ec2-runner/tests/test_cloud_runner.py) turn a
+    # those tests (see runner/ec2/tests/test_cloud_runner.py) turn a
     # hang into a normal failed-test report.
     "pytest-timeout>=2.3,<3.0",
     "ruff>=0.4,<1.0",
@@ -86,13 +86,13 @@ build-backend = "setuptools.build_meta"
 # the same package from its own source/index.
 canopy-agent-runs = { path = "packages/canopy_agent_runs", editable = true }
 # Same deal for the cron slot math: in-repo, standalone, installable. The runner
-# (packages/canopy_runner) depends on it directly rather than via canopy-web.
+# (runner/canopy_runner) depends on it directly rather than via canopy-web.
 canopy-cron = { path = "packages/canopy_cron", editable = true }
 # The transcript core: in-repo, standalone, installable. Both runners depend on it
 # directly; the server uses it for the ordinal scheme.
 canopy-transcript = { path = "packages/canopy_transcript", editable = true }
 # Test-only (see the dev extra): the cross-seam menu test imports it.
-canopy-runner = { path = "packages/canopy_runner", editable = true }
+canopy-runner = { path = "runner/canopy_runner", editable = true }
 
 [tool.setuptools.packages.find]
 include = ["apps*", "config*"]
@@ -113,11 +113,11 @@ asyncio_mode = "auto"
 # no DB); it is run from its own dir, not as part of the Django suite. Ignore it
 # here so the Django runner doesn't try to collect it under DJANGO_SETTINGS.
 #
-# deploy/ec2-runner is ignored for the same reason, and one more: cloud_runner.py is
+# runner/ec2 is ignored for the same reason, and one more: cloud_runner.py is
 # deliberately stdlib-only, and CI runs its suite from its own dir in a BARE env
 # (`uv run --with pytest`). That bare run is the only thing proving the file hasn't
 # grown a dependency on canopy-web's environment — an accidental `import django`
 # would sail through here (Django is installed) and fail on the EC2 box. Collecting
 # it here therefore doesn't just re-run 58 tests we already run, it re-runs them in
 # the one environment that cannot check the invariant they exist to protect.
-addopts = "--ignore=packages --ignore=deploy"
+addopts = "--ignore=packages --ignore=deploy --ignore=runner"

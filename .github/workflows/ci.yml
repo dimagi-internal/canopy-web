@@ -82,7 +82,7 @@ jobs:
       # fires (or fires a slot predating its schedule). Also covers the
       # session-reuse regressions.
       - name: Run canopy_runner tests
-        working-directory: packages/canopy_runner
+        working-directory: runner/canopy_runner
         run: uv run --with pytest pytest
 
       # cloud_runner.py has a 48-test suite that had never run in CI — the file
@@ -91,7 +91,7 @@ jobs:
       # for the whole cloud fleet and cannot be tested against live EC2, so this
       # suite is the only gate it has.
       - name: Run cloud_runner tests
-        working-directory: deploy/ec2-runner
+        working-directory: runner/ec2
         run: uv run --with pytest --with pytest-timeout pytest -q
 
       # canopy_transcript is the Claude Code transcript core BOTH runners execute
@@ -111,7 +111,7 @@ jobs:
       # The live-adapter tests skip unless ACP_ADAPTER_PATH is set (they need
       # Node, Claude auth and tokens), so CI runs the protocol logic only.
       - name: Run canopy_acp tests
-        working-directory: packages/canopy_acp
+        working-directory: runner/canopy_acp
         run: uv run --with pytest pytest -q
 
       # canopy_agent_runs is the Django-free run-lifecycle core that apps/agent_runs

@@ -1007,7 +1007,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
     `curl --compressed` and `httpx` both return only the FIRST gzip member
     of Task 1's multi-member on-disk format, silently truncating the
     transcript with a 200 and no error, and this repo's own runner client
-    (`packages/canopy_runner`, `urllib.request`) does no content-decoding at
+    (`runner/canopy_runner`, `urllib.request`) does no content-decoding at
     all — it would have treated raw gzip bytes as JSONL. Streaming plaintext
     here removes that wire-format gamble: every caller gets exactly the
     bytes `services.read_transcript` would return, with none of its

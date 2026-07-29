@@ -33,7 +33,7 @@ wire.
 ## Lifecycle
 
 ```bash
-cd deploy/ec2-runner
+cd runner/ec2
 aws sso login --profile labs   # you, once per session
 ./up.sh                        # stand up the box (~3 min to fully boot)
 ./wire.sh --drill               # stage credentials, retire the predecessor,
@@ -61,7 +61,7 @@ ssh -i canopy-cloud-runner-key.pem ubuntu@<ip> 'journalctl -u canopy-runner -f'
 ## Bootstrap (agent-fleet provisioning)
 
 `cloud_runner.py`'s `main()` clones/pulls `canopy-web` to `/opt/canopy-web` and runs
-`deploy/ec2-runner/bootstrap_agents.sh` from that clone once per service start —
+`runner/ec2/bootstrap_agents.sh` from that clone once per service start —
 **after** `fetch_and_stage_credential()` has staged this runner's Claude token, 1Password
 service-account token, and GitHub token (see the docstring on
 `bootstrap_agent_fleet()` for exactly why the ordering has to be this way round, not
@@ -102,7 +102,7 @@ creation, which means the reduced `TurnEvent`s this runner posts to
 `/turns/{id}/events` never become durable `Message` rows and the user's own line is
 never durably written either — the only durable path is
 `POST /runners/{id}/session-stream` with per-line transcript ordinals, which today
-has exactly one caller, `packages/canopy_runner` (the laptop runner). Flipping
+has exactly one caller, `runner/canopy_runner` (the laptop runner). Flipping
 `sessions` on today means a chat this runner claims streams a perfect-looking live
 reply and then loses the ENTIRE conversation the moment the user reloads the page.
 Flip the default only once that path (`session-stream` + `/streams` + `/backfills`)
@@ -170,7 +170,7 @@ project directory (`~/.claude/projects/<cwd with '/','.' -> '-'>/<session-id>.js
 so a session id captured under one cwd is invisible under a different one. Before
 ever invoking `--resume`, `_resume_target_exists` checks that file actually exists
 under the turn's cwd — the cheap local equivalent of
-`packages/canopy_runner/execute.py`'s verify-before-reuse (it reads emdash's DB
+`runner/canopy_runner/execute.py`'s verify-before-reuse (it reads emdash's DB
 before driving a task; this reads the filesystem before resuming a transcript) — and
 drops straight to a fresh spawn if it doesn't, rather than ever invoking a doomed
 `--resume`. As a second-layer safety net, if the file existed but the CLI still
@@ -182,7 +182,7 @@ is never retried (retrying would silently duplicate work under a new session).
 **What was and was not verified.** There is no live cloud runner instance running
 today (the EC2 stack is down), so none of this has been exercised against a real
 `claude` binary or a real canopy-web deployment. What IS covered, by unit tests
-under `deploy/ec2-runner/tests/` (mocking `subprocess.Popen` and the runner's own
+under `runner/ec2/tests/` (mocking `subprocess.Popen` and the runner's own
 `_api` helper — see the test file for exactly what's stubbed): capability
 env-gating (default OFF) and the pair-time `PATCH`-in-place sync; byte-bounded
 transcript batching including the oversized-line marker and driving `run_claude`'s
