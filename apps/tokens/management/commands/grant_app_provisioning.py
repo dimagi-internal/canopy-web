@@ -10,7 +10,7 @@ create_app_credential's validation, one typo from the wrong slug.
 Usage:
     uv run python manage.py grant_app_provisioning --name ace-web --workspace connect --role editor
 
-See docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md (F5).
+See docs/archive/plans/2026-07-26-tenant-scoped-provisioning.md (F5).
 """
 from __future__ import annotations
 

@@ -241,7 +241,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     streams the reply.
 
     This function STARTS the turn, it does not wait for it. The reply is pumped tick by
-    tick (`main._pump_chat_bridges`) and the turn is finished there, when the transcript
+    tick (`chat_pump.pump_chat_bridges`) and the turn is finished there, when the transcript
     says the agent handed the floor back. Cancellation moved with it: the pump watches
     CANCELLED_TURNS, presses Escape in the live emdash session, and finishes CANCELLED.
     `cancel_check` is accepted for signature compatibility and is no longer read here.

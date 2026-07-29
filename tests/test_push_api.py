@@ -32,12 +32,13 @@ def client(user):
 
 @pytest.fixture(autouse=True)
 def _vapid_configured(settings):
-    """Every test in this module pins VAPID_PUBLIC_KEY explicitly instead of
+    """Every test in this module pins BOTH VAPID keys explicitly instead of
     inheriting whatever happens to be ambient — a dev .env locally, nothing in
-    CI. Tests that exercise the "not configured" path override this back to
-    "" in their own body (see test_vapid_public_key_503s_when_push_is_not_configured
-    and test_subscribe_503s_when_push_is_not_configured)."""
+    CI. Both, because the endpoints gate on both (a public-key-only deployment
+    accepted subscriptions and silently never sent). Tests that exercise the
+    "not configured" paths blank one or both keys in their own body."""
     settings.VAPID_PUBLIC_KEY = "BPublicKeyHere"
+    settings.VAPID_PRIVATE_KEY = "PrivateKeyHere"
 
 
 def test_vapid_public_key_is_served(client, settings):
@@ -58,6 +59,16 @@ def test_subscribe_503s_when_push_is_not_configured(client, settings):
     """Empty keys mean push is off. Storing a subscription we can never send to
     just accumulates dead rows — refuse instead."""
     settings.VAPID_PUBLIC_KEY = ""
+    resp = client.post("/api/push/subscribe", SUB, content_type="application/json")
+    assert resp.status_code == 503
+    assert not PushSubscription.objects.filter(endpoint=SUB["endpoint"]).exists()
+
+
+def test_half_configured_is_not_configured(client, settings):
+    """A public key with no private key can subscribe browsers but never send —
+    the worst state, because it LOOKS configured. Both endpoints must 503."""
+    settings.VAPID_PRIVATE_KEY = ""
+    assert client.get("/api/push/vapid-public-key").status_code == 503
     resp = client.post("/api/push/subscribe", SUB, content_type="application/json")
     assert resp.status_code == 503
     assert not PushSubscription.objects.filter(endpoint=SUB["endpoint"]).exists()

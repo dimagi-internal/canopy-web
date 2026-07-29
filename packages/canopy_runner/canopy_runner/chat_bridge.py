@@ -17,7 +17,7 @@ done, and dropped the actual answer on the floor. (Labs, 2026-07-26: 11 consecut
 turns finished in 14-60s having bridged 70-220 chars each — all preambles.)
 
 A turn therefore outlives the runner tick that started it. `LiveBridge` holds that
-state between ticks and `main._pump_chat_bridges` advances it, so the runner keeps
+state between ticks and `chat_pump.pump_chat_bridges` advances it, so the runner keeps
 heartbeating and claiming while an agent works. The step function stays pure
 (records in, texts out) so the state machine unit-tests without files or a clock.
 """

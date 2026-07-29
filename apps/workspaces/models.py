@@ -139,7 +139,7 @@ class WorkspaceMembership(models.Model):
     # WorkspaceMembership's role constants, so a direct import back would be
     # circular). Lets a leaked-credential incident be found and bulk-reverted
     # by app rather than being indistinguishable from an organic join — see
-    # docs/superpowers/plans/2026-07-26-tenant-scoped-provisioning.md (F1).
+    # docs/archive/plans/2026-07-26-tenant-scoped-provisioning.md (F1).
     # Which embedding app created this membership (null = a human joined, was
     # invited, or auto-joined). PROTECT, not SET_NULL: this is an audit field,
     # and deleting the credential would otherwise silently erase provenance on
