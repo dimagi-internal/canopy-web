@@ -109,6 +109,7 @@ def enqueue_turn(
 def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
+    code_version: str = "", code_sha: str = "",
 ) -> Runner:
     now = timezone.now()
     runner.last_heartbeat_at = now
@@ -117,8 +118,11 @@ def heartbeat(
     runner.ready = ready
     runner.ready_note = ready_note
     runner.code_branch = code_branch
+    runner.code_version = code_version
+    runner.code_sha = code_sha
     runner.save(update_fields=[
         "last_heartbeat_at", "status", "status_note", "ready", "ready_note", "code_branch",
+        "code_version", "code_sha",
     ])
     if active_turn_ids:
         Turn.objects.filter(
@@ -1875,17 +1879,37 @@ def report_drill(drill: RunnerDrill, *, outcome: str, summary: str) -> RunnerDri
     return drill
 
 
-def seed_assignments_from_capabilities() -> int:
+def seed_assignments_from_capabilities(
+    agent_model=None, runner_model=None, assignment_model=None
+) -> int:
     """One-time bridge from the old two-sided routing config (runner
     capabilities.agents ∩ agent.runner_preference kind order) into explicit
     RunnerAssignment rows. Idempotent: skips (agent, runner) pairs that already
-    have a row. Returns rows created. Used by the seed data migration."""
-    from apps.agents.models import Agent
-    from apps.harness.models import Runner, RunnerAssignment
+    have a row. Returns rows created. Used by the seed data migration.
+
+    Takes the model classes so the migration can pass its HISTORICAL models and
+    the test can pass nothing and get the live ones — same rule for both, which
+    is the pattern `canopy_sessions.staleness.archive_stale_sessions` already
+    follows.
+
+    This is not stylistic. Reading live models from a data migration means the
+    query names every column the model has TODAY against the schema as it stood
+    at that migration, so the next field added to `Runner` breaks `migrate` from
+    zero — every fresh dev DB and the whole CI suite, in a file nobody touched.
+    Adding `code_version`/`code_sha` (spec 2026-07-28) is exactly what tripped it.
+    """
+    from apps.agents import models as agent_models
+    from apps.harness import models as harness_models
+
+    agent_cls = agent_model or agent_models.Agent
+    runner_cls = runner_model or harness_models.Runner
+    assignment_cls = assignment_model or harness_models.RunnerAssignment
 
     created = 0
-    runners = list(Runner.objects.exclude(status=Runner.RETIRED))
-    for agent in Agent.objects.all():
+    # "retired" by VALUE, not Runner.RETIRED: a historical model carries fields,
+    # not the class constants the live model defines.
+    runners = list(runner_cls.objects.exclude(status="retired"))
+    for agent in agent_cls.objects.all():
         matched = [r for r in runners if agent.slug in (r.capabilities.get("agents") or [])]
         pref = agent.runner_preference or []
 
@@ -1894,13 +1918,13 @@ def seed_assignments_from_capabilities() -> int:
             return (kind_rank, r.name)
 
         existing = set(
-            RunnerAssignment.objects.filter(agent=agent).values_list("runner_id", flat=True)
+            assignment_cls.objects.filter(agent=agent).values_list("runner_id", flat=True)
         )
-        next_rank = RunnerAssignment.objects.filter(agent=agent).count()
+        next_rank = assignment_cls.objects.filter(agent=agent).count()
         for r in sorted(matched, key=sort_key):
             if r.id in existing:
                 continue
-            RunnerAssignment.objects.create(agent=agent, runner=r, rank=next_rank)
+            assignment_cls.objects.create(agent=agent, runner=r, rank=next_rank)
             next_rank += 1
             created += 1
     return created

@@ -22,8 +22,13 @@ let heartbeatFile = canopyDir.appendingPathComponent("heartbeat")
 let configFile = canopyDir.appendingPathComponent("runner.json")
 let logFile = canopyDir.appendingPathComponent("runner.log")
 let launchLabel = "com.canopy.runner"
-let plistPath = home.appendingPathComponent(
-    "emdash-projects/canopy-web/packages/canopy_runner/launchd/com.canopy.runner.plist")
+// The plist launchd ACTUALLY loaded, not the repo's copy of one. Pointing at the
+// checkout was a silent breakage: "Take one turn" reads ProgramArguments + env
+// from here (see takeOneTurn) so it can't drift from how the daemon runs — but
+// the repo copy listed a single PYTHONPATH entry while the runner imports three
+// packages, so every invocation died on ModuleNotFoundError, unreported, because
+// the launch is fire-and-forget. install-runner.sh generates this file.
+let plistPath = home.appendingPathComponent("Library/LaunchAgents/com.canopy.runner.plist")
 
 func baseURL() -> String {
     guard let data = try? Data(contentsOf: configFile),

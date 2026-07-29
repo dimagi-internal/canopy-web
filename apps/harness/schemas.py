@@ -94,6 +94,16 @@ class RunnerOut(Schema):
     capabilities: dict
     host: str
     code_branch: str
+    code_version: str
+    code_sha: str
+    # The sha the SERVER expects (settings.RUNNER_CODE_SHA) — the same quantity
+    # `code_sha` holds, computed at image-build time. Denormalized onto every row
+    # rather than served from a second endpoint: the client needs it per row to
+    # decide anything, and one string repeated N times beats a second fetch for
+    # a page that already has this one. `can_manage` sets the precedent for a
+    # derived, non-column field on this schema.
+    expected_code_sha: str
+
     workspace: str | None
     # The human who paired the runner. This — NOT `workspace` — is what governs
     # what the runner may WORK FOR (claim_next_turn derives the tenant from the
@@ -115,6 +125,11 @@ class RunnerOut(Schema):
     # None when this runner has never been drilled (not "zero of zero pass") —
     # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
     drill_rollup: DrillRollup | None = None
+
+    @staticmethod
+    def resolve_expected_code_sha(obj) -> str:
+        from django.conf import settings
+        return getattr(settings, "RUNNER_CODE_SHA", "") or ""
 
     @staticmethod
     def resolve_workspace(obj) -> str | None:
@@ -152,6 +167,10 @@ class HeartbeatIn(Schema):
     ready: bool = True   # can the runner fire a turn (cdp healthy ∧ not recently failed)
     ready_note: str = ""
     code_branch: str = ""  # the runner checkout's git branch — supervisor alerts on non-main
+    code_version: str = ""  # the runner package's __version__ (legible; not the comparison)
+    # The sha of the last commit touching the runner's own source. Compared against
+    # settings.RUNNER_CODE_SHA; empty means unknown and never alerts.
+    code_sha: str = ""
 
 
 class ResolveSessionIn(Schema):

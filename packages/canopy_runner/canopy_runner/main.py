@@ -24,7 +24,6 @@ import argparse
 import datetime as dt
 import json
 import logging
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +34,7 @@ import canopy_transcript as transcript_core
 
 from .tail import TailReader
 from .config import Config
+from . import __version__, provenance
 
 logger = logging.getLogger("canopy_runner")
 
@@ -48,8 +48,6 @@ CDP_DOWN_SIGNAL_TICKS = 3
 _cdp_down_ticks = 0
 _cdp_down_signalled = False
 _last_session_report = 0.0
-_last_branch_check = 0.0
-_cached_branch = ""
 
 # RC-cancel: turn ids the user asked to stop, relayed down the wake listener's
 # control channel as `{"type": "cancel", "turn_id": ...}` frames (see WakeListener's
@@ -57,30 +55,6 @@ _cached_branch = ""
 # running turn; module-scoped so the wake listener's callback and the executor share
 # one set for the process's lifetime without threading extra state through the loop.
 CANCELLED_TURNS: set[str] = set()
-
-
-def _code_branch(now_fn=time.monotonic) -> str:
-    """The git branch of the runner's OWN checkout (best-effort, throttled+cached).
-
-    Reported on the heartbeat so the supervisor can SHOUT when another process has
-    left this runner on a non-main branch — i.e. the daemon is silently executing
-    stale/wrong code (observed twice: a DDD run checked out a branch in the runner's
-    shared checkout). Empty string if it can't be determined (not a git checkout, git
-    missing); never raises — a heartbeat must not depend on this."""
-    global _last_branch_check, _cached_branch
-    if now_fn() - _last_branch_check < 15:
-        return _cached_branch
-    _last_branch_check = now_fn()
-    try:
-        repo = Path(__file__).resolve().parents[3]  # …/packages/canopy_runner/canopy_runner/main.py -> repo root
-        out = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=3,
-        )
-        _cached_branch = out.stdout.strip() if out.returncode == 0 else ""
-    except Exception:  # noqa: BLE001 — best-effort; never break the heartbeat
-        _cached_branch = ""
-    return _cached_branch
 
 
 def _reset_cdp_health_state() -> None:
@@ -818,7 +792,7 @@ def run_once(cfg: Config, client: Client) -> str:
         # Report in-flight chat turns so the server renews their lease: a bridged
         # turn now outlives the tick that started it, and an unrenewed lease is swept.
         client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
-                         ready=_ready, ready_note=_rnote, code_branch=_code_branch())
+                         ready=_ready, ready_note=_rnote)
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -827,8 +801,7 @@ def run_once(cfg: Config, client: Client) -> str:
         client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
                          note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
                          host=host, ready=False,
-                         ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
-                         code_branch=_code_branch())
+                         ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}")
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -924,8 +897,45 @@ def verify_emdash(cfg_path: Path) -> int:
     return 0
 
 
+def install_sidecar() -> int:
+    """Provision the CDP sidecar's node deps. Exit code, for the CLI."""
+    from . import cdp_control as cdp
+    if cdp.sidecar_deps_installed():
+        print(f"✓ CDP sidecar deps already present at {cdp.SIDECAR.parent}")
+        return 0
+    try:
+        cdp.ensure_sidecar_deps()
+    except cdp.CDPError as exc:
+        print(f"✗ {exc}")
+        return 1
+    print(f"✓ installed CDP sidecar deps at {cdp.SIDECAR.parent}")
+    return 0
+
+
+def _provision_sidecar_or_warn() -> None:
+    """Startup provisioning: a freshly installed runner has the sidecar but not its
+    node_modules. WARN rather than exit — launchd's KeepAlive would turn a fatal
+    startup into a restart loop, and a runner that can still heartbeat (reporting
+    itself not-ready once CDP fails) is far more debuggable than one that flaps."""
+    from . import cdp_control as cdp
+    if cdp.sidecar_deps_installed():
+        return
+    logger.info("CDP sidecar deps missing at %s — installing (first run after an "
+                "install; this takes a moment)", cdp.SIDECAR.parent)
+    try:
+        cdp.ensure_sidecar_deps()
+        logger.info("CDP sidecar deps installed.")
+    except cdp.CDPError as exc:
+        logger.warning("could not install CDP sidecar deps: %s — turns needing emdash will "
+                       "fail until `canopy-runner install-sidecar` succeeds", exc)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="canopy runner (emdash adapter)")
+    # `--version` prints what the heartbeat reports, so "which runner is this box
+    # actually on?" is answerable at the shell without reading the supervisor.
+    parser.add_argument("--version", action="version",
+                        version=f"canopy-runner {__version__} (rev {provenance.code_sha()[:12] or 'unknown'})")
     # Top-level --config/--once keep the bare invocation (no subcommand) working —
     # the launchd plist invokes `-m canopy_runner.main --config ...` with no
     # subcommand, and that must keep behaving like `run`.
@@ -942,6 +952,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--once", action="store_true", help="single iteration (for cron/tests)")
     run_parser.add_argument("--drain-one", action="store_true",
                             help="claim + run exactly ONE queued turn, then exit")
+
+    subparsers.add_parser(
+        "install-sidecar",
+        help="install the CDP sidecar's node deps next to the installed sidecar "
+             "(idempotent; run after every `uv tool install` of this package)",
+    )
 
     verify_parser = subparsers.add_parser(
         "verify-emdash",
@@ -960,6 +976,9 @@ def main() -> None:
 
     command = args.command or "run"
 
+    if command == "install-sidecar":
+        raise SystemExit(install_sidecar())
+
     if command == "verify-emdash":
         if not args.config:
             parser.error("verify-emdash requires --config")
@@ -969,6 +988,7 @@ def main() -> None:
     if not args.config:
         parser.error("--config is required")
     cfg = Config.load(Path(args.config))
+    _provision_sidecar_or_warn()
     client = Client(cfg.base_url, cfg.token)
     if getattr(args, "drain_one", False):
         print(drain_one(cfg, client))
@@ -1065,8 +1085,7 @@ def main() -> None:
                 paused = True
             try:
                 client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT),
-                                 note="paused", host=host,
-                                 code_branch=_code_branch())
+                                 note="paused", host=host)
             except Exception:  # noqa: BLE001
                 pass
             # Pause stops STARTING work, it doesn't abandon work already running: a

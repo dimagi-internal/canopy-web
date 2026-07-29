@@ -97,6 +97,11 @@ export function RunnerDetail({
         {/* host only matters for emdash (per-macOS-account session reuse); cloud
             runners report no host, so skip the empty row entirely. */}
         {runner.host && row('host', runner.host)}
+        {/* What code this box is actually on. Only shown when it says something:
+            the cloud runner is a different program and reports neither. */}
+        {runner.code_version &&
+          row('runner code', `${runner.code_version}${runner.code_sha ? ` (${runner.code_sha.slice(0, 12)})` : ''}`)}
+        {runner.code_branch && row('branch', runner.code_branch)}
         {row('status', runner.status ?? 'unknown')}
       </div>
 

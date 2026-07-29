@@ -101,6 +101,21 @@ jobs:
     needs: guard
     steps:
       - uses: actions/checkout@v5
+        with:
+          # `git log -1 -- <path>` needs real history: at the default depth of 1
+          # it answers with HEAD or with nothing, so the runner-staleness alert
+          # would compare against a sha that has nothing to do with the runner.
+          fetch-depth: 0
+
+      # The one quantity both sides of the runner-staleness alert compute (spec
+      # 2026-07-28). Path-scoped on purpose — HEAD moves on every canopy-web
+      # commit, and comparing that would demand a runner reinstall for a CSS change.
+      - name: Resolve runner code sha
+        id: runner_sha
+        run: |
+          SHA="$(git log -1 --format=%H -- packages/canopy_runner/canopy_runner)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Runner source last changed at ${SHA:-<none>}"
 
       # Vendor the canopy plugin into the build context so apps.system can
       # render the /system catalog. canopy is PUBLIC (dimagi-internal/canopy), so
@@ -141,6 +156,7 @@ jobs:
           build-args: |
             VITE_BASE_PATH=/canopy/
             VITE_CSRF_COOKIE_NAME=csrftoken_canopy
+            RUNNER_CODE_SHA=${{ steps.runner_sha.outputs.sha }}
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}

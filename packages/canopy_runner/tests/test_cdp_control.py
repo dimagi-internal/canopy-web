@@ -208,3 +208,57 @@ def test_send_keys_passes_each_key_separately(monkeypatch):
     cdp_control.send_keys("agent-x", ["3", "\r"])
     assert calls["command"] == "send-keys"
     assert calls["args"]["keys"] == ["3", "\r"]
+
+
+# --- sidecar provisioning (spec 2026-07-28: the runner is installed, so its node
+# deps cannot ship in the wheel and are provisioned per-install) -----------------
+
+
+def test_ensure_sidecar_deps_is_a_noop_when_already_present(monkeypatch):
+    """Called at every daemon start, so the common path must not shell out."""
+    monkeypatch.setattr(cdp_control, "sidecar_deps_installed", lambda: True)
+    monkeypatch.setattr(cdp_control.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not run npm when deps are present"))
+    cdp_control.ensure_sidecar_deps()
+
+
+def test_ensure_sidecar_deps_installs_next_to_the_sidecar(monkeypatch):
+    """Deps must land BESIDE the .mjs, not in a shared directory: NODE_PATH is
+    consulted for CommonJS only and this sidecar is `type: module`, so Node
+    resolves its bare import by walking up from the file."""
+    calls = {}
+    state = {"present": False}
+
+    def fake_run(cmd, cwd=None, **kwargs):
+        calls["cmd"] = cmd
+        calls["cwd"] = cwd
+        state["present"] = True
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(cdp_control, "sidecar_deps_installed", lambda: state["present"])
+    monkeypatch.setattr(cdp_control.subprocess, "run", fake_run)
+    cdp_control.ensure_sidecar_deps()
+
+    assert calls["cmd"][:2] == ["npm", "install"]
+    assert calls["cwd"] == str(cdp_control.SIDECAR.parent)
+
+
+def test_ensure_sidecar_deps_reports_a_missing_npm_actionably(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("npm")
+
+    monkeypatch.setattr(cdp_control, "sidecar_deps_installed", lambda: False)
+    monkeypatch.setattr(cdp_control.subprocess, "run", boom)
+    with pytest.raises(cdp_control.CDPError) as exc:
+        cdp_control.ensure_sidecar_deps()
+    assert "install-sidecar" in str(exc.value)
+
+
+def test_ensure_sidecar_deps_fails_when_npm_claims_success_but_installs_nothing(monkeypatch):
+    """A zero exit is not proof. Re-check the dep, or the daemon starts believing
+    it is provisioned and dies later at the first CDP call instead."""
+    monkeypatch.setattr(cdp_control, "sidecar_deps_installed", lambda: False)
+    monkeypatch.setattr(cdp_control.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(stdout="", stderr="", returncode=0))
+    with pytest.raises(cdp_control.CDPError):
+        cdp_control.ensure_sidecar_deps()

@@ -346,6 +346,32 @@ Since spec 2026-07-27 an assignment row also carries a **`source`**: `""` is the
 - `GET /api/harness/runners/{runner_id}/drills` — Per-agent drill grid (outcome, summary, timestamps) for this runner; `RunnerOut.drill_rollup` (`passed`/`failed`/`pending`/`last_finished_at`) surfaces the badge summary on `GET /api/harness/runners/`.
 - `POST /api/harness/drills/{drill_id}/report` — Agent-callback: the drilled agent POSTs its own `{outcome: "pass"|"fail", summary}` using its runner environment's bearer token — the callback itself proves that environment can reach canopy-web. A drill turn that fails without a report is marked `fail` by `finish_turn`.
 
+**The laptop runner is an INSTALLED package, not a checkout.** `packages/canopy_runner/scripts/install-runner.sh`
+is both the install and the update: it `git archive`s a ref (default `origin/main`) into a
+temp dir, builds three wheels there, `uv tool install`s them, provisions the CDP sidecar's
+node deps, and renders + loads the launchd plist. The daemon's code therefore lives in a
+tool venv that **no `git checkout` can reach** — it used to run from
+`~/emdash-projects/canopy-web` via `PYTHONPATH`, so any process checking out a branch in
+that shared checkout silently changed the code it executed (three incidents; #306 added the
+alert, this made it structurally impossible). Re-run the script after any runner change; it
+restarts the daemon, so not mid-turn. `--ref <branch>` installs something else deliberately,
+`--no-launchd` skips touching the daemon. The plist is GENERATED (`launchd/*.template`) —
+the previously committed literal named one source directory while the runner imports three
+packages, so it could not actually start the runner and the live copy had been hand-patched.
+
+**Runner code provenance.** The heartbeat carries `code_version` (the package's
+`__version__`, legible) and `code_sha` — **the sha of the last commit touching
+`packages/canopy_runner/canopy_runner/`**, NOT the repo HEAD. The server holds the same
+quantity in `settings.RUNNER_CODE_SHA` (computed by the deploy workflow, which needs
+`fetch-depth: 0`, and baked in as a build arg), and `/supervisor` alerts when both are
+non-empty and differ: that box is executing an older runner. Path-scoped on purpose — HEAD
+moves on every canopy-web commit, so comparing it would demand a runner reinstall for a CSS
+change. **Empty on either side means UNKNOWN and never alerts** (the cloud runner is a
+different program and reports none; a dev server bakes in no expectation). A version number
+is deliberately not the comparison: it depends on someone remembering to bump it, and is
+therefore decorative on the day they forget. See
+`docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`.
+
 **Recurring turns** — the runner-facing half of scheduling; the supervisor's CRUD is the `/api/agents/{slug}/schedules/` surface above. `runner_id` is a query param on both routes; the tenant is derived from `runner.paired_by` (the human who paired the runner) rather than the `Runner.workspace` FK — see the Design Decisions entry below.
 - `GET /api/harness/schedules/?runner_id=…` — runner syncs the schedules it may fire. **Tenant-scoped, never scoped by `capabilities`** (a caller-supplied hint, not a boundary — see b4f5ead).
 - `POST /api/harness/schedules/{id}/fire?runner_id=…` — the runner reports a due slot; the server materializes the turn.
@@ -515,6 +541,7 @@ Design **specs** (the "why" record) live in `docs/superpowers/specs/`. The execu
 - `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md` — Directed runner routing: `RunnerAssignment` as the per-agent routing authority (availability cascade + grace), `Turn.pinned_runner`, session-turn stickiness, readiness drills; supersedes `capabilities.agents` + `Agent.runner_preference` for agent-turn claim routing
 - `docs/superpowers/specs/2026-07-27-acp-adoption-design.md` — **ACP adoption**: the Agent Client Protocol is the standard canopy hand-rolled (emdash runs `@agentclientprotocol/claude-agent-acp`). Spiked green on subscription auth; an ACP session writes an ORDINARY transcript, so the durable path is untouched. Cloud-only by design — the laptop keeps emdash
 - `docs/superpowers/specs/2026-07-27-source-aware-runner-routing-design.md` — Source-aware routing: `Turn.origin` becomes the source vocabulary, and a `RunnerAssignment` row with a non-empty `source` is that source's priority runner (+ `strict`), composed into the same cascade. Layers onto the 2026-07-24 spec
+- `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md` — **The runner is an installed package, not a checkout**: one install/update command, a generated launchd plist, a self-provisioning CDP sidecar, and the branch alert joined by a path-scoped-sha staleness alert. Also the record of what the checkout coupling had already broken (a committed plist that could not start the runner; the menubar's "Take one turn" reading it)
 - `docs/designs/canopy-web-design.md` — Product design + glossary (open claw, skill, collection, eval suite, workspace session)
 - `docs/designs/ceo-plan-conversation-to-agent.md` — CEO review, scope decisions, deferred work
 - `docs/walkthroughs/project-workbench.yaml` — Project workbench walkthrough spec

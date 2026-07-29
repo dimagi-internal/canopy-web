@@ -460,6 +460,8 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         ready=payload.ready,
         ready_note=payload.ready_note,
         code_branch=payload.code_branch,
+        code_version=payload.code_version,
+        code_sha=payload.code_sha,
     )
 
 

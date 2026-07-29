@@ -20,11 +20,9 @@ for the schema drift that causes such a failure.
 ## One-time laptop setup
 
 1. **Launch emdash with its debug port** via the **"Emdash CDP"** Spotlight app
-   (or any launcher that passes `--remote-debugging-port=9222`), and install the
-   CDP sidecar deps once:
-   ```bash
-   cd canopy_runner/cdp && npm install
-   ```
+   (or any launcher that passes `--remote-debugging-port=9222`). The CDP
+   sidecar's node deps are provisioned by the installer (step 5) and re-checked
+   at every daemon start — there is no separate `npm install` step.
 
 2. **Pair the runner** with canopy-web:
    ```bash
@@ -58,32 +56,34 @@ for the schema drift that causes such a failure.
    the durable link lives in canopy-web, so switching macOS accounts continues the
    thread (fresh local session, rehydrated) rather than losing it.
 
-4. **Sanity-check / smoke test** the config:
+4. **Install the daemon.** One command — it also renders and loads the launchd
+   job, and provisions the sidecar's node deps:
    ```bash
-   python3 -m canopy_runner.main --config ~/.canopy/runner.json --once
+   packages/canopy_runner/scripts/install-runner.sh
+   ```
+   This is also the **update** command: re-run it after any runner change. It
+   installs a SNAPSHOT of `origin/main` into its own tool venv, so the daemon's
+   code cannot be moved by a `git checkout` in your working tree (which is what
+   used to happen — see
+   `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`).
+   Pass `--ref <branch>` to install something else deliberately, or
+   `--no-launchd` to install without touching the running daemon.
+
+   It restarts the daemon, so avoid running it mid-turn.
+
+   The `realtime` extra (the WebSocket wake listener — instant claims instead of
+   up to a 5s poll delay) is installed as part of this, into the tool venv's own
+   interpreter. It used to be a hand-run `pip install --user` against whichever
+   `python3` was on PATH, which meant a `brew upgrade python` silently returned
+   the fleet to poll-only. The log should read `wake listener connected: wss://…`.
+
+5. **Sanity-check / smoke test** the config:
+   ```bash
+   canopy-runner --version                                   # what this box is on
+   canopy-runner run --config ~/.canopy/runner.json --once
    ```
    → should report `idle` (no claimed turns yet), or `cdp_down` if emdash isn't
    up on its debug port.
-
-5. **Install the launchd job** to run the watch loop continuously:
-   ```bash
-   cp launchd/com.canopy.runner.plist ~/Library/LaunchAgents/
-   launchctl load ~/Library/LaunchAgents/com.canopy.runner.plist
-   ```
-
-6. **Enable the realtime wake listener** (recommended). The core loop claims
-   turns on the 5s poll; the `realtime` extra (`pyproject.toml`) adds a WebSocket
-   control channel so the runner also claims on *push* — instant wakes instead of
-   up to a 5s delay. `wake.py` imports `websocket` lazily and degrades to
-   poll-only when it's absent, so this is opt-in — but install it so a provisioned
-   runner isn't silently stuck on polling. Install into the **same interpreter the
-   launchd job uses** (the plist runs `/usr/bin/env python3`):
-   ```bash
-   python3 -m pip install --user --break-system-packages 'websocket-client>=1.8,<2'
-   ```
-   Then `launchctl kickstart -k gui/$(id -u)/com.canopy.runner`. The log should
-   read `wake listener connected: wss://…` rather than `websocket-client not
-   installed — wake listener off, polling only`.
 
 ## Commands
 

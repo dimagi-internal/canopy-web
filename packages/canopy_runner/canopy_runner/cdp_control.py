@@ -16,11 +16,61 @@ import urllib.request
 from pathlib import Path
 
 SIDECAR = Path(__file__).parent / "cdp" / "emdash_control.mjs"
+# The one dependency emdash_control.mjs imports. Its presence is the cheap,
+# specific probe for "have this sidecar's node deps been installed here?" —
+# a bare `node_modules/` exists() would pass on a half-finished install.
+_SIDECAR_DEP = "playwright-core"
 
 
 class CDPError(Exception):
     """emdash CDP control failed — often "task not present" (reuse should fall back
     to create) or "cannot connect" (emdash not launched with the debug port)."""
+
+
+def sidecar_deps_installed() -> bool:
+    return (SIDECAR.parent / "node_modules" / _SIDECAR_DEP).exists()
+
+
+def ensure_sidecar_deps(*, timeout: int = 300) -> None:
+    """Install the sidecar's node deps NEXT TO the sidecar, once, if missing.
+
+    The `.mjs` ships inside the wheel (it is code, versioned with the Python that
+    calls it), but `node_modules` cannot: `playwright-core` is a Node dependency,
+    and site-packages is replaced wholesale on every reinstall. So a freshly
+    installed runner has the sidecar and not its deps, and would fail at the first
+    CDP call with a Node resolution error naming a path the user has never seen.
+
+    Deps must live NEXT TO the sidecar rather than in a stable shared directory:
+    `NODE_PATH` is consulted for CommonJS resolution only, and this sidecar is
+    `type: module`, so Node resolves its bare import by walking up from the .mjs.
+
+    Idempotent and cheap when already present (one `exists()`). Called at daemon
+    STARTUP and by `canopy-runner install-sidecar` (which `install-runner.sh` runs,
+    so the cost lands on the install rather than on the first turn of the day) —
+    deliberately NOT lazily from `_run`: a hot path that can shell out to npm is
+    both a surprising mid-turn latency spike and something every CDP unit test
+    would have to defend against.
+    """
+    if sidecar_deps_installed():
+        return
+    try:
+        proc = subprocess.run(
+            ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
+            cwd=str(SIDECAR.parent), capture_output=True, text=True, timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise CDPError(
+            f"npm not found — the CDP sidecar's deps are missing at {SIDECAR.parent} "
+            f"and cannot be installed. Install Node.js, then re-run "
+            f"`canopy-runner install-sidecar`."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CDPError(f"npm install for the CDP sidecar timed out after {timeout}s") from exc
+    if proc.returncode != 0 or not sidecar_deps_installed():
+        raise CDPError(
+            f"npm install for the CDP sidecar failed in {SIDECAR.parent}: "
+            f"{(proc.stderr or proc.stdout or '')[:300]!r}"
+        )
 
 
 HOST_ID_PATH = Path.home() / ".canopy" / "host-id"
@@ -88,8 +138,8 @@ def _run(command: str, args: dict, *, node: str = "node", timeout: int = 90) -> 
             capture_output=True, text=True, timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise CDPError("node not found — install Node.js and run "
-                       "`cd canopy_runner/cdp && npm install`") from exc
+        raise CDPError("node not found — install Node.js, then run "
+                       "`canopy-runner install-sidecar`") from exc
     except subprocess.TimeoutExpired as exc:
         raise CDPError(f"emdash CDP '{command}' timed out after {timeout}s") from exc
     raw = (proc.stdout or "").strip()

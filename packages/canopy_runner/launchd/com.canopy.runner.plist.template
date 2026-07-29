@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE — rendered to ~/Library/LaunchAgents/com.canopy.runner.plist by
+  scripts/install-runner.sh. Do not load this file directly; its placeholders
+  are not valid paths.
+
+  Note what is NOT here: PYTHONPATH. The daemon runs an INSTALLED console script
+  from its own tool venv, so there is no source tree to point at — which is the
+  whole point (see docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md).
+  The previous committed version of this file listed one source directory while
+  the runner imports three packages, so it could not actually start the runner;
+  the live copy had been hand-patched. A generated file cannot drift that way.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.canopy.runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__CANOPY_RUNNER_BIN__</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>__HOME__/.canopy/runner.json</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.canopy/runner.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.canopy/runner.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd's default PATH omits Homebrew, so the runner can't find `gog`
+         (inbox polling), `node` (CDP sidecar) or `npm` (sidecar provisioning)
+         without this. The Python interpreter is NOT resolved from PATH — the
+         console script hard-codes its own venv's interpreter. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONUNBUFFERED</key><string>1</string>
+  </dict>
+</dict>
+</plist>

@@ -58,6 +58,15 @@ RUN SECRET_KEY=build-placeholder \
     GOOGLE_OAUTH_CLIENT_SECRET=placeholder \
     python manage.py collectstatic --noinput
 
+# The sha of the last commit that touched the laptop runner's own source, passed
+# in by the deploy workflow (which needs fetch-depth: 0 to compute it). A runner
+# reports the same quantity on its heartbeat and the supervisor alerts when they
+# differ. Deliberately placed LATE: an ARG/ENV invalidates every layer below it,
+# and this value changes on every runner commit — up top it would rebuild the
+# whole image each time. Empty (local builds) disables the comparison.
+ARG RUNNER_CODE_SHA=""
+ENV RUNNER_CODE_SHA=$RUNNER_CODE_SHA
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

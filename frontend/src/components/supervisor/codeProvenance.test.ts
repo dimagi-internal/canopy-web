@@ -1,0 +1,112 @@
+import { describe, expect, it } from 'vitest'
+
+import { runnerCodeAlerts } from './codeProvenance'
+import type { RunnerOut } from '@/api/harness'
+
+// RunnerOut has many fields; the helper only reads these.
+const runner = (
+  name: string,
+  fields: Partial<RunnerOut> & { status?: string } = {},
+): RunnerOut =>
+  ({
+    id: name,
+    name,
+    status: 'online',
+    code_branch: '',
+    code_version: '',
+    code_sha: '',
+    expected_code_sha: '',
+    ...fields,
+  }) as unknown as RunnerOut
+
+const SHIPPED = 'a'.repeat(40)
+const OLD = 'b'.repeat(40)
+
+describe('runnerCodeAlerts — branch (source-mode runners)', () => {
+  it('alerts only runners on a non-main, non-empty branch', () => {
+    const rows = [
+      runner('good', { code_branch: 'main' }),
+      runner('installed', { code_branch: '' }), // no checkout — never a branch alert
+      runner('bad', { code_branch: 'ddd-ui-polish' }),
+    ]
+    expect(runnerCodeAlerts(rows).map((a) => a.runner.name)).toEqual(['bad'])
+    expect(runnerCodeAlerts(rows)[0].kind).toBe('branch')
+  })
+
+  it('a heartbeating runner is reachable — fix-on-machine, no retire offer', () => {
+    for (const status of ['online', 'degraded']) {
+      const [alert] = runnerCodeAlerts([runner('r', { code_branch: 'feat-x', status })])
+      expect(alert.unreachable).toBe(false)
+    }
+  })
+
+  it('a quiet runner is unreachable — its branch is a LAST report and only retiring clears it', () => {
+    // The 2026-07-25 incident: jj-mbp-cdp died on ddd-ui-polish after its
+    // account logged out; the banner could never clear on its own.
+    for (const status of ['stale', 'disconnected']) {
+      const [alert] = runnerCodeAlerts([runner('r', { code_branch: 'ddd-ui-polish', status })])
+      expect(alert.unreachable).toBe(true)
+    }
+  })
+})
+
+describe('runnerCodeAlerts — outdated (installed runners)', () => {
+  it('alerts when the installed sha differs from what shipped', () => {
+    const [alert] = runnerCodeAlerts([
+      runner('mbp', { code_sha: OLD, expected_code_sha: SHIPPED, code_version: '0.1.0' }),
+    ])
+    expect(alert.kind).toBe('outdated')
+    expect(alert.runner.name).toBe('mbp')
+  })
+
+  it('stays silent when the runner is current', () => {
+    expect(
+      runnerCodeAlerts([runner('mbp', { code_sha: SHIPPED, expected_code_sha: SHIPPED })]),
+    ).toEqual([])
+  })
+
+  it('stays silent when EITHER side is unknown', () => {
+    // Empty means unknown, never "different". The cloud runner is a separate
+    // program that reports no sha; a dev server bakes in no expectation; a
+    // shallow clone yields neither. Alerting on partial information would cry
+    // wolf on exactly the boxes we know least about.
+    const rows = [
+      runner('cloud', { code_sha: '', expected_code_sha: SHIPPED }),
+      runner('dev-server', { code_sha: OLD, expected_code_sha: '' }),
+      runner('both-unknown', { code_sha: '', expected_code_sha: '' }),
+    ]
+    expect(runnerCodeAlerts(rows)).toEqual([])
+  })
+
+  it('a quiet outdated runner offers the retire escape hatch too', () => {
+    const [alert] = runnerCodeAlerts([
+      runner('dead', { code_sha: OLD, expected_code_sha: SHIPPED, status: 'stale' }),
+    ])
+    expect(alert.unreachable).toBe(true)
+  })
+})
+
+describe('runnerCodeAlerts — shared', () => {
+  it('raises ONE banner per runner: a wrong branch outranks being out of date', () => {
+    // A source runner on a branch will almost always also look "outdated"
+    // (its sha is whatever that branch last touched). Two banners about the
+    // same box would just be noise, and the branch is the louder fault.
+    const alerts = runnerCodeAlerts([
+      runner('r', { code_branch: 'feat-x', code_sha: OLD, expected_code_sha: SHIPPED }),
+    ])
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].kind).toBe('branch')
+  })
+
+  it('a source runner on main that is current raises nothing', () => {
+    expect(
+      runnerCodeAlerts([
+        runner('r', { code_branch: 'main', code_sha: SHIPPED, expected_code_sha: SHIPPED }),
+      ]),
+    ).toEqual([])
+  })
+
+  it('tolerates a null runner list (initial load)', () => {
+    expect(runnerCodeAlerts(null)).toEqual([])
+  })
+})

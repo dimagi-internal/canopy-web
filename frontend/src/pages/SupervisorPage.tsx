@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { listOpenItems, type ItemOut } from '@/api/items'
 import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
-import { BranchAlerts } from '@/components/supervisor/BranchAlerts'
+import { RunnerCodeAlerts } from '@/components/supervisor/RunnerCodeAlerts'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -101,8 +101,8 @@ export default function SupervisorPage(): JSX.Element {
     }
   }, [])
 
-  // Re-poll runners so the wrong-branch alert (below) appears/clears without a reload
-  // — code_branch rides the REST runner, not the live socket overlay.
+  // Re-poll runners so the code-provenance alerts (below) appear/clear without a
+  // reload — code_branch/code_sha ride the REST runner, not the live socket overlay.
   useEffect(() => {
     let cancelled = false
     const id = window.setInterval(() => {
@@ -189,7 +189,7 @@ export default function SupervisorPage(): JSX.Element {
         </div>
       )}
 
-      <BranchAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
+      <RunnerCodeAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
 
       <Tabs value={tab} onValueChange={onTab} className="gap-4">
         <TabsList className="w-full">
