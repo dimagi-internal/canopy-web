@@ -2,7 +2,7 @@
 """Regenerate EVERY canopy brand image from the one geometry source.
 
 The bare-branch tree is defined ONCE as line segments in
-`packages/canopy_runner/canopy_runner/tree.py`. This script renders that geometry
+`assets/brand/tree.py`. This script renders that geometry
 into every committed image the product needs, so nothing is drawn just-in-time at
 build or runtime. Edit `tree.py` to change the shape, then run this and commit the
 results — never hand-edit the outputs.
@@ -37,9 +37,13 @@ WEB_ICONS = REPO / "frontend" / "public" / "icons"
 WEB_FAVICON = REPO / "frontend" / "public" / "favicon.svg"
 
 # tree.py (pure geometry) + render_tree_svg (pure SVG) are the shape source of truth.
-sys.path.insert(0, str(REPO / "packages" / "canopy_runner"))
-from canopy_runner.render_tree_svg import render_svg  # noqa: E402
-from canopy_runner.tree import ICON_INSET, ink_bounds, tree_segments  # noqa: E402
+# They live HERE, beside their only consumer. They used to sit inside
+# packages/canopy_runner and were therefore built into the runner wheel and
+# installed onto every box in the fleet — 112 lines of icon geometry the daemon
+# never imports.
+sys.path.insert(0, str(BRAND))
+from render_tree_svg import render_svg  # noqa: E402
+from tree import ICON_INSET, ink_bounds, tree_segments  # noqa: E402
 
 # Brand palette (canopy Warm Earth) — the ONLY place these hexes live for the mark.
 WARM_TILE = (0.16, 0.13, 0.11)   # app-icon background
@@ -141,7 +145,7 @@ def _scaled(img, px: int):
 def main() -> None:
     BRAND.mkdir(parents=True, exist_ok=True)
     WEB_ICONS.mkdir(parents=True, exist_ok=True)
-    print("Regenerating brand assets from packages/canopy_runner/canopy_runner/tree.py:")
+    print("Regenerating brand assets from assets/brand/tree.py:")
 
     # 1. Master SVG + web favicon (pure-python; white tree on black).
     svg = render_svg(512)

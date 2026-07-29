@@ -7,7 +7,7 @@ drawn just-in-time at build or runtime.
 ## The one source of truth
 
 The tree's *shape* is defined once, as line segments, in
-[`packages/canopy_runner/canopy_runner/tree.py`](../../packages/canopy_runner/canopy_runner/tree.py).
+[`tree.py`](tree.py).
 Everything here is rendered from that geometry by [`generate.py`](./generate.py). To
 change the mark, edit `tree.py`, then:
 

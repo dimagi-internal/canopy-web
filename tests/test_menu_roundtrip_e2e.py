@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from canopy_runner import main as runner_main
+# Menu ANSWERING moved out of main.py into hooks.py (the hook-shaped half);
+# menu.py stays the pure parser. See packages/canopy_runner/README.md § Layout.
+from canopy_runner import hooks as runner_hooks
 from canopy_runner.hook_listener import HookListener
 from apps.canopy_sessions.stream_map import turn_event_to_frames
 
@@ -73,7 +75,7 @@ def _run_hook_to_frames(screen):
         port=0, nonce="n",
         resolve_session=lambda cwd: "session-1",
         forward=lambda: True,
-        read_menu=lambda cwd: runner_main._read_hook_menu_from(emdash, "agent-task"),
+        read_menu=lambda cwd: runner_hooks.read_hook_menu_from(emdash, "agent-task"),
     )
     listener.bind_sender(lambda sid, events: published.append((sid, events)))
     listener.handle_payload({"hook_event_name": "Notification", "cwd": "/w/x",
@@ -117,13 +119,13 @@ def test_a_busy_screen_reports_blocked_without_a_menu():
 def test_the_answer_becomes_the_keystrokes_that_dialog_expects():
     emdash, frames = _run_hook_to_frames(SCREEN)
     chosen = frames[0]["data"]["menu"]["options"][0]["number"]
-    runner_main._answer_menu_with(emdash, "agent-task", chosen)
+    runner_hooks.answer_menu_with(emdash, "agent-task", chosen)
     assert emdash.sent == [("agent-task", ["1", "\r"])]
 
 
 def test_refusing_sends_escape():
     emdash, _frames = _run_hook_to_frames(SCREEN)
-    runner_main._answer_menu_with(emdash, "agent-task", None)
+    runner_hooks.answer_menu_with(emdash, "agent-task", None)
     assert emdash.sent == [("agent-task", ["\x1b"])]
 
 
@@ -132,12 +134,12 @@ def test_answering_twice_does_not_press_a_second_time():
     answer finds no dialog on screen and must not type into the prompt — where
     the agent would read a bare '1' as an instruction."""
     emdash, frames = _run_hook_to_frames(SCREEN)
-    runner_main._answer_menu_with(emdash, "agent-task", 1)
-    runner_main._answer_menu_with(emdash, "agent-task", 1)
+    runner_hooks.answer_menu_with(emdash, "agent-task", 1)
+    runner_hooks.answer_menu_with(emdash, "agent-task", 1)
     assert emdash.sent == [("agent-task", ["1", "\r"])]
 
 
 def test_an_option_the_dialog_does_not_offer_is_never_pressed():
     emdash, _frames = _run_hook_to_frames(SCREEN)
-    runner_main._answer_menu_with(emdash, "agent-task", 9)
+    runner_hooks.answer_menu_with(emdash, "agent-task", 9)
     assert emdash.sent == []

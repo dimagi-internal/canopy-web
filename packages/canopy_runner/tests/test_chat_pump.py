@@ -7,7 +7,9 @@ giving up after 3s is what truncated every answer that involved a tool call.
 import types
 
 import pytest
-from canopy_runner import chat_bridge, main
+from canopy_runner import cancel
+from canopy_runner import chat_pump
+from canopy_runner import chat_bridge
 
 
 def _asst(text, stop="tool_use"):
@@ -46,10 +48,10 @@ class _FakeClient:
 @pytest.fixture(autouse=True)
 def _clean_registry():
     chat_bridge.IN_FLIGHT.clear()
-    main.CANCELLED_TURNS.clear()
+    cancel.CANCELLED_TURNS.clear()
     yield
     chat_bridge.IN_FLIGHT.clear()
-    main.CANCELLED_TURNS.clear()
+    cancel.CANCELLED_TURNS.clear()
 
 
 def _cfg():
@@ -71,14 +73,14 @@ def test_pump_streams_across_ticks_and_finishes_on_end_turn():
         [],                                                 # tick 2: a tool is running
         [_asst("The actual answer.", stop="end_turn")],     # tick 3: done
     ])
-    main._pump_chat_bridges(_cfg(), client)
+    chat_pump.pump_chat_bridges(_cfg(), client)
     assert [e["payload"]["text"] for e in client.events] == ["On it."]
     assert client.finished == [], "a silent tool call must not end the turn"
 
-    main._pump_chat_bridges(_cfg(), client)
+    chat_pump.pump_chat_bridges(_cfg(), client)
     assert client.finished == []
 
-    main._pump_chat_bridges(_cfg(), client)
+    chat_pump.pump_chat_bridges(_cfg(), client)
     assert [e["payload"]["text"] for e in client.events] == ["On it.", "The actual answer."]
     assert client.finished == [("t1", "done", "chat reply bridged (26 chars)")]
     assert chat_bridge.IN_FLIGHT == {}
@@ -87,10 +89,10 @@ def test_pump_streams_across_ticks_and_finishes_on_end_turn():
 def test_pump_retries_undelivered_text_instead_of_losing_it():
     client = _FakeClient(post_fails=1)
     _register([[_asst("the answer", stop="end_turn")], []])
-    main._pump_chat_bridges(_cfg(), client)          # post blows up
+    chat_pump.pump_chat_bridges(_cfg(), client)          # post blows up
     assert client.events == []
     assert client.finished == [], "don't finish a turn whose reply nobody received"
-    main._pump_chat_bridges(_cfg(), client)          # next tick retries
+    chat_pump.pump_chat_bridges(_cfg(), client)          # next tick retries
     assert [e["payload"]["text"] for e in client.events] == ["the answer"]
     assert client.finished[0][1] == "done"
 
@@ -104,13 +106,13 @@ def test_pump_cancels_via_interrupt_and_finishes_cancelled(monkeypatch):
 
     client = _FakeClient()
     _register([[]])
-    main.CANCELLED_TURNS.add("t1")
-    main._pump_chat_bridges(_cfg(), client)
+    cancel.CANCELLED_TURNS.add("t1")
+    chat_pump.pump_chat_bridges(_cfg(), client)
 
     assert interrupted == {"task": "echo-1", "port": 9222}
     assert client.finished == [("t1", "cancelled", "cancelled by user")]
     assert chat_bridge.IN_FLIGHT == {}
-    assert "t1" not in main.CANCELLED_TURNS
+    assert "t1" not in cancel.CANCELLED_TURNS
 
 
 def test_pump_cancel_survives_a_failed_interrupt(monkeypatch):
@@ -123,8 +125,8 @@ def test_pump_cancel_survives_a_failed_interrupt(monkeypatch):
     monkeypatch.setattr(cdp_control, "interrupt", _boom)
     client = _FakeClient()
     _register([[]])
-    main.CANCELLED_TURNS.add("t1")
-    main._pump_chat_bridges(_cfg(), client)
+    cancel.CANCELLED_TURNS.add("t1")
+    chat_pump.pump_chat_bridges(_cfg(), client)
     assert client.finished == [("t1", "cancelled", "cancelled by user")]
 
 
@@ -136,7 +138,7 @@ def test_pump_survives_an_unreadable_transcript():
     client = _FakeClient()
     chat_bridge.IN_FLIGHT["t1"] = chat_bridge.LiveBridge(
         turn_id="t1", task="echo-1", reader=_Broken())
-    main._pump_chat_bridges(_cfg(), client)          # must not raise
+    chat_pump.pump_chat_bridges(_cfg(), client)          # must not raise
     assert client.finished == []
     assert "t1" in chat_bridge.IN_FLIGHT             # a quiet tick, not an ending
 
@@ -148,7 +150,7 @@ def test_pump_finish_failure_still_drops_the_bridge():
             raise RuntimeError("server down")
 
     _register([[_asst("done", stop="end_turn")]])
-    main._pump_chat_bridges(_cfg(), _Client())
+    chat_pump.pump_chat_bridges(_cfg(), _Client())
     assert chat_bridge.IN_FLIGHT == {}
 
 
@@ -215,8 +217,8 @@ def test_the_turns_raw_jsonl_is_retained_verbatim(monkeypatch):
     chat_bridge.IN_FLIGHT["t1"] = bridge
     c = _TranscriptClient()
     cfg = _cfg()
-    main._pump_chat_bridges(cfg, c)
-    main._pump_chat_bridges(cfg, c)
+    chat_pump.pump_chat_bridges(cfg, c)
+    chat_pump.pump_chat_bridges(cfg, c)
 
     shipped = [line for _t, lines, _b in c.posts for line in lines]
     assert shipped == raw1 + raw2
@@ -230,7 +232,7 @@ def test_a_failed_flush_keeps_the_lines_for_the_next_tick():
     chat_bridge.IN_FLIGHT.clear()
     bridge = chat_bridge.LiveBridge(turn_id="t1", task="x", reader=_RawReader([]))
     bridge.raw_pending = ['{"a":1}']
-    main._flush_turn_transcript(_TranscriptClient(fail=True), bridge)
+    chat_pump.flush_turn_transcript(_TranscriptClient(fail=True), bridge)
     assert bridge.raw_pending == ['{"a":1}']    # nothing lost
 
 
@@ -252,11 +254,11 @@ def test_flushing_stops_once_the_server_reports_the_ceiling():
     bridge = chat_bridge.LiveBridge(turn_id="t1", task="x", reader=_RawReader([]))
     bridge.raw_pending = ['{"a":1}']
     c = _TranscriptClient(truncate_after=1)
-    main._flush_turn_transcript(c, bridge)
+    chat_pump.flush_turn_transcript(c, bridge)
     assert bridge.transcript_truncated is True
     bridge.step([], ['{"b":2}'])                # further lines aren't even queued
     assert bridge.raw_pending == []
-    main._flush_turn_transcript(c, bridge)
+    chat_pump.flush_turn_transcript(c, bridge)
     assert len(c.posts) == 1                    # and nothing more is sent
 
 

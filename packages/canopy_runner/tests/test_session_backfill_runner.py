@@ -2,7 +2,8 @@
 messages when the server asks. Fake client + tmp transcript."""
 import json
 
-from canopy_runner import main as m
+from canopy_runner import transcript
+from canopy_runner import streams
 from canopy_runner.chat_bridge import compose_index as _ix
 
 
@@ -40,10 +41,10 @@ def test_drains_backfill_and_ships_full_transcript_with_ordinals(tmp_path, monke
     the live stream uses — that identity is what makes the two idempotent."""
     p = tmp_path / "echo.jsonl"
     p.write_text(_summary() + _user("q1") + _asst("a1") + _user("q2") + _asst("a2"))
-    monkeypatch.setattr(m.transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
+    monkeypatch.setattr(transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
 
     c = _Client([{"session_id": "s1", "session_key": "echo-1", "project": "echo"}])
-    m._drain_backfills(_Cfg(), c)
+    streams.drain_backfills(_Cfg(), c)
 
     assert len(c.shipped) == 1
     sid, messages = c.shipped[0]
@@ -55,7 +56,7 @@ def test_drains_backfill_and_ships_full_transcript_with_ordinals(tmp_path, monke
 
 
 def test_drain_skips_when_transcript_missing(monkeypatch):
-    monkeypatch.setattr(m.transcript, "resolve_transcript", lambda *a, **k: None)
+    monkeypatch.setattr(transcript, "resolve_transcript", lambda *a, **k: None)
     c = _Client([{"session_id": "s1", "session_key": "echo-1", "project": "echo"}])
-    m._drain_backfills(_Cfg(), c)
+    streams.drain_backfills(_Cfg(), c)
     assert c.shipped == []  # nothing to ship; runner-offline path stays server-side

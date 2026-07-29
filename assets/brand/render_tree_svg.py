@@ -10,13 +10,13 @@ UP (drawn the way `_tree_image` draws it, with `NSImage.imageWithSize_flipped_dr
 SVG the tree would appear upside-down, so every y is negated before scale/translate —
 equivalent to a `scale(1,-1)` flip about the ink's own centre.
 
-Run standalone: `python -m canopy_runner.render_tree_svg <out.svg> [px]`.
+Run standalone: `python assets/brand/render_tree_svg.py <out.svg> [px]`.
 """
 from __future__ import annotations
 
 import sys
 
-from canopy_runner.tree import ICON_INSET, ink_bounds, tree_segments
+from tree import ICON_INSET, ink_bounds, tree_segments
 
 BG = "#000000"
 STROKE = "#ffffff"
@@ -56,7 +56,7 @@ def render_svg(px: int = 512) -> str:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("usage: python -m canopy_runner.render_tree_svg <out.svg> [px]", file=sys.stderr)
+        print("usage: python assets/brand/render_tree_svg.py <out.svg> [px]", file=sys.stderr)
         raise SystemExit(2)
     out_path = sys.argv[1]
     px = int(sys.argv[2]) if len(sys.argv) > 2 else 512
