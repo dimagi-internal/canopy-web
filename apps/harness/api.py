@@ -482,6 +482,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         code_branch=payload.code_branch,
         code_version=payload.code_version,
         code_sha=payload.code_sha,
+        code_committed_at=payload.code_committed_at,
         projects=payload.projects,
     )
 

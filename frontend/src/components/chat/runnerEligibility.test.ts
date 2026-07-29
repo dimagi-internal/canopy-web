@@ -21,6 +21,8 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     code_branch: "main",
     code_version: "",
     code_sha: "",
+    code_committed_at: 0,
+    expected_code_committed_at: 0,
     expected_code_sha: "",
     workspace: null,
     paired_by_email: null,

@@ -103,6 +103,11 @@ class RunnerOut(Schema):
     # a page that already has this one. `can_manage` sets the precedent for a
     # derived, non-column field on this schema.
     expected_code_sha: str
+    # The two halves of the ORDERING, mirroring the sha pair above: without them
+    # `code_sha != expected_code_sha` can only say "different", and the supervisor
+    # was rendering that as "behind" (see Runner.code_committed_at).
+    code_committed_at: int
+    expected_code_committed_at: int
 
     workspace: str | None
     # The human who paired the runner. This — NOT `workspace` — is what governs
@@ -130,6 +135,16 @@ class RunnerOut(Schema):
     def resolve_expected_code_sha(obj) -> str:
         from django.conf import settings
         return getattr(settings, "RUNNER_CODE_SHA", "") or ""
+
+    @staticmethod
+    def resolve_expected_code_committed_at(obj) -> int:
+        from django.conf import settings
+        try:
+            return int(getattr(settings, "RUNNER_CODE_COMMITTED_AT", 0) or 0)
+        except (TypeError, ValueError):
+            # A malformed build arg must not 500 the whole runners list — unknown
+            # (0) simply means the alert keeps today's direction-less behaviour.
+            return 0
 
     @staticmethod
     def resolve_workspace(obj) -> str | None:
@@ -171,6 +186,9 @@ class HeartbeatIn(Schema):
     # The sha of the last commit touching the runner's own source. Compared against
     # settings.RUNNER_CODE_SHA; empty means unknown and never alerts.
     code_sha: str = ""
+    # Committer epoch of that same commit. 0 = unknown; see Runner.code_committed_at
+    # for why an ORDER is needed on top of the identity a sha gives.
+    code_committed_at: int = 0
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot

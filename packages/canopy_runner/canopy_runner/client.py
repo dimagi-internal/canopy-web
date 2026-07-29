@@ -63,7 +63,8 @@ class Client:
     def heartbeat(self, runner_id: str, active_turn_ids: list[str], degraded: bool = False,
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
                   code_branch: str | None = None, code_version: str | None = None,
-                  code_sha: str | None = None, projects: list[str] | None = None) -> dict:
+                  code_sha: str | None = None, code_committed_at: int | None = None,
+                  projects: list[str] | None = None) -> dict:
         """Report liveness. Code provenance is stamped HERE, not by callers.
 
         `services.heartbeat` assigns these unconditionally, so any heartbeat that
@@ -87,7 +88,9 @@ class Client:
                 "host": host, "ready": ready, "ready_note": ready_note,
                 "code_branch": provenance.code_branch() if code_branch is None else code_branch,
                 "code_version": provenance.version() if code_version is None else code_version,
-                "code_sha": provenance.code_sha() if code_sha is None else code_sha}
+                "code_sha": provenance.code_sha() if code_sha is None else code_sha,
+                "code_committed_at": (provenance.code_committed_at()
+                                      if code_committed_at is None else code_committed_at)}
         if projects is not None:
             body["projects"] = projects
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)

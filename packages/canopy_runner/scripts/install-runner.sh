@@ -109,6 +109,10 @@ fi
 # commit that touched the runner's OWN source, NOT the repo HEAD (which moves on
 # every canopy-web commit and would mark every runner stale on a CSS change).
 RUNNER_SHA="$(git -C "$REPO" log -1 --format=%H "$REF" -- "$RUNNER_SRC")"
+# Committer epoch of the SAME commit. The sha says WHICH code; this says WHEN, and
+# only the pair can tell "this box is behind" from "this box is ahead of the
+# deploy" — which the supervisor was reporting as the former either way.
+RUNNER_COMMITTED_AT="$(git -C "$REPO" log -1 --format=%ct "$REF" -- "$RUNNER_SRC")"
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$RUNNER_SHA" ]; then
   echo "==> ref $REF | runner source at ${RUNNER_SHA:0:12}"
@@ -132,6 +136,7 @@ from __future__ import annotations
 
 SHA = "$RUNNER_SHA"
 BUILT_AT = "$BUILT_AT"
+COMMITTED_AT = ${RUNNER_COMMITTED_AT:-0}
 EOF
 
 echo "==> building wheels"

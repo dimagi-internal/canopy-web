@@ -114,3 +114,50 @@ describe('RunnerCodeAlerts', () => {
     expect(screen.getByTestId('retire-runner-dead')).toBeTruthy()
   })
 })
+
+describe('RunnerCodeAlerts — a runner AHEAD of the deploy', () => {
+  // The false alarm this exists to kill: a box installed from main between a
+  // runner change landing and the deploy that ships it is the MOST current in the
+  // fleet, and was being told to update itself in destructive red. An alert that
+  // fires on the box you just fixed is one you learn to ignore — which costs you
+  // the next real one.
+  const ahead = runner('mbp', {
+    code_sha: SHIPPED,
+    expected_code_sha: OLD,
+    code_committed_at: 1753999999,
+    expected_code_committed_at: 1753000000,
+  })
+
+  it('does not tell you to update it', () => {
+    render(<RunnerCodeAlerts runners={[ahead]} retiringId={null} onRetire={() => {}} />)
+    expect(screen.queryByText(/install-runner\.sh/)).toBeNull()
+    expect(screen.queryByText(/out of date/i)).toBeNull()
+  })
+
+  it('says which direction it differs in, rather than implying a fault', () => {
+    render(<RunnerCodeAlerts runners={[ahead]} retiringId={null} onRetire={() => {}} />)
+    const box = screen.getByTestId('runner-code-alert-mbp')
+    expect(box.getAttribute('data-alert-kind')).toBe('ahead')
+    expect(box.textContent).toMatch(/ahead of/i)
+  })
+
+  it('is not styled as an error — nothing is broken', () => {
+    render(<RunnerCodeAlerts runners={[ahead]} retiringId={null} onRetire={() => {}} />)
+    const box = screen.getByTestId('runner-code-alert-mbp')
+    expect(box.className).not.toContain('border-destructive')
+  })
+
+  it('offers no retire button even when the box is quiet', () => {
+    // Retire is the escape hatch for an alert that can never clear on its own.
+    // This one clears itself on the next deploy, so offering to permanently
+    // destroy the runner row would be wildly disproportionate.
+    render(
+      <RunnerCodeAlerts
+        runners={[{ ...ahead, status: 'stale' } as RunnerOut]}
+        retiringId={null}
+        onRetire={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('retire-runner-mbp')).toBeNull()
+  })
+})

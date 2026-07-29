@@ -86,6 +86,74 @@ describe('runnerCodeAlerts — outdated (installed runners)', () => {
   })
 })
 
+describe('runnerCodeAlerts — direction (a sha is a name, not a position)', () => {
+  // `code_sha !== expected_code_sha` means DIFFERENT. It was being reported as
+  // "behind", which is an inference the data does not support — there are three
+  // ways to differ and only one is "update this box". Observed 2026-07-29:
+  // jj-mbp-cdp, freshly installed from origin/main, was flagged outdated while
+  // being the most current box in the fleet — the deploy simply hadn't caught up.
+  // The commit TIMESTAMP is what orders them, and both sides already run
+  // `git log -1`, so it costs one extra format specifier.
+  const T_OLD = 1753000000
+  const T_NEW = 1753999999
+
+  it('says BEHIND when the runner commit predates what shipped', () => {
+    const [alert] = runnerCodeAlerts([
+      runner('mbp', {
+        code_sha: OLD, expected_code_sha: SHIPPED,
+        code_committed_at: T_OLD, expected_code_committed_at: T_NEW,
+      }),
+    ])
+    expect(alert.kind).toBe('outdated')
+  })
+
+  it('says AHEAD — not behind — when the runner commit is newer than what shipped', () => {
+    // The false alarm. Telling someone to update the newest box in the fleet
+    // teaches them the banner is noise, which is how a real one gets ignored.
+    const [alert] = runnerCodeAlerts([
+      runner('mbp', {
+        code_sha: SHIPPED, expected_code_sha: OLD,
+        code_committed_at: T_NEW, expected_code_committed_at: T_OLD,
+      }),
+    ])
+    expect(alert.kind).toBe('ahead')
+  })
+
+  it('falls back to "different" when the timestamps cannot order them', () => {
+    // A runner too old to report a timestamp is exactly the one most likely to
+    // be genuinely behind — so an unknown ordering must NOT silence the alert.
+    // It keeps today's behaviour and only loses the direction.
+    const [alert] = runnerCodeAlerts([
+      runner('legacy', { code_sha: OLD, expected_code_sha: SHIPPED }),
+    ])
+    expect(alert.kind).toBe('outdated')
+  })
+
+  it('stays silent when the shas match, whatever the timestamps say', () => {
+    // Same code is same code. A timestamp disagreement here would mean one side
+    // computed it wrong, and inventing a banner from that helps nobody.
+    expect(
+      runnerCodeAlerts([
+        runner('mbp', {
+          code_sha: SHIPPED, expected_code_sha: SHIPPED,
+          code_committed_at: T_OLD, expected_code_committed_at: T_NEW,
+        }),
+      ]),
+    ).toEqual([])
+  })
+
+  it('an AHEAD runner still reports reachability, so the UI can offer retire', () => {
+    const [alert] = runnerCodeAlerts([
+      runner('dead', {
+        code_sha: SHIPPED, expected_code_sha: OLD,
+        code_committed_at: T_NEW, expected_code_committed_at: T_OLD,
+        status: 'stale',
+      }),
+    ])
+    expect(alert.unreachable).toBe(true)
+  })
+})
+
 describe('runnerCodeAlerts — shared', () => {
   it('raises ONE banner per runner: a wrong branch outranks being out of date', () => {
     // A source runner on a branch will almost always also look "outdated"

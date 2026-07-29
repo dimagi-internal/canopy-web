@@ -144,3 +144,48 @@ def test_patching_other_capabilities_still_works(client, runner):
     # The reported key survives a PATCH that doesn't mention it — it belongs to the
     # runner now, so a capabilities write must not drop it as a side effect.
     assert runner.capabilities.get("projects") == ["canopy-web"]
+
+
+# --- code_committed_at: the ORDER a sha cannot carry -----------------------------
+#
+# Not about projects, but the same failure shape and the same heartbeat: an
+# indicator asserting more than its data supports. `code_sha != expected` means
+# DIFFERENT, and the supervisor rendered it as "behind" — telling the operator to
+# update the most current box in the fleet (2026-07-29), which is how a real
+# staleness alert gets trained into noise.
+
+
+def test_the_heartbeat_records_when_the_runner_code_was_committed(client, runner):
+    assert _beat(client, runner, code_sha="a" * 40, code_committed_at=1753999999).status_code == 200
+    runner.refresh_from_db()
+    assert runner.code_committed_at == 1753999999
+
+
+def test_an_absent_timestamp_records_zero_not_a_guess(client, runner):
+    """0 = unknown. A runner too old to report this is exactly the one most likely
+    to be genuinely behind, so the UI keeps alerting — it just can't say which
+    direction, which is honest rather than silent."""
+    assert _beat(client, runner, code_sha="a" * 40).status_code == 200
+    runner.refresh_from_db()
+    assert runner.code_committed_at == 0
+
+
+def test_the_runners_list_serves_both_halves_of_the_comparison(client, runner, settings):
+    """The client cannot order anything with only its own timestamp — the server's
+    expectation has to ride along, exactly as `expected_code_sha` does."""
+    settings.RUNNER_CODE_COMMITTED_AT = 1753000000
+    _beat(client, runner, code_sha="a" * 40, code_committed_at=1753999999)
+
+    row = next(r for r in client.get("/api/harness/runners/").json() if r["name"] == runner.name)
+    assert row["code_committed_at"] == 1753999999
+    assert row["expected_code_committed_at"] == 1753000000
+
+
+def test_a_malformed_build_arg_does_not_break_the_runners_list(client, runner, settings):
+    """RUNNER_CODE_COMMITTED_AT arrives from a Docker build arg, so it can be a
+    string, empty, or nonsense. Unknown (0) is a fine answer; a 500 on the whole
+    fleet list because someone fat-fingered a build arg is not."""
+    settings.RUNNER_CODE_COMMITTED_AT = "not-a-number"
+    resp = client.get("/api/harness/runners/")
+    assert resp.status_code == 200
+    assert resp.json()[0]["expected_code_committed_at"] == 0
