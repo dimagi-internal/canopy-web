@@ -180,7 +180,10 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     may re-call with ``clear_first=True`` to kill the current line first, then send
     (``{"action": "sent-cleared"}``).
 
-    Raises CDPError if the task isn't present (caller falls back to create+rehydrate)."""
+    Raises CDPError if the task isn't present (caller falls back to create+rehydrate),
+    or with ``COMPOSER_NOT_VISIBLE`` if the rendered frame shows no input line
+    (mid-redraw, a menu is up, or a stale frame) — the sidecar refuses a blind send
+    it can't verify; the caller fails the turn for retry rather than duplicating."""
     args = {"port": port, "task": task, "text": text}
     if clear_first:
         args["clearFirst"] = True
