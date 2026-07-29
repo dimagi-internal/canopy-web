@@ -40,7 +40,15 @@ import { chromium } from 'playwright-core';
 // evaluates ONE EXPRESSION, so prefixing a function DECLARATION produced
 // `function(){}(...)()` — a call on a function expression — and every call failed
 // with "(intermediate value) is not a function".
-const ACTIVE_TERM_FN = `
+// String.raw on every one of these, and it is load-bearing. A plain template
+// literal PROCESSES escapes before Playwright ever sees the source: `\n` became a
+// real newline (so `.join('\n')` produced an unterminated string —
+// "SyntaxError: Invalid or unexpected token" at runtime, nowhere near this file)
+// and `\s` collapsed to a literal `s`, silently turning every `\s*` in these
+// regexes into "zero or more letter s". The file still parsed; only the evaluated
+// string was wrong, which is why `node --check` was clean and the collision guard
+// quietly never matched.
+const ACTIVE_TERM_FN = String.raw`
 function activeTerm() {
   const real = [...document.querySelectorAll('.xterm')].filter(t => {
     if (t.offsetParent === null) return false;
@@ -59,6 +67,44 @@ function activeTerm() {
     return /[⏺✻⎿]/.test(text) || /esc to interrupt|shift\\+tab to cycle/i.test(text);
   });
   return claudeish || byArea[0];
+}
+`;
+
+// WHERE the composer is, structurally — not "the last rows". The input line is
+// the `❯` row sitting directly UNDER a box rule (with the closing rule below and
+// the status bar under that); historical `❯` user messages in scrollback never
+// have that rule. The scan covers the WHOLE viewport, top-bounded by nothing and
+// bottom-bounded by the status bar when one is rendered, because a FRESH session
+// draws its TUI at the TOP of the pane (measured live, #521: composer at row 13
+// of 38, rows 24–37 all empty) — any "last N rows" window reads exactly those
+// sessions as empty and blind-appends. Returns {found, text}:
+//   found:false  = no composer in the rendered frame (mid-redraw, a menu is up,
+//                  or a clipped stale frame) — the caller must NOT treat this as
+//                  "empty and safe to send"; it cannot see what a send would hit.
+//   found:true   = composer visible; `text` is its content ('' = genuinely empty;
+//                  NBSP — what an empty composer actually holds after ❯ — is
+//                  normalized to space before trimming).
+const COMPOSER_FN = String.raw`
+function composerText(rows) {
+  const norm = rows.map(r => (r || '').replace(/\u00a0/g, ' '));
+  const isRule = (s) => /^\s*[╭╰]?─{8,}[╮╯]?\s*$/.test(s);
+  const isStatus = (s) => /⏵⏵|bypass permissions|shift\+tab to cycle|esc to interrupt/i.test(s);
+  let hi = norm.length - 1;
+  for (let i = norm.length - 1; i >= 0; i--) {
+    if (isStatus(norm[i])) { hi = i - 1; break; }
+  }
+  for (let i = hi; i >= 1; i--) {
+    if (!/^\s*(?:[│|]\s*)?[>❯]/.test(norm[i])) continue;
+    if (!isRule(norm[i - 1])) continue;
+    const strip = (s) => s.replace(/^\s*(?:[│|]\s*)?/, '').replace(/\s*[│|]\s*$/, '');
+    const parts = [strip(norm[i]).replace(/^[>❯]\s?/, '')];
+    for (let j = i + 1; j <= hi; j++) {
+      if (isRule(norm[j])) break;
+      parts.push(strip(norm[j]));
+    }
+    return { found: true, text: parts.join(' ').trim() };
+  }
+  return { found: false, text: '' };
 }
 `;
 
@@ -133,7 +179,7 @@ const openTask = async (task) => {
   // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
   // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
   // task's pane) when several are mounted.
-  const focused = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
+  const focused = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
     const term = activeTerm();
     const ta = (term && term.querySelector('.xterm-helper-textarea'))
       || document.querySelector('textarea[aria-label="Terminal input"]');
@@ -213,51 +259,40 @@ try {
     const { task, text, clearFirst } = args;
     await openTask(task);
 
-    // Read whatever is ALREADY sitting in the prompt. claude's TUI renders its input
-    // inside a bordered box; the input line is the last visible row carrying a '>'
-    // prompt marker. A non-empty line here means the human was typing when emdash
-    // switched to this task and their keystrokes leaked in — a COLLISION we must NOT
-    // clobber blindly. Heuristic + version-fragile: on any ambiguity it returns '',
-    // which takes the fast send path (never worse than the pre-collision behaviour, and
-    // no false-positive dialog).
-    // Is there ANY text sitting in the composer? That is the whole question — not
-    // "parse the prompt line", which is what this used to attempt and why it kept
-    // failing open. Two defects, both silent:
+    // Read whatever is ALREADY sitting in the composer. Non-empty means the human
+    // was typing when emdash switched to this task and their keystrokes leaked in —
+    // a COLLISION we must NOT clobber blindly (insertText APPENDS and Enter submits
+    // the concatenation; verified live 2026-07-28, a half-typed thought and a chat
+    // message reached the agent as ONE line).
     //
-    //   1. it matched '>' as the prompt marker; Claude Code's TUI draws U+276F (❯),
-    //      so every real prompt read as EMPTY;
-    //   2. it picked its own `terms[0]` under the loose width>0 filter, which admits
-    //      the 16x16 ghost terminals emdash keeps mounted for other tasks — so it
-    //      could answer about a different session entirely (observed: it returned
-    //      another agent's prompt).
-    //
-    // Either one makes isEmpty('') true, and the send takes the fast path:
-    // insertText APPENDS to whatever the human half-typed and Enter submits the
-    // concatenation. Verified live 2026-07-28 — "half typed thought" and a chat
-    // message reached the agent as ONE line, with no dialog.
-    //
-    // Now: the same activeTerm() everything else uses, and the composer read whole
-    // (a long unsent line wraps across rows), stripped of marker and box drawing.
-    const readLine = () => page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    // Detection is structural (COMPOSER_FN: the ❯ row directly under a box rule,
+    // whole viewport, status-bar bounded) — NOT a "last N rows" scan. The previous
+    // window read a FRESH session as empty every time, because a fresh session
+    // draws its composer near the TOP of the pane (measured: row 13 of 38, the
+    // whole scanned window blank) — which is exactly the state every new chat
+    // session is in (#521).
+    const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; ${COMPOSER_FN}; return (() => {
       const term = activeTerm();
-      if (!term) return '';
-      const rows = [...term.querySelectorAll('.xterm-rows > div')]
-        .map(r => (r.textContent || '').replace(/\u00a0/g, ' '));
-      for (let i = rows.length - 1; i >= 0 && i >= rows.length - 14; i--) {
-        const m = rows[i].match(/(?:^|[│|])\s*[>❯]\s?(.*)$/);
-        if (!m) continue;
-        const parts = [m[1] || ''];
-        for (let j = i + 1; j < rows.length; j++) {
-          const next = rows[j];
-          if (/^[\s│|─╭╮╰╯]*$/.test(next)) break;         // blank line or a box rule
-          if (/^\s*[>❯]/.test(next)) break;                // a new prompt begins
-          if (/⏵⏵|shift\+tab to cycle/.test(next)) break;  // the status bar
-          parts.push(next);
-        }
-        return parts.join(' ').replace(/[│|─╭╮╰╯]/g, '').trim();
-      }
-      return '';
+      if (!term) return { found: false, text: '' };
+      const rows = [...term.querySelectorAll('.xterm-rows > div')].map(r => r.textContent || '');
+      return composerText(rows);
     })(); })()`);
+    // A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
+    // task click, a menu/dialog covering the input, or a clipped stale frame (all
+    // observed live). Re-read a few times for the transient cases, then fail closed —
+    // a blind send would append into a composer we cannot see. The runner treats a
+    // CDPError as "task exists but undrivable" and retries the turn; it never
+    // duplicates the session.
+    let composer = { found: false, text: '' };
+    for (let attempt = 0; attempt < 4; attempt++) {
+      composer = await readComposer();
+      if (composer.found) break;
+      await page.waitForTimeout(400);
+    }
+    if (!composer.found) {
+      fail(`COMPOSER_NOT_VISIBLE: no input line in the rendered frame for task "${task}" ` +
+           `(mid-redraw, a menu is up, or a stale frame) — refusing a blind send`);
+    }
     // Ghost/placeholder hints claude shows in an EMPTY input — treat as empty so the
     // fast path still fires instead of popping a spurious collision dialog.
     const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
@@ -270,7 +305,8 @@ try {
       // TUI actually honors). Leaked text is "the last few words", so this is short.
       await page.keyboard.press('Control+U');
       for (let i = 0; i < 6; i++) {
-        const n = Math.min((await readLine()).length, 300);
+        const cur = await readComposer();
+        const n = Math.min(cur.found ? cur.text.length : 0, 300);
         if (n === 0) break;
         await page.keyboard.press('End');
         for (let k = 0; k < n; k++) await page.keyboard.press('Backspace');
@@ -278,16 +314,13 @@ try {
       await page.keyboard.insertText(text);
       await page.keyboard.press('Enter');
       out({ ok: true, action: 'sent-cleared', task });
+    } else if (!isEmpty(composer.text)) {
+      // Don't touch it — hand the collision back to the runner to ask the human.
+      out({ ok: true, action: 'collision', task, line: composer.text });
     } else {
-      const line = await readLine();
-      if (!isEmpty(line)) {
-        // Don't touch it — hand the collision back to the runner to ask the human.
-        out({ ok: true, action: 'collision', task, line });
-      } else {
-        await page.keyboard.insertText(text);   // atomic commit, not char-by-char
-        await page.keyboard.press('Enter');
-        out({ ok: true, action: 'sent', task });
-      }
+      await page.keyboard.insertText(text);   // atomic commit, not char-by-char
+      await page.keyboard.press('Enter');
+      out({ ok: true, action: 'sent', task });
     }
 
   } else if (command === 'interrupt') {
@@ -310,7 +343,7 @@ try {
     // Claude Code draws spaces as ESC[nC.
     const { task } = args;
     await openTask(task);
-    const text = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const text = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       if (!rows) return null;
@@ -331,7 +364,7 @@ try {
     // Enter there RUNS something. Reading the wrong pane costs a menu; typing
     // into it is the one outcome worth failing for, so this command alone
     // requires a positive identification instead of falling back.
-    const isClaude = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const isClaude = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       const text = rows ? rows.textContent || '' : '';
