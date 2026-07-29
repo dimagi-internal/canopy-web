@@ -56,7 +56,7 @@ def code_branch(now_fn=time.monotonic) -> str:
         return _cached_branch
     _last_branch_check = now_fn()
     try:
-        repo = runner_src_dir().parents[2]  # …/packages/canopy_runner/canopy_runner -> repo root
+        repo = runner_src_dir().parents[2]  # …/runner/canopy_runner/canopy_runner -> repo root
         out = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, timeout=3,

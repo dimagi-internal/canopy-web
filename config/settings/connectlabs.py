@@ -103,6 +103,6 @@ CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
 # drives the agent's emdash session and bridges the reply back to the ledger — so the
 # website streams the actual agent response and you can continue a session from your
 # phone. If no session-capable runner is online, the turn simply waits (rather than
-# getting an instant fake reply). See apps/canopy_sessions/executor.py + packages/canopy_runner
+# getting an instant fake reply). See apps/canopy_sessions/executor.py + runner/canopy_runner
 # chat_bridge/execute_chat_turn.
 CHAT_STUB_EXECUTOR = False

@@ -11,7 +11,7 @@ dependencies = ["canopy-transcript"]
 [tool.uv.sources]
 # Same editable path-dep wiring canopy_runner uses, resolved relative to this
 # package so `uv run` here works without publishing to an index.
-canopy-transcript = { path = "../canopy_transcript", editable = true }
+canopy-transcript = { path = "../../packages/canopy_transcript", editable = true }
 
 [build-system]
 requires = ["hatchling"]

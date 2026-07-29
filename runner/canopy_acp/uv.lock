@@ -11,9 +11,9 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "canopy-transcript", editable = "../canopy_transcript" }]
+requires-dist = [{ name = "canopy-transcript", editable = "../../packages/canopy_transcript" }]
 
 [[package]]
 name = "canopy-transcript"
 version = "0.1.0"
-source = { editable = "../canopy_transcript" }
+source = { editable = "../../packages/canopy_transcript" }

@@ -1,4 +1,4 @@
-"""Unit tests for deploy/ec2-runner/cloud_runner.py.
+"""Unit tests for runner/ec2/cloud_runner.py.
 
 Everything here is pure-python or mocks subprocess.Popen / the runner's own
 `_api` helper — there is no live canopy-web and no live EC2 box to test

@@ -12,7 +12,7 @@ import type { Message } from "./protocol";
  * has no other way to tell which result belongs to which call.
  *
  * Not every producer stamps ids yet: events already in the ledger predate
- * this field, and some runners (see `packages/canopy_runner`) don't emit it
+ * this field, and some runners (see `runner/canopy_runner`) don't emit it
  * until updated separately. When a ``tool_result`` carries no id at all, it
  * falls back to the FIRST still-open ``tool_use`` that *also* has no id
  * (oldest-first, FIFO) — today's pre-correlation pairing heuristic. That

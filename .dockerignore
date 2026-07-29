@@ -12,10 +12,11 @@ node_modules
 .ruff_cache
 staticfiles
 
-# The laptop/cloud runner daemon (packages/canopy_runner) is NOT a dependency of
-# the web image (canopy-web depends only on canopy-agent-runs + canopy-cron) and no
-# app imports it. Excluding it from the build context means editing the runner never
-# busts the expensive `uv pip install` layer — the web image rebuilds only when the
-# web app actually changes. deploy/ is likewise runtime-irrelevant to the container.
-packages/canopy_runner
+# The runner family (runner/ — laptop daemon, ACP client, menubar, EC2 runner) is
+# NOT a dependency of the web image (canopy-web depends only on canopy-agent-runs +
+# canopy-cron) and no app imports it. Excluding it from the build context means
+# editing the runner never busts the expensive `uv pip install` layer — the web
+# image rebuilds only when the web app actually changes. deploy/ is likewise
+# runtime-irrelevant to the container.
+runner
 deploy

@@ -89,7 +89,7 @@ them together would make the two modules import each other.
 4. **Install the daemon.** One command — it also renders and loads the launchd
    job, and provisions the sidecar's node deps:
    ```bash
-   packages/canopy_runner/scripts/install-runner.sh
+   runner/canopy_runner/scripts/install-runner.sh
    ```
    This is also the **update** command: re-run it after any runner change. It
    installs a SNAPSHOT of `origin/main` into its own tool venv, so the daemon's

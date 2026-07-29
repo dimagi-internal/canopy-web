@@ -11,7 +11,7 @@ the cron math:
 - The **server** (`apps/harness`) holds the schedule config and previews the next
   fire times — `next_slots` is what makes a raw cron expression trustworthy in
   the editor without a docs trip.
-- The **runner** (`packages/canopy_runner`) evaluates the cron and POSTs the due
+- The **runner** (`runner/canopy_runner`) evaluates the cron and POSTs the due
   slot — `due_slot` exists for it. The runner is Django-free by construction
   (`dependencies = []`) and can never import `apps.*`.
 

@@ -7,7 +7,7 @@ import { runnerCodeAlerts, type RunnerCodeAlert } from './codeProvenance'
 // install that is behind what shipped. In both cases a HEARTBEATING runner is
 // fixed on its machine, while a QUIET one can never clear on its own (what is
 // shown is its last report), so the in-place resolve there is Retire.
-const UPDATE_CMD = 'packages/canopy_runner/scripts/install-runner.sh'
+const UPDATE_CMD = 'runner/canopy_runner/scripts/install-runner.sh'
 const BRANCH_CMD = 'git -C ~/emdash-projects/canopy-web checkout main && git pull'
 
 function headline({ kind, unreachable }: RunnerCodeAlert): string {

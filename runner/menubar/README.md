@@ -34,7 +34,7 @@ the workbench PAT) and the state dir (`~/.canopy/`). Shared data, separate proce
 ## Build
 
 ```bash
-bash packages/canopy-runner-menubar/build.sh
+bash runner/menubar/build.sh
 ```
 
 Compiles `Sources/main.swift`, assembles `~/Applications/Canopy Runner.app` (icons

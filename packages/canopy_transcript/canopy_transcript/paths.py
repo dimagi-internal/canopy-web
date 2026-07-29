@@ -43,7 +43,7 @@ def encode_project_dir(worktree: Path | str) -> str:
     ``~/.claude/projects`` **none** contains an underscore, and the session run
     in ``…/packages/canopy_runtime`` is stored as ``…-packages-canopy-runtime``.
 
-    Keep this in step with ``deploy/ec2-runner/cloud_runner.py::_encode_project_dir``,
+    Keep this in step with ``runner/ec2/cloud_runner.py::_encode_project_dir``,
     which is the same function on the box that ships as a single file.
     """
     return str(worktree).replace("/", "-").replace(".", "-").replace("_", "-")

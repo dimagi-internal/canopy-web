@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy/ec2-runner/bootstrap_agents.sh — idempotent agent-fleet bootstrap for the
+# runner/ec2/bootstrap_agents.sh — idempotent agent-fleet bootstrap for the
 # canopy cloud runner (EC2, Ubuntu 24.04). Runs as the service user (`ubuntu`), NOT
 # root — cloud-init's runcmd pre-creates $AGENT_ROOT / /opt/canopy-web with ubuntu
 # ownership (see runner.cfn.yaml) so this script never needs sudo for its own state,

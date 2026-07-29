@@ -36,8 +36,8 @@ realtime = ["websocket-client>=1.8,<2"]
 # In-repo, standalone, installable — same editable path-dep wiring the root
 # pyproject uses for canopy-agent-runs / canopy-cron, resolved relative to this
 # package so `uv run` here works without publishing to an index.
-canopy-cron = { path = "../canopy_cron", editable = true }
-canopy-transcript = { path = "../canopy_transcript", editable = true }
+canopy-cron = { path = "../../packages/canopy_cron", editable = true }
+canopy-transcript = { path = "../../packages/canopy_transcript", editable = true }
 
 [project.scripts]
 canopy-runner = "canopy_runner.main:main"

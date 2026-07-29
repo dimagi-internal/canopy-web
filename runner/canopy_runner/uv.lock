@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 [[package]]
 name = "canopy-cron"
 version = "0.1.0"
-source = { editable = "../canopy_cron" }
+source = { editable = "../../packages/canopy_cron" }
 dependencies = [
     { name = "croniter" },
 ]
@@ -28,8 +28,8 @@ realtime = [
 
 [package.metadata]
 requires-dist = [
-    { name = "canopy-cron", editable = "../canopy_cron" },
-    { name = "canopy-transcript", editable = "../canopy_transcript" },
+    { name = "canopy-cron", editable = "../../packages/canopy_cron" },
+    { name = "canopy-transcript", editable = "../../packages/canopy_transcript" },
     { name = "websocket-client", marker = "extra == 'realtime'", specifier = ">=1.8,<2" },
 ]
 provides-extras = ["realtime"]
@@ -37,7 +37,7 @@ provides-extras = ["realtime"]
 [[package]]
 name = "canopy-transcript"
 version = "0.1.0"
-source = { editable = "../canopy_transcript" }
+source = { editable = "../../packages/canopy_transcript" }
 
 [[package]]
 name = "croniter"

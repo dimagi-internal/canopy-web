@@ -1,4 +1,4 @@
-"""Loads deploy/ec2-runner/cloud_runner.py by path.
+"""Loads runner/ec2/cloud_runner.py by path.
 
 cloud_runner.py is deliberately stdlib-only and lives under a hyphenated
 directory (`ec2-runner`), which is not a valid Python package name — it can

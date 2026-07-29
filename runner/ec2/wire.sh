@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy/ec2-runner/wire.sh — operator side of standing up a cloud runner: script
+# runner/ec2/wire.sh — operator side of standing up a cloud runner: script
 # what was done by hand on 2026-07-25 (design spec §3) so `./up.sh && ./wire.sh
 # [--drill]` is the whole lifecycle, no runbook required.
 #

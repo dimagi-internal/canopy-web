@@ -93,7 +93,7 @@
 
 ### Agent execution control plane — deferred from Phase 0
 
-**What:** Items deferred from the `apps/harness` / `packages/canopy_runner` Phase 0 slice (spec `docs/superpowers/specs/2026-07-05-agent-execution-control-plane-design.md`):
+**What:** Items deferred from the `apps/harness` / `runner/canopy_runner` Phase 0 slice (spec `docs/superpowers/specs/2026-07-05-agent-execution-control-plane-design.md`):
 - Per-runner PAT binding + workspace FK scoping on the harness `Runner`/`Turn` models (spec §5.1/§9) — any authenticated PAT can currently act as any runner.
 - A board-command → automatic `Turn` enqueue hook — Phase 0's only trigger is a manual `POST /api/harness/turns/`.
 

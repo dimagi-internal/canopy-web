@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, "packages/canopy_runner")
+sys.path.insert(0, "runner/canopy_runner")
 from django.contrib.auth.models import User
 from apps.harness import services as hs
 from apps.harness.models import Turn

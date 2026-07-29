@@ -79,7 +79,7 @@ class Runner(models.Model):
     # which is the day it matters).
     code_version = models.CharField(max_length=64, blank=True, default="")
     # The sha of the last commit that touched the runner's OWN source
-    # (`packages/canopy_runner/canopy_runner/`) — NOT the repo HEAD, which moves on
+    # (`runner/canopy_runner/canopy_runner/`) — NOT the repo HEAD, which moves on
     # every canopy-web commit and would mark every runner stale on a CSS change.
     # `settings.RUNNER_CODE_SHA` holds the same quantity computed at image-build
     # time, and the supervisor alerts when both are non-empty and differ.
