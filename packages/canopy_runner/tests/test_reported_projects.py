@@ -12,7 +12,7 @@ unclaimable — the `replace_reported_sessions` drift with a bigger blast radius
 """
 import sqlite3
 
-from canopy_runner import main as main_mod
+from canopy_runner import sessions
 
 
 def _db(tmp_path, *names) -> str:
@@ -33,7 +33,7 @@ class _Cfg:
 
 def test_reports_what_emdash_holds(tmp_path):
     cfg = _Cfg(_db(tmp_path, "canopy-web", "canopy"))
-    assert main_mod._reported_projects(cfg) == ["canopy", "canopy-web"]
+    assert sessions.reported_projects(cfg) == ["canopy", "canopy-web"]
 
 
 def test_reports_none_when_emdash_cannot_be_read(tmp_path, caplog):
@@ -41,13 +41,13 @@ def test_reports_none_when_emdash_cannot_be_read(tmp_path, caplog):
     stored list alone, not blank it."""
     bad = tmp_path / "bad.db"
     sqlite3.connect(str(bad)).execute("CREATE TABLE projects (id TEXT)")  # no `name`
-    assert main_mod._reported_projects(_Cfg(str(bad))) is None
+    assert sessions.reported_projects(_Cfg(str(bad))) is None
 
 
 def test_reports_empty_for_a_box_with_no_emdash(tmp_path):
     """A missing DB is a true "no emdash here", and [] is the honest report —
     distinct from the unreadable case above, which is the point."""
-    assert main_mod._reported_projects(_Cfg(str(tmp_path / "nope.db"))) == []
+    assert sessions.reported_projects(_Cfg(str(tmp_path / "nope.db"))) == []
 
 
 def test_an_unreadable_read_is_logged_loudly(tmp_path, caplog):
@@ -56,7 +56,7 @@ def test_an_unreadable_read_is_logged_loudly(tmp_path, caplog):
     bad = tmp_path / "bad.db"
     sqlite3.connect(str(bad)).execute("CREATE TABLE projects (id TEXT)")
     with caplog.at_level("WARNING"):
-        main_mod._reported_projects(_Cfg(str(bad)))
+        sessions.reported_projects(_Cfg(str(bad)))
     assert any("verify-emdash" in r.message for r in caplog.records)
 
 

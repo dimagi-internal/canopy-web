@@ -12,11 +12,20 @@ One iteration (run_once):
 Agent/project turns finish synchronously — the runner owns the routing lifecycle;
 the work continues in the visible emdash session — so there is NO injection state to
 track and NO emdash-DB write. CHAT turns are the exception: they stay EXECUTING while
-the agent works and are pumped tick by tick (_pump_chat_bridges), because their reply
+the agent works and are pumped tick by tick (chat_pump.pump_chat_bridges), because their reply
 has to be carried back into the ledger and an agent turn lasts minutes, which is far
 longer than a tick may block. The only emdash-DB access is the two READ-ONLY queries in
 `emdash.py` (task_state, list_open_sessions), whose column dependencies are
 verified out-of-band by `canopy_runner verify-emdash`.
+
+This module is the LOOP and the CLI. Each subsystem it drives owns its own
+module, so "where does X live" has one answer:
+  sessions.py    reporting the open emdash sessions this box can see
+  chat_pump.py   driving a chat turn to completion across ticks
+  streams.py     live transcript push for sessions a viewer is watching
+  hooks.py       hook tool-events, and answering a blocked agent's dialog
+  cancel.py      the shared "stop this turn" set
+  failure_log.py repeat-aware logging for the best-effort retry paths
 """
 from __future__ import annotations
 
@@ -25,16 +34,13 @@ import datetime as dt
 import json
 import logging
 import time
-import uuid
 from pathlib import Path
 
-from . import cdp_control, chat_bridge, emdash, hook_install, menu, transcript
-from .client import Client, ClientError
-import canopy_transcript as transcript_core
-
-from .tail import TailReader
-from .config import Config
+from . import chat_bridge, chat_pump, emdash, hooks, sessions, streams
 from . import __version__, provenance
+from .cancel import CANCELLED_TURNS
+from .client import Client, ClientError
+from .config import Config
 
 logger = logging.getLogger("canopy_runner")
 
@@ -47,14 +53,6 @@ logger = logging.getLogger("canopy_runner")
 CDP_DOWN_SIGNAL_TICKS = 3
 _cdp_down_ticks = 0
 _cdp_down_signalled = False
-_last_session_report = 0.0
-
-# RC-cancel: turn ids the user asked to stop, relayed down the wake listener's
-# control channel as `{"type": "cancel", "turn_id": ...}` frames (see WakeListener's
-# on_control). The bridge poll loop (Task 8) checks membership here to interrupt a
-# running turn; module-scoped so the wake listener's callback and the executor share
-# one set for the process's lifetime without threading extra state through the loop.
-CANCELLED_TURNS: set[str] = set()
 
 
 def _reset_cdp_health_state() -> None:
@@ -199,621 +197,6 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         _mark_in_flight(cfg)
 
 
-# Per-session incremental tail readers, keyed by emdash_task — the byte-offset change
-# signal that makes the phone reflect live emdash activity (see _session_changed).
-_tail_readers: dict[str, "TailReader | None"] = {}
-
-# Per-session live-stream tailers, keyed by session_id — active only while a viewer
-# is attached (stream_desired on the server). Distinct from _tail_readers (the idle
-# tail read-model that fills RunnerBinding.tail); this is the live push to attached
-# viewers. Each entry: {"reader": TailReader|None, "count": int (records consumed ==
-# the next record's ordinal), "session_key": str, "project": str, "last_index":
-# int|None (the server's catch-up marker)}. Deliberately holds NO durable resume
-# state — the server's last_index is the checkpoint (spec 2026-07-24).
-_stream_readers: dict[str, dict] = {}
-
-
-def _session_changed(cfg: Config, sessions: list[dict]) -> bool:
-    """True if any SHOWN session's transcript grew, or a new session appeared, since
-    the last check. This is the LIVE signal — cheap (a byte-offset read of only the
-    newly-appended bytes) and it catches assistant streaming too (transcript growth),
-    not just user interaction (which is all last_interacted_at would catch)."""
-    home = Path.home()
-    claude_home = home / ".claude" / "projects"
-    active: set[str] = set()
-    changed = False
-    for s in sessions[: cfg.session_tail_count]:  # only the sessions the phone shows
-        task = s.get("emdash_task")
-        if not task:
-            continue
-        active.add(task)
-        first_sight = task not in _tail_readers
-        tr = _tail_readers.get(task)
-        if tr is None:  # unresolved (new session, or transcript not found yet) — (re)try
-            path = transcript.resolve_transcript(
-                s.get("project") or "", task, home=home, claude_home=claude_home
-            )
-            tr = TailReader(str(path)) if path else None
-            if tr is not None:
-                tr.seek_end()  # stream only NEW activity from here, never the history
-            _tail_readers[task] = tr
-        if first_sight:
-            changed = True  # a session newly appeared
-        elif tr is not None and tr.read_new():
-            changed = True  # its transcript grew
-    for task in list(_tail_readers):  # drop readers for sessions that are gone
-        if task not in active:
-            _tail_readers.pop(task, None)
-    return changed
-
-
-def _reported_projects(cfg: Config) -> list[str] | None:
-    """The repos this box can drive, for the heartbeat to report — or None if we
-    could not tell this tick.
-
-    `capabilities["projects"]` is the allowlist `claim_next_turn` matches repo
-    turns against. It used to be typed by a human at pairing and nothing kept it
-    true, so a turn at `canopy` sat QUEUED forever while the repo sat in emdash's
-    own projects table (labs, 2026-07-28). Now the box answers for itself, every
-    tick, and the list cannot drift.
-
-    None is NOT []. None means "unreadable — leave the server's list alone"; []
-    means "I genuinely have none" and empties it. Collapsing the two would let one
-    unreadable emdash DB blank the list and make every repo turn on this runner
-    unclaimable — the same shape as the drift that once blanked the supervisor by
-    reporting zero sessions, with more of the fleet behind it.
-    """
-    try:
-        return emdash.list_projects(cfg.emdash_db)
-    except emdash.EmdashReadError:
-        # WARNING, not debug: the silent-degradation class verify-emdash exists
-        # for. Omitting the field is safe; omitting it *quietly* is how a routing
-        # outage ends up with no breadcrumb.
-        logger.warning(
-            "emdash project read FAILED — omitting the project report so the server keeps "
-            "the list it already has. Run `canopy-runner verify-emdash` to check for "
-            "schema drift.",
-            exc_info=True,
-        )
-        return None
-    except Exception:  # noqa: BLE001
-        logger.debug("project list failed (non-fatal, omitting)", exc_info=True)
-        return None
-
-
-def _maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -> None:
-    """Report the open emdash sessions the phone can continue. CHANGE-DRIVEN: reports
-    the instant a shown session's transcript grows (so the phone reflects live emdash
-    activity within a poll tick), plus a heartbeat every session_report_seconds so a
-    freshly-connected phone gets state. The cheap change-check runs every tick; the
-    expensive recent-tail read + POST only on a real change or the heartbeat. A sqlite
-    read of emdash's DB (runs even while CDP is down); best-effort — never stops a tick."""
-    global _last_session_report
-    try:
-        sessions = emdash.list_open_sessions(cfg.emdash_db, cfg.session_report_limit)
-    except emdash.EmdashReadError:
-        # WARNING, not debug: this is the silent-degradation class verify-emdash
-        # exists for. Skip the report entirely — an empty one would clear every
-        # RunnerBinding server-side, which is the opposite of what we observed.
-        logger.warning(
-            "emdash session read FAILED — skipping this report so the server keeps the "
-            "sessions it already knows. Run `canopy-runner verify-emdash` to check for "
-            "schema drift.",
-            exc_info=True,
-        )
-        return
-    except Exception:  # noqa: BLE001
-        logger.debug("session list failed (non-fatal)", exc_info=True)
-        return
-    changed = _session_changed(cfg, sessions)
-    heartbeat = now_fn() - _last_session_report >= cfg.session_report_seconds
-    if not changed and not heartbeat:
-        return
-    _last_session_report = now_fn()
-    # Read the closing signal only on a tick we're actually going to report on.
-    # Fail-soft in the opposite direction to the open-session read: losing the
-    # archived list must not cost us the report, so omit the field and carry on.
-    try:
-        archived = emdash.list_recently_archived_tasks(
-            cfg.emdash_db, cfg.session_report_limit
-        )
-    except emdash.EmdashReadError:
-        logger.debug("archived-task read failed (non-fatal, omitting)", exc_info=True)
-        archived = []
-    try:
-        transcript.attach_recent_tail(
-            sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
-        )
-        client.report_sessions(cfg.runner_id, sessions, archived)
-    except Exception:  # noqa: BLE001
-        logger.debug("session report failed (non-fatal)", exc_info=True)
-
-
-def _finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note: str) -> None:
-    """Retire one in-flight bridge: drop it from the registry FIRST (so a failing
-    finish can't leave it pumping forever), interrupt the live session on a cancel,
-    then tell the server. Best-effort — a client hiccup must not wedge the loop."""
-    from . import cdp_control
-
-    chat_bridge.IN_FLIGHT.pop(bridge.turn_id, None)
-    CANCELLED_TURNS.discard(bridge.turn_id)
-    if status == "cancelled":
-        try:
-            cdp_control.interrupt(bridge.task, port=cfg.cdp_port)
-        except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
-            logger.warning("chat turn=%s: interrupt failed: %s", bridge.turn_id, exc)
-    try:
-        client.finish(bridge.turn_id, note=note, status=status)
-    except Exception:  # noqa: BLE001
-        logger.warning("chat turn=%s: finish failed", bridge.turn_id, exc_info=True)
-    logger.info("chat turn=%s %s (task=%s): %s", bridge.turn_id, status, bridge.task, note)
-
-
-def _pump_chat_bridges(cfg: Config, client: Client) -> None:
-    """Advance every in-flight chat turn by one tick: ship whatever the agent has
-    written since the last tick, and finish the turn once the transcript says it
-    handed the floor back (see chat_bridge.hands_back_to_human).
-
-    This is why a chat turn no longer blocks the loop. It used to run inline inside
-    execute_chat_turn, which was only survivable because it gave up after 3 seconds
-    of transcript silence — and giving up after 3s is exactly what truncated every
-    answer that involved a tool call. Pumping it here buys the correct completion
-    rule without holding the tick: the heartbeat, claims and session reports all
-    keep running while an agent works.
-    """
-    for turn_id, bridge in list(chat_bridge.IN_FLIGHT.items()):
-        if turn_id in CANCELLED_TURNS:
-            _finish_chat_bridge(cfg, client, bridge, status="cancelled", note="cancelled by user")
-            continue
-        try:
-            new_records = bridge.reader.read_new()
-            raw_lines = list(getattr(bridge.reader, "last_raw", ()) or ())
-        except Exception:  # noqa: BLE001 — an unreadable transcript is a quiet tick
-            logger.debug("chat turn=%s: transcript read failed", turn_id, exc_info=True)
-            new_records, raw_lines = [], []
-        bridge.step(new_records, raw_lines)
-        _flush_turn_transcript(client, bridge)
-        if bridge.pending:
-            events = [{"kind": "assistant", "payload": {"text": t}} for t in bridge.pending]
-            try:
-                client.post_events(turn_id, events)
-                bridge.pending.clear()   # only drop text the server has actually taken
-            except Exception:  # noqa: BLE001 — keep it queued and retry next tick
-                logger.debug("chat turn=%s: event post failed, retrying", turn_id, exc_info=True)
-        if bridge.finished:
-            # One last attempt before the turn closes: whatever the agent wrote in
-            # its final tick is exactly the part a cost aggregator needs (the
-            # `result` line carries the turn's totals).
-            _flush_turn_transcript(client, bridge, final=True)
-            _finish_chat_bridge(cfg, client, bridge, status="done", note=bridge.note)
-
-
-def _flush_turn_transcript(client: Client, bridge, *, final: bool = False) -> None:
-    """Ship the bridge's accumulated raw JSONL to the turn's retained transcript.
-
-    Best-effort and non-blocking for the turn: the reply is the product, this is
-    a derived artifact. A failed batch stays queued and is retried next tick; on
-    the FINAL flush an unshippable batch is dropped rather than holding the turn
-    open, and says so in the log.
-
-    Batches carry `<turn>:<n>` as their batch_id so a lost-ack retry dedupes
-    server-side instead of double-appending (apps/harness/services.append_transcript).
-    """
-    if bridge.transcript_truncated or not bridge.raw_pending:
-        return
-    for batch in chat_bridge.chunk_raw_lines(bridge.raw_pending):
-        batch_id = f"{bridge.turn_id}:{bridge.raw_batches_sent}"
-        try:
-            still_open = client.post_transcript(bridge.turn_id, batch, batch_id)
-        except Exception:  # noqa: BLE001
-            if final:
-                _note_failure(f"transcript:{bridge.turn_id}",
-                              f"final transcript flush ({len(batch)} lines, dropped)")
-                bridge.raw_pending.clear()
-            else:
-                _note_failure(f"transcript:{bridge.turn_id}", "transcript flush")
-            return
-        bridge.raw_batches_sent += 1
-        del bridge.raw_pending[:len(batch)]
-        if not still_open:
-            # Per-turn ceiling reached; every further batch is a server-side
-            # no-op, so stop paying for them.
-            bridge.transcript_truncated = True
-            bridge.raw_pending.clear()
-            logger.info("chat turn=%s: transcript ceiling reached; no further flushes",
-                        bridge.turn_id)
-            return
-    _note_success(f"transcript:{bridge.turn_id}")
-
-
-def _drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
-                        max_seconds: float = 3600.0) -> None:
-    """Pump to completion, for the ONE-SHOT modes (--once / --drain-one) that exit
-    when they return. The daemon never calls this — it pumps on its own ticks. The
-    process would otherwise leave the turn EXECUTING until the server's lease sweep
-    reclaimed it, so a `--drain-one` chat turn would never deliver its reply."""
-    deadline = time.monotonic() + max_seconds
-    last_hb = time.monotonic()
-    while chat_bridge.IN_FLIGHT and time.monotonic() < deadline:
-        _pump_chat_bridges(cfg, client)
-        if not chat_bridge.IN_FLIGHT:
-            return
-        if time.monotonic() - last_hb >= 60:
-            # Renew the turn lease: nothing else heartbeats in a one-shot run, and a
-            # long reply would otherwise outlive it and be swept mid-answer.
-            try:
-                client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT))
-            except Exception:  # noqa: BLE001
-                logger.debug("drain heartbeat failed (non-fatal)", exc_info=True)
-            last_hb = time.monotonic()
-        time.sleep(poll)
-
-
-# Persistent per-key failure counters for the best-effort transcript paths
-# (stream posts, backfill posts). These retry every tick forever by design, so
-# logging each failure would spam and logging none is what actually happened:
-# the NUL-byte bug (2026-07-26) was a hard 500 on every backfill attempt for one
-# session, invisible in the runner log because the handler logged at DEBUG. A
-# failure that REPEATS is the interesting kind — it means stuck, not flaky.
-_failures: dict[str, int] = {}
-
-# Warn on the first failure, then every Nth, so a permanently-stuck session stays
-# visible in the log without drowning it (~5 min apart at the default tick).
-_REWARN_EVERY = 60
-
-
-def _note_failure(key: str, what: str) -> None:
-    """Count a best-effort failure and log it at a level someone will see."""
-    n = _failures.get(key, 0) + 1
-    _failures[key] = n
-    if n == 1 or n % _REWARN_EVERY == 0:
-        logger.warning("%s failed (attempt %d, still retrying): %s", what, n, key,
-                       exc_info=True)
-    else:
-        logger.debug("%s failed (attempt %d): %s", what, n, key, exc_info=True)
-
-
-def _note_success(key: str) -> None:
-    """Clear a failure streak; log the recovery if there was one to clear."""
-    n = _failures.pop(key, 0)
-    if n:
-        logger.info("recovered after %d failed attempts: %s", n, key)
-
-
-
-# --- Live hook events (spec 2026-07-27) -------------------------------------
-#
-# Claude Code fires a hook per tool call straight to a loopback listener this
-# runner owns. That is the LIVE half of a session's record: the transcript is
-# complete but lags (the docs say so explicitly), so it cannot drive a view you
-# are actively watching. The transcript remains the durable record, which is
-# what makes it safe for this path to drop events freely.
-#
-# `{(project, session_key): session_id}`, refreshed from the stream sync each
-# tick — the hook reports a cwd, and this is what turns that back into a canopy
-# Session.
-_hook_sessions: dict[tuple[str, str], str] = {}
-_hook_listener = None
-
-
-# None, NOT 0.0: `time.monotonic()` is near zero early in a process's life, so
-# seeding this with 0.0 reads as "already reported just now" and suppresses the
-# first report for a whole window — exactly when you are watching for it, because
-# you have just turned the feature on. Found on the first live enablement; the
-# original test hid it by starting its fake clock at 10,000.
-_last_hook_report: float | None = None
-# Same cadence as the idle-cycle line: often enough to answer "is it working?"
-# without turning a busy agent into a log flood.
-HOOK_REPORT_SECONDS = 300
-
-
-def _maybe_report_hooks(now_fn=time.monotonic) -> None:
-    """Log what the hook listener has seen.
-
-    Without this the live path is unobservable from the runner side: events are
-    accepted, resolved and forwarded entirely silently, so "is it working?" can
-    only be answered from the server's logs — which is exactly the question you
-    have when you cannot reach them. Counters are cumulative since start.
-    """
-    global _last_hook_report
-    listener = _hook_listener
-    if listener is None:
-        return
-    if _last_hook_report is not None and now_fn() - _last_hook_report < HOOK_REPORT_SECONDS:
-        return
-    if listener.received == 0:
-        # Nothing has fired yet; silence is the honest report — and crucially we
-        # do NOT stamp, or an idle tick right after startup burns the whole
-        # window and the first real report waits 5 minutes behind it.
-        return
-    _last_hook_report = now_fn()
-    logger.info(
-        "hooks: %d received, %d forwarded, %d dropped (cwd not a session we back), "
-        "forwarding=%s",
-        listener.received, listener.forwarded, listener.dropped_unknown_cwd,
-        listener._forward(),
-    )
-
-
-def _resolve_hook_session(cwd: str) -> str:
-    """A hook's cwd -> canopy session id, or "" if this isn't a session we back.
-
-    Hooks are installed at USER level, so they fire for every Claude Code
-    session on the machine. Most are not ours; returning "" is the expected
-    path, not a failure.
-    """
-    if not cwd:
-        return ""
-    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
-    if parsed is None:
-        return ""
-    project, task = parsed
-    # The worktree dir may carry emdash's random de-dupe suffix, so try the exact
-    # name first and the stripped one second — matching against sessions we
-    # actually know rather than guessing which it is.
-    for candidate in transcript_core.emdash_task_candidates(task):
-        session_id = _hook_sessions.get((project, candidate))
-        if session_id:
-            return session_id
-    return ""
-
-
-def _hook_task_name(cwd: str) -> str:
-    """The emdash task backing this cwd, or "" — the handle CDP drives by."""
-    if not cwd:
-        return ""
-    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
-    if parsed is None:
-        return ""
-    project, task = parsed
-    for candidate in transcript_core.emdash_task_candidates(task):
-        if _hook_sessions.get((project, candidate)):
-            return candidate
-    return ""
-
-
-# The two functions below take the CDP module as an argument so the whole
-# chain — screen in, keystrokes out — is testable against a captured terminal
-# with no emdash, no browser and no Playwright. The `cdp_control`-bound wrappers
-# under them are what the runner actually calls.
-
-
-def _read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
-    """The dialog on `task`'s screen as a plain dict, or None."""
-    if not task:
-        return None
-    found = menu.find_menu(cdp.read_terminal(task, port=cdp_port))
-    if found is None:
-        return None
-    return {
-        "question": found.question,
-        "title": found.title,
-        "body": found.body,
-        "selected": found.selected,
-        "options": [{"number": o.number, "label": o.label} for o in found.options],
-    }
-
-
-def _answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> None:
-    """Press a human's answer into `session_key`'s terminal.
-
-    Re-reads the screen FIRST and refuses an option that is not on it. A menu can
-    go stale between the phone rendering it and a thumb reaching it — and a
-    NUMBER typed at a session no longer showing a dialog lands in its prompt,
-    where the agent reads a bare "1" as an instruction. Double-taps and two
-    people answering at once both land here.
-    """
-    # Re-read with a settle: a single read can catch the TUI mid-render, and
-    # dropping a human's tap because the footer had not painted yet is a bug
-    # they experience as "the button did nothing".
-    current = menu.find_menu_settled(
-        lambda: cdp.read_terminal(session_key, port=cdp_port))
-    if current is None:
-        logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
-        return
-    number = None if option is None else int(option)
-    if not current.allows(number):
-        logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
-                       number, session_key, len(current.options))
-        return
-    cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port)
-    logger.info("answered the dialog on %s with %s", session_key,
-                "Esc" if number is None else f"option {number}")
-
-
-def _read_hook_menu(cwd: str, *, cdp_port: int):
-    """The dialog on this session's screen, or None.
-
-    Only called when a session reports BLOCKED: a hook can say an agent wants a
-    human but never what it is asking, and emdash owns the session, so the
-    question and its options exist only on the terminal.
-    """
-    return _read_hook_menu_from(cdp_control, _hook_task_name(cwd), cdp_port=cdp_port)
-
-
-def _answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> None:
-    _answer_menu_with(cdp_control, session_key, option, cdp_port=cdp_port)
-
-
-def _start_hook_listener(cfg: Config, client: Client):
-    """Install the user-level hook and start the loopback listener.
-
-    Returns the listener, or None when disabled (`hook_port = 0`), in which case
-    any previously-installed canopy hook is REMOVED — turning the feature off
-    must not leave a curl pointing at a port nothing is listening on.
-    """
-    global _hook_listener
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if cfg.hook_port <= 0:
-        if hook_install.remove(settings_path):
-            logger.info("hook listener disabled; removed canopy's hook from %s",
-                        settings_path)
-        return None
-    from .hook_listener import HookListener
-
-    nonce = uuid.uuid4().hex
-    # NO read_menu here, deliberately. Reading a session's screen means driving
-    # emdash over CDP, and `openTask` CLICKS the task in the sidebar and focuses
-    # its terminal — so wiring it to a hook meant every Notification yanked
-    # emdash to whatever agent had just asked for input, mid-typing.
-    #
-    # Reported 2026-07-28, twice: focus taken, a few characters typed into the
-    # newly-focused prompt, then the message that was meant for that task never
-    # arrived. The second half is the collision guard working exactly as designed
-    # — `open_and_send` found unsent text, refused to clobber it, and defaulted to
-    # a fresh session — so this bug MANUFACTURED the leaked-keystroke case that
-    # guard exists to catch.
-    #
-    # A menu can still be read on demand (`cdp_control.read_terminal`), where the
-    # task switch is something a human just asked for. It cannot be read on a
-    # signal, because there is no way to read a NON-active task: emdash marks no
-    # task as current in the DOM (checked — no aria-current, no data-state), so
-    # identifying whose screen you are looking at requires activating it first.
-    listener = HookListener(
-        port=cfg.hook_port, nonce=nonce,
-        resolve_session=_resolve_hook_session,
-        forward=lambda: cfg.forward_sessions,
-    )
-    listener.bind_sender(
-        lambda session_id, events: client.post_session_stream(
-            cfg.runner_id, session_id, events)
-    )
-    try:
-        listener.start()
-    except OSError as exc:
-        # Another process already holds the port (a second runner, a stale
-        # process). Live events are an overlay, so this is a warning, not fatal.
-        logger.warning("hook listener could not bind :%d (%s); live events off",
-                       cfg.hook_port, exc)
-        return None
-    hook_install.install(settings_path, port=cfg.hook_port, nonce=nonce)
-    logger.info("live hook events: listener on :%d, forwarding=%s",
-                cfg.hook_port, cfg.forward_sessions)
-    _hook_listener = listener
-    return listener
-
-
-def _post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
-    """Ship conversational rows as live events. seq == index (the composite
-    transcript ordinal): monotonic per session forever, so the WS-derived
-    `seq:<n>` message ids can never collide across detaches, restarts, or
-    failovers — including between two rows of the same transcript record."""
-    events = [
-        {"kind": r["role"], "seq": r["index"], "index": r["index"],
-         "payload": chat_bridge.row_payload(r)}
-        for r in rows
-    ]
-    try:
-        client.post_session_stream(cfg.runner_id, sid, events)
-        _note_success(f"stream:{sid}")
-        return True
-    except Exception:  # noqa: BLE001
-        _note_failure(f"stream:{sid}", "stream post")
-        return False
-
-
-def _sync_session_streams(cfg: Config, client: Client) -> None:
-    """Tail each session a viewer is watching and ship every new conversational
-    record (user + assistant) with its transcript ordinal — the server persists
-    them as the session's durable Message rows and fans the assistant frames out
-    live (spec 2026-07-24).
-
-    The resume point is SERVER-side: the descriptor's `last_index` (max persisted
-    turn_index). On attach we read the transcript once and ship everything after
-    it; steady state stays change-driven off TailReader (only newly-appended
-    bytes). There is deliberately NO local offset checkpoint — a failed post just
-    drops the tailer so the next tick re-attaches from the marker, and a runner
-    restart or account failover recovers identically. Best-effort — a client
-    hiccup never breaks a tick."""
-    try:
-        streams = client.sync_streams(cfg.runner_id)
-    except Exception:  # noqa: BLE001
-        logger.debug("stream sync failed (non-fatal)", exc_info=True)
-        return
-    desired = {s["session_id"]: s for s in streams if s.get("session_id")}
-    home = Path.home()
-    claude_home = home / ".claude" / "projects"
-
-    for sid in list(_stream_readers):  # drop tailers for sessions no longer watched
-        if sid not in desired:
-            _stream_readers.pop(sid, None)
-
-    # The hook path resolves a cwd against these, so refresh it wholesale here
-    # rather than accumulating stale entries for detached sessions.
-    _hook_sessions.clear()
-    for sid, s in desired.items():
-        _hook_sessions[(s.get("project") or "", s.get("session_key") or "")] = sid
-        st = _stream_readers.setdefault(sid, {
-            "reader": None, "count": 0,
-            "session_key": s.get("session_key") or "", "project": s.get("project") or "",
-        })
-        # Refresh every tick: the marker advances as the server persists our posts.
-        st["last_index"] = s.get("last_index")
-
-    for sid, st in _stream_readers.items():
-        reader = st["reader"]
-        if reader is None:
-            # (Re-)attach: read the whole file once, atomically w.r.t. this reader,
-            # and catch up from the server marker. No marker yet -> stream forward
-            # only (history stays the backfill's job).
-            path = transcript.resolve_transcript(
-                st["project"], st["session_key"], home=home, claude_home=claude_home
-            )
-            if not path:
-                continue  # transcript wasn't there yet — retry resolving next tick
-            reader = TailReader(str(path))
-            records = reader.read_new()
-            last = st["last_index"]
-            since = chat_bridge.end_index(len(records)) if last is None else int(last)
-            rows = chat_bridge.conversational_messages(records, since)
-            if rows and not _post_stream_rows(cfg, client, sid, rows):
-                continue  # nothing consumed; re-attach next tick
-            st["reader"], st["count"] = reader, len(records)
-            continue
-        new_records = reader.read_new()
-        if not new_records:
-            continue
-        base = st["count"]
-        # The batch's records start at `base` in the file; the offset is applied
-        # to the RECORD ordinal inside compose_index, never to the composite
-        # index (adding it there would shift a row into another record's slots).
-        rows = chat_bridge.conversational_messages(new_records, -1, record_offset=base)
-        if rows and not _post_stream_rows(cfg, client, sid, rows):
-            # Don't advance past unshipped records: reset so the next tick
-            # re-attaches and catches up from the server marker.
-            st["reader"], st["count"] = None, 0
-            continue
-        st["count"] = base + len(new_records)
-
-
-def _drain_backfills(cfg: Config, client: Client) -> None:
-    """Ship full transcript history — with ordinals, so the server upsert-fills the
-    older rows around anything the live stream already persisted. Best-effort — a
-    missing transcript or a client hiccup is skipped, not fatal."""
-    try:
-        backfills = client.sync_backfills(cfg.runner_id)
-    except Exception:  # noqa: BLE001
-        logger.debug("backfill sync failed (non-fatal)", exc_info=True)
-        return
-    home = Path.home()
-    claude_home = home / ".claude" / "projects"
-    for b in backfills:
-        sid = b.get("session_id")
-        path = transcript.resolve_transcript(
-            b.get("project") or "", b.get("session_key") or "", home=home, claude_home=claude_home
-        )
-        if not (sid and path):
-            continue  # transcript not resolvable -> leave it; server keeps showing the tail
-        messages = chat_bridge.conversational_messages(chat_bridge.read_records(path), -1)
-        try:
-            client.post_session_backfill(cfg.runner_id, sid, messages)
-            _note_success(f"backfill:{sid}")
-        except Exception:  # noqa: BLE001
-            # A backfill that keeps failing never rebuilds the session's history
-            # and never stops trying — exactly the case that must not be silent.
-            _note_failure(f"backfill:{sid}", f"backfill post ({len(messages)} rows)")
-
-
 def run_once(cfg: Config, client: Client) -> str:
     """One loop iteration: preflight emdash's CDP health → heartbeat (with macOS host, for
     reuse ownership) → pump in-flight chat replies → claim one turn → route it to an
@@ -849,7 +232,7 @@ def run_once(cfg: Config, client: Client) -> str:
         # and a runner that isn't claiming has no use for a refreshed list.
         client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
                          ready=_ready, ready_note=_rnote,
-                         projects=_reported_projects(cfg))
+                         projects=sessions.reported_projects(cfg))
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -871,11 +254,11 @@ def run_once(cfg: Config, client: Client) -> str:
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
-    _maybe_report_hooks()
-    _pump_chat_bridges(cfg, client)
-    _maybe_report_sessions(cfg, client)
-    _sync_session_streams(cfg, client)
-    _drain_backfills(cfg, client)
+    hooks.maybe_report_hooks()
+    chat_pump.pump_chat_bridges(cfg, client)
+    sessions.maybe_report_sessions(cfg, client)
+    streams.sync_session_streams(cfg, client)
+    streams.drain_backfills(cfg, client)
     paused = _paused_agents(cfg)
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
@@ -916,9 +299,9 @@ def drain_one(cfg: Config, client: Client) -> str:
     # Report here too: this path claims, and claiming against a stale project list
     # is exactly the failure this reporting exists to remove.
     client.heartbeat(cfg.runner_id, [], host=host_id(), ready=_ready, ready_note=_rnote,
-                     projects=_reported_projects(cfg))
+                     projects=sessions.reported_projects(cfg))
     action = _claim_and_execute(cfg, client, _paused_agents(cfg))
-    _drain_chat_bridges(cfg, client)  # one-shot: pump the reply out before exiting
+    chat_pump.drain_chat_bridges(cfg, client)  # one-shot: pump the reply out before exiting
     return action
 
 
@@ -1080,7 +463,7 @@ def main() -> None:
         return
     if args.once:
         action = run_once(cfg, client)
-        _drain_chat_bridges(cfg, client)  # one-shot: don't exit mid-reply
+        chat_pump.drain_chat_bridges(cfg, client)  # one-shot: don't exit mid-reply
         print(action)
         return
 
@@ -1136,7 +519,7 @@ def main() -> None:
             # also carries cancel and wake, and losing it would cost the runner
             # its liveness for a keystroke.
             try:
-                _answer_menu(str(msg["session_key"]), msg.get("option"),
+                hooks.answer_menu(str(msg["session_key"]), msg.get("option"),
                              cdp_port=cfg.cdp_port)
             except Exception:  # noqa: BLE001
                 logger.warning("menu answer failed for %s", msg.get("session_key"),
@@ -1146,7 +529,7 @@ def main() -> None:
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
-    _start_hook_listener(cfg, client)
+    hooks.start_hook_listener(cfg, client)
 
     def _wait(seconds: float) -> None:
         # With a live wake channel, block until a nudge OR the poll interval,
@@ -1179,7 +562,7 @@ def main() -> None:
             # Pause stops STARTING work, it doesn't abandon work already running: a
             # reply mid-flight when the sentinel dropped still gets carried back and
             # its turn closed, instead of hanging EXECUTING until the pause lifts.
-            _pump_chat_bridges(cfg, client)
+            chat_pump.pump_chat_bridges(cfg, client)
             time.sleep(cfg.poll_seconds)
             continue
         if paused:

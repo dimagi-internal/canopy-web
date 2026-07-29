@@ -17,6 +17,36 @@ skips that session report rather than POSTing an empty list that would clear
 every binding server-side. `verify-emdash` (below) remains the proactive check
 for the schema drift that causes such a failure.
 
+## Layout
+
+`main.py` is the LOOP and the CLI. Every subsystem it drives owns its own module,
+so "where does X live" has exactly one answer:
+
+| module | owns |
+|---|---|
+| `main.py` | the poll loop, claim→execute, pause, and the argparse CLI |
+| `config.py` / `client.py` | the config file; the control-plane HTTP client |
+| `execute.py` | routing one claimed turn into an emdash session |
+| `sessions.py` | reporting the open emdash sessions this box can see |
+| `chat_pump.py` | driving a chat turn to completion across ticks |
+| `streams.py` | live transcript push while a viewer is attached |
+| `hooks.py` | hook tool-events, and answering a blocked agent's dialog |
+| `menu.py` | parsing a dialog off the rendered screen (pure) |
+| `cdp_control.py` + `cdp/` | driving emdash over CDP (Python wrapper + Node sidecar) |
+| `emdash.py` | the two READ-ONLY emdash DB queries |
+| `transcript.py` / `tail.py` | resolving and incrementally reading transcripts |
+| `inbox.py` / `schedules.py` | the email and cron turn producers |
+| `provenance.py` / `update.py` / `_build_info.py` | what code this box runs, and whether to update |
+| `cancel.py` / `failure_log.py` | the shared "stop this turn" set; repeat-aware retry logging |
+| `readiness.py` / `wake.py` / `dialog.py` | can-I-fire; the WS wake channel; the native prompt |
+
+Two rules keep this honest. **Dependencies point one way** — `main` imports its
+subsystems, never the reverse; `cancel.py` and `failure_log.py` are leaves precisely
+so `chat_pump` and `streams` can use them without importing their caller. And
+**menu PARSING stays in `menu.py` while menu ANSWERING lives in `hooks.py`**, because
+answering resolves a cwd/session_key to an emdash task — hook-shaped, and putting
+them together would make the two modules import each other.
+
 ## One-time laptop setup
 
 1. **Launch emdash with its debug port** via the **"Emdash CDP"** Spotlight app

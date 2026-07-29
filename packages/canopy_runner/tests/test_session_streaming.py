@@ -7,7 +7,8 @@ all catch up the same way: ship everything after the marker. Fake client + tmp
 transcript."""
 import json
 
-from canopy_runner import main as m
+from canopy_runner import transcript
+from canopy_runner import streams
 from canopy_runner.chat_bridge import compose_index as _ix
 
 
@@ -52,10 +53,10 @@ def _events(client):
 
 
 def _setup(tmp_path, monkeypatch, content):
-    m._stream_readers.clear()
+    streams._stream_readers.clear()
     p = tmp_path / "echo.jsonl"
     p.write_text(content)
-    monkeypatch.setattr(m.transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
+    monkeypatch.setattr(transcript, "resolve_transcript", lambda _proj, _task, **_k: p)
     return p
 
 
@@ -65,12 +66,12 @@ def test_first_attach_streams_forward_with_composite_ordinals(tmp_path, monkeypa
     p = _setup(tmp_path, monkeypatch, _summary() + _user("old q") + _asst("old a"))
     c = _Client([_desc()])
 
-    m._sync_session_streams(_Cfg(), c)          # attach: history is not replayed
+    streams.sync_session_streams(_Cfg(), c)          # attach: history is not replayed
     assert c.posted == []
 
     with open(p, "a") as f:
         f.write(_user("live q") + _asst("live a"))   # ordinals 3, 4
-    m._sync_session_streams(_Cfg(), c)
+    streams.sync_session_streams(_Cfg(), c)
     assert _events(c) == [
         {"kind": "user", "seq": _ix(3), "index": _ix(3), "payload": {"text": "live q"}},
         {"kind": "assistant", "seq": _ix(4), "index": _ix(4), "payload": {"text": "live a"}},
@@ -82,7 +83,7 @@ def test_attach_catches_up_from_the_server_marker(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch,
            _user("q1") + _asst("a1") + _user("q2") + _asst("a2"))
     c = _Client([_desc(last_index=_ix(1))])
-    m._sync_session_streams(_Cfg(), c)
+    streams.sync_session_streams(_Cfg(), c)
     assert _events(c) == [
         {"kind": "user", "seq": _ix(2), "index": _ix(2), "payload": {"text": "q2"}},
         {"kind": "assistant", "seq": _ix(3), "index": _ix(3), "payload": {"text": "a2"}},
@@ -96,19 +97,19 @@ def test_restart_resumes_from_the_server_marker(tmp_path, monkeypatch):
     no ordinal is ever shipped twice."""
     p = _setup(tmp_path, monkeypatch, _user("q1") + _asst("a1"))
     c = _Client([_desc(last_index=None)])
-    m._sync_session_streams(_Cfg(), c)          # attach
+    streams.sync_session_streams(_Cfg(), c)          # attach
     with open(p, "a") as f:
         f.write(_asst("while watching"))        # ordinal 2
-    m._sync_session_streams(_Cfg(), c)
+    streams.sync_session_streams(_Cfg(), c)
     assert [e["index"] for e in _events(c)] == [_ix(2)]
 
     # RESTART: every in-memory tailer is gone; the agent worked while we were down.
-    m._stream_readers.clear()
+    streams._stream_readers.clear()
     with open(p, "a") as f:
         f.write(_user("missed q") + _asst("missed a"))   # ordinals 3, 4
     # The server persisted everything shipped so far, so its marker is 2.
     c._streams = [_desc(last_index=_ix(2))]
-    m._sync_session_streams(_Cfg(), c)
+    streams.sync_session_streams(_Cfg(), c)
 
     assert [(e["kind"], e["index"], e["payload"]["text"]) for e in _events(c)] == [
         ("assistant", _ix(2), "while watching"),
@@ -124,34 +125,34 @@ def test_failed_post_is_retried_from_the_marker_next_tick(tmp_path, monkeypatch)
     the tailer resets and the next tick re-attaches from the server marker."""
     p = _setup(tmp_path, monkeypatch, _user("q1"))
     c = _Client([_desc(last_index=None)])
-    m._sync_session_streams(_Cfg(), c)          # attach at end of history
+    streams.sync_session_streams(_Cfg(), c)          # attach at end of history
     with open(p, "a") as f:
         f.write(_asst("reply"))                 # ordinal 1
     c.fail_posts = True
-    m._sync_session_streams(_Cfg(), c)          # post fails silently
+    streams.sync_session_streams(_Cfg(), c)          # post fails silently
     assert c.posted == []
     c.fail_posts = False
     c._streams = [_desc(last_index=_ix(0))]     # server still only has record 0
-    m._sync_session_streams(_Cfg(), c)          # re-attach + catch-up
+    streams.sync_session_streams(_Cfg(), c)          # re-attach + catch-up
     assert [(e["index"], e["payload"]["text"]) for e in _events(c)] == [(_ix(1), "reply")]
 
 
 def test_detached_session_drops_its_tailer(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch, _asst("old"))
     c = _Client([_desc()])
-    m._sync_session_streams(_Cfg(), c)
-    assert "s1" in m._stream_readers
+    streams.sync_session_streams(_Cfg(), c)
+    assert "s1" in streams._stream_readers
     c._streams = []
-    m._sync_session_streams(_Cfg(), c)
-    assert "s1" not in m._stream_readers
+    streams.sync_session_streams(_Cfg(), c)
+    assert "s1" not in streams._stream_readers
 
 
 def test_sync_streams_survives_client_error(monkeypatch):
-    m._stream_readers.clear()
+    streams._stream_readers.clear()
 
     class _Boom:
         def sync_streams(self, rid):
             raise RuntimeError("network")
 
-    m._sync_session_streams(_Cfg(), _Boom())  # must not raise
-    assert m._stream_readers == {}
+    streams.sync_session_streams(_Cfg(), _Boom())  # must not raise
+    assert streams._stream_readers == {}

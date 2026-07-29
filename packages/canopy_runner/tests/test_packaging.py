@@ -78,3 +78,12 @@ def test_the_wheel_version_matches_the_package(wheel):
     meta = [n for n in _names(wheel) if n.endswith("METADATA")]
     assert meta, "no METADATA in the wheel"
     assert f"Version: {__version__}" in wheel.read(meta[0]).decode()
+
+
+def test_no_brand_assets_in_the_wheel(wheel):
+    """Icon geometry is not runner code. `tree.py` + `render_tree_svg.py` used to
+    live in this package and were therefore built into the wheel and installed on
+    every box, though the daemon never imports them — their only consumer is
+    assets/brand/generate.py. They live beside it now; keep them out of here."""
+    names = _names(wheel)
+    assert not [n for n in names if n.endswith(("tree.py", "render_tree_svg.py"))]

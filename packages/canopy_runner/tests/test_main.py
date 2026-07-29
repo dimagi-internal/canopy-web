@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from canopy_runner import sessions
+from canopy_runner import cancel
+from canopy_runner import failure_log
+from canopy_runner import hooks
 from canopy_runner import emdash
 from canopy_runner import main as main_mod
 from canopy_runner.client import ClientError
@@ -269,13 +273,13 @@ def test_claim_and_execute_threads_cancel_check_and_evicts_on_return(tmp_path, m
 
     monkeypatch.setattr(execute, "execute_turn", fake_execute_turn)
     cfg = SimpleNamespace(runner_id="r-1", state_path=str(tmp_path / "runner-state.json"))
-    main_mod.CANCELLED_TURNS.add("t-9")
+    cancel.CANCELLED_TURNS.add("t-9")
     try:
         assert main_mod._claim_and_execute(cfg, _FakeClient(), paused=set()) == "cancelled:t-9"
         assert seen["cancelled_at_call_time"] is True
-        assert "t-9" not in main_mod.CANCELLED_TURNS
+        assert "t-9" not in cancel.CANCELLED_TURNS
     finally:
-        main_mod.CANCELLED_TURNS.discard("t-9")  # don't leak into other tests
+        cancel.CANCELLED_TURNS.discard("t-9")  # don't leak into other tests
 
 
 def test_claim_and_execute_evicts_from_cancelled_turns_even_if_execute_turn_crashes(tmp_path, monkeypatch):
@@ -300,13 +304,13 @@ def test_claim_and_execute_evicts_from_cancelled_turns_even_if_execute_turn_cras
 
     monkeypatch.setattr(execute, "execute_turn", _boom)
     cfg = SimpleNamespace(runner_id="r-1", state_path=str(tmp_path / "runner-state.json"))
-    main_mod.CANCELLED_TURNS.add("t-crash")
+    cancel.CANCELLED_TURNS.add("t-crash")
     try:
         result = main_mod._claim_and_execute(cfg, _FakeClient(), paused=set())
         assert result == "failed:t-crash"
-        assert "t-crash" not in main_mod.CANCELLED_TURNS
+        assert "t-crash" not in cancel.CANCELLED_TURNS
     finally:
-        main_mod.CANCELLED_TURNS.discard("t-crash")
+        cancel.CANCELLED_TURNS.discard("t-crash")
 
 
 def test_drain_one_idle_when_nothing_queued(monkeypatch, tmp_path):
@@ -421,7 +425,7 @@ def _reset_cdp_throttle():
 def _stub_cdp(monkeypatch, healthy):
     monkeypatch.setattr("canopy_runner.cdp_control.cdp_healthy", lambda **k: healthy)
     monkeypatch.setattr("canopy_runner.cdp_control.host_id", lambda: "u@h")
-    monkeypatch.setattr(main_mod.emdash, "list_open_sessions", lambda db: [])
+    monkeypatch.setattr(emdash, "list_open_sessions", lambda db: [])
 
 
 def test_cdp_healthy_claims_and_executes(monkeypatch, tmp_path):
@@ -460,8 +464,8 @@ def test_an_unreadable_emdash_omits_projects_rather_than_reporting_none_at_all(
     runner becomes unclaimable)."""
     _stub_cdp(monkeypatch, healthy=True)
     monkeypatch.setattr(
-        main_mod.emdash, "list_projects",
-        lambda db: (_ for _ in ()).throw(main_mod.emdash.EmdashReadError("drift")),
+        emdash, "list_projects",
+        lambda db: (_ for _ in ()).throw(emdash.EmdashReadError("drift")),
     )
     monkeypatch.setattr(
         "canopy_runner.execute.execute_turn",
@@ -567,20 +571,19 @@ def test_maybe_report_sessions_throttled(db, tmp_path, monkeypatch):
     change-check (list_open_sessions) runs every tick, but the report is heartbeat-only
     absent a real change. (A transcript that GREW would report immediately — that's the
     live path, covered in test_session_report_live.)"""
-    from canopy_runner import main as m
     from canopy_runner import transcript
     cfg = _cfg(db, tmp_path)  # session_report_seconds defaults to 10
     calls = []
     monkeypatch.setattr(emdash, "list_open_sessions", lambda p, limit=30: [])  # no sessions -> no change
     monkeypatch.setattr(transcript, "attach_recent_tail", lambda *a, **k: calls.append(1))
-    m._last_session_report = 0.0
+    sessions._last_session_report = 0.0
     clock = [1000.0]
     now = lambda: clock[0]
     client = FakeClient()
-    m._maybe_report_sessions(cfg, client, now_fn=now)   # first tick -> reports
-    m._maybe_report_sessions(cfg, client, now_fn=now)   # within window -> skipped
+    sessions.maybe_report_sessions(cfg, client, now_fn=now)   # first tick -> reports
+    sessions.maybe_report_sessions(cfg, client, now_fn=now)   # within window -> skipped
     clock[0] += cfg.session_report_seconds + 1
-    m._maybe_report_sessions(cfg, client, now_fn=now)   # window elapsed -> reports
+    sessions.maybe_report_sessions(cfg, client, now_fn=now)   # window elapsed -> reports
     assert len(calls) == 2
 
 
@@ -593,37 +596,37 @@ def test_repeated_backfill_failures_are_warned_not_swallowed(caplog):
     A failure that repeats means stuck, not flaky, and must be visible."""
     import logging
 
-    main_mod._failures.clear()
+    failure_log._failures.clear()
     with caplog.at_level(logging.WARNING, logger="canopy_runner"):
-        main_mod._note_failure("backfill:s1", "backfill post")
+        failure_log.note_failure("backfill:s1", "backfill post")
         assert "attempt 1" in caplog.text
         caplog.clear()
         # Quiet in between, so a stuck session can't drown the log...
-        for _ in range(main_mod._REWARN_EVERY - 2):
-            main_mod._note_failure("backfill:s1", "backfill post")
+        for _ in range(failure_log._REWARN_EVERY - 2):
+            failure_log.note_failure("backfill:s1", "backfill post")
         assert caplog.text == ""
         # ...but it re-surfaces, so it can't be forgotten either.
-        main_mod._note_failure("backfill:s1", "backfill post")
-        assert f"attempt {main_mod._REWARN_EVERY}" in caplog.text
+        failure_log.note_failure("backfill:s1", "backfill post")
+        assert f"attempt {failure_log._REWARN_EVERY}" in caplog.text
 
 
 def test_recovery_clears_the_streak_and_says_so(caplog):
     import logging
 
-    main_mod._failures.clear()
-    main_mod._note_failure("stream:s1", "stream post")
+    failure_log._failures.clear()
+    failure_log.note_failure("stream:s1", "stream post")
     with caplog.at_level(logging.INFO, logger="canopy_runner"):
-        main_mod._note_success("stream:s1")
+        failure_log.note_success("stream:s1")
     assert "recovered after 1" in caplog.text
-    assert "stream:s1" not in main_mod._failures
+    assert "stream:s1" not in failure_log._failures
 
 
 def test_success_with_no_prior_failure_is_silent(caplog):
     import logging
 
-    main_mod._failures.clear()
+    failure_log._failures.clear()
     with caplog.at_level(logging.INFO, logger="canopy_runner"):
-        main_mod._note_success("stream:s1")
+        failure_log.note_success("stream:s1")
     assert caplog.text == ""
 
 
@@ -663,15 +666,15 @@ NO_DIALOG = """\
 
 def test_answering_presses_the_option(monkeypatch):
     fake = _FakeMenuCDP(DIALOG)
-    monkeypatch.setattr(main_mod, "cdp_control", fake)
-    main_mod._answer_menu("agent-task", 1)
+    monkeypatch.setattr(hooks, "cdp_control", fake)
+    hooks.answer_menu("agent-task", 1)
     assert fake.sent == [("agent-task", ["1", "\r"])]
 
 
 def test_refusing_sends_escape(monkeypatch):
     fake = _FakeMenuCDP(DIALOG)
-    monkeypatch.setattr(main_mod, "cdp_control", fake)
-    main_mod._answer_menu("agent-task", None)
+    monkeypatch.setattr(hooks, "cdp_control", fake)
+    hooks.answer_menu("agent-task", None)
     assert fake.sent == [("agent-task", ["\x1b"])]
 
 
@@ -680,16 +683,16 @@ def test_a_stale_answer_is_dropped_rather_than_typed(monkeypatch):
     it. A NUMBER typed at a session no longer showing a menu lands in its PROMPT,
     where the agent reads it as an instruction."""
     fake = _FakeMenuCDP(NO_DIALOG)
-    monkeypatch.setattr(main_mod, "cdp_control", fake)
-    main_mod._answer_menu("agent-task", 1)
+    monkeypatch.setattr(hooks, "cdp_control", fake)
+    hooks.answer_menu("agent-task", 1)
     assert fake.sent == []
 
 
 def test_an_option_not_on_the_dialog_is_dropped(monkeypatch):
     """The menu on screen may have changed shape since it was rendered."""
     fake = _FakeMenuCDP(DIALOG)
-    monkeypatch.setattr(main_mod, "cdp_control", fake)
-    main_mod._answer_menu("agent-task", 7)
+    monkeypatch.setattr(hooks, "cdp_control", fake)
+    hooks.answer_menu("agent-task", 7)
     assert fake.sent == []
 
 
@@ -716,12 +719,12 @@ def test_the_hook_listener_never_reads_the_screen_by_itself(monkeypatch, tmp_pat
 
     import canopy_runner.hook_listener as hl
     monkeypatch.setattr(hl, "HookListener", _Listener)
-    monkeypatch.setattr(main_mod.hook_install, "install", lambda *a, **k: True)
+    monkeypatch.setattr(hooks.hook_install, "install", lambda *a, **k: True)
     monkeypatch.setattr(main_mod.Path, "home", classmethod(lambda cls: tmp_path))
 
     class _Client:
         def post_session_stream(self, *a, **k):
             pass
 
-    main_mod._start_hook_listener(cfg, _Client())
+    hooks.start_hook_listener(cfg, _Client())
     assert "read_menu" not in captured or captured["read_menu"] is None

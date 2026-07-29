@@ -6,6 +6,7 @@ canopy did not put there (emdash owns its own).
 """
 import json
 
+from canopy_runner import hooks
 from canopy_runner import hook_install
 from canopy_runner.hook_listener import HookListener
 
@@ -170,47 +171,45 @@ def test_hook_counters_are_reported_but_stay_quiet_until_something_fires(caplog)
     reachable."""
     import logging
 
-    from canopy_runner import main as main_mod
 
     lis, _ = _listener()
-    main_mod._hook_listener = lis
-    main_mod._last_hook_report = None
+    hooks._hook_listener = lis
+    hooks._last_hook_report = None
     try:
         clock = [10_000.0]
         with caplog.at_level(logging.INFO, logger="canopy_runner"):
-            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            hooks.maybe_report_hooks(now_fn=lambda: clock[0])
             assert caplog.text == "", "nothing fired yet — silence is the honest report"
 
             lis.handle_payload(_payload())
             lis.handle_payload(_payload(cwd="/not/ours"))
-            clock[0] += main_mod.HOOK_REPORT_SECONDS + 1
-            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            clock[0] += hooks.HOOK_REPORT_SECONDS + 1
+            hooks.maybe_report_hooks(now_fn=lambda: clock[0])
         assert "2 received" in caplog.text
         assert "1 forwarded" in caplog.text
         assert "1 dropped" in caplog.text
     finally:
-        main_mod._hook_listener = None
+        hooks._hook_listener = None
 
 
 def test_hook_report_is_throttled(caplog):
     import logging
 
-    from canopy_runner import main as main_mod
 
     lis, _ = _listener()
     lis.handle_payload(_payload())
-    main_mod._hook_listener = lis
-    main_mod._last_hook_report = None
+    hooks._hook_listener = lis
+    hooks._last_hook_report = None
     try:
         clock = [10_000.0]
         with caplog.at_level(logging.INFO, logger="canopy_runner"):
-            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            hooks.maybe_report_hooks(now_fn=lambda: clock[0])
             caplog.clear()
             clock[0] += 5  # well inside the window
-            main_mod._maybe_report_hooks(now_fn=lambda: clock[0])
+            hooks.maybe_report_hooks(now_fn=lambda: clock[0])
         assert caplog.text == "", "a busy agent must not flood the log"
     finally:
-        main_mod._hook_listener = None
+        hooks._hook_listener = None
 
 
 def test_the_first_report_is_not_throttled_out_at_process_start(caplog):
@@ -220,18 +219,17 @@ def test_the_first_report_is_not_throttled_out_at_process_start(caplog):
     you have just enabled the feature. Clock starts where it really starts."""
     import logging
 
-    from canopy_runner import main as main_mod
 
     lis, _ = _listener()
     lis.handle_payload(_payload())
-    main_mod._hook_listener = lis
-    main_mod._last_hook_report = None
+    hooks._hook_listener = lis
+    hooks._last_hook_report = None
     try:
         with caplog.at_level(logging.INFO, logger="canopy_runner"):
-            main_mod._maybe_report_hooks(now_fn=lambda: 0.4)
+            hooks.maybe_report_hooks(now_fn=lambda: 0.4)
         assert "1 received" in caplog.text
     finally:
-        main_mod._hook_listener = None
+        hooks._hook_listener = None
 
 
 def test_an_idle_tick_does_not_consume_the_report_window(caplog):
@@ -242,20 +240,19 @@ def test_an_idle_tick_does_not_consume_the_report_window(caplog):
     were found live; both had passing tests."""
     import logging
 
-    from canopy_runner import main as main_mod
 
     lis, _ = _listener()
-    main_mod._hook_listener = lis
-    main_mod._last_hook_report = None
+    hooks._hook_listener = lis
+    hooks._last_hook_report = None
     try:
         with caplog.at_level(logging.INFO, logger="canopy_runner"):
-            main_mod._maybe_report_hooks(now_fn=lambda: 1.0)   # idle tick, nothing fired
+            hooks.maybe_report_hooks(now_fn=lambda: 1.0)   # idle tick, nothing fired
             assert caplog.text == ""
             lis.handle_payload(_payload())                      # now something fires
-            main_mod._maybe_report_hooks(now_fn=lambda: 6.0)    # 5s later, well inside the window
+            hooks.maybe_report_hooks(now_fn=lambda: 6.0)    # 5s later, well inside the window
         assert "1 received" in caplog.text, "the idle tick swallowed the first real report"
     finally:
-        main_mod._hook_listener = None
+        hooks._hook_listener = None
 
 
 def test_install_covers_both_halves_of_the_lifecycle(tmp_path):

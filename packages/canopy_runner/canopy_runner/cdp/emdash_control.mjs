@@ -40,15 +40,7 @@ import { chromium } from 'playwright-core';
 // evaluates ONE EXPRESSION, so prefixing a function DECLARATION produced
 // `function(){}(...)()` — a call on a function expression — and every call failed
 // with "(intermediate value) is not a function".
-// String.raw on every one of these, and it is load-bearing. A plain template
-// literal PROCESSES escapes before Playwright ever sees the source: `\n` became a
-// real newline (so `.join('\n')` produced an unterminated string —
-// "SyntaxError: Invalid or unexpected token" at runtime, nowhere near this file)
-// and `\s` collapsed to a literal `s`, silently turning every `\s*` in these
-// regexes into "zero or more letter s". The file still parsed; only the evaluated
-// string was wrong, which is why `node --check` was clean and the collision guard
-// quietly never matched.
-const ACTIVE_TERM_FN = String.raw`
+const ACTIVE_TERM_FN = `
 function activeTerm() {
   const real = [...document.querySelectorAll('.xterm')].filter(t => {
     if (t.offsetParent === null) return false;
@@ -141,7 +133,7 @@ const openTask = async (task) => {
   // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
   // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
   // task's pane) when several are mounted.
-  const focused = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+  const focused = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
     const term = activeTerm();
     const ta = (term && term.querySelector('.xterm-helper-textarea'))
       || document.querySelector('textarea[aria-label="Terminal input"]');
@@ -246,7 +238,7 @@ try {
     //
     // Now: the same activeTerm() everything else uses, and the composer read whole
     // (a long unsent line wraps across rows), stripped of marker and box drawing.
-    const readLine = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const readLine = () => page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       if (!term) return '';
       const rows = [...term.querySelectorAll('.xterm-rows > div')]
@@ -318,7 +310,7 @@ try {
     // Claude Code draws spaces as ESC[nC.
     const { task } = args;
     await openTask(task);
-    const text = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const text = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       if (!rows) return null;
@@ -339,7 +331,7 @@ try {
     // Enter there RUNS something. Reading the wrong pane costs a menu; typing
     // into it is the one outcome worth failing for, so this command alone
     // requires a positive identification instead of falling back.
-    const isClaude = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const isClaude = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       const text = rows ? rows.textContent || '' : '';
