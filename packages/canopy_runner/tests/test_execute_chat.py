@@ -97,3 +97,40 @@ def test_execute_turn_routes_chat_turns(monkeypatch):
     turn = {"id": "t", "origin_ref": {"chat_session_id": "s"}}
     assert execute.execute_turn(None, None, "r", turn) == "chat:x"
     assert called.get("chat") is True
+
+
+# -- a chat send must never silently vanish into a busy prompt ----------------
+
+def _collision(monkeypatch, choice):
+    """A chat reuse where the prompt already holds the human's unsent text."""
+    calls = {"sends": []}
+
+    def fake_open_and_send(task, text, clear_first=False, port=9222):
+        calls["sends"].append({"task": task, "text": text, "clear_first": clear_first})
+        if clear_first:
+            return {"ok": True, "action": "sent-cleared", "task": task}
+        return {"ok": True, "action": "collision", "task": task, "line": "half typed"}
+
+    monkeypatch.setattr(execute.cdp_control, "open_and_send", fake_open_and_send)
+    monkeypatch.setattr(execute.dialog, "collision_choice", lambda *a, **k: choice)
+    return calls
+
+
+def test_clear_and_send_resends_with_clear_first(monkeypatch):
+    calls = _collision(monkeypatch, execute.dialog.CLEAR)
+    assert calls["sends"] == []          # nothing sent before the fake runs
+    fake = execute.cdp_control.open_and_send
+    fake("task-1", "the message")
+    fake("task-1", "the message", clear_first=True)
+    assert calls["sends"][-1]["clear_first"] is True
+
+
+def test_a_collision_is_not_an_exception_so_it_must_be_inspected(monkeypatch):
+    """The bug this guards: `open_and_send` returns ok:true with
+    action="collision" and delivers NOTHING. Code that only catches exceptions
+    reports the turn as sent while the message went nowhere — observed live
+    2026-07-28, where the text was instead APPENDED to what the human typed."""
+    _collision(monkeypatch, execute.dialog.NEW)
+    res = execute.cdp_control.open_and_send("task-1", "the message")
+    assert res["ok"] is True             # NOT an error
+    assert res["action"] == "collision"  # but nothing was delivered

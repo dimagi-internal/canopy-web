@@ -36,6 +36,10 @@ import { chromium } from 'playwright-core';
 // tab beside the agent) prefer the one that looks like a CLAUDE session, since
 // that is the only one where a prompt or a menu answer means anything; fall back
 // to the largest.
+// NOTE: every use below wraps this INSIDE a single arrow-IIFE. `page.evaluate(str)`
+// evaluates ONE EXPRESSION, so prefixing a function DECLARATION produced
+// `function(){}(...)()` — a call on a function expression — and every call failed
+// with "(intermediate value) is not a function".
 const ACTIVE_TERM_FN = `
 function activeTerm() {
   const real = [...document.querySelectorAll('.xterm')].filter(t => {
@@ -129,14 +133,14 @@ const openTask = async (task) => {
   // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
   // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
   // task's pane) when several are mounted.
-  const focused = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+  const focused = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
     const term = activeTerm();
     const ta = (term && term.querySelector('.xterm-helper-textarea'))
       || document.querySelector('textarea[aria-label="Terminal input"]');
     if (!ta) return false;
     ta.focus();
     return true;
-  })()`);
+  })(); })()`);
   if (!focused) fail(`could not focus the terminal input for task "${task}"`);
 };
 
@@ -216,19 +220,44 @@ try {
     // clobber blindly. Heuristic + version-fragile: on any ambiguity it returns '',
     // which takes the fast send path (never worse than the pre-collision behaviour, and
     // no false-positive dialog).
-    const readLine = () => page.evaluate(() => {
-      const terms = [...document.querySelectorAll('.xterm')]
-        .filter(t => t.offsetParent !== null && t.getBoundingClientRect().width > 0);
-      const term = terms[0];
+    // Is there ANY text sitting in the composer? That is the whole question — not
+    // "parse the prompt line", which is what this used to attempt and why it kept
+    // failing open. Two defects, both silent:
+    //
+    //   1. it matched '>' as the prompt marker; Claude Code's TUI draws U+276F (❯),
+    //      so every real prompt read as EMPTY;
+    //   2. it picked its own `terms[0]` under the loose width>0 filter, which admits
+    //      the 16x16 ghost terminals emdash keeps mounted for other tasks — so it
+    //      could answer about a different session entirely (observed: it returned
+    //      another agent's prompt).
+    //
+    // Either one makes isEmpty('') true, and the send takes the fast path:
+    // insertText APPENDS to whatever the human half-typed and Enter submits the
+    // concatenation. Verified live 2026-07-28 — "half typed thought" and a chat
+    // message reached the agent as ONE line, with no dialog.
+    //
+    // Now: the same activeTerm() everything else uses, and the composer read whole
+    // (a long unsent line wraps across rows), stripped of marker and box drawing.
+    const readLine = () => page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
+      const term = activeTerm();
       if (!term) return '';
       const rows = [...term.querySelectorAll('.xterm-rows > div')]
         .map(r => (r.textContent || '').replace(/\u00a0/g, ' '));
       for (let i = rows.length - 1; i >= 0 && i >= rows.length - 14; i--) {
-        const m = rows[i].match(/(?:^|[│|])\s*>\s?(.*)$/);
-        if (m) return (m[1] || '').replace(/[│|─╭╮╰╯]/g, '').trim();
+        const m = rows[i].match(/(?:^|[│|])\s*[>❯]\s?(.*)$/);
+        if (!m) continue;
+        const parts = [m[1] || ''];
+        for (let j = i + 1; j < rows.length; j++) {
+          const next = rows[j];
+          if (/^[\s│|─╭╮╰╯]*$/.test(next)) break;         // blank line or a box rule
+          if (/^\s*[>❯]/.test(next)) break;                // a new prompt begins
+          if (/⏵⏵|shift\+tab to cycle/.test(next)) break;  // the status bar
+          parts.push(next);
+        }
+        return parts.join(' ').replace(/[│|─╭╮╰╯]/g, '').trim();
       }
       return '';
-    });
+    })(); })()`);
     // Ghost/placeholder hints claude shows in an EMPTY input — treat as empty so the
     // fast path still fires instead of popping a spurious collision dialog.
     const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
@@ -281,12 +310,12 @@ try {
     // Claude Code draws spaces as ESC[nC.
     const { task } = args;
     await openTask(task);
-    const text = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+    const text = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       if (!rows) return null;
       return [...rows.children].map(r => r.textContent).join('\n');
-    })()`);
+    })(); })()`);
     if (text === null) fail(`could not read the terminal for task "${task}"`);
     out({ ok: true, task, text });
 
@@ -302,12 +331,12 @@ try {
     // Enter there RUNS something. Reading the wrong pane costs a menu; typing
     // into it is the one outcome worth failing for, so this command alone
     // requires a positive identification instead of falling back.
-    const isClaude = await page.evaluate(`${ACTIVE_TERM_FN} (() => {
+    const isClaude = await page.evaluate(`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       const text = rows ? rows.textContent || '' : '';
       return /[⏺✻⎿]/.test(text) || /esc to interrupt|shift\\+tab to cycle|bypass permissions/i.test(text);
-    })()`);
+    })(); })()`);
     if (!isClaude) {
       fail(`NOT_A_CLAUDE_PANE: the visible terminal for "${task}" is not a Claude session ` +
            `(a shell tab is probably selected) — refusing to send keys into it`);

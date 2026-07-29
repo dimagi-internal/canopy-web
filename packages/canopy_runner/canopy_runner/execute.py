@@ -265,11 +265,34 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         task = None  # the linked emdash session is gone — create a fresh one
     if task:
         try:
-            cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
+            res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
             logger.error("chat reuse send failed turn=%s task=%s: %s", turn_id, task, exc)
             client.fail_turn(turn_id, f"chat reuse send failed: {str(exc)[:200]}")
             return f"failed:{turn_id}"
+        # A collision is `ok: true` with action="collision" and NOTHING delivered —
+        # not an exception. This path used to discard the result entirely, so a
+        # chat send into a prompt the human was typing in reported success while
+        # the message went nowhere. The agent path has asked since #320; chat now
+        # asks the same way, because it is the SAME hazard and the human is right
+        # there.
+        if res.get("action") == "collision":
+            choice = dialog.collision_choice(task, res.get("line", ""))
+            logger.info("chat collision on '%s' (turn=%s): unsent text in prompt — "
+                        "human chose %r", task, turn_id, choice)
+            if choice == dialog.CLEAR:
+                cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port)
+            elif choice == dialog.CANCEL:
+                # Deliver nothing and let the turn be retried, rather than finishing
+                # a turn whose message never arrived.
+                client.fail_turn(turn_id, f"chat send cancelled by human (collision on '{task}')")
+                return f"cancelled:{turn_id}"
+            else:
+                # NEW (and the timeout default): never destroy what the human typed.
+                # A fresh session is wrong for a CHAT — the conversation lives in this
+                # one — so the honest outcome is to leave it and retry.
+                client.fail_turn(turn_id, f"chat send deferred: unsent text in '{task}'")
+                return f"deferred:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
         try:
