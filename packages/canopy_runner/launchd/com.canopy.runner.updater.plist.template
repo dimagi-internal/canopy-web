@@ -12,10 +12,16 @@
 
   It runs the INSTALLER, not the runner: `uv tool install --force` replaces the
   runner's venv, and a process cannot safely have its own interpreter and modules
-  swapped out from under it mid-run. The shell script lives in the repo checkout,
-  which this job therefore depends on — but note it can only ever install what
-  `--if-stale` resolves from the control plane, so a stray branch checked out in
-  that repo still cannot change WHAT gets installed.
+  swapped out from under it mid-run.
+
+  __INSTALLER__ is a COPY of install-runner.sh placed at ~/.canopy/canopy-runner-update
+  by the install. Two reasons, both about being legible: macOS names background
+  items after this executable's basename, so pointing at the repo made canopy's
+  updater appear in System Settings as `install-runner.sh` from an "unidentified
+  developer"; and copying from the installed snapshot means a stray `git checkout`
+  in the repo cannot change the script this timer runs. The repo is still the
+  source of the BUILD (--repo, for `git archive`), and `--if-stale` still resolves
+  WHAT to install from the control plane.
 -->
 <plist version="1.0">
 <dict>
