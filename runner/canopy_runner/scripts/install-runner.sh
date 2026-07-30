@@ -206,16 +206,46 @@ echo "==> provisioning the CDP sidecar's node deps"
 # first real install (2026-07-29); a hand-run retry seconds later succeeded with
 # no other change — the signature of a race, not a bad plist. So wait for the
 # domain to clear, then retry anyway, because the print check races too.
+#
+# One job must never be bounced this way: the one we are RUNNING UNDER.
+# `launchctl bootout` tears down the job's whole process tree, and in --if-stale
+# mode that tree contains this script — so bootout kills us, `bootstrap` never
+# runs, and the timer is left UNLOADED. Observed on a real box 2026-07-29: the
+# updater fired, installed a new runner, and its log stops mid-sentence at
+# "rendering …com.canopy.runner.updater.plist" — "(re)started" never printed and
+# the job was gone from `launchctl list`. It comes back at the next login (or
+# whenever something else runs an install), so this is not permanent; it just
+# means auto-update goes dark after every successful self-update, which is
+# precisely the run where it mattered.
+#
+# For our own job we therefore write the plist and stop. launchd reads it at
+# next load, so a CHANGED definition takes effect at the next login rather than
+# immediately — a fair price for a file that changes about never, and strictly
+# better than a job that isn't running at all.
+self_job() {
+  [ "$IF_STALE" -eq 1 ] && [ "$1" = "$UPDATER_LABEL" ]
+}
+
 install_job() {
   local label="$1" src="$2" dest="$HOME/Library/LaunchAgents/$1.plist"
-  local uid_n booted=0 err="" attempt
+  local uid_n booted=0 err="" attempt changed=1
   uid_n="$(id -u)"
 
   echo "==> rendering $dest"
   mkdir -p "$HOME/Library/LaunchAgents"
   plutil -lint "$src" >/dev/null \
     || { echo "rendered plist for $label is not valid — leaving the running job alone" >&2; return 1; }
+  cmp -s "$src" "$dest" 2>/dev/null && changed=0
   cp "$src" "$dest"
+
+  if self_job "$label"; then
+    if [ "$changed" -eq 1 ]; then
+      echo "==> $label definition updated — loads at next login (not bounced: this install is running under it)"
+    else
+      echo "==> $label unchanged — left running (this install is running under it)"
+    fi
+    return 0
+  fi
 
   launchctl bootout "gui/$uid_n/$label" 2>/dev/null || true
   for _ in $(seq 1 20); do
