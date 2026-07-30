@@ -133,7 +133,7 @@ def test_the_runner_job_is_still_bounced_by_the_updater(tmp_path, harness):
     """Only the updater's OWN label is protected. The whole point of an update
     is to restart the runner onto the new code, and that must keep happening."""
     _, calls = _run(tmp_path, harness, label=RUNNER, if_stale=1)
-    assert any(c.startswith(f"bootout gui/") and RUNNER in c for c in calls), calls
+    assert any(c.startswith("bootout gui/") and RUNNER in c for c in calls), calls
     assert any(c.startswith("bootstrap") for c in calls), calls
 
 
