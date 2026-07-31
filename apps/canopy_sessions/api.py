@@ -57,6 +57,15 @@ def _runner_online(runner) -> bool | None:
     return runner.live_status == Runner.ONLINE
 
 
+def _runner_status(runner) -> str | None:
+    """The bound runner's live_status verbatim — see SessionOut.runner_status.
+
+    Read from the same property `_runner_online` derives its bool from, so the
+    two can never disagree about a runner (one says offline, the other online).
+    """
+    return None if runner is None else runner.live_status
+
+
 def _out(session: Session) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     runner = binding.runner if (binding and binding.runner_id) else None
@@ -90,6 +99,7 @@ def _out(session: Session) -> dict:
         # runners, so the session payload is where they learn their bound runner
         # went away. None when unbound — nothing to be offline.
         "runner_online": _runner_online(runner),
+        "runner_status": _runner_status(runner),
         "session_key": binding.session_key if binding else "",
     }
 

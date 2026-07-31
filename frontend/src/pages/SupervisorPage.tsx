@@ -101,6 +101,14 @@ export default function SupervisorPage(): JSX.Element {
     }
   }, [])
 
+  // A pause/resume from the detail view. Patch both the list and the open detail
+  // from the SERVER's row: the 30s re-poll would otherwise leave the button
+  // showing the state you just left, which reads as "the tap didn't take".
+  const handleRunnerChanged = useCallback((fresh: RunnerOut) => {
+    setRunners((prev) => prev?.map((r) => (r.id === fresh.id ? fresh : r)) ?? prev)
+    setSelectedRunner((prev) => (prev && prev.id === fresh.id ? fresh : prev))
+  }, [])
+
   // Re-poll runners so the code-provenance alerts (below) appear/clear without a
   // reload — code_branch/code_sha ride the REST runner, not the live socket overlay.
   useEffect(() => {
@@ -258,6 +266,7 @@ export default function SupervisorPage(): JSX.Element {
               runner={selectedRunner}
               agents={agents ?? []}
               onBack={() => setSelectedRunner(null)}
+              onChanged={handleRunnerChanged}
             />
           ) : errs.runners ? (
             <BandError message={errs.runners} />

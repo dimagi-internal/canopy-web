@@ -94,6 +94,81 @@ describe("PlacementBanner", () => {
     expect(screen.getByText("Could not place the turn.")).toBeTruthy();
   });
 
+  it("names a pause as a pause, with the reason it was given", () => {
+    render(
+      <PlacementBanner
+        runnerName="Laptop"
+        eligibleRunners={[]}
+        paused
+        pausedNote="token limit on this account"
+        onWait={vi.fn()}
+        onPlace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Laptop is paused")).toBeTruthy();
+    // The note is what tells you whether resuming is actually safe.
+    expect(screen.getByText("— token limit on this account")).toBeTruthy();
+  });
+
+  it("offers Resume when the viewer can un-park the runner", () => {
+    const onResume = vi.fn();
+    render(
+      <PlacementBanner
+        runnerName="Laptop"
+        eligibleRunners={[]}
+        paused
+        onResume={onResume}
+        onWait={vi.fn()}
+        onPlace={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Resume"));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits Resume when no handler is given — only the pairer may resume", () => {
+    render(
+      <PlacementBanner
+        runnerName="Laptop"
+        eligibleRunners={[]}
+        paused
+        onWait={vi.fn()}
+        onPlace={vi.fn()}
+      />,
+    );
+
+    // A button that 404s reads as the runner refusing to come back.
+    expect(screen.queryByText("Resume")).toBeNull();
+  });
+
+  it("keeps waiting reachable but demoted below the acting exits", () => {
+    // Waiting leaves the message QUEUED until the box returns — real for a
+    // reboot, wrong as a default. It stays a button (role, disabled state,
+    // accessible name) but is styled as a link rather than a peer action.
+    render(
+      <PlacementBanner
+        runnerName="Laptop"
+        eligibleRunners={[]}
+        paused
+        onResume={vi.fn()}
+        onWait={vi.fn()}
+        onPlace={vi.fn()}
+      />,
+    );
+
+    const wait = screen.getByText("Wait for it") as HTMLButtonElement;
+    expect(wait.tagName).toBe("BUTTON");
+    expect(wait.className).toContain("underline");
+    expect(wait.className).not.toContain("border");
+    // Resume comes first in reading order — the fix before the deferral.
+    expect(
+      screen.getByText("Resume").compareDocumentPosition(wait) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("renders error and info distinctly styled when both are present", () => {
     render(
       <PlacementBanner

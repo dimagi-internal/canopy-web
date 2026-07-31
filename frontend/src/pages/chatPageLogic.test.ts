@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   backfillAction,
   restToKitMessage,
+  sendBlockReason,
   shouldShowLoadFull,
 } from "./chatPageLogic";
 import type { ChatSessionDetail } from "@/api/chat";
@@ -95,5 +96,36 @@ describe("shouldShowLoadFull", () => {
   it("is hidden before the session meta loads (origin null/undefined)", () => {
     expect(shouldShowLoadFull({ ...base, origin: null })).toBe(false);
     expect(shouldShowLoadFull({ ...base, origin: undefined })).toBe(false);
+  });
+});
+
+describe("sendBlockReason", () => {
+  it("allows sending when the bound runner is fine", () => {
+    expect(
+      sendBlockReason({ runnerName: "Laptop", boundOffline: false, paused: false }),
+    ).toBeUndefined();
+  });
+
+  it("blocks with the resume instruction when the runner is paused", () => {
+    // The fix is one tap and it undoes YOUR decision — say so, rather than
+    // offering the generic "unavailable" that implies something broke.
+    expect(
+      sendBlockReason({ runnerName: "Laptop", boundOffline: true, paused: true }),
+    ).toBe("Laptop is paused — resume it to send");
+  });
+
+  it("blocks with the re-place instruction when the runner is merely gone", () => {
+    expect(
+      sendBlockReason({ runnerName: "Laptop", boundOffline: true, paused: false }),
+    ).toBe("Laptop is unavailable — continue on another runner to send");
+  });
+
+  it("fails OPEN when there is no bound runner at all", () => {
+    // A web chat that has never sent has no binding; blocking it would lock the
+    // composer of a brand-new conversation. Over-blocking is worse than the
+    // queue this prevents.
+    for (const runnerName of [null, undefined, ""]) {
+      expect(sendBlockReason({ runnerName, boundOffline: true, paused: false })).toBeUndefined();
+    }
   });
 });

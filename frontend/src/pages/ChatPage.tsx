@@ -24,9 +24,18 @@ import {
   uploadAttachment,
   deleteAttachment,
 } from '@/api/chat'
-import { listRunners, type RunnerOut } from '@/api/harness'
-import { isBoundRunnerOffline, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
-import { backfillAction, restToKitMessage, shouldShowLoadFull } from './chatPageLogic'
+import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
+import {
+  findBoundRunner,
+  isBoundRunnerOffline,
+  onlineSessionCapableRunners,
+} from '@/components/chat/runnerEligibility'
+import {
+  backfillAction,
+  restToKitMessage,
+  sendBlockReason,
+  shouldShowLoadFull,
+} from './chatPageLogic'
 
 /** Render assistant/system message text through canopy's shared Markdown (the
  *  same renderer used across every AI-output surface — so it picks up remark-gfm
@@ -165,6 +174,16 @@ export function ChatPage() {
     () => onlineSessionCapableRunners(fleetRunners),
     [fleetRunners],
   )
+  // The bound runner's fleet row — the id `Resume` needs, and the `paused` /
+  // `can_manage` flags that decide whether resuming is even on offer here.
+  const boundRunner = findBoundRunner(meta?.runner_name, fleetRunners)
+  const boundPaused = boundOffline && Boolean(boundRunner?.paused)
+  // The composer refuses rather than queueing — see sendBlockReason.
+  const disabledReason = sendBlockReason({
+    runnerName: meta?.runner_name,
+    boundOffline,
+    paused: boundPaused,
+  })
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -236,6 +255,29 @@ export function ChatPage() {
       .catch(placementFail)
       .finally(() => setPlacing(false))
   }, [id, placementFail, refreshFleet])
+
+  // Un-park the bound runner from inside the chat. The fix for a pause is one
+  // tap and it is YOUR decision being undone, so making you leave for
+  // /supervisor to do it is what pushed people toward waiting instead.
+  const resumeBoundRunner = useCallback(() => {
+    if (!boundRunner) return
+    setPlacing(true)
+    setPlaceInfo(null)
+    setPlaceError(null)
+    unpauseRunner(boundRunner.id)
+      .then((fresh) => {
+        setFleetRunners((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)))
+        // Drop the session payload's liveness snapshot — it was computed before
+        // the unpause and is stale by construction — so the freshly-patched
+        // fleet row answers instead. This clears a STALE READING, it does not
+        // assert the box is up: unpause restores whatever the heartbeat says,
+        // so a runner that is also offline keeps the banner, correctly.
+        setMeta((prev) => (prev ? { ...prev, runner_online: null, runner_status: null } : prev))
+        setPlaceInfo(`${fresh.name} resumed.`)
+      })
+      .catch(placementFail)
+      .finally(() => setPlacing(false))
+  }, [boundRunner, placementFail])
 
   const continueOn = useCallback(
     (runnerId: string) => {
@@ -535,6 +577,9 @@ export function ChatPage() {
           renderMarkdown={renderMarkdown}
           emptyState={emptyState}
           historySlot={historySlot}
+          // Refuse the send outright rather than queueing it at a box that
+          // cannot answer — the banner above holds the ways out.
+          disabledReason={disabledReason}
           banner={
             socket.state.menu ? (
               <MenuPrompt
@@ -552,6 +597,12 @@ export function ChatPage() {
                 info={placeInfo}
                 onWait={waitForIt}
                 onPlace={continueOn}
+                paused={boundPaused}
+                pausedNote={boundRunner?.paused_note || undefined}
+                // Pause/resume is pairer-only server-side; `can_manage` is the
+                // row saying so. Without it, Resume would 404 and read as the
+                // runner refusing to come back.
+                onResume={boundPaused && boundRunner?.can_manage ? resumeBoundRunner : undefined}
               />
             ) : undefined
           }

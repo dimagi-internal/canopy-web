@@ -32,6 +32,26 @@ export async function retireRunner(runnerId: string): Promise<void> {
   if (error) throw new Error(`retireRunner failed: ${JSON.stringify(error)}`)
 }
 
+// Park a runner without decommissioning it — the remote half of the box's local
+// ~/.canopy/PAUSED sentinel, which only someone sitting at that machine (and in
+// that macOS account) could ever drop. This is the phone's version of that
+// toggle. Both return the updated runner so the caller re-renders from the
+// server's value rather than guessing at it.
+export async function pauseRunner(runnerId: string, note = ''): Promise<RunnerOut> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/pause', {
+    params: { path: { runner_id: runnerId } },
+    body: { note },
+  })
+  return unwrap(res, 'pauseRunner')
+}
+
+export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/unpause', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'unpauseRunner')
+}
+
 // Dispatch a turn from the phone composer — to an agent OR a repo.
 //
 // An AGENT turn routes through the flat mount: the server derives the agent's

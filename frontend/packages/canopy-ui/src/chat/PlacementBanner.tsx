@@ -24,15 +24,32 @@ export interface PlacementBannerProps {
   onWait: () => void;
   /** Re-place the turn onto the given runner id. */
   onPlace: (runnerId: string) => void;
+  /** True when the runner is PARKED rather than gone — a decision someone made,
+   *  which someone can therefore undo. Changes the headline and, with `onResume`,
+   *  puts the one-tap fix first. */
+  paused?: boolean;
+  /** The reason recorded at pause time, shown so the reader can judge whether
+   *  resuming is safe (e.g. "token limit on this account" usually is not). */
+  pausedNote?: string;
+  /** Un-park the runner in place. Omit when the viewer cannot — only the human
+   *  who paired a runner may pause or resume it, so offering this to anyone else
+   *  would render a button that 404s. */
+  onResume?: () => void;
 }
 
 /**
- * Offline-runner placement banner: the chat session's bound runner has gone
- * unavailable, and the user must decide whether to wait for it or continue
- * on a different session-capable runner. Presentational only — NO fetch, NO
- * WS. The container (canopy's ChatPage) owns the fleet poll, the derived
- * eligible-runner list, and the placement POST; this component just renders
- * the decision and forwards the pick.
+ * Offline-runner placement banner: the chat session's bound runner cannot act,
+ * and the user must get it acting again — resume it, or continue on a different
+ * session-capable runner. Presentational only — NO fetch, NO WS. The container
+ * (canopy's ChatPage) owns the fleet poll, the derived eligible-runner list, and
+ * the placement POST; this component just renders the decision and forwards it.
+ *
+ * The actions are deliberately not peers. Waiting means your message sits QUEUED
+ * until the box returns — which, for a pause you applied yourself, may be never —
+ * and a queued send reads as a sent one right up until you notice no reply came.
+ * So the exits that make the chat WORK are buttons, and waiting is a link you
+ * have to mean. It stays reachable because a box rebooting in ninety seconds is
+ * a real case; it is just not the shape of the default.
  */
 export function PlacementBanner({
   runnerName,
@@ -42,6 +59,9 @@ export function PlacementBanner({
   info,
   onWait,
   onPlace,
+  paused = false,
+  pausedNote,
+  onResume,
 }: PlacementBannerProps) {
   // Whether the "Continue on…" picker is expanded — purely local UI state,
   // not fetch-driven, so it lives in the kit rather than round-tripping
@@ -50,15 +70,22 @@ export function PlacementBanner({
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning">
-      <span className="font-medium">{runnerName} is unavailable</span>
-      <button
-        type="button"
-        onClick={onWait}
-        disabled={busy}
-        className="rounded-md border border-warning/40 px-2 py-0.5 text-warning hover:bg-warning/20 disabled:opacity-50"
-      >
-        Wait for it
-      </button>
+      <span className="font-medium">
+        {runnerName} is {paused ? "paused" : "unavailable"}
+      </span>
+      {paused && pausedNote && (
+        <span className="text-warning/80">— {pausedNote}</span>
+      )}
+      {onResume && (
+        <button
+          type="button"
+          onClick={onResume}
+          disabled={busy}
+          className="rounded-md border border-warning/40 bg-warning/20 px-2 py-0.5 font-medium text-warning hover:bg-warning/30 disabled:opacity-50"
+        >
+          Resume
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setShowPicker((v) => !v)}
@@ -85,6 +112,16 @@ export function PlacementBanner({
           ))}
         </select>
       )}
+      {/* Demoted, not removed — see the component doc. Still a <button> so it
+          keeps its role, its disabled state and its accessible name. */}
+      <button
+        type="button"
+        onClick={onWait}
+        disabled={busy}
+        className="ml-auto text-warning/70 underline underline-offset-2 hover:text-warning disabled:opacity-50"
+      >
+        Wait for it
+      </button>
       {error && <span className="text-destructive">{error}</span>}
       {info && <span className="text-muted-foreground">{info}</span>}
     </div>

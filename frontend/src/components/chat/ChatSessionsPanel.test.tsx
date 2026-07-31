@@ -281,3 +281,90 @@ describe('ChatSessionsPanel — Run on picker', () => {
     )
   })
 })
+
+function chatSession(id: string, overrides: Partial<ChatSession> = {}): ChatSession {
+  return {
+    id,
+    workspace: 'dimagi',
+    agent_slug: 'echo',
+    project: '',
+    title: `Chat ${id}`,
+    status: 'active',
+    created_at: '2026-07-29T00:00:00Z',
+    last_activity_at: '2026-07-29T00:00:00Z',
+    origin: 'runner',
+    running: false,
+    runner_name: 'Laptop',
+    runner_online: true,
+    runner_status: 'online',
+    session_key: '',
+    ...overrides,
+  } as ChatSession
+}
+
+// Sending to a paused/offline runner does not fail — it queues until that box
+// comes back — so a chat on one must not sit in the list looking sendable.
+describe('ChatSessionsPanel — sessions on a parked runner', () => {
+  it('hides them by default and says how many, and why', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('live', { title: 'Live one' }),
+      chatSession('parked', { title: 'Parked one', runner_online: false, runner_status: 'paused' }),
+    ])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('Live one')).toBeTruthy()
+    expect(screen.queryByText('Parked one')).toBeNull()
+    expect(screen.getByTestId('parked-summary').textContent).toBe('1 hidden — runner paused')
+  })
+
+  it('reveals them dimmed, with the reason on the row, when Show offline is on', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('live', { title: 'Live one' }),
+      chatSession('parked', { title: 'Parked one', runner_online: false, runner_status: 'paused' }),
+    ])
+
+    renderPanel([agent()])
+    fireEvent.click(await screen.findByTestId('toggle-offline'))
+
+    expect(await screen.findByText('Parked one')).toBeTruthy()
+    const row = screen.getByTestId('session-parked-parked')
+    expect(row.className).toContain('opacity-60')
+    expect(row.textContent).toContain('runner paused')
+  })
+
+  it('still offers the reveal toggle when EVERY session is parked', async () => {
+    // The sort row used to render only for >1 session, so a lone parked chat
+    // would hide with no control left on screen to bring it back.
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('only', { title: 'Only one', runner_online: false, runner_status: 'disconnected' }),
+    ])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('No chats on a live runner')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('toggle-offline'))
+    expect(await screen.findByText('Only one')).toBeTruthy()
+  })
+
+  it('keeps an unbound web chat visible — it has no runner to be offline', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('web', {
+        title: 'Fresh chat',
+        origin: 'web',
+        runner_name: null,
+        runner_online: null,
+        runner_status: null,
+      }),
+    ])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('Fresh chat')).toBeTruthy()
+    expect(screen.queryByTestId('parked-summary')).toBeNull()
+  })
+})
