@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
+from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
@@ -286,7 +287,15 @@ def test_web_origin_session_with_title_reports_own_title(client, ctx):
     runner = Runner.objects.create(
         name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
     )
-    RunnerBinding.objects.create(session_id=sid, runner=runner, thread_key=sid, session_key="ace-api-1a2b-cdef")
+    # live_seen_at is what `record_session` stamps when this binding forms for real
+    # (unconditionally, as does the wholesale report). Without it the binding reads as
+    # "a runner held this and never reported it", which is now staleness for a web
+    # session too — correctly, but it would drop the row out of the list this test is
+    # asserting about, for reasons that have nothing to do with titles.
+    RunnerBinding.objects.create(
+        session_id=sid, runner=runner, thread_key=sid, session_key="ace-api-1a2b-cdef",
+        live_seen_at=timezone.now(),
+    )
 
     detail = client.get(f"/api/canopy-sessions/{sid}").json()
     assert detail["title"] == "Help me plan the Q3 field visit schedule"

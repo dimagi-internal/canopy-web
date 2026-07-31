@@ -43,19 +43,39 @@ def stale_cutoff(now=None):
 
 
 def unseen_q() -> Q:
-    """Runner-origin sessions with no recent sighting. A session with NO binding at
-    all counts as unseen, not as fresh. Web sessions never match — no runner reports
-    them, so only an explicit archive ends one."""
-    return Q(origin="runner") & (
-        Q(runner_binding__live_seen_at__lt=stale_cutoff())
-        | Q(runner_binding__live_seen_at__isnull=True)
+    """Sessions no runner is currently reporting — the derived half of `state=active`.
+
+    Keyed on the BINDING, not on origin. Where a chat was started says nothing about
+    whether it is still open: once a web chat has been sent, a runner holds an emdash
+    session for it and re-reports it every ~10s exactly like a runner-discovered one,
+    so absence from that report is the same direct observation for both. Scoping this
+    to `origin="runner"` left labs listing 10 week-old phone chats as live whose emdash
+    tasks had been deleted days earlier (2026-07-31) — indistinguishable, in the list,
+    from a chat you could actually continue.
+
+    Origin survives in one place only: what an ABSENT binding means. A
+    runner-discovered session could only ever have come from a report, so having no
+    binding is itself staleness; a web chat that has never been sent has no runner yet,
+    and absence proves nothing about it, so it stays active until archived by hand.
+
+    An existing binding with no stamp reads as unseen, not fresh: both writers
+    (`record_session` and the wholesale report) stamp `live_seen_at` unconditionally,
+    so unstamped means never reported. Being wrong here is cheap and self-healing
+    anyway — the rule is derived on every read, so one report brings the session back.
+    """
+    quiet = Q(runner_binding__live_seen_at__lt=stale_cutoff())
+    # `live_seen_at__isnull=True` is also true when there is no binding at all (the
+    # LEFT JOIN yields NULL), which is why the web leg has to require one explicitly.
+    never_reported = Q(runner_binding__live_seen_at__isnull=True) & (
+        Q(origin="runner") | Q(runner_binding__isnull=False)
     )
+    return quiet | never_reported
 
 
 def archive_stale_sessions(session_model) -> int:
-    """Archive runner-origin sessions with no recent runner sighting. The one-shot
-    backfill for rows that predate any means of retiring them. Web sessions are exempt
-    (no runner reports them). Returns the number of rows changed.
+    """Archive sessions with no recent runner sighting. The one-shot backfill for rows
+    that predate any means of retiring them. Only sessions no runner has ever held are
+    exempt — see `unseen_q`. Returns the number of rows changed.
 
     Takes the model class so the migration can pass its historical model and the test
     can pass the real one — the rule itself is identical for both.
