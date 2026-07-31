@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, emdash, hooks, sessions, streams
+from . import chat_bridge, chat_pump, close, emdash, hooks, sessions, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -626,6 +626,15 @@ def main() -> None:
                              cdp_port=cfg.cdp_port)
             except Exception:  # noqa: BLE001
                 logger.warning("menu answer failed for %s", msg.get("session_key"),
+                               exc_info=True)
+        elif msg.get("type") == "close_session" and msg.get("session_key"):
+            # A human closed this session from the web. Runs on the wake-listener
+            # thread and must never raise: this socket also carries cancel and wake,
+            # and losing it would cost the runner its liveness for one delete.
+            try:
+                close.close_session(str(msg["session_key"]), cdp_port=cfg.cdp_port)
+            except Exception:  # noqa: BLE001
+                logger.warning("close failed for %s", msg.get("session_key"),
                                exc_info=True)
 
     waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id, on_control=_on_control)
