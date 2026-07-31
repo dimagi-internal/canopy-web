@@ -1,8 +1,11 @@
 """The liveness window, defined once.
 
-Separate from services.py so the backfill migration can import it without dragging
-in models, signals, and the realtime bridge. Nothing in here imports app code, so it
-is safe for a migration to depend on it long after the rest of the app has moved on.
+Separate from services.py so it can be imported without dragging in models, signals,
+and the realtime bridge — including from a migration, which imports SESSION_LIVE_WINDOW
+(the window is data) but must NOT reuse `unseen_q` (the rule is logic, and it moves).
+Migration 0009 learned that the hard way: the predicate grew a join into
+`Runner.sessions_reported_at`, a field its historical models do not have, and every
+test database stopped building. A one-shot backfill freezes its own copy of the rule.
 """
 from __future__ import annotations
 
@@ -43,22 +46,64 @@ def stale_cutoff(now=None):
 
 
 def unseen_q() -> Q:
-    """Runner-origin sessions with no recent sighting. A session with NO binding at
-    all counts as unseen, not as fresh. Web sessions never match — no runner reports
-    them, so only an explicit archive ends one."""
-    return Q(origin="runner") & (
-        Q(runner_binding__live_seen_at__lt=stale_cutoff())
-        | Q(runner_binding__live_seen_at__isnull=True)
+    """Sessions no runner is currently reporting — the derived half of `state=active`.
+
+    Where a chat was STARTED says nothing about whether it is still open. Once a web
+    chat has been sent, a runner holds an emdash session for it and re-reports it every
+    ~10s exactly like a runner-discovered one, so absence from that report is the same
+    direct observation for both. Scoping the rule to `origin="runner"` left labs listing
+    11 week-old phone chats as live whose emdash tasks had been deleted days earlier
+    (2026-07-31) — indistinguishable, in the list, from a chat you could continue.
+
+    But staleness needs an OBSERVER, and that is what origin was standing in for badly.
+    Two things have to be true before absence means anything: a runner holds this
+    session, and that runner is one that posts wholesale reports. An unbound web chat
+    fails the first (no runner yet); a cloud-held chat fails the second. Neither can be
+    retired by observation, only by an explicit archive.
+
+    Being wrong in the archiving direction is cheap and self-healing — the rule is
+    derived on every read, so one report brings a session back — but it is not free:
+    the failure is a live chat vanishing from the list, so the gates above are real.
+    """
+    # Its binding stopped being reported. `live_seen_at__isnull=True` also covers
+    # having no binding at all (the LEFT JOIN yields NULL), which is why the web leg
+    # below requires one explicitly.
+    quiet = Q(runner_binding__live_seen_at__lt=stale_cutoff()) | Q(
+        runner_binding__live_seen_at__isnull=True
     )
+
+    # UNCHANGED. A runner-discovered session could only have come from a report, so
+    # absence — of a sighting or of a binding entirely — is staleness with no further
+    # qualification. Narrowing this leg would resurrect the 47 zombies of 2026-07-25.
+    runner_unseen = Q(origin="runner") & quiet
+
+    # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
+    # like any other, so its going quiet means the same thing — but ONLY on a box that
+    # actually posts wholesale reports. The cloud runner does not (it record-sessions
+    # once per turn and has no open-task set to report, a cloud chat being always
+    # resumable), so there `live_seen_at` is a creation stamp and its age is not
+    # evidence. Ungated, this archived every live cloud chat 3 minutes after its last
+    # turn. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
+    # rather than a freshness window.
+    web_unseen = (
+        ~Q(origin="runner")
+        & Q(runner_binding__isnull=False)
+        & Q(runner_binding__runner__sessions_reported_at__isnull=False)
+        & quiet
+    )
+
+    return runner_unseen | web_unseen
 
 
 def archive_stale_sessions(session_model) -> int:
-    """Archive runner-origin sessions with no recent runner sighting. The one-shot
-    backfill for rows that predate any means of retiring them. Web sessions are exempt
-    (no runner reports them). Returns the number of rows changed.
+    """WRITE the derived rule down: archive every session `unseen_q` currently matches.
+    Returns the number of rows changed.
 
-    Takes the model class so the migration can pass its historical model and the test
-    can pass the real one — the rule itself is identical for both.
+    Not needed for the list to read correctly — `unseen_q` is applied on every read, so
+    a stale session is already excluded without this. It exists as a repair/one-shot
+    utility. Takes the model class rather than importing one, so a caller can hand it a
+    historical model; note that only works while the predicate stays within fields that
+    model has (see the module docstring — migration 0009 no longer uses this).
     """
     return (
         session_model.objects.filter(status="active")

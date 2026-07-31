@@ -1435,6 +1435,17 @@ def replace_reported_sessions(
     session on its next turn)."""
     from apps.canopy_sessions.models import RunnerBinding, Session
 
+    # Record that this runner PARTICIPATES in the wholesale report — the observer
+    # session staleness is derived against (see Runner.sessions_reported_at and
+    # canopy_sessions.staleness.unseen_q). Stamped BEFORE the early-outs and
+    # regardless of whether `sessions` is empty: an empty report is the case that
+    # must retire everything on the box, so it is exactly the one that has to count
+    # as having reported. A targeted one-column `update()`, never `runner.save()` —
+    # this service is called on a ~10s cadence and a full save here would join the
+    # bug class where a frequent writer silently clears fields another writer owns
+    # (`code_sha`/`code_branch` have each paid for that once).
+    Runner.objects.filter(pk=runner.pk).update(sessions_reported_at=timezone.now())
+
     # emdash task NAMES are not unique — two un-archived tasks can share a name
     # (see task_state's "Names aren't unique in emdash's schema" note). Collapse
     # duplicates before upserting; the runner sends newest-first, so the first

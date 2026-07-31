@@ -220,3 +220,31 @@ def test_stickiness_survives_the_liveness_change():
     )
     assert services.claim_next_turn(other) is None, "no silent failover, even when stale"
     assert services.claim_next_turn(holder) is not None, "the holder still owns it"
+
+
+def test_a_wholesale_report_marks_the_runner_as_an_observer():
+    """`Runner.sessions_reported_at` is the OBSERVER stamp session staleness is derived
+    against. It has to be written by the report itself — observed, never typed — so a
+    box that reports gets it for free and a box that does not (the cloud runner posts
+    no wholesale report at all) never does."""
+    user, ws, runner = _ctx()
+    assert runner.sessions_reported_at is None, "unreported until it reports"
+
+    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    runner.refresh_from_db()
+    assert runner.sessions_reported_at is not None
+
+
+def test_an_empty_report_still_marks_the_runner_as_an_observer():
+    """The case that matters most: an empty report is how a box says 'everything here
+    closed', so it is exactly the report that must retire sessions — and it can only do
+    that if it counts as having reported. Stamping only on a non-empty list would mean a
+    laptop whose last task closed could never retire it."""
+    user, ws, runner = _ctx()
+    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
+    Runner.objects.filter(pk=runner.pk).update(sessions_reported_at=None)
+
+    services.replace_reported_sessions(runner, ws, [])
+    runner.refresh_from_db()
+    assert runner.sessions_reported_at is not None
