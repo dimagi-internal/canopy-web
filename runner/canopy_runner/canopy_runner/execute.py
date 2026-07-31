@@ -25,7 +25,7 @@ import re
 import time
 from pathlib import Path
 
-from . import cdp_control, chat_bridge, dialog, emdash, readiness, transcript
+from . import cdp_control, chat_bridge, dialog, emdash, hooks, readiness, transcript
 from .tail import TailReader
 
 logger = logging.getLogger("canopy_runner.execute")
@@ -233,6 +233,52 @@ def prompt_with_attachments(prompt: str, paths: list[pathlib.Path]) -> str:
         f"with the Read tool before replying:\n{lines}"
     )
 
+def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, exc) -> str:
+    """Why a reuse send failed, in terms the human can act on — and, when the
+    answer is "a dialog is up", the dialog itself.
+
+    `COMPOSER_NOT_VISIBLE` means something is drawn where the input line should
+    be, and the overwhelmingly common something is a menu the agent is waiting
+    on. That is the one send failure a human can actually resolve, and it used
+    to be the quietest thing in the system: the phone got a failed turn carrying
+    a runner-internal string, so "the agent asked you something" and "the send
+    broke" looked identical. Observed 2026-07-30 — three sends bounced off an
+    unanswered AskUserQuestion and the session sat dead for 139 minutes.
+
+    Reading the screen here is free of the hazard that rules it out on a hook
+    signal (see `hooks.start_hook_listener`): `open-send` has ALREADY opened this
+    task, so it is the active terminal and no focus is stolen. A human asked for
+    this send; the read is part of servicing it.
+
+    Best-effort throughout — this is the failure path, and nothing here may turn
+    a reported failure into an unreported one.
+    """
+    plain = f"chat reuse send failed: {str(exc)[:200]}"
+    if "COMPOSER_NOT_VISIBLE" not in str(exc):
+        return plain
+    try:
+        # The hook path's serializer, deliberately: a menu must reach the phone
+        # in ONE shape whichever path found it, or the client grows two readers.
+        menu = hooks.read_hook_menu_from(cdp_control, task, cdp_port=cfg.cdp_port)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not read the dialog on %s", task, exc_info=True)
+        return plain
+    if menu is None:
+        # Mid-redraw or a stale frame — the error's other causes. Saying "blocked"
+        # here would report an agent as needing a human when it is merely busy.
+        return plain
+    session_id = (turn.get("origin_ref") or {}).get("chat_session_id") or ""
+    try:
+        client.post_session_stream(runner_id, session_id, [{
+            "kind": "activity:blocked", "seq": -1, "index": -1,
+            "payload": {"menu": menu},
+        }])
+    except Exception:  # noqa: BLE001 — observability may never cost a turn
+        logger.debug("could not ship the dialog for session %s", session_id, exc_info=True)
+    question = menu.get("question") or "a question"
+    return f"not delivered — the agent is waiting on {question}"
+
+
 def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
     and REGISTER a bridge that carries the assistant reply back into the ledger — unlike
@@ -268,7 +314,9 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
             logger.error("chat reuse send failed turn=%s task=%s: %s", turn_id, task, exc)
-            client.fail_turn(turn_id, f"chat reuse send failed: {str(exc)[:200]}")
+            client.fail_turn(
+                turn_id, _blocking_dialog_note(cfg, client, runner_id, turn, task, exc)
+            )
             return f"failed:{turn_id}"
         # A collision is `ok: true` with action="collision" and NOTHING delivered —
         # not an exception. This path used to discard the result entirely, so a

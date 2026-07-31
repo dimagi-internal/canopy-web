@@ -256,6 +256,30 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "desired": message.get("desired"),
         })
 
+    async def runner_check_inbox(self, message):
+        # runner.{id} group_send type="runner.check_inbox" — the Gmail doorbell
+        # (apps/inbound/services.ring): a push said this mailbox changed; the
+        # runner marks it due and reads it on its own poll thread. This handler
+        # is load-bearing beyond forwarding: Channels RAISES on an unhandled
+        # group-message type, so without it the doorbell frame not only never
+        # arrived, it errored the consumer carrying wake/cancel too.
+        await self.send_json({
+            "type": "check_inbox",
+            "mailbox": message.get("mailbox"),
+        })
+
+    async def runner_update_available(self, message):
+        # runner.{id} group_send type="runner.update_available" — this box's
+        # last heartbeat reported a code_sha that differs from the deployed
+        # expectation. The runner kickstarts its SEPARATE updater job, which
+        # re-checks staleness and the in-flight marker itself — the daemon never
+        # installs anything on this signal, and the updater's 30-min timer stays
+        # the rescue path for a daemon too dead to hear a frame.
+        await self.send_json({
+            "type": "update_available",
+            "expected_sha": message.get("expected_sha"),
+        })
+
     async def runner_menu_answer(self, message):
         # runner.{id} group_send type="runner.menu_answer" — a human answered, from
         # the web, the dialog an agent is blocked on. The runner presses the key in
@@ -285,7 +309,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             turn = await self._claim()
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
-            await self._heartbeat(content.get("active_turn_ids") or [])
+            await self._heartbeat(content.get("active_turn_ids") or [], content)
             await self.send_json({"type": "heartbeat.ack"})
         elif action == "start":
             ok = await self._start(content.get("turn_id"), content.get("session_id") or "")
@@ -332,10 +356,42 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return _serialize_turn(turn) if turn else None
 
     @database_sync_to_async
-    def _heartbeat(self, active_turn_ids):
+    def _heartbeat(self, active_turn_ids, frame=None):
+        """Provenance rides this frame, and it HAS to.
+
+        `services.heartbeat` assigns code_branch/code_version/code_sha/
+        code_committed_at unconditionally, so a call that omits them RESETS them.
+        This path is the cloud runner's primary heartbeat (every 20s), so without
+        the pass-through anything it reports over REST — at pairing, or from a
+        lease-renewal beat — is erased moments later, and `code_sha` reads empty
+        forever while looking exactly like a runner that never reported one.
+
+        Same failure the laptop's `provenance.py` docstring records from the other
+        side: six call sites, four silently clearing the field. The fix there was
+        one stamping point; here it is not dropping what the stamp sent.
+
+        A runner too old to send these simply sends nothing, which resets to empty
+        — i.e. UNKNOWN, which is what an unknown-provenance runner should report,
+        and what this path already did for everyone.
+        """
+        frame = frame or {}
+        try:
+            committed_at = int(frame.get("code_committed_at") or 0)
+        except (TypeError, ValueError):
+            # Provenance is decoration on a liveness call. A malformed value must
+            # cost the runner its timestamp, never its heartbeat — losing the beat
+            # would take it offline and stop it claiming.
+            committed_at = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is not None:
-            harness_services.heartbeat(runner, active_turn_ids=active_turn_ids)
+            harness_services.heartbeat(
+                runner,
+                active_turn_ids=active_turn_ids,
+                code_branch=str(frame.get("code_branch") or ""),
+                code_version=str(frame.get("code_version") or ""),
+                code_sha=str(frame.get("code_sha") or ""),
+                code_committed_at=committed_at,
+            )
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

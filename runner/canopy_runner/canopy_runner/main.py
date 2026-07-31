@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, emdash, hooks, sessions, streams
+from . import chat_bridge, chat_pump, close, emdash, hooks, inbox_due, sessions, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -162,28 +162,55 @@ def _paused_agents(cfg: Config) -> set[str]:
 
 def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
                          paused: set[str] | None = None) -> None:
-    """Deterministic email trigger: at most every inbox_poll_seconds, poll each
-    configured mailbox and enqueue email-origin turns. Best-effort — a failing inbox
-    (auth expired) logs and is skipped, never crashes the loop. Paused agents are
-    skipped so no new email turns are enqueued for them."""
+    """Email trigger, on two clocks: the doorbell and the timer.
+
+    A ``check_inbox`` control frame from canopy-web means Gmail just told the
+    server that mailbox changed — that mailbox is checked NOW, bypassing the
+    timer. Everything else still runs on ``inbox_poll_seconds`` (300s), which is
+    no longer the delivery mechanism but remains the AUDITOR: a message the
+    timer finds is a message push failed to ring for, and the ``discovered_by``
+    tag is what lets the server say so.
+
+    Stamps are per mailbox, so a doorbell for eva never defers hal's timer — the
+    quiet mailboxes are exactly where a silently-broken watch would hide.
+
+    Best-effort — a failing inbox (auth expired) logs and is skipped, never
+    crashes the loop. Paused agents are skipped so no new email turns are
+    enqueued for them.
+    """
     if not getattr(cfg, "mailboxes", None):
         return
-    stamp = Path(cfg.state_path).with_name("inbox-last.txt") if cfg.state_path else Path("inbox-last.txt")
+    stamp = Path(cfg.state_path).with_name("inbox-last.json") if cfg.state_path else Path("inbox-last.json")
     try:
-        last = float(stamp.read_text())
+        stamps = json.loads(stamp.read_text())
+        if not isinstance(stamps, dict):
+            stamps = {}
     except (OSError, ValueError):
-        last = 0.0
-    if now_fn() - last < cfg.inbox_poll_seconds:
+        stamps = {}
+
+    rung = inbox_due.take_pending()
+    now = now_fn()
+    due_slugs = inbox_due.due(
+        cfg.mailboxes, stamps, now=now, interval=cfg.inbox_poll_seconds, rung=rung
+    )
+    if not due_slugs:
         return
+    rung_slugs = {
+        slug for slug in due_slugs
+        if (cfg.mailboxes[slug].get("account") or "").strip().lower() in rung
+    }
+
     from . import inbox as inbox_mod
     cap = getattr(cfg, "inbox_max_threads", 8)
-    for agent, box in cfg.mailboxes.items():
+    for agent in due_slugs:
+        box = cfg.mailboxes[agent]
         if paused and agent in paused:
             continue
         try:
             res = inbox_mod.check_inbox(
                 client, agent, mailbox=box["account"], gog_client=box["client"],
                 query=box.get("query", inbox_mod.DEFAULT_QUERY), max_threads=cap,
+                discovered_by=inbox_due.discovered_by(agent, rung_slugs),
             )
             n_new, n_seen = len(res["new"]), len(res["seen"])
             n_skip = len(res.get("skipped", []))
@@ -192,15 +219,95 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # `skipped` = unread threads whose newest message is the agent's own reply
             # (already had the last word), suppressed so a re-marked-unread thread can't
             # manufacture a turn with no new inbound.
-            logger.info("inbox[%s]: polled — %d unread (%d NEW -> session, %d already tracked, "
+            logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply)",
-                        agent, n_new + n_seen + n_skip, n_new, n_seen, n_skip)
+                        agent, "RUNG" if agent in rung_slugs else "polled",
+                        n_new + n_seen + n_skip, n_new, n_seen, n_skip)
         except Exception as exc:  # noqa: BLE001 — one bad inbox never kills the loop
             logger.warning("inbox check for %s failed: %s", agent, exc)
+        finally:
+            # Stamp per mailbox, and stamp even on failure: a mailbox whose auth
+            # has expired would otherwise be retried every single tick, turning
+            # one broken credential into a subprocess storm.
+            stamps[agent] = now_fn()
     try:
-        stamp.write_text(str(now_fn()))
+        stamp.write_text(json.dumps(stamps))
     except OSError:
         pass
+
+
+def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
+    """Keep each mailbox's Gmail watch armed, and report the expiry.
+
+    Rides the inbox tick because it needs nothing else, and re-arms 24h early
+    against a 7-day ceiling — six chances to succeed before push actually lapses.
+    NOT the delivery path: arming is a weekly registration call, while delivery is
+    Gmail -> Pub/Sub -> canopy-web -> the check_inbox doorbell, in seconds.
+
+    Off unless `gmail_watch_topic` is set, so a box with no Pub/Sub topic
+    provisioned behaves exactly as before. Best-effort per mailbox: one failing
+    mailbox (revoked grant, missing gog client) is logged and skipped, never
+    raised — the server's watch.expired row is what makes it loud.
+    """
+    if not getattr(cfg, "mailboxes", None):
+        return
+    from . import gmail_watch
+
+    # Topics come from canopy-web (each workspace's InboundPushConfig), so a
+    # tenant configures its topic once in the UI rather than by editing
+    # runner.json on every box. The local `gmail_watch_topic` remains as a
+    # fallback for a box running against a server that has no config yet.
+    local_topic = getattr(cfg, "gmail_watch_topic", "") or ""
+    try:
+        served = {row.get("address", "").lower(): row.get("watch_topic", "")
+                  for row in client.runner_mailboxes()}
+    except Exception as exc:  # noqa: BLE001 — a config read never breaks the tick
+        logger.debug("runner-mailboxes fetch failed (%s); using local topic", exc)
+        served = {}
+    if not served and not local_topic:
+        return
+
+    state_path = (Path(cfg.state_path).with_name("gmail-watch.json")
+                  if cfg.state_path else Path("gmail-watch.json"))
+    try:
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError):
+        state = {}
+
+    now = dt.datetime.now(dt.UTC)
+    changed = False
+    for agent, box in cfg.mailboxes.items():
+        address = box.get("account") or ""
+        if not address:
+            continue
+        try:
+            prev = dt.datetime.fromisoformat(state[address]) if state.get(address) else None
+        except (TypeError, ValueError):
+            prev = None
+        if not gmail_watch.due(prev, now=now):
+            continue
+        topic = served.get(address.lower(), "") or local_topic
+        if not topic:
+            continue
+        try:
+            expires = gmail_watch.arm(address, box.get("client") or "canopy", topic)
+        except Exception as exc:  # noqa: BLE001 — one mailbox never breaks the tick
+            logger.warning("gmail watch re-arm failed for %s: %s", address, exc)
+            continue
+        state[address] = expires.isoformat()
+        changed = True
+        logger.info("gmail watch armed for %s -> expires %s", address, expires.isoformat())
+        try:
+            client.report_watch(address, expires)
+        except Exception as exc:  # noqa: BLE001 — reporting is not the arming
+            logger.warning("gmail watch report failed for %s: %s", address, exc)
+    if changed:
+        try:
+            state_path.write_text(json.dumps(state))
+        except OSError:
+            pass
 
 
 def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = None) -> None:
@@ -341,6 +448,11 @@ def run_once(cfg: Config, client: Client) -> str:
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
     hooks.maybe_report_hooks()
+    # The hook config is shared by the whole account and written by anything that
+    # starts a listener, so it can be pointed away from us after startup. Checked
+    # every tick rather than on the report's cadence: the report is gated on hooks
+    # ARRIVING, which is the very thing a drifted config stops.
+    hooks.ensure_hook_config()
     chat_pump.pump_chat_bridges(cfg, client)
     sessions.maybe_report_sessions(cfg, client)
     streams.sync_session_streams(cfg, client)
@@ -366,6 +478,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
     _maybe_check_inboxes(cfg, client, paused=paused)
+    # Keep the Gmail watches armed so push keeps being DELIVERED. Rides the same
+    # tick; a no-op unless a topic is configured, and internally throttled to the
+    # 24h-before-expiry window rather than firing every cycle.
+    _maybe_rearm_watches(cfg, client)
     # Fleet-audit review ingestion was removed when Ada moved to Items: approving
     # an Item dispatches its work server-side (in the decide transaction), so there
     # is no resolved review for the runner to poll. DDD findings reviews are applied
@@ -616,6 +732,22 @@ def main() -> None:
     def _on_control(msg: dict) -> None:
         if msg.get("type") == "cancel" and msg.get("turn_id"):
             CANCELLED_TURNS.add(str(msg["turn_id"]))
+        elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
+            # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
+            # on the next tick instead of waiting out inbox_poll_seconds. Only
+            # marks it due — the read itself stays on the poll thread, because a
+            # `gog` subprocess on the wake-listener thread would block the socket
+            # that also carries cancel and wake.
+            inbox_due.ring(str(msg["mailbox"]))
+        elif msg.get("type") == "update_available":
+            # A deploy moved this kind's expected runner sha; kickstart the
+            # SEPARATE updater job now instead of waiting out its 30-min timer.
+            # nudge() never installs in-process, never raises, throttles itself,
+            # and skips when the frame raced an install that already happened —
+            # the updater keeps the busy/stale decision either way.
+            from . import update as update_mod
+
+            update_mod.nudge(cfg, str(msg.get("expected_sha") or ""))
         elif msg.get("type") == "menu_answer" and msg.get("session_key"):
             # A human answered, from the web, the dialog an agent is blocked on.
             # Runs on the wake-listener thread and must never raise: this socket

@@ -55,8 +55,14 @@ def test_session_state_dto_keys():
     state = serializers.session_state_dto(
         session=s, current_user_id=u.pk, participants=[sp],
         present_ids=[u.pk], draft=None, messages=[])
+    # `menu` joined the snapshot deliberately (2026-07-31): the dialog an agent
+    # is blocked on used to exist only as a view-only live frame, so it reached
+    # a client only if it was already connected when the agent asked — and you
+    # go and look precisely BECAUSE the session stopped. Always present, null
+    # when nothing is pending, so a client needs no second code path.
     assert set(state) == {"messages", "active_draft", "participants",
-                          "presence_user_ids", "current_user_id"}
+                          "presence_user_ids", "current_user_id", "menu"}
+    assert state["menu"] is None
     assert state["current_user_id"] == u.pk
     assert state["presence_user_ids"] == [u.pk]
     assert state["participants"][0]["email"] == u.email

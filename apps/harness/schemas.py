@@ -141,14 +141,26 @@ class RunnerOut(Schema):
 
     @staticmethod
     def resolve_expected_code_sha(obj) -> str:
-        from django.conf import settings
-        return getattr(settings, "RUNNER_CODE_SHA", "") or ""
+        # Per KIND, because the fleet runs two different programs: a laptop
+        # executes runner/canopy_runner, a cloud box executes runner/ec2. Serving
+        # one sha to both would mark every cloud runner permanently stale — the
+        # alert would then be pure noise on exactly the boxes it was extended to
+        # cover. Either being empty still means UNKNOWN and stays silent.
+        # The derivation lives on the model so the heartbeat's update nudge
+        # compares the same quantity this serves.
+        return obj.expected_code_sha()
 
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:
         from django.conf import settings
+        from .models import Runner
+
+        setting = (
+            "RUNNER_CLOUD_CODE_COMMITTED_AT" if obj.kind == Runner.CLOUD
+            else "RUNNER_CODE_COMMITTED_AT"
+        )
         try:
-            return int(getattr(settings, "RUNNER_CODE_COMMITTED_AT", 0) or 0)
+            return int(getattr(settings, setting, 0) or 0)
         except (TypeError, ValueError):
             # A malformed build arg must not 500 the whole runners list — unknown
             # (0) simply means the alert keeps today's direction-less behaviour.
@@ -253,6 +265,16 @@ class ReportedSessionIn(Schema):
     status: str = ""
     last_interacted_at: dt.datetime | None = None
     recent_messages: list = []  # Phase B populates this; ignored/empty in Phase A
+    # The dialog this session is blocked on, read from its transcript, or None
+    # for "I looked and there is none". `None` is a REAL answer and is written
+    # through: it is what retires a menu once the human answers at the laptop.
+    #
+    # Defaulted so a runner that predates this keeps working — but note what its
+    # default MEANS. An old runner sends nothing, which lands as None and clears
+    # the field, i.e. "no dialog". That is the safe direction: the failure is a
+    # phone with no buttons (the terminal still answers), never a phone offering
+    # buttons against a dialog that is gone.
+    question: dict | None = None
 
 
 class ReportSessionsIn(Schema):

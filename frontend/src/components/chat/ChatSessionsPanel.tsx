@@ -249,11 +249,22 @@ export function ChatSessionsPanel({
     [sessions],
   )
   const visible = showOffline ? sessions : liveSessions
+  // Counted over the WHOLE list, not `visible`: a session waiting on a human is
+  // the one thing you want to know is there even when the current filter is
+  // hiding it. Sits beside the heading so it reads from a collapsed tab.
+  const waitingCount = sessions.filter((s) => s.waiting_on_you).length
 
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex items-center justify-between gap-2 pb-2">
-        <h2 className="text-sm font-semibold text-foreground">{heading}</h2>
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          {heading}
+          {waitingCount > 0 && (
+            <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
+              {waitingCount} waiting on you
+            </span>
+          )}
+        </h2>
         <DropdownMenu onOpenChange={(open: boolean) => { if (!open) resetPending() }}>
           <DropdownMenuTrigger
             render={<Button size="sm" disabled={creating || (agents.length === 0 && projects.length === 0)} />}
@@ -443,6 +454,16 @@ export function ChatSessionsPanel({
                       {parkedWhy ? (
                         <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
                           runner {parkedWhy}
+                        </span>
+                      ) : s.waiting_on_you ? (
+                        /* Outranks `running`: an agent blocked on a dialog is the
+                           one row here you can do something about, and it is the
+                           one that otherwise reads as merely quiet — a waiting
+                           session stops writing, so it sinks in a list ordered by
+                           activity and looks identical to an idle one. */
+                        <span className="flex items-center gap-1 font-medium text-warning">
+                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+                          waiting on you
                         </span>
                       ) : s.running ? (
                         <span className="flex items-center gap-1 font-medium text-success">

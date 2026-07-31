@@ -71,10 +71,25 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     }
 
     case "session.activity":
-      // The menu is cleared unless this frame carries one: a stale dialog is
-      // worse than none, because its buttons would answer a prompt that is no
-      // longer on screen.
-      return { ...prev, activity: frame.data.state, menu: frame.data.menu };
+      // A frame that says the agent is NOT waiting retracts the menu — a stale
+      // dialog is worse than none, because its buttons would answer a prompt
+      // that is no longer on screen.
+      //
+      // A `blocked` frame that carries no menu does NOT, and that asymmetry is
+      // load-bearing. The hook path reports `blocked` without one on purpose
+      // (#510 — reading the screen stole emdash's focus), so treating a bare
+      // `blocked` as a retraction would erase every menu the snapshot and the
+      // session report supply, which is now all of them.
+      if (frame.data.state !== "blocked") {
+        return { ...prev, activity: frame.data.state, menu: undefined };
+      }
+      return { ...prev, activity: "blocked", menu: frame.data.menu ?? prev.menu };
+
+    case "session.menu":
+      // The authoritative producer: the session report re-derives the dialog
+      // from the transcript every ~10s and pushes only the edges. `null` is the
+      // retraction, and has to be honoured — somebody answered at the keyboard.
+      return { ...prev, menu: frame.data.menu ?? undefined };
 
     case "chat.user_message": {
       // Someone typed into emdash, OR into this page. Both reach here, and that

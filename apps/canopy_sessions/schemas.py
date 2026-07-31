@@ -105,10 +105,20 @@ class SessionOut(Schema):
     # opposite things from the reader (unpause it vs go find out what broke).
     runner_status: str | None = None
     session_key: str = ""
+    # This session is blocked on a dialog somebody has to answer. A bool here
+    # and the dialog itself on the detail read: the list needs to RANK and badge
+    # a waiting session, not render its options. Without it a blocked agent and
+    # an idle one are indistinguishable in the list — the "it looks like the
+    # session stopped" half of the 2026-07-31 spark report.
+    waiting_on_you: bool = False
 
 
 class SessionDetailOut(SessionOut):
     messages: list[MessageOut]
+    # The dialog itself, when `waiting_on_you`. Same payload shape whichever
+    # half found it (transcript or screen read), so a client never grows two
+    # readers — see canopy_transcript.questions.
+    menu: dict | None = None
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.

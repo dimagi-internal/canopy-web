@@ -91,7 +91,15 @@ export function sendBlockReason(args: {
   runnerName: string | null | undefined;
   boundOffline: boolean;
   paused: boolean;
+  blockedOnMenu?: boolean;
 }): string | undefined {
+  // A dialog is up, so there is no prompt to send INTO: Claude Code's TUI draws
+  // the menu where the composer would be, which is exactly the state the runner
+  // reports as COMPOSER_NOT_VISIBLE and refuses to blind-send against. The send
+  // would bounce, and the answer the agent is actually waiting for is one tap
+  // away in the banner above. Checked before liveness because it is the more
+  // specific fact — a dialog is up whether or not the box is also parked.
+  if (args.blockedOnMenu) return "answer the question above to continue";
   if (!args.boundOffline || !args.runnerName) return undefined;
   return args.paused
     ? `${args.runnerName} is paused — resume it to send`

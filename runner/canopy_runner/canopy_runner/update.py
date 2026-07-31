@@ -74,6 +74,65 @@ def in_flight(cfg, *, now: float | None = None) -> int | None:
         return None
 
 
+# --- the update doorbell -----------------------------------------------------
+#
+# The server rings `update_available` down the control channel the moment a
+# heartbeat reports a sha that differs from the deployed expectation — on EVERY
+# stale beat, so a missed frame costs one beat, not one timer cycle. The daemon
+# therefore owns the throttle: one kick per window, not sixty an hour while the
+# updater is deliberately deferring (busy).
+NUDGE_MIN_SECONDS = 600.0
+_last_nudge_at = 0.0
+
+UPDATER_LABEL = "com.canopy.runner.updater"
+
+
+def _kickstart_updater() -> None:
+    import os
+    import subprocess
+
+    subprocess.run(
+        ["launchctl", "kickstart", f"gui/{os.getuid()}/{UPDATER_LABEL}"],
+        capture_output=True, timeout=15, check=True,
+    )
+
+
+def nudge(cfg, expected_sha: str, *, now: float | None = None) -> bool:
+    """The `update_available` doorbell: kickstart the SEPARATE updater job now
+    instead of waiting out its 30-minute timer.
+
+    Never installs in-process — the updater re-checks staleness and the
+    in-flight marker itself, so busy deferral, the read-only check and the
+    crash-loop rescue are inherited, not re-implemented. Skips when the frame
+    raced an install that already happened (expected == installed). Runs on the
+    wake-listener thread, so it must never raise: that socket also carries
+    cancel and wake."""
+    global _last_nudge_at
+    from . import provenance
+
+    now = time.time() if now is None else now
+    expected = (expected_sha or "").strip()
+    installed = provenance.code_sha()
+    # Empty on either side is UNKNOWN, never "stale" — the same rule
+    # update_status applies on the timer path.
+    if not expected or not installed or expected == installed:
+        return False
+    if now - _last_nudge_at < NUDGE_MIN_SECONDS:
+        return False
+    # Advance the throttle on the ATTEMPT, not the success: a broken launchctl
+    # would otherwise warn on every ~10s heartbeat, and the 30-min timer is the
+    # rescue for that case regardless.
+    _last_nudge_at = now
+    try:
+        _kickstart_updater()
+    except Exception as exc:  # noqa: BLE001 — a launchctl hiccup must not cost the socket
+        logger.warning("update nudge: could not kickstart %s: %s", UPDATER_LABEL, exc)
+        return False
+    logger.info("update nudge: kickstarted %s (expected %s, installed %s)",
+                UPDATER_LABEL, expected[:12], installed[:12])
+    return True
+
+
 def update_status(cfg, client, *, installed_sha: str | None = None,
                   now: float | None = None) -> tuple[str, str]:
     """(status, expected_sha).

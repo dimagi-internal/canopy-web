@@ -23,6 +23,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/mcp/",              # FastMCP server — auth via Bearer in the request
     "/auth/cli/authorize/",   # @login_required handles its own OAuth bounce + preserves ?cb/?state/?label
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
+    "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
 )
 
 

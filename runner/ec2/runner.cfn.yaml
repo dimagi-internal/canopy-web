@@ -90,13 +90,33 @@ Parameters:
     Default: canopy/cloud-runner/runner-code
     Description: >
       Secrets Manager id holding cloud_runner.py as a single-line gzip+base64
-      blob, published by up.sh on every deploy. The code does NOT live in
-      UserData: EC2 caps UserData at 16 KB and the gz+b64 runner alone is ~12 KB,
-      which (plus the rest of this cloud-config) blew the cap and made the stack
-      undeployable — CREATE_FAILED "User data is limited to 16384 bytes". Keeping
-      it in Secrets Manager also means the runner code is re-fetched by
-      canopy-fetch-env on every service start, so `./up.sh && systemctl restart
-      canopy-runner` ships new runner bytes without recycling the instance.
+      blob, published by up.sh. The code does NOT live in UserData: EC2 caps
+      UserData at 16 KB and the gz+b64 runner alone is ~12 KB, which (plus the
+      rest of this cloud-config) blew the cap and made the stack undeployable —
+      CREATE_FAILED "User data is limited to 16384 bytes".
+
+      As of spec 2026-07-30 this is a FIRST-BOOT SEED, not the update channel:
+      canopy-fetch-env installs it only when there is no cloud_runner.py on disk.
+      Past that the auto-updater owns the file and tracks the DEPLOYED sha, so
+      re-fetching the secret on every start would revert every update at the next
+      restart. `canopy-runner-update --from-secret` is the way back to these bytes.
+  RunnerCodeShaSecret:
+    Type: String
+    Default: canopy/cloud-runner/runner-code-sha
+    Description: >
+      Secrets Manager id holding the PROVENANCE of the seed above, as the JSON
+      `{"sha": ..., "committed_at": ...}` up.sh resolves from git (path-scoped to
+      runner/ec2/{cloud_runner.py,bootstrap_agents.sh} — the same quantity the
+      deploy computes for `expected_code_sha`). canopy-fetch-env writes it to
+      /opt/canopy-runner/build-info.json when it installs the seed, so a fresh
+      box's FIRST update check is a real answer instead of `unknown` — which would
+      mean it never auto-updates, and looks exactly like being up to date.
+
+      A SECRET rather than a CloudFormation parameter deliberately: a parameter is
+      interpolated into UserData, and CFN applies a UserData change to a running
+      instance as a stop/start. The sha changes on every runner commit, so passing
+      it as a parameter would bounce the live box (new public IP and all) every
+      time anyone ran up.sh. Absent → unknown → silent, as everywhere else.
 
 Resources:
   KeyPair:
@@ -184,12 +204,26 @@ Resources:
                 umask 077
                 install -d -o ubuntu -g ubuntu /opt/canopy-runner
                 # cloud_runner.py lives in Secrets Manager, not UserData (16 KB cap).
+                # SEED ONLY — install it when there is nothing on disk, and never
+                # again. Past first boot the auto-updater owns this file and tracks
+                # the DEPLOYED sha; re-fetching here on every start would revert
+                # every update at the next restart, silently, forever.
+                # `canopy-runner-update --from-secret` is the deliberate way back.
                 # Decode to a temp file and mv into place so a failed fetch can never
                 # leave a truncated script that systemd would then try to exec.
-                secret ${RunnerCodeSecret} | base64 -d | gunzip > /opt/canopy-runner/cloud_runner.py.new
-                chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new
-                chmod 0755 /opt/canopy-runner/cloud_runner.py.new
-                mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
+                if [ ! -s /opt/canopy-runner/cloud_runner.py ]; then
+                  secret ${RunnerCodeSecret} | base64 -d | gunzip > /opt/canopy-runner/cloud_runner.py.new
+                  chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new
+                  chmod 0755 /opt/canopy-runner/cloud_runner.py.new
+                  mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
+                  # What the seed IS, so the first update check can answer at all.
+                  # Its own secret, not a template parameter — a parameter would be
+                  # baked into UserData, and this value changes on every runner
+                  # commit, so up.sh would stop/start the live box every time.
+                  secret ${RunnerCodeShaSecret} > /opt/canopy-runner/build-info.json 2>/dev/null \
+                    || echo '{}' > /opt/canopy-runner/build-info.json
+                  chown ubuntu:ubuntu /opt/canopy-runner/build-info.json
+                fi
                 # gog's `file` keyring backend (the only option on a headless box —
                 # there is no OS keychain) encrypts with a password it PROMPTS for.
                 # With no TTY the prompt is impossible, so every `gog auth tokens
@@ -215,6 +249,65 @@ Resources:
                 ENV
                 chown ubuntu:ubuntu /opt/canopy-runner/runner.env
                 chmod 600 /opt/canopy-runner/runner.env
+            - path: /usr/local/bin/canopy-runner-update
+              permissions: '0755'
+              content: |
+                #!/usr/bin/env bash
+                # Thin shim. The REAL updater is runner/ec2/update_runner.sh in the
+                # canopy-web clone this box already keeps — so the updater itself
+                # ships by deploy rather than being frozen here, where cloud-init
+                # only ever runs on an instance's FIRST boot (and where a 16 KB
+                # UserData cap could not hold it anyway).
+                #
+                # Read from origin/main, never the working tree: agent turns run in
+                # this clone and one may have left it on a branch.
+                set -uo pipefail
+                REPO="${!CANOPY_WEB_REPO_DIR:-/opt/canopy-web}"
+                TMP=$(mktemp)
+                trap 'rm -f "$TMP"' EXIT
+                git -C "$REPO" show origin/main:runner/ec2/update_runner.sh > "$TMP" 2>/dev/null || true
+                if [ ! -s "$TMP" ]; then
+                  echo "$(date -u +%FT%TZ) canopy-runner-update: no update_runner.sh in $REPO yet; skipping."
+                  exit 0
+                fi
+                bash "$TMP" "$@"
+            - path: /etc/sudoers.d/canopy-runner-update
+              permissions: '0440'
+              content: |
+                # The auto-updater runs as the service user and needs exactly one
+                # privileged action: restarting the runner after installing new
+                # bytes. Scoped to that command rather than relying on the AMI's
+                # default blanket NOPASSWD for `ubuntu`.
+                ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart canopy-runner.service
+                # The daemon's update NUDGE (an `update_available` WS frame) starts
+                # the update unit off-cycle instead of waiting out the 30-min timer.
+                # `start`, never the script as a child — the restart above would
+                # kill a child in the daemon's own cgroup mid-install.
+                ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block canopy-runner-update.service
+            - path: /etc/systemd/system/canopy-runner-update.service
+              content: |
+                [Unit]
+                Description=Canopy cloud runner auto-update (install the deployed sha)
+                [Service]
+                Type=oneshot
+                User=ubuntu
+                Environment=HOME=/home/ubuntu
+                Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+                ExecStart=/usr/local/bin/canopy-runner-update
+            - path: /etc/systemd/system/canopy-runner-update.timer
+              content: |
+                [Unit]
+                Description=Ask every 30 min whether this box is behind the deployed runner
+                [Timer]
+                # Not at boot: the runner clones canopy-web and bootstraps the agent
+                # fleet in its first minutes, and an update RESTARTS the service —
+                # doing that mid-bootstrap would undo work nothing re-runs until the
+                # next start.
+                OnBootSec=30min
+                OnUnitActiveSec=30min
+                AccuracySec=1min
+                [Install]
+                WantedBy=timers.target
             - path: /etc/systemd/system/canopy-runner.service
               content: |
                 [Unit]
@@ -264,6 +357,11 @@ Resources:
             - [ bash, -c, "/usr/local/bin/canopy-fetch-env" ]
             - [ systemctl, daemon-reload ]
             - [ systemctl, enable, --now, canopy-runner.service ]
+            # The auto-updater. A SEPARATE unit from the runner on purpose: a
+            # runner that crash-loops can never update itself (it never heartbeats,
+            # so it never learns it is behind), and an independent timer means
+            # shipping a fix is enough to rescue the box. Spec 2026-07-30.
+            - [ systemctl, enable, --now, canopy-runner-update.timer ]
 
 Outputs:
   InstanceId:

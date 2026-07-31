@@ -77,3 +77,48 @@ describe("projectHeader", () => {
     expect(projectHeader(rows, 0, "project")).toBe("No project");
   });
 });
+
+describe("a session waiting on a human", () => {
+  const waiting = (project: string, at: string) => ({
+    ...row(project, at),
+    waiting_on_you: true,
+  });
+
+  it("sorts above everything, however long ago it last spoke", () => {
+    // The trap this exists for: a session stops writing the INSTANT it asks, so
+    // activity ordering pushes it further down the longer it is kept waiting —
+    // the one row you can act on ends up under every row you cannot.
+    const rows = [
+      row("canopy-web", T.now, true),
+      row("ace", T.min5),
+      waiting("spark", T.wk1),
+    ];
+    expect(sortSessions(rows, "time").map((r) => r.project)).toEqual([
+      "spark",
+      "canopy-web",
+      "ace",
+    ]);
+  });
+
+  it("stays inside its project group in project mode", () => {
+    // Project mode's contract is that a row appears under its repo heading;
+    // floating a waiting row out of its group would break the grouping it is
+    // named for.
+    const rows = [
+      row("ace", T.now),
+      waiting("reef", T.wk1),
+      row("ace", T.wk1),
+    ];
+    expect(sortSessions(rows, "project").map((r) => r.project)).toEqual([
+      "ace",
+      "ace",
+      "reef",
+    ]);
+  });
+
+  it("outranks running, which is not the same question", () => {
+    // "running" means the agent is busy; "waiting" means YOU are the blocker.
+    const rows = [row("busy", T.now, true), waiting("blocked", T.hr4)];
+    expect(sortSessions(rows, "time")[0].project).toBe("blocked");
+  });
+});

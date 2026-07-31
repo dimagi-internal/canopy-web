@@ -150,6 +150,22 @@ def heartbeat(
             runner.capabilities = {**runner.capabilities, "projects": cleaned}
             fields.append("capabilities")
     runner.save(update_fields=fields)
+    # The update nudge: this is the one moment both shas are in hand — the
+    # deploy moved the expectation, the beat just reported what's installed.
+    # Ring the box's control channel so its updater checks NOW instead of
+    # waiting out its 30-min timer. Push is the doorbell, the timer stays the
+    # auditor (and the rescue for a daemon too dead to hear a frame). Sent on
+    # every stale beat, not edge-triggered: the frame is tiny, and the runner
+    # owns the throttle — a missed frame then costs one beat, not one timer
+    # cycle. Empty on either side is UNKNOWN, never "stale".
+    expected = runner.expected_code_sha()
+    if code_sha and expected and code_sha != expected:
+        from apps.realtime import groups
+
+        groups.publish(
+            groups.runner_group(runner.pk),
+            {"type": "runner.update_available", "expected_sha": expected},
+        )
     if active_turn_ids:
         Turn.objects.filter(
             pk__in=active_turn_ids,
@@ -1432,6 +1448,11 @@ def replace_reported_sessions(
         deduped.append(s)
 
     now_keys = {s.emdash_task for s in deduped}
+    # (session_id, menu|None) for every session whose dialog appeared or went
+    # away in THIS report — pushed after commit so an open chat updates without
+    # a reload. Only the edges: the report repeats every ~10s and republishing
+    # an unchanged menu would re-render the buttons under a thumb.
+    menu_changes: list[tuple] = []
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
@@ -1520,6 +1541,18 @@ def replace_reported_sessions(
             # alone.
             binding.reported_at = binding.live_seen_at
             binding.tail = list(s.recent_messages or [])
+            # Written unconditionally, INCLUDING None. The report is a fresh
+            # observation of the session's screen every ~10s, so "no dialog" has
+            # to be able to clear one — otherwise a menu answered at the laptop
+            # keeps live buttons on every phone that opens the session, and a
+            # tap then presses a number at a prompt that is no longer a dialog.
+            was_asking = binding.pending_question or None
+            # getattr, not attribute access: this service is also called
+            # directly with lightweight session objects, and a dialog must
+            # never be the reason a liveness report fails.
+            binding.pending_question = getattr(s, "question", None) or None
+            if was_asking != binding.pending_question:
+                menu_changes.append((binding.session_id, binding.pending_question))
             binding.save()
 
     # Un-archive anything re-reported as open. The DERIVED staleness half of
@@ -1558,6 +1591,37 @@ def replace_reported_sessions(
         from apps.harness.signals import sessions_reported
 
         sessions_reported.send(sender=Runner, runner=runner)
+
+        # The dialog, to anyone already looking at that chat. Its own frame
+        # rather than an overloaded `session.activity`: activity is "is the
+        # agent producing", which the hook path owns and answers within a
+        # tick — inventing a state here to carry a menu would mean reporting
+        # an agent as idle or blocked on this path's much slower clock.
+        from apps.realtime import groups
+
+        for session_id, menu in menu_changes:
+            groups.publish(groups.session_group(session_id),
+                           {"type": "session.menu", "menu": menu})
+
+        # And to the phone in your pocket, for the agents that just STARTED
+        # waiting. Only the null -> menu edge: a retraction is not news, and the
+        # UI it would correct is already corrected by the frame above.
+        #
+        # This is the half no rendering fix could cover. A menu that renders
+        # perfectly still needs somebody to open the app, and the failure being
+        # fixed here is 52 minutes of nobody knowing there was anything to open.
+        asking = [(sid, menu) for sid, menu in menu_changes if menu]
+        if asking:
+            from apps.canopy_sessions.models import Session
+            from apps.push import services as push_services
+
+            sessions = Session.objects.select_related(
+                "agent", "runner_binding", "runner_binding__runner"
+            ).in_bulk([sid for sid, _ in asking])
+            for session_id, menu in asking:
+                session = sessions.get(session_id)
+                if session is not None:
+                    push_services.notify_session_question(session, menu)
 
     transaction.on_commit(_fire_reported)
     return len(deduped)

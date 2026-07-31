@@ -22,7 +22,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
-from . import attachment_storage, services
+from . import attachment_storage, serializers, services
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
@@ -99,6 +99,12 @@ def _out(session: Session) -> dict:
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
         "session_key": binding.session_key if binding else "",
+        # Is this session blocked on a human? A bool on the LIST (the menu
+        # itself rides the detail read) — a list carrying every session's full
+        # dialog would pay for N sets of options to render one badge each. It
+        # answers the thing the list could not: a waiting agent and an idle one
+        # look identical, which is why spark read as "the session stopped".
+        "waiting_on_you": serializers.pending_menu(session) is not None,
     }
 
 
@@ -210,11 +216,19 @@ def list_sessions(
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
 
     out = [_out(s) for s in rows]
-    # Running first, then genuinely-most-recent. Sorting by created_at made a
-    # dead repo and a live one interleave arbitrarily (both "created" in the
-    # same report sweep); last_activity_at is the real signal. The client can
-    # re-group by project — this is the default order.
-    out.sort(key=lambda r: (not r["running"], -(r["last_activity_at"].timestamp())))
+    # Waiting first, then running, then genuinely-most-recent. Sorting by
+    # created_at made a dead repo and a live one interleave arbitrarily (both
+    # "created" in the same report sweep); last_activity_at is the real signal.
+    # The client can re-group by project — this is the default order.
+    #
+    # `waiting_on_you` outranks both because activity ordering actively BURIES
+    # it: a session stops writing the moment it asks, so the longer somebody has
+    # been kept waiting the further down it sinks, and the row you can actually
+    # do something about ends up below a dozen you cannot. Same trap the runner
+    # side avoids by reading the question for every session rather than the top
+    # K — this is that trap one layer up.
+    out.sort(key=lambda r: (not r["waiting_on_you"], not r["running"],
+                            -(r["last_activity_at"].timestamp())))
     # Clamp AFTER the sort, never as a queryset slice: the queryset is ordered by
     # -created_at, so slicing it could drop the running session this sort exists to
     # float. `state=active` already bounds the set; this is a payload backstop.
@@ -255,6 +269,9 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
+    # Same reader as the WS snapshot, so opening a session over REST and over
+    # the socket can never disagree about whether an agent is waiting.
+    data["menu"] = serializers.pending_menu(session)
     return data
 
 

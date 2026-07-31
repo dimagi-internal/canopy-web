@@ -123,6 +123,24 @@ jobs:
           echo "committed_at=${TS:-0}" >> "$GITHUB_OUTPUT"
           echo "Runner source last changed at ${SHA:-<none>} (${TS:-0})"
 
+      # The same quantity for the OTHER runner. The cloud box is a different
+      # program with its own path, so one sha cannot describe both — served
+      # per-runner-kind by RunnerOut (spec 2026-07-30).
+      #
+      # bootstrap_agents.sh is in scope alongside the runner itself: it re-runs on
+      # every service start, but nothing ever TRIGGERS a start, so a bootstrap fix
+      # ships only when a human happens to restart the box. Including it here is
+      # what makes the auto-updater supply that missing event.
+      - name: Resolve cloud runner code sha
+        id: cloud_sha
+        run: |
+          PATHS="runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh"
+          SHA="$(git log -1 --format=%H -- $PATHS)"
+          TS="$(git log -1 --format=%ct -- $PATHS)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "committed_at=${TS:-0}" >> "$GITHUB_OUTPUT"
+          echo "Cloud runner source last changed at ${SHA:-<none>} (${TS:-0})"
+
       # Vendor the canopy plugin into the build context so apps.system can
       # render the /system catalog. canopy is PUBLIC (dimagi-internal/canopy), so
       # this needs no credentials — it used to clone via a CANOPY_PLUGIN_TOKEN PAT
@@ -164,6 +182,8 @@ jobs:
             VITE_CSRF_COOKIE_NAME=csrftoken_canopy
             RUNNER_CODE_SHA=${{ steps.runner_sha.outputs.sha }}
             RUNNER_CODE_COMMITTED_AT=${{ steps.runner_sha.outputs.committed_at }}
+            RUNNER_CLOUD_CODE_SHA=${{ steps.cloud_sha.outputs.sha }}
+            RUNNER_CLOUD_CODE_COMMITTED_AT=${{ steps.cloud_sha.outputs.committed_at }}
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}

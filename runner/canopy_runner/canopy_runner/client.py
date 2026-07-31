@@ -19,7 +19,15 @@ class Client:
         self.token = token
 
     def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict | None]:
-        url = f"{self.base_url}/api/harness{path}"
+        return self._call_api(f"/harness{path}", method=method, body=body, label=path)
+
+    def _call_api(self, path: str, *, method: str, body: dict | None = None,
+                  label: str = "") -> tuple[int, dict | None]:
+        """Same transport as ``_call`` but rooted at ``/api`` rather than
+        ``/api/harness`` — for the handful of runner calls that live in another
+        app's namespace (the Gmail watch report is in ``apps/inbound``)."""
+        label = label or path
+        url = f"{self.base_url}/api{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.token}")
@@ -34,9 +42,9 @@ class Client:
                 error_body = exc.read()[:200]
             except Exception:
                 error_body = b"(could not read error body)"
-            raise ClientError(f"{method} {path} -> {exc.code}: {error_body!r}") from exc
+            raise ClientError(f"{method} {label} -> {exc.code}: {error_body!r}") from exc
         except urllib.error.URLError as exc:
-            raise ClientError(f"{method} {path} -> {exc.reason}") from exc
+            raise ClientError(f"{method} {label} -> {exc.reason}") from exc
         if status == 204 or not raw:
             return status, None
         return status, json.loads(raw)
@@ -231,6 +239,30 @@ class Client:
         # 201 = a NEW turn; 200 = idempotent hit on one we already enqueued. Callers log
         # the difference so a re-poll of the same unread mail reads as "nothing new".
         return {**(payload or {}), "_created": status == 201}
+
+    def runner_mailboxes(self) -> list[dict]:
+        """[{address, watch_topic}] — which mailboxes to arm, and on which topic.
+
+        Served from each workspace's InboundPushConfig so a tenant sets its topic
+        in the UI once, instead of someone hand-editing runner.json on every box.
+        """
+        _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
+        return (payload or {}).get("items", []) if isinstance(payload, dict) else []
+
+    def report_watch(self, address: str, expires_at) -> dict:
+        """Tell canopy-web when this mailbox's Gmail watch lapses.
+
+        Lives under /api/inbound, not /api/harness — hence _call_api. Reporting
+        is what turns the 7-day expiry from a silent cliff into a warn/error row
+        (apps/inbound.services.note_watch_state).
+        """
+        _status, payload = self._call_api(
+            "/inbound/watch/",
+            method="POST",
+            body={"address": address,
+                  "expires_at": expires_at.isoformat() if expires_at else None},
+        )
+        return payload or {}
 
     def start(self, turn_id: str, session_id: str = "") -> None:
         self._call("POST", f"/turns/{turn_id}/start", {"session_id": session_id})

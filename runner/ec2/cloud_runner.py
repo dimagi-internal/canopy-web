@@ -43,6 +43,11 @@ Config comes from the environment (see runner/ec2/README.md):
                      pulls canopy-web from, to run its bootstrap_agents.sh
   POLL_SECONDS      idle poll interval (default: 15)
   STATE_FILE        runner-id cache (default: ~/.canopy-cloud-runner.json)
+  RUNNER_HOME       where this runner's bytes + its two auto-update files live
+                     (default: /opt/canopy-runner) — `build-info.json` says what
+                     code is installed, `in-flight` says whether now is a safe
+                     moment to replace it. Both are written here and read by
+                     runner/ec2/update_runner.sh; see spec 2026-07-30.
 `claude` authenticates from CLAUDE_CODE_OAUTH_TOKEN (a dedicated setup-token from
 Secrets Manager, staged into the service env by cloud-init). AGENT_SLUGS /
 AGENT_REPO_ORG / GITHUB_TOKEN / OP_SERVICE_ACCOUNT_TOKEN are consumed by
@@ -152,6 +157,14 @@ STREAM_POLL_SECONDS = float(os.environ.get("STREAM_POLL_SECONDS", "3"))
 LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
 
+# Where this runner's bytes live, and the two files the auto-updater
+# (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
+#   build-info.json — what code is installed, stamped by whoever installed it.
+#   in-flight       — how many turns this box is carrying right now.
+RUNNER_HOME = pathlib.Path(os.environ.get("RUNNER_HOME", "/opt/canopy-runner"))
+BUILD_INFO_FILE = pathlib.Path(os.environ.get("BUILD_INFO_FILE", str(RUNNER_HOME / "build-info.json")))
+IN_FLIGHT_FILE = pathlib.Path(os.environ.get("IN_FLIGHT_FILE", str(RUNNER_HOME / "in-flight")))
+
 # Bound on reaping the claude subprocess in run_claude's cleanup (review N1) —
 # a bare, untimed proc.wait() can hang the RUNNER forever if the child is still
 # alive with an undrained stdout pipe (a mid-loop exception leaves exactly that
@@ -192,6 +205,141 @@ def _api(method: str, path: str, body: dict | None = None) -> tuple[int, dict | 
     except urllib.error.URLError as exc:
         _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
+
+
+# ── code provenance + the busy marker (auto-update's two shared files) ──────
+_BUILD_INFO: dict | None = None
+
+
+def build_info(*, refresh: bool = False) -> dict:
+    """What code is this box running — `{"sha": str, "committed_at": int}`.
+
+    Stamped into a file by whoever INSTALLED the bytes (canopy-fetch-env for the
+    first-boot seed, update_runner.sh for every update since), because there is no
+    git history at /opt/canopy-runner to derive it from. The laptop runner has the
+    same two provenances and the same answer: `_build_info.py`, stamped at build
+    time by install-runner.sh.
+
+    Missing, unreadable, or malformed yields empty/0 — which every consumer treats
+    as UNKNOWN and stays silent about. A staleness alert fired on partial
+    information is worse than no alert.
+
+    Cached for the process's lifetime ON PURPOSE, exactly as `provenance.code_sha`
+    is: this answers "which bytes did I START with". The updater rewrites the stamp
+    moments before restarting the service, so re-reading it live would report the
+    new sha while still executing the old code — clearing the staleness banner for
+    the box that is still stale.
+    """
+    global _BUILD_INFO
+    if _BUILD_INFO is not None and not refresh:
+        return _BUILD_INFO
+    info = {"sha": "", "committed_at": 0}
+    try:
+        raw = json.loads(BUILD_INFO_FILE.read_text())
+        info["sha"] = str(raw.get("sha") or "").strip()
+        info["committed_at"] = int(raw.get("committed_at") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    _BUILD_INFO = info
+    return info
+
+
+def _mark_in_flight(count: int) -> None:
+    """Publish how many turns this box is carrying, for the auto-updater.
+
+    An update restarts the service, so it must not land mid-turn. Same file shape
+    and same semantics as the laptop's `update.mark_busy` — including that a marker
+    older than 120s means the daemon has stopped writing it (stopped, wedged,
+    crash-looping) and therefore must NOT read as busy: that is the case
+    auto-update exists to rescue.
+
+    Best-effort: a failure here can never affect a turn.
+    """
+    try:
+        IN_FLIGHT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        IN_FLIGHT_FILE.write_text(json.dumps({"count": int(count), "at": time.time()}))
+    except OSError:
+        pass
+
+
+# --- the update doorbell -----------------------------------------------------
+#
+# The server rings `update_available` down the WS the moment a heartbeat reports
+# a sha that differs from the deployed expectation — on EVERY stale beat, so a
+# missed frame costs one beat, not one timer cycle. The daemon owns the throttle.
+UPDATE_NUDGE_MIN_SECONDS = 600.0
+_last_update_nudge = 0.0
+
+
+def _start_update_unit() -> None:
+    # `systemctl start`, never running update_runner.sh as a child: the updater
+    # restarts canopy-runner.service, and a child of this process would be
+    # killed in the daemon's own cgroup mid-install by that restart. Handing
+    # the work to systemd puts it in the unit's cgroup, where the restart it
+    # performs cannot reach it. `--no-block` because the oneshot takes ~a
+    # minute and this thread carries wake and heartbeat. The scoped sudoers
+    # line ships in runner.cfn.yaml.
+    subprocess.run(
+        ["sudo", "-n", "systemctl", "start", "--no-block", "canopy-runner-update.service"],
+        capture_output=True, timeout=15, check=True,
+    )
+
+
+def _nudge_updater(expected_sha: str, *, now: float | None = None) -> bool:
+    """The `update_available` doorbell: start the SEPARATE update unit now
+    instead of waiting out its 30-minute timer.
+
+    Never installs in-process — the unit re-checks staleness and the in-flight
+    marker itself, so busy deferral and the crash-loop rescue are inherited,
+    not re-implemented. Skips when the frame raced an install that already
+    happened. Never raises: the WS loop it runs on also carries wake,
+    heartbeat and claim."""
+    global _last_update_nudge
+    now = time.time() if now is None else now
+    expected = (expected_sha or "").strip()
+    installed = build_info()["sha"]
+    # Empty on either side is UNKNOWN, never "stale" — the fleet provenance rule.
+    if not expected or not installed or expected == installed:
+        return False
+    if now - _last_update_nudge < UPDATE_NUDGE_MIN_SECONDS:
+        return False
+    # Advance the throttle on the ATTEMPT, not the success: a broken systemctl
+    # would otherwise warn on every ~20s beat, and the timer rescues that case.
+    _last_update_nudge = now
+    try:
+        _start_update_unit()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"update nudge: could not start canopy-runner-update.service: {exc}")
+        return False
+    _log(f"update nudge: started canopy-runner-update.service "
+         f"(expected {expected[:12]}, installed {installed[:12]})")
+    return True
+
+
+def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
+    """THE heartbeat payload — one stamping point, for all four call sites.
+
+    `services.heartbeat` assigns code_sha/code_committed_at unconditionally, so any
+    call site that omits them RESETS the fields. This runner heartbeats from four
+    places (pairing, the idle REST loop, the WS beat, the per-turn lease renewer),
+    and the laptop already paid for the version of this bug where four of six sites
+    silently cleared `code_branch` (see provenance.py). Building the body in one
+    function is what makes that unrepresentable rather than merely fixed.
+
+    `code_branch` is deliberately absent: /opt/canopy-runner is not a checkout, and
+    reporting a branch would be inventing one. Writing the busy marker here too
+    means it is refreshed by whatever heartbeat is live — including the lease
+    renewer, which is the only one beating while a long turn runs.
+    """
+    info = build_info()
+    _mark_in_flight(len(active_turn_ids))
+    return {
+        "active_turn_ids": active_turn_ids,
+        "host": RUNNER_HOST,
+        "code_sha": info["sha"],
+        "code_committed_at": info["committed_at"],
+        **extra,
+    }
 
 
 def _chunk_transcript_lines(
@@ -274,8 +422,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
     def _loop() -> None:
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
-            _api("POST", f"/runners/{runner_id}/heartbeat",
-                 {"active_turn_ids": [turn_id], "host": RUNNER_HOST})
+            _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -294,8 +441,7 @@ def pair_or_load() -> str:
             # where a laptop must not: this comes from env, so there is no read to
             # fail and no way to mistake "cannot tell" for "have none".
             status, _ = _api("POST", f"/runners/{rid}/heartbeat",
-                              {"active_turn_ids": [], "host": RUNNER_HOST,
-                               "projects": list(RUNNER_CAPS.get("projects") or [])})
+                             _heartbeat_body([], projects=list(RUNNER_CAPS.get("projects") or [])))
             if status == 200:
                 _log(f"reusing runner {rid}")
                 # Capabilities were historically fixed at pairing time; re-pairing
@@ -1122,7 +1268,9 @@ def clone_or_pull_canopy_web() -> bool:
         return False
 
 
-def _expose_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> None:
+def _expose_repo_package(
+    repo_dir: pathlib.Path, name: str, purpose: str, *, parent: str = "packages"
+) -> None:
     """Put one in-repo package on `sys.path`, straight from the freshly-cloned repo.
 
     Taken from the clone rather than an index so it is always the same commit as
@@ -1154,7 +1302,7 @@ def _expose_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> Non
     the import later fails, and the turn still runs and still finishes. A
     bootstrap step that could brick execution is worse than a missing feature.
     """
-    pkg = repo_dir / "packages" / name
+    pkg = repo_dir / parent / name
     if not (pkg / name).is_dir():
         _log(f"warn: {pkg} not in the clone; {purpose} disabled")
         return
@@ -1172,7 +1320,9 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     rather than a redeploy — the point of a switch you can actually use.
     """
     _expose_repo_package(repo_dir, "canopy_transcript", "transcript rows")
-    _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor")
+    # canopy_acp lives beside the runner programs (runner/canopy_acp), not in
+    # packages/ — looking for it there disabled the ACP executor on every boot.
+    _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor", parent="runner")
     _install_acp_adapter()
 
 
@@ -1715,8 +1865,7 @@ def run_over_rest(runner_id: str) -> None:
         # Every in-flight turn rides the heartbeat so the server renews all of
         # their leases — with concurrency, reporting only the newest would let
         # the others expire mid-run.
-        _api("POST", f"/runners/{runner_id}/heartbeat",
-             {"active_turn_ids": _in_flight_ids(), "host": RUNNER_HOST})
+        _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -1911,7 +2060,11 @@ def run_over_ws(runner_id: str) -> bool:
             # Report in-flight turns, not []: each worker also has its own lease
             # renewer, but a heartbeat that claims nothing is running while four
             # turns are executing is a lie the server acts on.
-            _ws_request(ws, {"action": "heartbeat", "active_turn_ids": _in_flight_ids()},
+            # Provenance rides THIS frame too, not just the REST ones: the WS beat
+            # is the cloud runner's primary heartbeat, and the server assigns those
+            # fields unconditionally — so a frame that omitted them would erase
+            # what the REST paths reported, every 20 seconds.
+            _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
                         "heartbeat.ack", timeout=15)
 
         try:
@@ -1937,6 +2090,8 @@ def run_over_ws(runner_id: str) -> bool:
                         # regardless, so a dropped frame costs one tick, never
                         # a permanently unattached viewer.
                         _sync_session_views(runner_id)
+                    elif mtype == "update_available":
+                        _nudge_updater(str(msg.get("expected_sha") or ""))
                 elif raw == "":
                     break  # server closed the socket
                 if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
