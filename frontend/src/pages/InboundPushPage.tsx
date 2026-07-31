@@ -184,6 +184,13 @@ export function InboundPushPage(): JSX.Element | null {
           <label className="space-y-1 text-sm">
             <span className="text-muted-foreground">GCP project</span>
             <Input value={project} onChange={(e) => setProject(e.target.value)} />
+            <span className="block text-xs text-muted-foreground">
+              Must be the project that owns the mailbox's Gmail OAuth client, not
+              wherever canopy-web runs — Gmail refuses a topic from anywhere else
+              (<code>Invalid topicName does not match projects/…</code>). Mailboxes
+              in this workspace whose clients live in different projects need a
+              topic each, which one <code>watch_topic</code> cannot hold.
+            </span>
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-muted-foreground">Topic name</span>
