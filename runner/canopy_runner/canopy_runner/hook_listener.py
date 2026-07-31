@@ -26,6 +26,7 @@ transcript. That is what makes it safe for this path to drop events freely.
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import threading
@@ -173,7 +174,29 @@ class HookListener:
 
         # Bound to 127.0.0.1 explicitly — never 0.0.0.0. This machine holds fleet
         # credentials; the listener must not be reachable off-box.
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.port), _Handler)
+        #
+        # The configured port is a PREFERENCE, not a contract: nothing outside
+        # this process has to predict the number, because we WRITE it into
+        # ~/.claude/settings.json ourselves. What it cannot be is machine-global.
+        # Two accounts on one Mac each install their own settings.json pointing
+        # at the same default 8787, so whichever runner starts first receives
+        # BOTH accounts' hooks — and can only resolve its own emdash sessions,
+        # so the other account's hooks are not merely lost but actively eaten as
+        # "unknown-cwd". The loser used to log a warning and run with live events
+        # off forever (2026-07-28 → 07-30: every restart of the second runner,
+        # zero activity events forwarded, and the chat UI's "running" indicator
+        # dead for every session that runner drove). Taking a free port instead
+        # retires the whole collision class.
+        try:
+            self._server = ThreadingHTTPServer(("127.0.0.1", self.port), _Handler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+            self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            taken, self.port = self.port, self._server.server_address[1]
+            logger.warning(
+                "hook port %d is held by another process; listening on :%d instead "
+                "(the hook config is rewritten to match)", taken, self.port)
         threading.Thread(target=self._server.serve_forever, daemon=True,
                          name="hook-listener").start()
         logger.info("hook listener on 127.0.0.1:%d (forwarding=%s)",

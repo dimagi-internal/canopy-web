@@ -44,6 +44,26 @@ function classifyError(detail: string | null) {
   };
 }
 
+/**
+ * The animated "the agent has the floor" treatment.
+ *
+ * Exported because it is rendered from two places that must not drift: inside a
+ * real assistant row that has started but has no text yet, and as MessageList's
+ * TRAILING row while no assistant row exists at all (see `pendingReply` there).
+ */
+export function ThinkingIndicator({ label = "Thinking…" }: { label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+      <span className="inline-flex gap-0.5" aria-label="thinking">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+      </span>
+      <span className="text-xs italic">{label}</span>
+    </span>
+  );
+}
+
 export function MessageItem({
   message,
   forceToolOpen,
@@ -104,14 +124,7 @@ export function MessageItem({
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
       {showThinking ? (
-        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-          <span className="inline-flex gap-0.5" aria-label="thinking">
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
-          </span>
-          <span className="text-xs italic">Thinking…</span>
-        </span>
+        <ThinkingIndicator />
       ) : message.role === "assistant" ? (
         renderMarkdown(text)
       ) : (

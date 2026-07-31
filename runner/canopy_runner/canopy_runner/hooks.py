@@ -226,14 +226,22 @@ def start_hook_listener(cfg: Config, client: Client):
     try:
         listener.start()
     except OSError as exc:
-        # Another process already holds the port (a second runner, a stale
-        # process). Live events are an overlay, so this is a warning, not fatal.
-        logger.warning("hook listener could not bind :%d (%s); live events off",
-                       cfg.hook_port, exc)
+        # `start` already falls back to a free port when the configured one is
+        # merely taken, so reaching here means the loopback socket itself is
+        # unusable. Live events are an overlay, so it stays non-fatal — but it is
+        # logged at ERROR, because the failure is silent everywhere else: the
+        # chat UI just never says "running" again, which reads as the app
+        # ignoring you rather than as a runner with a dead listener.
+        logger.error("hook listener could not bind (%s); live events OFF — the chat "
+                     "UI will not show agent activity for this runner's sessions", exc)
         return None
-    hook_install.install(settings_path, port=cfg.hook_port, nonce=nonce)
+    # `listener.port`, not `cfg.hook_port`: the fallback above may have taken a
+    # different one, and the hook config has to point where we are ACTUALLY
+    # listening. Installing the configured port after binding another is how a
+    # collision turns into hooks curling into a hole.
+    hook_install.install(settings_path, port=listener.port, nonce=nonce)
     logger.info("live hook events: listener on :%d, forwarding=%s",
-                cfg.hook_port, cfg.forward_sessions)
+                listener.port, cfg.forward_sessions)
     _hook_listener = listener
     return listener
 

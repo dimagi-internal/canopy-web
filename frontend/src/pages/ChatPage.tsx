@@ -507,6 +507,15 @@ export function ChatPage() {
   // useful part: queued means canopy has not started your turn yet, running
   // means the agent is thinking. Confusing the two hides where the delay is.
   const liveQueued = socket.awaitingReply;
+  // `meta` is fetched ONCE per session id and never refreshed, and `running`
+  // derives from a 120s window on the runner's last report — so this is a
+  // PAGE-LOAD SNAPSHOT that can only decay. It used to outrank everything below
+  // `blocked`, which quietly cost #490 its whole point: open a chat you were
+  // just using and the header already said "running", so pressing send changed
+  // nothing on screen and the "queued" branch was unreachable. Demoted to the
+  // last resort — consulted only while nothing live has spoken, and dropped for
+  // good once anything has.
+  const staleRunning = liveWorking === undefined && Boolean(meta?.running);
   const title = meta?.title?.trim() || 'Chat'
 
   return (
@@ -525,7 +534,7 @@ export function ChatPage() {
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
             needs you{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
-        ) : (liveWorking ?? meta?.running) ? (
+        ) : liveWorking ? (
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
@@ -534,6 +543,11 @@ export function ChatPage() {
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-muted-foreground">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
             queued{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
+          </span>
+        ) : staleRunning ? (
+          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
+            running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
         ) : meta?.runner_name ? (
           <span className="shrink-0 text-[12px] text-muted-foreground">

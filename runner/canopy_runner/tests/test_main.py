@@ -722,6 +722,9 @@ def test_the_hook_listener_never_reads_the_screen_by_itself(monkeypatch, tmp_pat
     class _Listener:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            # `start()` may re-home to a free port when the configured one is
+            # held, so the caller installs `listener.port`, not `cfg.hook_port`.
+            self.port = kwargs.get("port")
 
         def bind_sender(self, _s):
             pass

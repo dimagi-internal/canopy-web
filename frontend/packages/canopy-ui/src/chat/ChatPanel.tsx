@@ -96,13 +96,37 @@ export function ChatPanel({
     [state.messages],
   );
 
+  // Feedback where the eye actually is. Pressing send used to change NOTHING in
+  // the transcript: no assistant row exists until `chat.stream_start`, which the
+  // server emits together with `stream_complete` from a single `assistant`
+  // ledger event — i.e. only once the reply's first TEXT exists, seconds to
+  // minutes later. So MessageItem's own "Thinking…" treatment was unreachable on
+  // the real runner path, and the only signal was a 12px chip in the header,
+  // which on a phone is the far corner of the screen from your thumb.
+  //
+  // Two sources, deliberately: `awaitingReply` is client-side and answers
+  // INSTANTLY with no round trip (nothing server-side can — the turn has to be
+  // enqueued, claimed and driven into the agent before anything could report),
+  // and `activity === "working"` keeps it up for the rest of the turn, across
+  // the gaps between the assistant's separate text blocks. `blocked` withdraws
+  // it: an agent waiting on YOU must never render as an agent working.
+  const agentHasFloor =
+    state.activity !== "blocked" &&
+    (awaitingReply || state.activity === "working");
+  const showPendingReply = inFlightMessage == null && agentHasFloor;
+  // "Queued" until something reports the agent actually started — the useful
+  // distinction is where the delay is, not that there is one.
+  const pendingLabel = state.activity === "working" ? "Thinking…" : "Queued…";
+
   // Sticky-bottom scroll: dep changes on (a) new message arrival and (b)
   // streaming text growth on the last message. length-only (cheap) instead
   // of the full string so the effect doesn't re-run on equal characters.
+  // `showPendingReply` is in the dep too — the bubble is a new row at the
+  // bottom, and appearing below the fold would defeat the whole point of it.
   const messages = state.messages;
   const lastMessageLen =
     messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
-  const scrollDep = `${messages.length}:${lastMessageLen}`;
+  const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}`;
   const { containerRef, onScroll } = useStickyBottom(scrollDep);
 
   return (
@@ -131,6 +155,8 @@ export function ChatPanel({
           messages={state.messages}
           emptyState={emptyState}
           renderMarkdown={renderMarkdown}
+          pendingReply={showPendingReply}
+          pendingLabel={pendingLabel}
         />
       </div>
       <SendBox
