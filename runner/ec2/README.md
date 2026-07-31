@@ -379,6 +379,33 @@ recycling the stack:
 read from the canopy-web clone (see "Bootstrap" above; the shim in UserData is a
 dozen lines that just `git show`s the real updater out of `origin/main`).
 
+### Retrofitting a LIVE box instead of recycling it
+A recycle destroys the instance's EBS volume, and that volume is not empty: it holds
+the five agent clones, the gog keyring with all five gmail tokens, and every
+provisioned `~/.<slug>/.env`. `bootstrap_agents.sh` rebuilds all of it idempotently
+from 1Password, so a recycle is recoverable — but it also mints a NEW runner id,
+which is why `wire.sh` has to re-swap every agent's assignments afterwards.
+
+If you would rather keep that state, the only things missing from a running box are
+the cloud-init bits (the shim, the sudoers rule, the two units) and the stamp — the
+updater itself comes from git. Over SSM:
+
+```bash
+# 1. stamp what the box is currently running (from a canopy-web checkout):
+git log -1 --format='{"sha": "%H", "committed_at": %ct, "ref": "retrofit"}' \
+  -- runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh
+#    → write that JSON to /opt/canopy-runner/build-info.json (chown ubuntu:ubuntu)
+# 2. copy the four write_files blocks out of runner.cfn.yaml onto the box:
+#    /usr/local/bin/canopy-runner-update (0755), /etc/sudoers.d/canopy-runner-update
+#    (0440), and the canopy-runner-update .service + .timer
+# 3. systemctl daemon-reload && systemctl enable --now canopy-runner-update.timer
+# 4. canopy-runner-update --check   # expect: current (or stale, if a deploy is ahead)
+```
+
+Get step 1 right or skip it entirely — a WRONG sha is worse than none. An absent
+stamp reads `unknown` and does nothing; a stamp claiming a sha this box is not
+running would either suppress a real update or trigger a needless one.
+
 ## Notes
 - **Ephemeral by design.** The claude token lives only in Secrets Manager + in
   `/opt/canopy-runner/runner.env` (chmod 600) on the box; `down.sh` removes the box.
