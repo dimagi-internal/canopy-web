@@ -576,27 +576,33 @@ placeholder rather than a guess (a real-looking default provisioned cleanly and 
 failed every `users.watch`, leaving the mailbox silently on the poll — paid for
 2026-07-31). Authenticated push also needs `roles/iam.serviceAccountTokenCreator` for
 the Pub/Sub service agent on the push identity, or the subscription is created happily
-and delivers nothing, indistinguishable from a wrong audience. Live on labs since
-2026-07-31 for `hal`/`ada`/`eva`/`echo` (topics in `canopy-494811`), verified by real
-Gmail notifications arriving ~1s after arming — a freshly armed watch fires its own
-notification, so **arming IS the end-to-end test**; no mail needs sending.
+and delivers nothing, indistinguishable from a wrong audience. **Live on labs for the
+whole fleet since 2026-07-31** — `ace`/`ada`/`echo`/`eva`/`hal`, topics in
+`canopy-494811` — verified by real Gmail notifications arriving ~1s after arming. A
+freshly armed watch fires its own notification, so **arming IS the end-to-end test**;
+no mail needs sending, and no agent burns a turn on a probe.
 
 **The fix for a mailbox in the wrong project is to move the mailbox, not the topic.**
-`echo` was realigned onto the shared `canopy` client on 2026-07-31 (its old client
-lived in the retired `openclaw-assistant-20260224`, which nobody here can reach). That
-is a real OAuth re-grant and **the consent cannot be automated** — the password is
-accepted and Google then demands SMS verification of the browser — so it is a human
-step: `gog auth add <email> --client canopy --force-consent --services
-docs,drive,forms,gmail,sheets`, run in the macOS account whose runner is unpaused,
-since gog tokens live in the per-user keychain. Order matters: new token → repoint
-`runner.json`'s `mailboxes.<agent>.client` → **restart the runner** (`Config.load`
-runs once at startup) → only then delete the old credentials. Deleting first takes
-that agent's mail down.
+`echo` and `ace` were realigned onto the shared `canopy` client on 2026-07-31; their
+old clients lived in the retired `openclaw-assistant-20260224`, which nobody here can
+reach, so there was no topic to create. All five mailboxes now share one client, which
+is why one topic per workspace is currently sufficient. That realignment is a real
+OAuth re-grant and **the consent cannot be automated** — the password is accepted and
+Google then demands SMS verification of the browser — so it is a human step: `gog auth
+add <email> --client canopy --force-consent --services docs,drive,forms,gmail,sheets`,
+run in the macOS account whose runner is unpaused, since gog tokens live in the
+per-user keychain. Order matters: new token → repoint `runner.json`'s
+`mailboxes.<agent>.client` → **restart the runner** (`Config.load` runs once at
+startup) → only then delete the old credentials. Deleting first takes that agent's
+mail down. Expect one transient `401` from the token endpoint on the first arm after
+the switch; it self-corrects within seconds.
 
-**Known limit:** `watch_topic` is per-*workspace* while the constraint is per-*client
-project*, so a workspace whose mailboxes span two projects cannot be fully expressed.
-`ace` is the one mailbox still on the old client, so it is `enabled=false` and stays
-on the 300s poll. Per-mailbox topics are the real fix and are not built.
+**Known limit, now latent rather than live:** `watch_topic` is per-*workspace* while
+the real constraint is per-*client project*. Nothing hits it today because the fleet
+shares one client — but introduce an agent whose client lives elsewhere and that
+workspace cannot be expressed by one topic. Per-mailbox topics are the real fix and
+are not built; the interim lever is `enabled=false`, which parks a mailbox on the 300s
+poll without losing its row.
 
 **Configured entirely at `/w/:workspace/inbound`** — audience, signer, topic, mailboxes, per-mailbox watch health, and copy-pasteable `gcloud` commands generated from that workspace's own push URL. There are deliberately **no deployment-global inbound settings**: config that lives in env vars and a Django shell is deployment, not configuration, and it is what made the app single-tenant.
 

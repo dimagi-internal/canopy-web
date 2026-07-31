@@ -43,12 +43,13 @@ pair.** A workspace holding mailboxes whose clients live in different projects
 needs a topic each, which the per-workspace `watch_topic` cannot express. Making
 `watch_topic` per-mailbox is the real fix and is not built.
 
-**So prefer moving the mailbox onto the shared client over adding a topic.** Four
-of the five agents share the `canopy` client in `canopy-494811`; `ace` is the
-holdout, still on a client in the retired `openclaw-assistant-20260224`, which
-nobody here can reach — so it is `enabled=false` and stays on the 300s poll.
+**So prefer moving the mailbox onto the shared client over adding a topic.** As of
+2026-07-31 all five agents share the `canopy` client in `canopy-494811`, which is
+the only reason one topic per workspace suffices — `echo` and `ace` were moved off
+clients in the retired `openclaw-assistant-20260224`, a project nobody here can
+reach, so there was no topic to create for them.
 
-Realigning one agent (what `echo` went through on 2026-07-31):
+Realigning one agent (what `echo` and `ace` went through on 2026-07-31):
 
 ```bash
 # 1. Re-grant. HUMAN STEP — the consent cannot be automated: the password is
@@ -73,8 +74,17 @@ rm "$HOME/Library/Application Support/gogcli/credentials-<old>.json"
 ```
 
 Watch out: two agents' credential files can hold the *same* client_id (ace and
-echo did), so check `account_clients` and `runner.json` for other users of a file
-before removing it.
+echo did — two files, one OAuth client), so check `account_clients` and
+`runner.json` for other users of a file before removing it. Also expect one
+transient `401` from `oauth2.googleapis.com/token` on the first arm after the
+switch, immediately followed by a successful arm; it self-corrects and is not
+worth chasing.
+
+Verify by re-reading every mailbox afterwards (`gog gmail messages list "in:inbox"
+-a <email> --max 1`) — the point of the ordering above is that mail never stops,
+so check that it didn't. In the runner log a pushed mailbox reads
+`inbox[<agent>]: RUNG` where a polled one reads `polled`; that word is the
+quickest confirmation that an agent is actually on push.
 
 ## The steps
 
