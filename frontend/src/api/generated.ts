@@ -3074,6 +3074,36 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close a session for good
+         * @description End a session — delete its emdash task if a runner is reporting one, or
+         *     archive it outright if nothing exists on a box.
+         *
+         *     `closing: true` means the close was relayed to a runner and the row is still
+         *     listed: the runner deletes the task and its next report retires the session.
+         *     `closing: false` with `ok: true` means it is already done. A refusal is a 200
+         *     with `ok:false` and a stable reason (`unavailable`, `already_closed`), never a
+         *     4xx — same shape `answer-menu` and `reset` use, for the same reason.
+         *
+         *     There is deliberately no `unbound` refusal: a session with no binding has
+         *     nothing on a box, which is the second branch rather than an error.
+         */
+        readonly post: operations["apps_canopy_sessions_api_close_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/stop": {
         readonly parameters: {
             readonly query?: never;
@@ -13036,6 +13066,30 @@ export interface operations {
                 readonly "application/json": components["schemas"]["MenuAnswerIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_close_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

@@ -20,8 +20,6 @@ from ninja.files import UploadedFile
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
-from apps.harness import services as harness_services
-from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
 from . import attachment_storage, services
@@ -372,21 +370,33 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
     return {"ok": outcome == "sent", "reason": "" if outcome == "sent" else outcome}
 
 
+@router.post("/{session_id}/close", response=dict, summary="Close a session for good")
+def close_session(request: HttpRequest, session_id: uuid.UUID):
+    """End a session — delete its emdash task if a runner is reporting one, or
+    archive it outright if nothing exists on a box.
+
+    `closing: true` means the close was relayed to a runner and the row is still
+    listed: the runner deletes the task and its next report retires the session.
+    `closing: false` with `ok: true` means it is already done. A refusal is a 200
+    with `ok:false` and a stable reason (`unavailable`, `already_closed`), never a
+    4xx — same shape `answer-menu` and `reset` use, for the same reason.
+
+    There is deliberately no `unbound` refusal: a session with no binding has
+    nothing on a box, which is the second branch rather than an error.
+    """
+    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    outcome = services.close_session(session=session)
+    ok = outcome in ("closing", "closed")
+    return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
+
+
 @router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")
 def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    # ALL non-terminal turns, not just the newest: a mid-reply send queues a
-    # second turn behind the one still running, so Stop must reach both — the
-    # running one gets cancel_requested, the queued one is finished CANCELLED.
-    # NOTE: this must not be a bare `any(... for turn in turns)` — any() short-
-    # circuits on the first truthy result, which would skip cancelling every
-    # turn after the first non-None one.
-    turns = Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
-    cancelled = False
-    for turn in turns:
-        if harness_services.cancel_turn(turn) is not None:
-            cancelled = True
-    return {"cancelled": cancelled}
+    # Shared with close_session's unreported branch — a closed session must not be
+    # woken by a turn that was still queued, and the "all non-terminal turns, and
+    # not via any()" reasoning belongs in one place.
+    return {"cancelled": services.cancel_session_turns(session)}
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")
