@@ -1005,8 +1005,6 @@ def _is_runner_reported(binding) -> bool:
     Read against the same `stale_cutoff()` the session list uses, so "reported"
     and "live" can never drift into meaning different windows.
     """
-    from .staleness import stale_cutoff
-
     if binding is None or binding.runner_id is None or not binding.session_key:
         return False
     if binding.reported_at is None:
