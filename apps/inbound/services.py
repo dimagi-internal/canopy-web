@@ -222,14 +222,20 @@ def push_url(request, workspace_slug: str) -> str:
     does not — this runs behind FORCE_SCRIPT_NAME=/canopy on labs, so a
     hand-written URL drops the prefix and the pushes go nowhere, silently.
     """
-    from django.urls import reverse
+    from django.urls import get_script_prefix, reverse
 
+    # The namespace is the one apps/api/api.py declares (``urls_namespace``), NOT
+    # Ninja's ``api-1.0.0`` default. Naming the default here reversed nothing, and
+    # because the fallback below hardcoded a prefix-less path, every deployment
+    # behind FORCE_SCRIPT_NAME served a push URL pointing at a SIBLING tenant —
+    # accepted by something that is not us, so the mailbox just kept polling.
     try:
-        base = request.build_absolute_uri(reverse("api-1.0.0:gmail_push",
-                                                  kwargs={"workspace": workspace_slug}))
+        path = reverse("api_v2:gmail_push", kwargs={"workspace": workspace_slug})
     except Exception:  # noqa: BLE001 — never let URL reversal break a config read
-        base = request.build_absolute_uri(f"/api/inbound/gmail/{workspace_slug}/")
-    return base
+        # Carry the script prefix here too: a fallback that silently drops it is
+        # how the bug above stayed invisible.
+        path = f"{get_script_prefix().rstrip('/')}/api/inbound/gmail/{workspace_slug}/"
+    return request.build_absolute_uri(path)
 
 
 def watch_state(mailbox) -> str:

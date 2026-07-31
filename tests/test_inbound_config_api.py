@@ -78,6 +78,61 @@ def test_config_serves_the_push_url_so_nobody_hand_copies_it(owner, workspace):
     assert body["push_url"].endswith("/api/inbound/gmail/dimagi/")
 
 
+def test_push_url_carries_the_script_prefix():
+    """The whole reason this value is server-computed.
+
+    Labs runs behind ``FORCE_SCRIPT_NAME=/canopy``; a push URL missing that
+    prefix resolves to a SIBLING tenant on the same host, so pushes are accepted
+    by something that is not us and the mailbox silently keeps polling. Asserting
+    only the tail (the test above) cannot see this — it passes either way, which
+    is exactly how the prefix-less URL shipped.
+
+    Driven through the service rather than the test client on purpose: the real
+    WSGI/ASGI handlers call ``set_script_prefix``, ``django.test.Client`` does
+    not, so a client-level test is structurally blind to this bug.
+    """
+    from django.test import RequestFactory
+    from django.urls import set_script_prefix
+
+    from apps.inbound import services
+
+    try:
+        set_script_prefix("/canopy/")
+        url = services.push_url(RequestFactory().get("/api/inbound/config/dimagi"), "dimagi")
+    finally:
+        set_script_prefix("/")
+
+    assert url.endswith("/canopy/api/inbound/gmail/dimagi/"), url
+
+
+def test_push_url_reverses_rather_than_falling_back(monkeypatch):
+    """The fallback must stay unreachable in practice.
+
+    Naming a namespace that does not exist (Ninja's ``api-1.0.0`` default, where
+    this API declares ``api_v2``) made ``reverse`` raise on every call, and the
+    bare ``except`` turned that into a plausible-looking wrong URL instead of a
+    loud failure — so the route was never actually consulted.
+
+    Patching ``reverse`` to a sentinel proves the service reaches it: if the name
+    is wrong again, the call raises, the except branch hands back a hand-built
+    path, and the sentinel is absent. Fixing only the fallback's prefix would
+    satisfy the test above while leaving the route unreversed; this catches that.
+    """
+    import django.urls
+    from django.test import RequestFactory
+
+    from apps.inbound import services
+
+    # `push_url` imports from django.urls at call time, so patching there lands.
+    monkeypatch.setattr(
+        django.urls, "reverse",
+        lambda name, kwargs=None: f"/sentinel/{name}/{kwargs['workspace']}/",
+    )
+    url = services.push_url(RequestFactory().get("/api/inbound/config/dimagi"), "dimagi")
+
+    assert "/sentinel/api_v2:gmail_push/dimagi/" in url, url
+
+
 def test_owner_can_set_config(owner, workspace):
     r = _c(owner).put(
         "/api/inbound/config/dimagi",
