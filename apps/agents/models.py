@@ -73,6 +73,16 @@ class Agent(models.Model):
     # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
     # AgentIn during the deprecation window.
     runner_preference = models.JSONField(default=list, blank=True)
+    # Runtime autonomy posture, read by the fleet-canonical turn procedure at
+    # preflight (canopy agent-core/turn.md § Turn mode). Operational STATE, so
+    # it lives here — on the board the human operates from — not as a committed
+    # field in the agent's repo. Flipped only by a human (the /agents/<slug>
+    # toggle or PATCH /turn-mode); deliberately absent from AgentIn so a repo's
+    # self-publish upsert can never change its own autonomy.
+    GATED, AUTO = "gated", "auto"
+    TURN_MODE_CHOICES = [(GATED, "gated (outbound waits for human approval)"),
+                         (AUTO, "auto (self-review-and-send, audit on the board)")]
+    turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, default=GATED)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

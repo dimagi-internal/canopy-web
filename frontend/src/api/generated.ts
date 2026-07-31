@@ -1420,6 +1420,29 @@ export interface paths {
         readonly patch: operations["apps_agents_api_set_runner_preference"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/turn-mode": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set an agent's turn mode (gated | auto)
+         * @description Flip the agent's runtime autonomy posture — the board-side switch the
+         *     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
+         *     A human decision made from the board; the agent-repo upsert (POST /) cannot
+         *     touch this field.
+         */
+        readonly patch: operations["apps_agents_api_set_turn_mode"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runtime": {
         readonly parameters: {
             readonly query?: never;
@@ -5998,6 +6021,12 @@ export interface components {
             readonly workspace?: string | null;
             /** Runner Preference */
             readonly runner_preference?: readonly string[];
+            /**
+             * Turn Mode
+             * @default gated
+             * @enum {string}
+             */
+            readonly turn_mode: "gated" | "auto";
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -6086,6 +6115,12 @@ export interface components {
             /** Runner Preference */
             readonly runner_preference?: readonly string[];
             /**
+             * Turn Mode
+             * @default gated
+             * @enum {string}
+             */
+            readonly turn_mode: "gated" | "auto";
+            /**
              * Sync Count
              * @default 0
              */
@@ -6122,6 +6157,20 @@ export interface components {
         readonly RunnerPreferenceIn: {
             /** Runner Preference */
             readonly runner_preference?: readonly string[];
+        };
+        /**
+         * TurnModeIn
+         * @description Flip an agent's turn mode — a human decision, made from the board.
+         *
+         *     Deliberately its own endpoint (not part of AgentIn): the agent-repo
+         *     self-publish upsert must never be able to change its own autonomy.
+         */
+        readonly TurnModeIn: {
+            /**
+             * Turn Mode
+             * @enum {string}
+             */
+            readonly turn_mode: "gated" | "auto";
         };
         /**
          * AgentRuntimeOut
@@ -11221,6 +11270,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerPreferenceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_set_turn_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TurnModeIn"];
             };
         };
         readonly responses: {

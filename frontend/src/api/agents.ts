@@ -23,6 +23,10 @@ export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // picker and the rule rows both key on it, so there is no hand-kept copy.
 export type RoutableSource = Schemas['AgentRunnerRuleIn']['source']
 
+// The two runtime autonomy postures, straight off the request schema so the
+// toggle can't drift from the server's accepted values.
+export type TurnMode = Schemas['TurnModeIn']['turn_mode']
+
 export type AgentTaskStatus = AgentTaskOut['status']
 export type AgentCommandKind = Schemas['AgentTaskCommandIn']['kind']
 
@@ -207,6 +211,23 @@ export async function listPendingCommands(slug: string): Promise<AgentCommandOut
 export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runners', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunners'))
+}
+
+// Flip the agent's runtime autonomy posture (gated | auto) — the board-side
+// switch the fleet turn procedure reads at preflight. A human decision; the
+// agent's own repo publish can't touch it.
+//
+// Returns just the confirmed mode, not the whole AgentDetailOut the endpoint
+// sends: openapi-fetch's Readable<T> degrades the response's nested
+// `runner_preference` array into an ArrayLike-shaped object, so declaring
+// AgentDetailOut here fails to compile (TS2719 — same root cause as toPage's
+// note above). The mode is all any caller wants back from a toggle.
+export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<TurnMode> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/turn-mode', {
+    params: { path: { slug } },
+    body: { turn_mode: mode },
+  })
+  return unwrap(res, 'setAgentTurnMode').turn_mode
 }
 
 // Wholesale replace of an agent's ordered runner list — index = rank. Each
