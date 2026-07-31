@@ -39,12 +39,42 @@ This cost a full provisioning cycle on 2026-07-31: everything was created in
 `users.watch` failed — mail kept arriving by poll with no push row to explain it.
 
 Consequence worth knowing before you start: **one topic per (project, workspace)
-pair.** The `dimagi` fleet's clients are split across two projects
-(`canopy-494811` for the shared `canopy` client, `openclaw-assistant-20260224`
-for `ace` and `echo`), so a workspace holding mailboxes from both needs a topic
-each — which the per-workspace `watch_topic` cannot express. Today that is
-handled by leaving the odd mailboxes `enabled=false`, which keeps them on the
-300s poll. Making `watch_topic` per-mailbox is the real fix and is not built.
+pair.** A workspace holding mailboxes whose clients live in different projects
+needs a topic each, which the per-workspace `watch_topic` cannot express. Making
+`watch_topic` per-mailbox is the real fix and is not built.
+
+**So prefer moving the mailbox onto the shared client over adding a topic.** Four
+of the five agents share the `canopy` client in `canopy-494811`; `ace` is the
+holdout, still on a client in the retired `openclaw-assistant-20260224`, which
+nobody here can reach — so it is `enabled=false` and stays on the 300s poll.
+
+Realigning one agent (what `echo` went through on 2026-07-31):
+
+```bash
+# 1. Re-grant. HUMAN STEP — the consent cannot be automated: the password is
+#    accepted and Google then demands SMS verification of the browser. Run it in
+#    the macOS account whose runner is UNPAUSED; gog tokens are per-user keychain.
+gog auth add <email> --client canopy --force-consent \
+  --services docs,drive,forms,gmail,sheets
+
+# 2. Confirm the new bucket exists. `gog auth list` shows the STALE client row
+#    until the old bucket is deleted, so trust this instead:
+gog auth tokens list          # want token:canopy:<email>
+
+# 3. Repoint the runner and RESTART it — Config.load runs once at startup.
+#    Check ~/.canopy/in-flight is 0 first so no chat reply is stranded.
+#    (edit ~/.canopy/runner.json: mailboxes.<agent>.client = "canopy")
+launchctl kickstart -k gui/$(id -u)/com.canopy.runner
+
+# 4. Only NOW delete the old client. Doing this before step 1 succeeds takes that
+#    agent's mail down completely.
+gog auth tokens delete <email> --client <old> -y
+rm "$HOME/Library/Application Support/gogcli/credentials-<old>.json"
+```
+
+Watch out: two agents' credential files can hold the *same* client_id (ace and
+echo did), so check `account_clients` and `runner.json` for other users of a file
+before removing it.
 
 ## The steps
 
