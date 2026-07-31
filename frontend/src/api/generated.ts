@@ -645,6 +645,39 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/inbound/watch/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report a mailbox's Gmail watch expiry
+         * @description Tell canopy-web when this mailbox's Gmail watch lapses.
+         *
+         *     A Gmail ``users.watch`` expires within 7 days and Google will not renew it,
+         *     so push dies weekly unless something re-arms it. Whatever does that — the
+         *     documented `curl` today, an agent turn or the runner later — reports the new
+         *     expiry here, and the log then says ``gmail.watch.expiring`` a day out and
+         *     ``gmail.watch.expired`` after.
+         *
+         *     Without this the cliff is SILENT: push stops, the poll quietly takes over,
+         *     and the only symptom is that email feels slow again — which is precisely the
+         *     thing that took a manual investigation to notice the first time.
+         *
+         *     Caller-authed (session or PAT), not push-verified: this is our own fleet
+         *     reporting state, not Google calling in.
+         */
+        readonly post: operations["apps_inbound_api_report_watch"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/": {
         readonly parameters: {
             readonly query?: never;
@@ -4405,6 +4438,35 @@ export interface components {
              * @default
              */
             readonly subscription: string;
+        };
+        /** WatchReportOut */
+        readonly WatchReportOut: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Expires At
+             * @default
+             */
+            readonly expires_at: string;
+        };
+        /**
+         * WatchReportIn
+         * @description What something that armed a Gmail watch reports back.
+         *
+         *     ``expires_at`` may be null — that is how you say "this mailbox has no watch",
+         *     which is different from never having reported. Both are honest states and the
+         *     log distinguishes them.
+         */
+        readonly WatchReportIn: {
+            /** Address */
+            readonly address: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -9698,6 +9760,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PushResultOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_report_watch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WatchReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WatchReportOut"];
                 };
             };
         };

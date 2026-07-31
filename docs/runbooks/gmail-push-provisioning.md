@@ -84,14 +84,26 @@ curl -X POST "https://gmail.googleapis.com/gmail/v1/users/me/watch" \
 
 The response carries `historyId` and `expiration` (epoch ms).
 
-> **A watch expires after 7 days at most.** Google will not renew it for you.
-> Re-arming is automated in the follow-up PR (the runner already holds the
-> credentials and already runs a tick, so it re-arms inside 24h of expiry with no
-> new scheduler). Until that lands, this call must be repeated weekly, and the
-> symptom of forgetting is that email quietly goes back to taking five minutes.
+**Then report the expiry back**, so forgetting is loud instead of silent:
 
-`gog` has no `watch` verb, which is why this is a raw `curl` — minting
-`$ACCESS_TOKEN` from the stored refresh token is what the follow-up automates.
+```bash
+curl -X POST "https://labs.connect.dimagi.com/canopy/api/inbound/watch/" \
+  -H "Authorization: Bearer $CANOPY_TOKEN" -H "Content-Type: application/json" \
+  -d '{"address": "eva@dimagi-ai.com", "expires_at": "2026-08-06T12:00:00Z"}'
+```
+
+> **A watch expires after 7 days at most and Google will not renew it**, so this
+> section must be repeated weekly. The symptom of forgetting is that email
+> quietly goes back to taking five minutes — which is exactly why the report call
+> above matters: with an expiry on file, canopy-web logs `gmail.watch.expiring` a
+> day out and `gmail.watch.expired` after, so the cliff announces itself.
+
+`gog` has no `watch` verb and no way to print an access token — it keeps client
+credentials and refresh tokens in a keyring and never exposes a bearer — which is
+why step 4 is a raw `curl` a human runs rather than something the runner does.
+Automating it needs either a `gog` verb for minting a token (another repo) or a
+deliberate decision to hand the runner those secrets directly; that is a choice
+worth making explicitly rather than a gap to paper over.
 
 ## Verifying it works
 
