@@ -7,9 +7,11 @@ import { Markdown } from '@/components/Markdown'
 // place — no bouncing to another surface. A `review` gets implement / skip / defer;
 // a `question` is resolved by typing its answer. Both can be dismissed.
 //
-// Only `implement` dispatches work, so a bad dispatch spec 422s and the item stays
-// OPEN — we surface that inline rather than let the tap look like it worked. A
-// second decision 409s (already decided elsewhere); we refetch via onActed.
+// Both `implement` and an ANSWER dispatch the row's work immediately (a question has
+// no verb to click — the answer is the go-ahead), so the button says what it will do
+// when there is something to route. A bad dispatch spec 422s and the item stays OPEN
+// — we surface that inline rather than let the tap look like it worked. A second
+// decision 409s (already decided elsewhere); we refetch via onActed.
 
 const REVIEW_DECISIONS: ItemDecision[] = ['implement', 'skip', 'defer']
 
@@ -80,7 +82,7 @@ export function ItemCard({
             onClick={() => act(() => decideItem(item.id, '', answer.trim()))}
             className="rounded-md border border-border px-3 py-1 text-[12px] text-foreground transition-colors hover:bg-muted disabled:opacity-50"
           >
-            Answer
+            {(item.dispatch ?? []).length ? 'Answer & run' : 'Answer'}
           </button>
           <button
             type="button"

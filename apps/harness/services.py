@@ -1677,11 +1677,21 @@ def decide_item(
     item: Item, *, decision: str, comment: str, by: str, actor_workspace_slugs: set[str],
     decided_by_user=None,
 ) -> tuple[Item, list[Turn]]:
-    """Resolve an open item. Only IMPLEMENT dispatches.
+    """Resolve an open item, dispatching its work the moment the human commits.
 
-    A review needs a decision from the closed set; a question needs a non-empty
-    answer (its `decision` stays blank). Deciding twice raises AlreadyDecidedError —
-    the guard that stops a double-click becoming a second dispatch.
+    A review needs a decision from the closed set and dispatches on IMPLEMENT; a
+    question needs a non-empty answer (its `decision` stays blank) and dispatches on
+    ANY answer, because on a question the answer IS the go-ahead — there is no verb
+    to click. Answering used to be inert: the item left the open queue carrying the
+    human's instruction, and nothing enqueued it, so the work waited on an agent
+    happening to re-read decided rows (2026-07-30: three answered cards, zero turns).
+    A question with no `dispatch[]` still just records the answer — there is nothing
+    to route. Deciding twice raises AlreadyDecidedError — the guard that stops a
+    double-click becoming a second dispatch.
+
+    The reply itself rides into every dispatched prompt (`dispatch._with_reply`), so
+    an answer that redirects or declines reaches the agent rather than being dropped
+    on the floor while its superseded brief runs.
 
     `actor_workspace_slugs` is the set of workspaces the DECIDING human belongs to;
     it's the authorization for a cross-agent dispatch — you may only dispatch a
@@ -1716,7 +1726,8 @@ def decide_item(
         item.decided_at = timezone.now()
 
         turns: list[Turn] = []
-        if decision == Item.IMPLEMENT:
+        answered = item.kind == Item.QUESTION and bool(item.dispatch)
+        if decision == Item.IMPLEMENT or answered:
             turns = dispatch_item(item, actor_workspace_slugs=actor_workspace_slugs)
             item.dispatched_at = timezone.now()
 

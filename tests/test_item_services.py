@@ -79,6 +79,85 @@ def test_a_question_requires_an_answer(ada):
     assert item.comment == "canopy-web"
 
 
+def test_answering_a_question_dispatches_its_work(ada):
+    """An answer IS the go-ahead. A question card carries the same routing block a
+    review does, so answering it enqueues that work immediately — the alternative is
+    an answered card sitting inert until an agent happens to re-read decided items."""
+    item = _item(ada, kind=Item.QUESTION, title="add a weekday schedule for hal?",
+                 dispatch=[{"prompt": "/ada:turn — add hal's schedule"}])
+
+    item, turns = services.decide_item(
+        item, decision="", comment="Yeah let's do that", by="jj@dimagi.com",
+        actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert item.state == Item.DECIDED
+    assert item.decision == ""  # a question is still resolved by its answer, not a verb
+    assert item.dispatched_at is not None
+    assert len(turns) == 1
+
+
+def test_an_answer_with_nothing_to_route_is_only_recorded(ada):
+    item = _item(ada, kind=Item.QUESTION, title="which repo?")
+
+    item, turns = services.decide_item(
+        item, decision="", comment="canopy-web", by="jj@dimagi.com",
+        actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert item.state == Item.DECIDED
+    assert turns == []
+    assert item.dispatched_at is None
+
+
+def test_the_answer_rides_along_into_the_dispatched_prompt(ada):
+    """The answer often redirects the work ('yes, but send it to hal instead'). If the
+    agent never sees it, it executes the original brief and the steer is lost."""
+    item = _item(ada, kind=Item.QUESTION, title="investigate ace's closes?",
+                 dispatch=[{"prompt": "/ace:turn — investigate"}])
+
+    _item_, turns = services.decide_item(
+        item, decision="", comment="Yes, but dispatch it to hal", by="jj@dimagi.com",
+        actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert "Yes, but dispatch it to hal" in turns[0].prompt
+    assert "jj@dimagi.com" in turns[0].prompt
+
+
+def test_an_implement_comment_rides_along_too(ada):
+    item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
+
+    _item_, turns = services.decide_item(
+        item, decision=Item.IMPLEMENT, comment="only the retry, skip the backoff",
+        by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert "only the retry, skip the backoff" in turns[0].prompt
+
+
+def test_a_dispatch_free_decision_leaves_the_prompt_alone(ada):
+    """No answer, no preamble — an unadorned brief must stay byte-for-byte itself."""
+    item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
+
+    _item_, turns = services.decide_item(
+        item, decision=Item.IMPLEMENT, comment="", by="jj@dimagi.com",
+        actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert turns[0].prompt == "/ada:conduct"
+
+
+def test_a_failing_dispatch_rolls_an_ANSWER_back_too(ada):
+    """Same all-or-nothing guarantee the review path has: a bad spec 422s and the
+    question stays OPEN and re-answerable, rather than decided-but-inert."""
+    item = _item(ada, kind=Item.QUESTION, title="?",
+                 dispatch=[{"target_agent": "ghost", "prompt": "/ghost:turn"}])
+
+    with pytest.raises(ValueError, match="ghost"):
+        services.decide_item(item, decision="", comment="go", by="jj@dimagi.com",
+                             actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    item.refresh_from_db()
+    assert item.state == Item.OPEN
+    assert Turn.objects.count() == 0
+
+
 def test_a_review_rejects_a_decision_outside_the_closed_set(ada):
     item = _item(ada)
 
