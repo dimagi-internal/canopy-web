@@ -162,6 +162,15 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
     turn_index is NEGATIVE (-n..-1): it orders the tail before any real row and can
     never collide with backfilled rows (which start at 0) or with a live stream's
     `seq:` ids, so a backfill or a live message layers on cleanly.
+
+    The noise filter runs HERE too, not just on the durable paths. This is the one
+    path that renders rows the server never inspected — a local session shows this
+    tail until its backfill lands, and the runner filters it in the producer, which
+    is exactly the arrangement `transcript_noise` exists to warn against. A runner
+    on a lagging checkout shipped a tail containing a skill body and canopy rendered
+    it in the human's own bubble (found 2026-07-30: superpowers/brainstorming, on an
+    ada session). Sharing the prefix list fixes new runners; filtering here is what
+    fixes every runner already in the field.
     """
     if binding is None or not binding.tail:
         return []
@@ -175,6 +184,14 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
         if role not in _BACKFILL_ROLES:
             role = Message.ASSISTANT
         text = m.get("text") or ""
+        # Scoped to USER rows for the same reason persist_transcript_rows scopes
+        # it: the rule is about records masquerading as human input, and
+        # assistant text quoting a marker is still the agent talking.
+        if role == Message.USER and is_system_noise(text):
+            continue
+        # Derived from the ORIGINAL position, never a running counter — a dropped
+        # row leaves its slot empty rather than shifting its neighbours, so the
+        # tail keeps ordering consistently against itself.
         idx = i - n
         rows.append(TailMessage(
             pk=f"tail:{idx}", turn_index=idx, role=role,

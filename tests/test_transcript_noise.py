@@ -190,3 +190,92 @@ def test_a_human_quoting_the_interrupt_marker_still_survives():
     """Prefix-anchored, never a substring search — asking about the marker is a
     real message and must not be swallowed."""
     assert not is_system_noise('why does "[Request interrupted by user]" show up?')
+
+
+# --- the binding-tail path --------------------------------------------------
+#
+# The tail is the one transcript the server never inspected: a local session
+# renders `RunnerBinding.tail` until its backfill lands, and the runner filters
+# that tail itself. So for as long as the rule was enforced only on the durable
+# paths, a runner on a lagging checkout could put anything in a user bubble —
+# and did (2026-07-30: a superpowers/brainstorming skill body, injected as a
+# `type: "user"` record, rendered as the human's own message on an ada session).
+
+
+def _binding_with_tail(session, tail):
+    from django.utils import timezone
+
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner
+
+    runner = Runner.objects.create(
+        name="jj-mbp", workspace=session.workspace, location=Runner.LOCAL,
+        paired_by=session.workspace.created_by, host="jj@mbp", status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(),
+    )
+    return RunnerBinding.objects.create(
+        session=session, runner=runner, session_key="ada-demo",
+        thread_key="emdash:ada-demo", host=runner.host,
+        last_interacted_at=timezone.now(), tail=tail,
+    )
+
+
+def test_the_tail_drops_a_skill_body_a_lagging_runner_shipped():
+    session = _session()
+    binding = _binding_with_tail(session, [
+        {"role": "user", "text": "go look at the fleet"},
+        {"role": "assistant", "text": "I'll start by invoking the skill."},
+        {"role": "user", "text": "Base directory for this skill: /Users/jj/.claude/…"},
+    ])
+
+    rows = services.tail_as_messages(session, binding)
+
+    assert [r.plaintext for r in rows] == [
+        "go look at the fleet",
+        "I'll start by invoking the skill.",
+    ]
+
+
+def test_dropping_a_tail_row_does_not_shift_its_neighbours():
+    """The tail's negative turn_index comes from the row's ORIGINAL position, so
+    a dropped row leaves its slot empty. Renumbering would reorder the tail
+    against itself as the filter's verdict changed."""
+    session = _session()
+    binding = _binding_with_tail(session, [
+        {"role": "user", "text": "<task-notification>\nnoise"},
+        {"role": "assistant", "text": "real reply"},
+    ])
+
+    rows = services.tail_as_messages(session, binding)
+
+    assert [(r.turn_index, r.plaintext) for r in rows] == [(-1, "real reply")]
+
+
+def test_an_assistant_tail_row_is_never_dropped():
+    """Same scoping as the durable path: the rule is about records masquerading
+    as human input."""
+    session = _session()
+    binding = _binding_with_tail(session, [
+        {"role": "assistant", "text": "<system-reminder> is injected by the harness"},
+    ])
+
+    assert len(services.tail_as_messages(session, binding)) == 1
+
+
+# --- one definition, not two ------------------------------------------------
+
+
+def test_the_runner_and_the_server_cannot_disagree_about_the_rule():
+    """The bug underneath the bug: the runner carried a PRIVATE copy of this
+    list, the server carried another, and the server's grew two prefixes the
+    runner's never did. Both now import `canopy_transcript.noise` — this asserts
+    they still resolve to the same object, so re-introducing a second definition
+    fails here rather than on someone's phone."""
+    from canopy_runner import transcript as runner_transcript
+    from canopy_transcript import SYSTEM_NOISE_PREFIXES
+
+    from apps.canopy_sessions import transcript_noise
+
+    assert transcript_noise.SYSTEM_NOISE_PREFIXES is SYSTEM_NOISE_PREFIXES
+    assert runner_transcript._SYSTEM_NOISE_PREFIXES is SYSTEM_NOISE_PREFIXES
+    assert runner_transcript._is_system_noise is transcript_noise.is_system_noise
