@@ -413,3 +413,94 @@ def test_the_hook_config_is_written_with_the_port_actually_bound(monkeypatch, tm
         if listener is not None:
             listener.stop()
         squatter.stop()
+
+
+# -- the hook config must keep pointing at the LIVE listener ------------------
+#
+# `~/.claude/settings.json` is ONE file per account, shared by every runner
+# instance and every Claude Code session on it. `install()` runs once, at
+# startup — so anything that rewrites the file afterwards wins permanently.
+# The free-port fallback is exactly such a writer: a second instance that loses
+# the race takes an ephemeral port and re-points the account's hooks at itself,
+# and if it then exits, every hook curls a port nothing is listening on.
+#
+# Observed live 2026-07-30: the runner listening on :8788, the config pointing
+# at :49366, nothing bound there, and the hook receipt rate collapsing from 293
+# per 5 minutes to 88 as sessions restarted onto the dead port.
+
+
+def _idle_listener(port, nonce):
+    """A listener that has never received a hook — the state a repair must work in."""
+    listener = HookListener(port=port, nonce=nonce,
+                            resolve_session=lambda cwd: "s", forward=lambda: True)
+    listener.bind_sender(lambda sid, ev: None)
+    return listener
+
+
+def test_a_config_pointing_somewhere_else_is_re_pointed_at_the_live_listener(
+        tmp_path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    hook_install.install(settings, port=49366, nonce="from-an-instance-that-died")
+    monkeypatch.setattr(hooks, "_hook_listener", _idle_listener(8788, "live"))
+
+    assert hooks.ensure_hook_config(settings) is True
+    assert hook_install.is_current(settings, port=8788, nonce="live")
+
+
+def test_the_repair_does_not_wait_for_a_hook_to_arrive(tmp_path, monkeypatch):
+    """The condition being healed IS "no hooks are arriving", so the repair must
+    not be gated on one. `maybe_report_hooks` returns early while `received == 0`
+    — folding the repair in there would make it unreachable in precisely the
+    state that needs it."""
+    settings = tmp_path / "settings.json"
+    hook_install.install(settings, port=49366, nonce="stale")
+    listener = _idle_listener(8788, "live")
+    monkeypatch.setattr(hooks, "_hook_listener", listener)
+
+    assert listener.received == 0
+    assert hooks.ensure_hook_config(settings) is True
+
+
+def test_a_config_already_pointing_at_us_is_left_alone(tmp_path, monkeypatch):
+    """Re-writing an already-correct file every tick would churn a file other
+    processes read, for nothing."""
+    settings = tmp_path / "settings.json"
+    hook_install.install(settings, port=8788, nonce="live")
+    before = settings.read_text()
+    monkeypatch.setattr(hooks, "_hook_listener", _idle_listener(8788, "live"))
+
+    assert hooks.ensure_hook_config(settings) is False
+    assert settings.read_text() == before
+
+
+def test_a_repair_preserves_hooks_canopy_did_not_install(tmp_path, monkeypatch):
+    """emdash writes its own hooks; the repair goes through `install`, which
+    already protects them, and this pins that it stays true on this path."""
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": "curl emdash-of-its-own"}]}]}}))
+    hook_install.install(settings, port=49366, nonce="stale")
+    monkeypatch.setattr(hooks, "_hook_listener", _idle_listener(8788, "live"))
+
+    hooks.ensure_hook_config(settings)
+
+    assert "emdash-of-its-own" in settings.read_text()
+
+
+def test_nothing_is_written_when_the_listener_never_started(tmp_path, monkeypatch):
+    """`hook_port = 0` (or a bind that truly failed) leaves no listener. Writing
+    a config then would point hooks at a port we are not on."""
+    settings = tmp_path / "settings.json"
+    monkeypatch.setattr(hooks, "_hook_listener", None)
+
+    assert hooks.ensure_hook_config(settings) is False
+    assert not settings.exists()
+
+
+def test_is_current_sees_a_changed_port(tmp_path):
+    settings = tmp_path / "settings.json"
+    hook_install.install(settings, port=8788, nonce="n")
+
+    assert hook_install.is_current(settings, port=8788, nonce="n")
+    assert not hook_install.is_current(settings, port=49366, nonce="n")
+    assert not hook_install.is_current(settings, port=8788, nonce="rotated")

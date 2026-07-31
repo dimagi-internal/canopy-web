@@ -78,6 +78,44 @@ def maybe_report_hooks(now_fn=time.monotonic) -> None:
     )
 
 
+def ensure_hook_config(settings_path=None) -> bool:
+    """Re-point the hook config at the live listener if it has drifted. Returns
+    True if it was repaired.
+
+    `install` runs ONCE, at startup — but `~/.claude/settings.json` is one file
+    per ACCOUNT, shared by every runner instance and every Claude Code session on
+    it, so whatever writes last wins permanently. The free-port fallback is
+    itself such a writer: a second instance that loses the port race takes an
+    ephemeral port and re-points the account's hooks at itself. When that
+    instance exits, every hook on the account curls a port nothing is listening
+    on — the live-events-off failure the fallback exists to prevent, arriving by
+    a different door. Observed 2026-07-30: runner on :8788, config on :49366,
+    nothing bound there.
+
+    So the config is treated as observed state that converges, not as a fact
+    declared once — the same shape as `capabilities["projects"]` (reported, never
+    typed) and session liveness (polled, self-healing). One small read per tick
+    buys an invariant that repairs itself within a poll no matter who wrote over
+    it.
+
+    Deliberately NOT folded into `maybe_report_hooks`: that returns early while
+    `received == 0`, and "no hooks are arriving" is precisely the condition being
+    healed, so the repair would be unreachable exactly when it is needed.
+    """
+    listener = _hook_listener
+    if listener is None or listener.port <= 0:
+        return False
+    path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if hook_install.is_current(path, port=listener.port, nonce=listener.nonce):
+        return False
+    if not hook_install.install(path, port=listener.port, nonce=listener.nonce):
+        return False
+    logger.warning(
+        "hook config no longer pointed at this listener (something else wrote %s); "
+        "re-pointed it at :%d", path, listener.port)
+    return True
+
+
 def resolve_hook_session(cwd: str) -> str:
     """A hook's cwd -> canopy session id, or "" if this isn't a session we back.
 

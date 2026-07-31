@@ -109,6 +109,31 @@ def install(settings_path: Path, *, port: int, nonce: str) -> bool:
     return True
 
 
+def is_current(settings_path: Path, *, port: int, nonce: str) -> bool:
+    """True when every hooked event carries exactly our current command.
+
+    The question `install` cannot answer on its own: this file is shared by the
+    whole account, `install` runs once at startup, and anything that writes
+    afterwards wins. Comparing against `hook_command` rather than parsing a port
+    out means a rotated nonce counts as drift too — a stale nonce is rejected by
+    the listener, which is silent in the same way a dead port is.
+    """
+    settings = _load(settings_path)
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    want = hook_command(port, nonce)
+    for event in HOOK_EVENTS:
+        ours = [e for e in hooks.get(event, []) if isinstance(e, dict) and _is_ours(e)]
+        if len(ours) != 1:
+            return False
+        commands = [h.get("command") for h in ours[0].get("hooks", [])
+                    if isinstance(h, dict)]
+        if commands != [want]:
+            return False
+    return True
+
+
 def remove(settings_path: Path) -> bool:
     """Remove canopy's hook, leaving every other hook in place.
 
