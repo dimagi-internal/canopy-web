@@ -140,3 +140,25 @@ def test_session_backfill_rejects_unbound_runner():
     )
     assert resp.status_code == 404
     assert s.messages.count() == 0
+
+
+def test_backfill_requested_when_runner_is_paused(monkeypatch):
+    """Same shape as the DEGRADED case above, one state over: a paused runner's
+    poll loop runs `drain_backfills` every tick BEFORE the pause gate — pause
+    stops starting turns, not shipping files it already has."""
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="t")
+    r = Runner.objects.create(
+        name="laptop", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paused=True,
+    )
+    RunnerBinding.objects.create(session=s, runner=r, session_key="echo-1")
+    c = Client(); c.force_login(user)
+
+    assert r.live_status == Runner.PAUSED
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
+    assert published, "a paused (but alive) runner must still be signalled"

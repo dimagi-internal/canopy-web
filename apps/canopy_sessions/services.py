@@ -227,7 +227,6 @@ def request_backfill(session) -> str:
     (signal it — streamed ordinal rows alone are not the full history); 'unavailable'
     otherwise (tail still shows)."""
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.models import Runner
 
     first = (
         session.messages.order_by("turn_index").values_list("turn_index", flat=True).first()
@@ -236,16 +235,14 @@ def request_backfill(session) -> str:
         return "ready"
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
-    # turns. `live_status` returns the self-reported status ONLY while the
-    # heartbeat is fresh (a quiet runner is demoted to STALE/DISCONNECTED), so
-    # ONLINE and DEGRADED are exactly the "still reporting" states.
-    # Gating on ONLINE alone made backfill impossible whenever emdash's CDP port
-    # was down: the runner marks itself DEGRADED and stops CLAIMING, but its poll
-    # loop keeps running and `_drain_backfills` reads the transcript FILE, which
-    # never needed CDP. Found on prod — a degraded runner answered "unavailable"
-    # for history it was perfectly able to ship.
-    reachable = {Runner.ONLINE, Runner.DEGRADED}
-    if binding is None or binding.runner_id is None or binding.runner.live_status not in reachable:
+    # turns (`Runner.is_reachable`). Gating on ONLINE alone made backfill
+    # impossible whenever emdash's CDP port was down: the runner marks itself
+    # DEGRADED and stops CLAIMING, but its poll loop keeps running and
+    # `_drain_backfills` reads the transcript FILE, which never needed CDP.
+    # Found on prod — a degraded runner answered "unavailable" for history it
+    # was perfectly able to ship. A PAUSED runner drains backfills the same way,
+    # every tick before its pause gate.
+    if binding is None or binding.runner_id is None or not binding.runner.is_reachable:
         return "unavailable"
     if not binding.backfill_requested:
         binding.backfill_requested = True
@@ -497,14 +494,12 @@ def _reset_blocker(session) -> tuple[str, object]:
     What actually blocks a reset is having no pointer to a transcript at all (no
     binding), or no live runner to read it (offline/retired — transient).
     """
-    from apps.harness.models import Runner
-
     binding = getattr(session, "runner_binding", None)
     if binding is None or binding.runner_id is None:
         return RESET_NO_BINDING, None
     # Reachable is enough to READ A FILE — mirrors request_backfill, which never
     # needs emdash's CDP port.
-    if binding.runner.live_status not in (Runner.ONLINE, Runner.DEGRADED):
+    if not binding.runner.is_reachable:
         return RESET_RUNNER_UNREACHABLE, binding
     return RESET_OK, binding
 
@@ -954,13 +949,15 @@ def answer_menu(*, session: Session, option: int | None) -> str:
     The keystroke itself is the runner's job: the server knows nothing about
     terminals, and emdash (not canopy) owns the session.
     """
-    from apps.harness.models import Runner  # framework->framework; lazy, import cycle
-
     binding = getattr(session, "runner_binding", None)
     if binding is None or binding.runner_id is None or not binding.session_key:
         return "unbound"
-    reachable = {Runner.ONLINE, Runner.DEGRADED}
-    if binding.runner.live_status not in reachable:
+    # Reachable, not available: pause stops STARTING work, never finishing it,
+    # and a blocked agent is unfinished work already running. The answer rides
+    # the wake-listener thread, which the pause gate never touches — a PAUSED
+    # runner (fresh heartbeat by construction) presses the key just fine, and it
+    # is the runner whose session report delivered this very menu.
+    if not binding.runner.is_reachable:
         return "unavailable"
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {

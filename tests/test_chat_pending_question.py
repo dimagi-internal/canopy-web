@@ -292,3 +292,61 @@ def test_a_waiting_session_sorts_above_everything(monkeypatch):
     ])
     titles = [r["title"] for r in client.get("/api/canopy-sessions/").json()]
     assert titles[0] == "spark", f"the waiting session sank to {titles.index('spark')}"
+
+
+# -- the phone can answer it -----------------------------------------------
+
+
+def test_an_answer_reaches_a_paused_runner(monkeypatch):
+    """Pause stops STARTING work, never finishing it — and a blocked agent is
+    unfinished work already running. PAUSED is only ever served while the
+    heartbeat is fresh (a parked box that dies reads STALE), so a paused runner
+    is by construction still reporting — it is the runner that delivered this
+    very menu, since session reports run before the pause gate — and its control
+    channel is up. Refusing it turned every tap into a dead button the moment a
+    box was parked: found live 2026-07-31, first real use (jj-mbp-cdp parked for
+    a rate limit, ada blocked on AskUserQuestion, every answer 'unavailable')."""
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish",
+                        lambda g, m: published.append((g, m)))
+    jj, ws, runner, client = _setup()
+    runner.paused = True
+    runner.save(update_fields=["paused"])
+    _report(client, runner.id, [
+        {"emdash_task": "spark", "project": "ace", "question": MENU},
+    ])
+    session = RunnerBinding.objects.get(session_key="spark").session
+
+    assert runner.live_status == Runner.PAUSED
+    res = client.post(
+        f"/api/canopy-sessions/{session.id}/answer-menu",
+        {"option": 1}, content_type="application/json",
+    )
+    assert res.json() == {"ok": True, "reason": ""}
+    frames = [m for _g, m in published if m.get("type") == "runner.menu_answer"]
+    assert frames and frames[0]["option"] == 1
+    assert frames[0]["session_key"] == "spark"
+
+
+def test_an_answer_to_a_dead_runner_is_still_refused(monkeypatch):
+    """The widening stops at liveness: a stale heartbeat means nobody is there
+    to press anything, paused or not, and 'sent' would be a lie."""
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish",
+                        lambda g, m: published.append((g, m)))
+    jj, ws, runner, client = _setup()
+    _report(client, runner.id, [
+        {"emdash_task": "spark", "project": "ace", "question": MENU},
+    ])
+    session = RunnerBinding.objects.get(session_key="spark").session
+    runner.paused = True
+    runner.last_heartbeat_at = timezone.now() - timezone.timedelta(hours=1)
+    runner.save(update_fields=["paused", "last_heartbeat_at"])
+
+    assert runner.live_status == Runner.STALE
+    res = client.post(
+        f"/api/canopy-sessions/{session.id}/answer-menu",
+        {"option": 1}, content_type="application/json",
+    )
+    assert res.json() == {"ok": False, "reason": "unavailable"}
+    assert not [m for _g, m in published if m.get("type") == "runner.menu_answer"]
