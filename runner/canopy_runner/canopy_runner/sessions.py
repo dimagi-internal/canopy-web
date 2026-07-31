@@ -151,15 +151,25 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except emdash.EmdashReadError:
         logger.debug("archived-task read failed (non-fatal, omitting)", exc_info=True)
         archived = []
+    # Snapshot rather than read-then-clear: `_PENDING_CLOSED` is written from the
+    # wake-listener thread (close.close_session) and this runs on the report-tick
+    # thread. A name added while the POST below is in flight must survive — a
+    # wholesale `.clear()` after the call would drop it on the floor with no
+    # fallback (emdash has already deleted the task, so nothing rediscovers it).
+    # Same discard-only-the-snapshot shape as cancel.py::CANCELLED_TURNS.
+    closing = set(_PENDING_CLOSED)
     try:
         transcript.attach_recent_tail(
             sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
         )
-        client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | _PENDING_CLOSED))
-        # Cleared only on success. A dropped POST must not lose the closing signal —
-        # the next tick retries it, and re-reporting an already-retired name is a
-        # no-op server-side.
-        _PENDING_CLOSED.clear()
+        client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing))
+        # Discard only the names this report actually carried (mutate in place —
+        # `_PENDING_CLOSED -= closing` would rebind the name, making it local
+        # under Python's scoping rules and shadowing the module-level set). A
+        # dropped POST must not lose the closing signal — the next tick retries
+        # it (this snapshot stays queued), and re-reporting an already-retired
+        # name is a no-op server-side.
+        _PENDING_CLOSED.difference_update(closing)
     except Exception:  # noqa: BLE001
         logger.debug("session report failed (non-fatal)", exc_info=True)
 
