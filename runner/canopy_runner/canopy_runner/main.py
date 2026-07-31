@@ -249,10 +249,23 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
     mailbox (revoked grant, missing gog client) is logged and skipped, never
     raised — the server's watch.expired row is what makes it loud.
     """
-    topic = getattr(cfg, "gmail_watch_topic", "") or ""
-    if not topic or not getattr(cfg, "mailboxes", None):
+    if not getattr(cfg, "mailboxes", None):
         return
     from . import gmail_watch
+
+    # Topics come from canopy-web (each workspace's InboundPushConfig), so a
+    # tenant configures its topic once in the UI rather than by editing
+    # runner.json on every box. The local `gmail_watch_topic` remains as a
+    # fallback for a box running against a server that has no config yet.
+    local_topic = getattr(cfg, "gmail_watch_topic", "") or ""
+    try:
+        served = {row.get("address", "").lower(): row.get("watch_topic", "")
+                  for row in client.runner_mailboxes()}
+    except Exception as exc:  # noqa: BLE001 — a config read never breaks the tick
+        logger.debug("runner-mailboxes fetch failed (%s); using local topic", exc)
+        served = {}
+    if not served and not local_topic:
+        return
 
     state_path = (Path(cfg.state_path).with_name("gmail-watch.json")
                   if cfg.state_path else Path("gmail-watch.json"))
@@ -274,6 +287,9 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
         except (TypeError, ValueError):
             prev = None
         if not gmail_watch.due(prev, now=now):
+            continue
+        topic = served.get(address.lower(), "") or local_topic
+        if not topic:
             continue
         try:
             expires = gmail_watch.arm(address, box.get("client") or "canopy", topic)

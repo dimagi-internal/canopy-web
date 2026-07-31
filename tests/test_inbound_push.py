@@ -15,12 +15,12 @@ from apps.agents.models import Agent
 from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.inbound import services
-from apps.inbound.models import InboundMailbox
+from apps.inbound.models import InboundMailbox, InboundPushConfig
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-AUDIENCE = "https://labs.example/canopy/api/inbound/gmail/"
+AUDIENCE = "https://labs.example/canopy/api/inbound/gmail/dimagi/"
 SIGNER = "push@project.iam.gserviceaccount.com"
 
 
@@ -42,7 +42,14 @@ def agent(workspace):
 
 
 @pytest.fixture()
-def mailbox(agent):
+def push_config(workspace):
+    return InboundPushConfig.objects.create(
+        workspace=workspace, audience=AUDIENCE, service_account=SIGNER
+    )
+
+
+@pytest.fixture()
+def mailbox(agent, push_config):
     return InboundMailbox.objects.create(address="eva@dimagi-ai.com", agent=agent)
 
 
@@ -70,27 +77,19 @@ def _envelope(address="eva@dimagi-ai.com", history_id="12345"):
     return {"message": {"data": data, "messageId": "m1"}, "subscription": "sub"}
 
 
-def _post(body=None, *, verified=True, settings_over=None):
-    client = Client()
-    over = {"INBOUND_PUSH_AUDIENCE": AUDIENCE, "INBOUND_PUSH_SERVICE_ACCOUNT": SIGNER}
-    over.update(settings_over or {})
-    claims = {"email": SIGNER, "email_verified": True, "aud": AUDIENCE}
-    with mock.patch("django.conf.settings.INBOUND_PUSH_AUDIENCE", over["INBOUND_PUSH_AUDIENCE"]), \
-         mock.patch(
-             "django.conf.settings.INBOUND_PUSH_SERVICE_ACCOUNT",
-             over["INBOUND_PUSH_SERVICE_ACCOUNT"],
-         ):
-        with mock.patch("google.oauth2.id_token.verify_oauth2_token") as v:
-            if verified:
-                v.return_value = claims
-            else:
-                v.side_effect = ValueError("bad signature")
-            return client.post(
-                "/api/inbound/gmail/",
-                body if body is not None else _envelope(),
-                content_type="application/json",
-                HTTP_AUTHORIZATION="Bearer fake.jwt.token",
-            )
+def _post(body=None, *, verified=True, ws="dimagi", claims=None):
+    claims = claims or {"email": SIGNER, "email_verified": True, "aud": AUDIENCE}
+    with mock.patch("google.oauth2.id_token.verify_oauth2_token") as v:
+        if verified:
+            v.return_value = claims
+        else:
+            v.side_effect = ValueError("bad signature")
+        return Client().post(
+            f"/api/inbound/gmail/{ws}/",
+            body if body is not None else _envelope(),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer fake.jwt.token",
+        )
 
 
 # ── verification ─────────────────────────────────────────────────────────────
@@ -103,31 +102,26 @@ def test_unverified_push_404s_not_403s(mailbox):
 
 
 def test_missing_bearer_is_refused(mailbox):
-    with mock.patch("django.conf.settings.INBOUND_PUSH_AUDIENCE", AUDIENCE):
-        r = Client().post(
-            "/api/inbound/gmail/", _envelope(), content_type="application/json"
-        )
+    r = Client().post(
+        "/api/inbound/gmail/dimagi/", _envelope(), content_type="application/json"
+    )
     assert r.status_code == 404
 
 
-def test_unconfigured_audience_refuses_everything(mailbox):
-    """An unconfigured deployment must not quietly accept anonymous pushes."""
-    r = _post(settings_over={"INBOUND_PUSH_AUDIENCE": ""})
-    assert r.status_code == 404
+def test_unconfigured_workspace_refuses_everything(mailbox, push_config):
+    """An unconfigured tenant must not quietly accept anonymous pushes."""
+    push_config.audience = ""
+    push_config.save()
+    assert _post().status_code == 404
+
+
+def test_an_unknown_workspace_404s_without_revealing_itself(mailbox):
+    assert _post(ws="no-such-workspace").status_code == 404
 
 
 def test_a_different_signer_is_refused(mailbox):
     """Audience alone is not identity."""
-    with mock.patch("django.conf.settings.INBOUND_PUSH_AUDIENCE", AUDIENCE), \
-         mock.patch("django.conf.settings.INBOUND_PUSH_SERVICE_ACCOUNT", SIGNER), \
-         mock.patch("google.oauth2.id_token.verify_oauth2_token") as v:
-        v.return_value = {"email": "someone-else@evil.example", "email_verified": True}
-        r = Client().post(
-            "/api/inbound/gmail/",
-            _envelope(),
-            content_type="application/json",
-            HTTP_AUTHORIZATION="Bearer fake.jwt.token",
-        )
+    r = _post(claims={"email": "someone-else@evil.example", "email_verified": True})
     assert r.status_code == 404
 
 
@@ -205,12 +199,31 @@ def test_a_strict_source_rule_is_honoured(mailbox, agent, runner, user, workspac
 # ── the loud failures ────────────────────────────────────────────────────────
 
 
-def test_unknown_mailbox_is_200_but_logged(workspace):
-    """200 because a 4xx makes Pub/Sub redeliver forever."""
+def test_unknown_mailbox_is_200_but_logged(push_config, workspace):
+    """200 because a 4xx makes Pub/Sub redeliver forever. And the row lands in
+    the URL's workspace — it used to fall back to the DEFAULT workspace, writing
+    an unregistered address into whichever tenant happened to be default."""
     r = _post()
     assert r.status_code == 200
     assert r.json()["reason"] == "unknown_mailbox"
-    assert Event.objects.filter(kind="gmail.push.unknown_mailbox", level="warn").exists()
+    ev = Event.objects.get(kind="gmail.push.unknown_mailbox")
+    assert ev.level == "warn"
+    assert ev.workspace_id == workspace.pk
+
+
+def test_another_workspaces_address_is_not_reachable(push_config, workspace, user):
+    """A tenant that learned another's address must not be able to ring its
+    runners from its own verified subscription."""
+    other_user = User.objects.create_user("o2", "o2@dimagi.com", "pw")
+    other_ws = Workspace.objects.create(
+        slug="connect", display_name="Connect", created_by=other_user
+    )
+    other_agent = Agent.objects.create(slug="zed", name="Zed", workspace=other_ws)
+    InboundMailbox.objects.create(address="zed@dimagi-ai.com", agent=other_agent)
+
+    r = _post(_envelope(address="zed@dimagi-ai.com"))
+    assert r.json()["reason"] == "unknown_mailbox"
+    assert Event.objects.get(kind="gmail.push.unknown_mailbox").workspace_id == workspace.pk
 
 
 def test_no_online_runner_is_logged_loudly(mailbox, agent, user, workspace):

@@ -33,12 +33,21 @@ def _record(workspace, **kw) -> None:
     events.record([{"source": SOURCE, **kw}], workspace=workspace)
 
 
-def resolve_mailbox(address: str) -> InboundMailbox | None:
-    return (
-        InboundMailbox.objects.select_related("agent")
-        .filter(address__iexact=(address or "").strip(), enabled=True)
-        .first()
+def resolve_mailbox(address: str, *, workspace_slug: str | None = None) -> InboundMailbox | None:
+    """The mailbox for this address, optionally constrained to one workspace.
+
+    ``workspace_slug`` is passed on the push path and is a TENANT GATE, not a
+    filter: without it, a tenant that learned another's address could ring that
+    workspace's runners from its own verified subscription. The address column is
+    globally unique because a Gmail push carries nothing but the address to
+    disambiguate on — so the constraint has to be checked, not assumed.
+    """
+    qs = InboundMailbox.objects.select_related("agent", "agent__workspace").filter(
+        address__iexact=(address or "").strip(), enabled=True
     )
+    if workspace_slug is not None:
+        qs = qs.filter(agent__workspace_id=workspace_slug)
+    return qs.first()
 
 
 def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
@@ -82,35 +91,32 @@ def ring(mailbox: InboundMailbox) -> list[Runner]:
     return runners
 
 
-def handle_push(address: str, history_id: str = "") -> dict:
-    """A verified Gmail push arrived. Resolve it, ring, and log the outcome.
+def handle_push(address: str, workspace, history_id: str = "") -> dict:
+    """A verified Gmail push arrived for ``workspace``. Resolve, ring, log.
 
     Returns a small dict for the response body — the caller answers 200 for
     every branch, including the unresolvable ones, because a 4xx to Pub/Sub
     means REDELIVERY and a mailbox we do not own would then be retried forever.
     Refusing loudly in the log is the right answer; refusing over the wire just
     creates a retry storm.
+
+    ``workspace`` comes from the URL and has already been verified against, so
+    an unknown mailbox lands in the RIGHT tenant's log. It used to fall back to
+    the default workspace, which wrote the unregistered address into whichever
+    tenant happened to be default — a small cross-tenant leak that only existed
+    because the endpoint had no way to know who the push was for.
     """
-    mailbox = resolve_mailbox(address)
+    mailbox = resolve_mailbox(address, workspace_slug=workspace.pk)
     if mailbox is None:
-        # No tenant to attribute this to — an unknown mailbox belongs to no
-        # agent by definition. Log it against the default workspace so it is
-        # still visible; this is the one case with no better home.
-        from apps.workspaces import services as wsvc
-
-        home = wsvc.ensure_default_workspace()
-        if home is not None:
-            _record(
-                home,
-                kind="gmail.push.unknown_mailbox",
-                level="warn",
-                key=(address or "")[:200],
-                summary=f"push for a mailbox with no InboundMailbox row: {address}",
-                payload={"address": address},
-            )
+        _record(
+            workspace,
+            kind="gmail.push.unknown_mailbox",
+            level="warn",
+            key=(address or "")[:200],
+            summary=f"push for a mailbox this workspace has not registered: {address}",
+            payload={"address": address},
+        )
         return {"ok": False, "reason": "unknown_mailbox"}
-
-    workspace = mailbox.agent.workspace
     InboundMailbox.objects.filter(pk=mailbox.pk).update(last_push_at=timezone.now())
 
     runners = ring(mailbox)
@@ -175,3 +181,65 @@ def note_watch_state(mailbox: InboundMailbox, expires_at: dt.datetime | None) ->
             summary=f"Gmail watch for {mailbox.address} expires {expires_at.isoformat()}",
             payload={"address": mailbox.address, "expires_at": expires_at.isoformat()},
         )
+
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+
+def get_config(workspace) -> "object":
+    """This workspace's push config, creating an empty one on first read.
+
+    Empty is a real, safe state: no audience means the endpoint refuses every
+    push for this tenant, so materialising the row costs nothing and lets the UI
+    render a form instead of a special "not configured yet" branch.
+    """
+    from apps.inbound.models import InboundPushConfig
+
+    cfg, _created = InboundPushConfig.objects.get_or_create(workspace=workspace)
+    return cfg
+
+
+def configs_for(workspace_slugs):
+    """Every config row for these workspaces, in one query."""
+    from apps.inbound.models import InboundPushConfig
+
+    return InboundPushConfig.objects.filter(workspace_id__in=workspace_slugs)
+
+
+def set_config(workspace, *, audience: str, service_account: str, watch_topic: str):
+    cfg = get_config(workspace)
+    cfg.audience = (audience or "").strip()
+    cfg.service_account = (service_account or "").strip()
+    cfg.watch_topic = (watch_topic or "").strip()
+    cfg.save(update_fields=["audience", "service_account", "watch_topic", "updated_at"])
+    return cfg
+
+
+def push_url(request, workspace_slug: str) -> str:
+    """The absolute endpoint a subscription should push to.
+
+    Server-computed because the deployment knows its own address and the operator
+    does not — this runs behind FORCE_SCRIPT_NAME=/canopy on labs, so a
+    hand-written URL drops the prefix and the pushes go nowhere, silently.
+    """
+    from django.urls import reverse
+
+    try:
+        base = request.build_absolute_uri(reverse("api-1.0.0:gmail_push",
+                                                  kwargs={"workspace": workspace_slug}))
+    except Exception:  # noqa: BLE001 — never let URL reversal break a config read
+        base = request.build_absolute_uri(f"/api/inbound/gmail/{workspace_slug}/")
+    return base
+
+
+def watch_state(mailbox) -> str:
+    """armed | expiring | expired | none. One definition, shared by the API and
+    the UI, so a green badge can never disagree with a `watch.expired` row."""
+    if not mailbox.watch_expires_at:
+        return "none"
+    now = timezone.now()
+    if mailbox.watch_expires_at <= now:
+        return "expired"
+    if mailbox.watch_expires_at - now <= WATCH_WARN_WINDOW:
+        return "expiring"
+    return "armed"

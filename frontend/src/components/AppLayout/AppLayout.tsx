@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { path: 'shareouts', label: 'Shareouts', tenant: true },
   { path: 'timeline', label: 'Timeline', tenant: true },
   { path: 'members', label: 'Members', tenant: true },
+  { path: 'inbound', label: 'Inbound', tenant: true },
   { path: '/insights', label: 'Insights', tenant: false },
   { path: '/sessions', label: 'Sessions', tenant: false },
   { path: '/system', label: 'System', tenant: false },
