@@ -393,6 +393,13 @@ never update again — an independent timer means shipping a fix rescues every b
 (it must never heartbeat — that would forge liveness for a daemon that may be dead).
 Log: `~/.canopy/updater.log`. Testing a branch on a box? Bootout the updater first,
 or it reverts you to the deployed sha within 30 minutes.
+**The 30-min timer is the fallback, not the latency**: a heartbeat reporting a sha
+that differs from the deployed expectation gets a `runner.update_available` frame
+back down the control channel, and the daemon kickstarts the updater job
+(`update.nudge` — throttled, skip-if-current, never installs in-process), so a
+stale box converges in ~one heartbeat. Push is the doorbell, the timer is the
+auditor — same shape as Gmail inbound; the timer alone still rescues a daemon too
+dead to hear a frame.
 
 **Runner code provenance.** The heartbeat carries `code_version` (the package's
 `__version__`, legible) and `code_sha` — **the sha of the last commit touching the runner's
@@ -422,7 +429,10 @@ payload in exactly ONE place.
 **The cloud runner is a separate program** (`runner/ec2/cloud_runner.py`): claims on a 15s poll and drains the queue, executes via `claude -p` (or ACP behind `RUNNER_EXECUTOR=acp`, default off), declares its repos via `RUNNER_PROJECTS`, and mirrors the laptop's viewer-stream/backfill contract on its own 3s clock. `bootstrap_agents.sh` provisions the agent fleet on the box — clones each `dimagi-internal/<slug>` repo into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps each agent to its gog OAuth client — invoked from `main()` AFTER `fetch_and_stage_credential()` (not cloud-init, where credentials don't exist yet), and deliberately not `set -e`, so one agent's failure doesn't take down the other four. See `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
 **The cloud runner AUTO-UPDATES too**, on the laptop's rules (`runner/ec2/update_runner.sh`,
-a `canopy-runner-update.timer` every 30 min): it tracks the **deployed**
+a `canopy-runner-update.timer` every 30 min, plus the same `update_available` nudge —
+`_nudge_updater` does `sudo systemctl start --no-block canopy-runner-update.service`, never
+the script as a child, which the restart inside would kill in the daemon's own cgroup):
+it tracks the **deployed**
 `expected_code_sha` for its own path, defers while a turn is in flight
 (`/opt/canopy-runner/in-flight`, the same file shape `update.mark_busy` writes), is
 READ-ONLY against the control plane (a heartbeat from the updater would forge liveness for a
@@ -546,7 +556,7 @@ Token-based session sharing (the `/canopy:share-session` flow); the app was rena
 
 **The workspace is in the URL, and that IS the multi-tenancy.** Verification binds to that workspace's own `InboundPushConfig`, so a second tenant — its own GCP project, its own push service account — verifies correctly, and one tenant's SA can never satisfy another's check. A *list* of allowed signers would not do: that would let tenant A push for tenant B's mailbox. Naming the tenant in the path (rather than parsing it out of the payload) also means the tenant is known **before** the body is decoded, so no attacker-controlled byte selects the credential it is checked against — and an unknown mailbox is logged against the right workspace instead of leaking the address into the default one. `resolve_mailbox(..., workspace_slug=…)` is the matching gate: `address` is globally unique (a push carries nothing else to disambiguate on), so the tenant match is *checked*, never assumed.
 
-**It is a doorbell, not a reader.** A Gmail push carries `{emailAddress, historyId}` and **no content**, so the receiver resolves mailbox → agent → assigned runners and sends a `runner.check_inbox` control frame (a sixth frame type on the channel already carrying `wake`/`interject`/`cancel`/`stream`/`menu_answer`); the runner does the read it already does. No mail credential enters the web app, the existing idempotency key and "agent's own reply" skip are untouched, and **a forged doorbell cannot inject a fake email** — the worst it does is cause a `gog` read that finds nothing.
+**It is a doorbell, not a reader.** A Gmail push carries `{emailAddress, historyId}` and **no content**, so the receiver resolves mailbox → agent → assigned runners and sends a `runner.check_inbox` control frame (on the channel already carrying `wake`/`interject`/`cancel`/`stream`/`menu_answer`/`update_available`); the runner does the read it already does. No mail credential enters the web app, the existing idempotency key and "agent's own reply" skip are untouched, and **a forged doorbell cannot inject a fake email** — the worst it does is cause a `gog` read that finds nothing.
 
 Two response rules that look wrong and aren't: an unverified push gets **404, not 403** (a probe can't enumerate which workspaces accept push), and a push we can't act on still gets **200** — a 4xx tells Pub/Sub to REDELIVER, so a mailbox we don't own would be retried forever. Runner selection composes `harness.assignment_rows_for(..., ORIGIN_EMAIL, ...)` — the same helper `claim_next_turn` uses — so a strict `email` source rule is honoured and the doorbell can never ring a box that routing would refuse the turn to. Every online assigned runner is rung, not just rank 0: the enqueue is idempotent per `(thread, messageCount)`, so a duplicate read collapses server-side.
 

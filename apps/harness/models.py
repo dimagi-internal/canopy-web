@@ -200,6 +200,16 @@ class Runner(models.Model):
         via `project__in`."""
         return [p for p in self.capabilities.get("projects", []) if p]
 
+    def expected_code_sha(self) -> str:
+        """The sha the DEPLOYED server expects this runner's kind to be running.
+        Per KIND, because the fleet runs two programs (see `code_sha` above); one
+        derivation shared by RunnerOut and the heartbeat's update nudge so the
+        alert and the nudge cannot disagree. Empty means UNKNOWN, never "stale"."""
+        from django.conf import settings
+
+        setting = "RUNNER_CLOUD_CODE_SHA" if self.kind == Runner.CLOUD else "RUNNER_CODE_SHA"
+        return getattr(settings, setting, "") or ""
+
     def session_capable(self) -> bool:
         """Whether this runner executes chat-session turns (the interactive
         front-door — SP2b). Opt-in via `capabilities.sessions: true` so a chat send

@@ -739,6 +739,15 @@ def main() -> None:
             # `gog` subprocess on the wake-listener thread would block the socket
             # that also carries cancel and wake.
             inbox_due.ring(str(msg["mailbox"]))
+        elif msg.get("type") == "update_available":
+            # A deploy moved this kind's expected runner sha; kickstart the
+            # SEPARATE updater job now instead of waiting out its 30-min timer.
+            # nudge() never installs in-process, never raises, throttles itself,
+            # and skips when the frame raced an install that already happened —
+            # the updater keeps the busy/stale decision either way.
+            from . import update as update_mod
+
+            update_mod.nudge(cfg, str(msg.get("expected_sha") or ""))
         elif msg.get("type") == "menu_answer" and msg.get("session_key"):
             # A human answered, from the web, the dialog an agent is blocked on.
             # Runs on the wake-listener thread and must never raise: this socket
