@@ -216,12 +216,18 @@ export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
 // Flip the agent's runtime autonomy posture (gated | auto) — the board-side
 // switch the fleet turn procedure reads at preflight. A human decision; the
 // agent's own repo publish can't touch it.
-export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<AgentDetailOut> {
+//
+// Returns just the confirmed mode, not the whole AgentDetailOut the endpoint
+// sends: openapi-fetch's Readable<T> degrades the response's nested
+// `runner_preference` array into an ArrayLike-shaped object, so declaring
+// AgentDetailOut here fails to compile (TS2719 — same root cause as toPage's
+// note above). The mode is all any caller wants back from a toggle.
+export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<TurnMode> {
   const res = await apiV2.PATCH('/api/agents/{slug}/turn-mode', {
     params: { path: { slug } },
     body: { turn_mode: mode },
   })
-  return unwrap(res, 'setAgentTurnMode')
+  return unwrap(res, 'setAgentTurnMode').turn_mode
 }
 
 // Wholesale replace of an agent's ordered runner list — index = rank. Each

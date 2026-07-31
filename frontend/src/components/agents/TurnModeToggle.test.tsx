@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import type { AgentDetailOut, TurnMode } from '@/api/agents'
+import type { TurnMode } from '@/api/agents'
 
-const setAgentTurnMode = vi.fn<(slug: string, mode: TurnMode) => Promise<AgentDetailOut>>()
+const setAgentTurnMode = vi.fn<(slug: string, mode: TurnMode) => Promise<TurnMode>>()
 
 vi.mock('@/api/agents', () => ({ setAgentTurnMode }))
 
@@ -26,7 +26,7 @@ describe('TurnModeToggle', () => {
   })
 
   it('flips the mode through the API on click', async () => {
-    setAgentTurnMode.mockResolvedValue({} as AgentDetailOut)
+    setAgentTurnMode.mockResolvedValue('auto')
     render(<TurnModeToggle agentSlug="echo" initialMode="gated" />)
     fireEvent.click(screen.getByTestId('turn-mode-auto'))
     await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'auto'))
