@@ -1356,6 +1356,23 @@ def test_expose_repo_package_rejects_a_bare_project_dir(cloud_runner, tmp_path, 
     assert cloud_runner.sys.path == before
 
 
+def test_install_transcript_core_finds_canopy_acp_beside_the_runners(
+    cloud_runner, tmp_path, monkeypatch
+):
+    # canopy_acp lives at runner/canopy_acp in the repo, not packages/ — the
+    # bootstrap looked in packages/ and disabled the ACP executor on every boot
+    # (observed live on cloud-ec2-1, 2026-07-31), which defeats the contract
+    # that flipping RUNNER_EXECUTOR=acp is an env change + restart, no deploy.
+    for parent, name in (("packages", "canopy_transcript"), ("runner", "canopy_acp")):
+        pkg = tmp_path / parent / name
+        (pkg / name).mkdir(parents=True)
+        (pkg / name / "__init__.py").write_text("")
+    monkeypatch.setattr(cloud_runner.sys, "path", list(cloud_runner.sys.path))
+    monkeypatch.setattr(cloud_runner, "_install_acp_adapter", lambda: None)
+    cloud_runner._install_transcript_core(tmp_path)
+    assert str(tmp_path / "runner" / "canopy_acp") in cloud_runner.sys.path
+
+
 # ── live session views: /streams + /backfills ───────────────────────────────
 # The runner made a session's record durable at TURN END, which serves a
 # conversation nobody is watching. Someone watching one saw the reduced
