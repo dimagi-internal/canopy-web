@@ -21,7 +21,8 @@ wire.
 
 ## Files
 - `runner.cfn.yaml` — the whole stack (instance + SG + IAM role + key pair + cloud-init).
-- `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` splices it into the template as base64 at deploy time (single source of truth).
+- `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` publishes it to Secrets Manager as the first-boot seed; after that the box updates itself from git (see "Updating the runner code" below).
+- `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
 - `bootstrap_agents.sh` — idempotent agent-fleet bootstrap (tooling, gog, per-agent clones + secrets, claude plugins). Runs ON the box, from a live `canopy-web` clone — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — validate + render + `cloudformation deploy`; pulls the private key from SSM for SSH.
@@ -273,6 +274,10 @@ back to `rm -f`) whether the import succeeded or not.
 - `canopy/cloud-runner/claude-oauth-token` — a **dedicated** claude setup-token (`CLAUDE_CODE_OAUTH_TOKEN`). Mint with `claude setup-token` as `ace@dimagi-ai.com` (Max subscription). It's long-lived and non-rotating, so the runner is self-sufficient after one bootstrap. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh). **Required**.
 - `canopy/cloud-runner/op-service-account-token` — a 1Password service-account token, same one the laptop runners use for now (see the design spec's "out of scope: dedicated cloud SA token"). **Optional** — without it, `bootstrap_agents.sh`'s `canopy provision` and gmail-token-import steps skip (logged, not fatal); the runner still comes up and can serve `canopy-web`-repo turns.
 
+Two more are published by `up.sh` itself, not staged by hand:
+- `canopy/cloud-runner/runner-code` — `cloud_runner.py` as gzip+base64, the first-boot seed.
+- `canopy/cloud-runner/runner-code-sha` — that seed's provenance (`{"sha", "committed_at"}`), which the box stamps into `/opt/canopy-runner/build-info.json` so its first auto-update check can answer. A secret rather than a stack parameter because a parameter lives in UserData, and changing UserData stop/starts the running instance.
+
 Stage them with `./secrets.sh {canopy|claude|op} <file|->`. `wire.sh` reads the
 `canopy`/`claude`/`op` secrets from Secrets Manager and `Canopy-Shared/github-token`
 from 1Password, and `POST`s them all into the freshly-paired runner's credential
@@ -309,22 +314,70 @@ provisions; distinct from `RunnerAgents`, which is which agents this runner may
 CLAIM turns for), `RunnerWorkspace` (dimagi), `RunnerName`. `SshCidr` is set to
 your IP automatically.
 
-## Updating the runner code
-`up.sh` splices `cloud_runner.py` into the template's UserData as base64, but
-**CloudFormation applies a UserData change to an existing instance as a
-stop/start — it does NOT re-run cloud-init.** cloud-init's `write_files` (and
-everything else in the `#cloud-config` block) only runs on an instance's
-*first* boot. So editing `cloud_runner.py` and running `./up.sh` again updates
-the *template*, but a box that's already up keeps running the old bytes on
-disk until it's replaced — a silent deploy gap, not a redeploy.
+## Updating the runner code — it updates itself
 
-Until there's a real re-provisioning mechanism, ship a `cloud_runner.py` change by
-recycling the stack:
+**Ship a `cloud_runner.py` change by merging it and deploying canopy-web.** Within
+30 minutes the box installs it and restarts itself. Same rules as the laptop
+runner, and the same reasons — see
+`docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md`.
+
+How it works: `canopy-runner-update.timer` runs `update_runner.sh` every 30
+minutes as the service user. It asks the control plane for **its own row's
+`expected_code_sha`** — the sha of `runner/ec2/{cloud_runner.py,bootstrap_agents.sh}`
+in the DEPLOYED image, so already through CI, the merge queue and a deploy — and
+compares it to `/opt/canopy-runner/build-info.json`, the stamp left by whoever
+installed the running bytes. If they differ and no turn is in flight
+(`/opt/canopy-runner/in-flight`, rewritten by the daemon every heartbeat), it
+installs `git show <that sha>:runner/ec2/cloud_runner.py` from the `/opt/canopy-web`
+clone, re-stamps, and restarts the service.
+
+Four things worth knowing:
+
+- **It never tracks `origin/main`.** Installing main would run code nothing has
+  deployed and leave `code_sha != expected_code_sha` permanently — the staleness
+  banner would fire forever on exactly the boxes updating correctly.
+- **A stale busy-marker is not "busy".** A marker older than 120s means the daemon
+  stopped writing it (stopped, wedged, crash-looping) — the case auto-update exists
+  to rescue, so it never blocks.
+- **It only ever GETs.** A heartbeat from the updater would stamp the runner ONLINE
+  and forge liveness for a daemon that may be dead.
+- **It is a separate systemd unit**, because a runner that crash-loops could never
+  update itself.
+
+Watch it: `journalctl -u canopy-runner-update -f`. Ask without changing anything:
+`canopy-runner-update --check` → `current|stale|busy|unknown`.
+
+### Secrets Manager is now a first-boot seed
+`canopy-fetch-env` installs the `runner-code` secret only when there is no
+`cloud_runner.py` on disk. Past that the updater owns the file — re-fetching the
+secret on every start would silently revert every update at the next restart. So
+**`./up.sh` no longer ships runner code to a running box.** Two deliberate
+overrides, both on the box:
+
 ```bash
-./down.sh          # keeps the secrets (no --purge-secrets)
-./up.sh && ./wire.sh --drill   # fresh instance, fresh cloud-init, new code; re-wire it
+sudo -u ubuntu canopy-runner-update --ref my-branch  # run a branch, deliberately
+sudo -u ubuntu canopy-runner-update --from-secret    # go back to the published bytes
 ```
-`bootstrap_agents.sh` doesn't have this gap — see "Bootstrap" above.
+
+`up.sh` still publishes the secret (it is what a FRESH instance boots from) and now
+also passes `RunnerCodeSha`/`RunnerCodeCommittedAt` so the seed is stamped. If it
+warns that it could not resolve the sha, fix that before deploying: an unstamped
+box answers `unknown` forever, which looks exactly like a box that is up to date.
+
+### The cloud-init gap (still real for everything else)
+**CloudFormation applies a UserData change to an existing instance as a stop/start
+— it does NOT re-run cloud-init**, which only runs `write_files`/`runcmd` on an
+instance's *first* boot. So the units, `canopy-fetch-env`, and the
+`canopy-runner-update` shim are frozen on a running box. Changing any of them means
+recycling the stack:
+
+```bash
+./down.sh                      # keeps the secrets (no --purge-secrets)
+./up.sh && ./wire.sh --drill   # fresh instance, fresh cloud-init; re-wire it
+```
+`bootstrap_agents.sh` and `update_runner.sh` itself don't have this gap — both are
+read from the canopy-web clone (see "Bootstrap" above; the shim in UserData is a
+dozen lines that just `git show`s the real updater out of `origin/main`).
 
 ## Notes
 - **Ephemeral by design.** The claude token lives only in Secrets Manager + in

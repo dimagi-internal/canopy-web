@@ -69,6 +69,13 @@ ENV RUNNER_CODE_SHA=$RUNNER_CODE_SHA
 # Committer epoch of that same commit — the ordering the sha can't carry.
 ARG RUNNER_CODE_COMMITTED_AT="0"
 ENV RUNNER_CODE_COMMITTED_AT=$RUNNER_CODE_COMMITTED_AT
+# The same pair for the CLOUD runner (runner/ec2), a different program on a
+# different path — one sha cannot describe both, so RunnerOut serves whichever
+# matches the row's kind. Same late placement, same empty-means-unknown rule.
+ARG RUNNER_CLOUD_CODE_SHA=""
+ENV RUNNER_CLOUD_CODE_SHA=$RUNNER_CLOUD_CODE_SHA
+ARG RUNNER_CLOUD_CODE_COMMITTED_AT="0"
+ENV RUNNER_CLOUD_CODE_COMMITTED_AT=$RUNNER_CLOUD_CODE_COMMITTED_AT
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

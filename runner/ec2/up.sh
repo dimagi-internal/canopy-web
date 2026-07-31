@@ -46,6 +46,40 @@ else
 fi
 echo "   ${#B64} bytes published"
 
+# Provenance of the bytes just published, stamped onto the box when cloud-init
+# installs the seed. The SAME quantity deploy-labs.yml computes for the server's
+# `expected_code_sha`, over the same paths — the two are compared directly, so they
+# have to be the same command.
+#
+# Without it a fresh box reports unknown provenance, its first auto-update check
+# answers `unknown`, and it therefore never updates — which looks exactly like a
+# box that is up to date. Say so rather than shipping that silently.
+#
+# Published as its OWN secret rather than a template parameter: a parameter is
+# interpolated into UserData, and CFN applies a UserData change to a running
+# instance as a stop/start — this value changes on every runner commit, so it
+# would bounce the live box (new public IP and all) every time up.sh ran.
+SHA_SECRET="${SHA_SECRET:-canopy/cloud-runner/runner-code-sha}"
+SHA_PATHS=(cloud_runner.py bootstrap_agents.sh)
+CODE_SHA="$(git log -1 --format=%H -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
+CODE_AT="$(git log -1 --format=%ct -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
+if [ -n "$CODE_SHA" ]; then
+  echo ">> publishing seed provenance ${CODE_SHA:0:12} (${CODE_AT:-0}) -> $SHA_SECRET"
+  STAMP="{\"sha\": \"$CODE_SHA\", \"committed_at\": ${CODE_AT:-0}, \"ref\": \"seed\"}"
+  if "${AWS[@]}" secretsmanager describe-secret --secret-id "$SHA_SECRET" >/dev/null 2>&1; then
+    "${AWS[@]}" secretsmanager put-secret-value --secret-id "$SHA_SECRET" \
+      --secret-string "$STAMP" >/dev/null
+  else
+    "${AWS[@]}" secretsmanager create-secret --name "$SHA_SECRET" \
+      --description 'provenance of the cloud_runner.py seed — published by up.sh' \
+      --secret-string "$STAMP" >/dev/null
+  fi
+else
+  echo "!! WARNING: could not resolve the cloud runner source sha (shallow clone?)." >&2
+  echo "   A box seeded from this publish reports unknown provenance and will" >&2
+  echo "   NEVER auto-update — which looks exactly like a box that is up to date." >&2
+fi
+
 echo ">> validating template"
 "${AWS[@]}" cloudformation validate-template --template-body "file://runner.cfn.yaml" >/dev/null
 
