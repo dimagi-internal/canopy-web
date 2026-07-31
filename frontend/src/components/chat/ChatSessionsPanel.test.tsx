@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import type { AgentOut, AgentRunnerOut } from '@/api/agents'
 import type { RunnerOut } from '@/api/harness'
-import type { ChatSession } from '@/api/chat'
+import type { ChatSession, CloseResult } from '@/api/chat'
 import type { ProjectSlug } from '@/api/projects'
 
 // vi.mock is hoisted above these declarations, but the factories aren't
@@ -13,11 +13,12 @@ import type { ProjectSlug } from '@/api/projects'
 // RunnerAssignments.test.tsx for the same pattern.
 const createSession = vi.fn<(input: unknown) => Promise<ChatSession>>()
 const listSessions = vi.fn<() => Promise<ChatSession[]>>()
+const closeSession = vi.fn<(id: string) => Promise<CloseResult>>()
 const getAgentRunners = vi.fn<(slug: string) => Promise<AgentRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 const listSlugs = vi.fn<() => Promise<ProjectSlug[]>>()
 
-vi.mock('@/api/chat', () => ({ createSession, listSessions }))
+vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession }))
 vi.mock('@/api/agents', () => ({ getAgentRunners, listAgents: vi.fn() }))
 vi.mock('@/api/harness', () => ({ listRunners }))
 vi.mock('@/api/projects', () => ({ projectsApi: { listSlugs } }))
@@ -366,5 +367,48 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
 
     expect(await screen.findByText('Fresh chat')).toBeTruthy()
     expect(screen.queryByTestId('parked-summary')).toBeNull()
+  })
+})
+
+describe('ChatSessionsPanel — close a session', () => {
+  it('closes an idle session without asking', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('s1', { running: false })])
+    closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
+
+    renderPanel([agent()])
+
+    const btn = await screen.findByTestId('close-session-s1')
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(closeSession).toHaveBeenCalledWith('s1')
+  })
+
+  it('asks first when the agent is mid-turn', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('s1', { running: true })])
+    closeSession.mockResolvedValue({ ok: true, closing: true, reason: '' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    renderPanel([agent()])
+
+    const btn = await screen.findByTestId('close-session-s1')
+    await act(async () => {
+      fireEvent.click(btn)
+    })
+    expect(confirm).toHaveBeenCalled()
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('does not navigate into the chat when Close is clicked', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('s1')])
+    closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
+
+    renderPanel([agent()])
+
+    const btn = await screen.findByTestId('close-session-s1')
+    expect(btn.closest('a')).toBeNull()
   })
 })
