@@ -1,7 +1,11 @@
 """Pydantic v2 schemas for /api/inbound."""
 from __future__ import annotations
 
+import datetime as dt
+
 from pydantic import BaseModel
+
+from apps.common.schemas import StrictModel
 
 
 class PushEnvelopeIn(BaseModel):
@@ -22,3 +26,21 @@ class PushResultOut(BaseModel):
     ok: bool
     reason: str = ""
     rang: list[str] = []
+
+
+class WatchReportIn(StrictModel):
+    """What something that armed a Gmail watch reports back.
+
+    ``expires_at`` may be null — that is how you say "this mailbox has no watch",
+    which is different from never having reported. Both are honest states and the
+    log distinguishes them.
+    """
+
+    address: str
+    expires_at: dt.datetime | None = None
+
+
+class WatchReportOut(StrictModel):
+    ok: bool
+    reason: str = ""
+    expires_at: str = ""

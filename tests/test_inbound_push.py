@@ -306,3 +306,91 @@ def test_a_healthy_watch_is_quiet(mailbox):
     assert not Event.objects.filter(kind__startswith="gmail.watch").exists()
     mailbox.refresh_from_db()
     assert mailbox.watch_expires_at is not None
+
+
+# ── reporting watch state (the 7-day cliff) ──────────────────────────────────
+
+
+def _authed(user):
+    c = Client()
+    c.force_login(user)
+    return c
+
+
+def test_watch_report_records_expiry_and_is_quiet_when_healthy(mailbox, user, workspace):
+    soon = timezone.now() + dt.timedelta(days=6)
+    r = _authed(user).post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com", "expires_at": soon.isoformat()},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    mailbox.refresh_from_db()
+    assert mailbox.watch_expires_at is not None
+    assert not Event.objects.filter(kind__startswith="gmail.watch").exists()
+
+
+def test_watch_report_warns_inside_the_re_arm_window(mailbox, user, workspace):
+    _authed(user).post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com",
+         "expires_at": (timezone.now() + dt.timedelta(hours=6)).isoformat()},
+        content_type="application/json",
+    )
+    assert Event.objects.filter(kind="gmail.watch.expiring", level="warn").exists()
+
+
+def test_watch_report_errors_once_expired(mailbox, user, workspace):
+    _authed(user).post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com",
+         "expires_at": (timezone.now() - dt.timedelta(minutes=5)).isoformat()},
+        content_type="application/json",
+    )
+    assert Event.objects.filter(kind="gmail.watch.expired", level="error").exists()
+
+
+def test_watch_report_requires_auth(mailbox):
+    r = Client().post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com"},
+        content_type="application/json",
+    )
+    assert r.status_code in (401, 403)
+
+
+def test_watch_report_404s_an_unknown_mailbox(user, workspace):
+    r = _authed(user).post(
+        "/api/inbound/watch/",
+        {"address": "nobody@dimagi-ai.com"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+def test_watch_report_404s_a_non_member(mailbox):
+    """Whether an address is registered is not something a stranger gets to learn."""
+    outsider = User.objects.create_user("out", "out@dimagi.com", "pw")
+    other_ws = Workspace.objects.create(
+        slug="elsewhere", display_name="Elsewhere", created_by=outsider
+    )
+    WorkspaceMembership.objects.create(workspace=other_ws, user=outsider, role="owner")
+    r = _authed(outsider).post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com"},
+        content_type="application/json",
+    )
+    assert r.status_code == 404
+
+
+def test_a_null_expiry_means_no_watch(mailbox, user, workspace):
+    """Different from never having reported — and the push-miss auditor goes
+    quiet, because with no watch there is nothing to have missed."""
+    _authed(user).post(
+        "/api/inbound/watch/",
+        {"address": "eva@dimagi-ai.com", "expires_at": None},
+        content_type="application/json",
+    )
+    mailbox.refresh_from_db()
+    assert mailbox.watch_expires_at is None
+    assert not Event.objects.filter(kind__startswith="gmail.watch").exists()

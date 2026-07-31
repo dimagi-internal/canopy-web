@@ -26,9 +26,16 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.api.auth import session_auth
 from apps.inbound import services
-from apps.inbound.schemas import PushEnvelopeIn, PushResultOut
+from apps.inbound.schemas import (
+    PushEnvelopeIn,
+    PushResultOut,
+    WatchReportIn,
+    WatchReportOut,
+)
 from apps.inbound.verify import VerificationError, verify_push
+from apps.workspaces import services as wsvc
 
 logger = logging.getLogger(__name__)
 
@@ -84,4 +91,41 @@ def gmail_push(request: HttpRequest, payload: PushEnvelopeIn) -> dict:
         "ok": bool(result.get("ok")),
         "reason": result.get("reason", ""),
         "rang": result.get("rang", []),
+    }
+
+
+@router.post(
+    "/watch/",
+    response=WatchReportOut,
+    auth=session_auth,
+    summary="Report a mailbox's Gmail watch expiry",
+)
+def report_watch(request: HttpRequest, payload: WatchReportIn) -> dict:
+    """Tell canopy-web when this mailbox's Gmail watch lapses.
+
+    A Gmail ``users.watch`` expires within 7 days and Google will not renew it,
+    so push dies weekly unless something re-arms it. Whatever does that — the
+    documented `curl` today, an agent turn or the runner later — reports the new
+    expiry here, and the log then says ``gmail.watch.expiring`` a day out and
+    ``gmail.watch.expired`` after.
+
+    Without this the cliff is SILENT: push stops, the poll quietly takes over,
+    and the only symptom is that email feels slow again — which is precisely the
+    thing that took a manual investigation to notice the first time.
+
+    Caller-authed (session or PAT), not push-verified: this is our own fleet
+    reporting state, not Google calling in.
+    """
+    mailbox = services.resolve_mailbox(payload.address)
+    if mailbox is None:
+        raise HttpError(404, "no such mailbox")
+    if mailbox.agent.workspace_id not in wsvc.user_workspace_slugs(request.user):
+        # Same 404, not 403: whether an address is registered is not something a
+        # non-member gets to learn.
+        raise HttpError(404, "no such mailbox")
+
+    services.note_watch_state(mailbox, payload.expires_at)
+    return {
+        "ok": True,
+        "expires_at": payload.expires_at.isoformat() if payload.expires_at else "",
     }
