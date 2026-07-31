@@ -39,6 +39,15 @@ def _runner_session(ws, runner, key, seen_ago: dt.timedelta):
     return s
 
 
+def _reports_sessions(runner, yes=True):
+    """Mark the runner as one that participates in the wholesale session report. The
+    laptop runner does (every heartbeat, empty set included); the cloud runner does
+    NOT — it only `record-session`s once per turn."""
+    runner.sessions_reported_at = timezone.now() if yes else None
+    runner.save(update_fields=["sessions_reported_at"])
+    return runner
+
+
 def _bound_web_session(ws, user, runner, key, seen_ago: dt.timedelta, stamped=True):
     """A chat STARTED on the web that has since been sent — so a runner spun up an
     emdash session for it and reports it like any other. `stamped=False` is the legacy
@@ -93,6 +102,7 @@ def test_a_bound_web_session_goes_stale_when_its_runner_stops_reporting_it():
     runner-discovered session. Exempting it left labs showing 10 week-old phone chats
     as live, whose emdash tasks had been deleted days earlier (2026-07-31)."""
     user, ws, c, runner = _ctx()
+    _reports_sessions(runner)
     fresh = _bound_web_session(ws, user, runner, "still-open",
                                SESSION_LIVE_WINDOW - dt.timedelta(seconds=30))
     gone = _bound_web_session(ws, user, runner, "task-deleted",
@@ -111,10 +121,37 @@ def test_a_bound_web_session_never_stamped_is_stale_not_fresh():
     unconditionally now, so an unstamped binding means 'never reported', not 'reported
     at an unknown time' — and unknown must not read as live."""
     user, ws, c, runner = _ctx()
+    _reports_sessions(runner)
     legacy = _bound_web_session(ws, user, runner, "legacy", dt.timedelta(days=7),
                                 stamped=False)
     ids = {r["id"] for r in c.get("/api/canopy-sessions/").json()}
     assert str(legacy.id) not in ids
+
+
+def test_a_web_chat_on_a_runner_that_never_reports_sessions_stays_active():
+    """Staleness needs an OBSERVER. The cloud runner posts no wholesale session report
+    — it only `record-session`s once per turn — so `live_seen_at` on a chat it holds is
+    a creation stamp, not a clock, and its going quiet is not evidence of anything. It
+    also has no open-emdash-task set to report: a cloud chat is always resumable, so
+    only an explicit archive should ever retire one. Ageing these out would have
+    silently dropped every live cloud chat 3 minutes after its last turn."""
+    user, ws, c, runner = _ctx()
+    _reports_sessions(runner, yes=False)
+    chat = _bound_web_session(ws, user, runner, "cloud-chat",
+                              SESSION_LIVE_WINDOW + dt.timedelta(days=3))
+    ids = {r["id"] for r in c.get("/api/canopy-sessions/").json()}
+    assert str(chat.id) in ids
+
+
+def test_a_runner_session_still_ages_out_on_a_never_reporting_runner():
+    """The observer gate applies to the NEW web leg only. A runner-DISCOVERED session
+    could only have come from a report in the first place, so its existing rule is
+    unchanged — narrowing it would resurrect the 47 zombies of 2026-07-25."""
+    user, ws, c, runner = _ctx()
+    _reports_sessions(runner, yes=False)
+    stale = _runner_session(ws, runner, "vanished", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
+    ids = {r["id"] for r in c.get("/api/canopy-sessions/").json()}
+    assert str(stale.id) not in ids
 
 
 def test_archived_and_all_return_the_complements():

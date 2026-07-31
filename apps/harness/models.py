@@ -97,6 +97,24 @@ class Runner(models.Model):
     paused_note = models.CharField(max_length=200, blank=True, default="")
     paused_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    # When this runner last posted a WHOLESALE open-session report. OBSERVED, never
+    # typed — the same discipline `capabilities["projects"]` follows, and for the same
+    # reason: it is a fact about what a box does, and a hand-declared version of it
+    # would drift toward the answer that breaks things silently.
+    #
+    # It exists because session staleness needs an OBSERVER. `RunnerBinding.live_seen_at`
+    # is only a liveness clock if somebody is winding it, and exactly one of the two
+    # runner programs does: the laptop re-reports its whole open-emdash-task set every
+    # heartbeat (empty set included), while the CLOUD runner posts no wholesale report
+    # at all — it only `record-session`s once per turn, so `live_seen_at` there is a
+    # creation stamp. Reading absence as retirement on a box that never reports would
+    # have archived every live cloud chat 3 minutes after its last turn.
+    #
+    # NULL means "never reported", which is why the read is `isnull` and not a window:
+    # a box that HAS reported and then died must still retire its sessions (that is the
+    # long-standing behavior, and the point of polled liveness), so this gates whether
+    # the signal exists at all — not whether it is fresh.
+    sessions_reported_at = models.DateTimeField(null=True, blank=True)
     # macOS user @ hostname that owns this runner. Load-bearing for session reuse:
     # emdash sessions are per-macOS-account (separate emdash4.db, worktrees, transcripts),
     # so a live session is reusable ONLY by the runner whose host matches the one that
