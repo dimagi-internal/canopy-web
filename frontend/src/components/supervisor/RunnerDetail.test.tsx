@@ -7,11 +7,15 @@
 // on a runner you don't own would recreate, in the UI, exactly the "listed a
 // runner every action then 404s on" failure the split predicate had to give up.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 
+const pauseRunner = vi.fn<(id: string, note?: string) => Promise<RunnerOut>>()
+const unpauseRunner = vi.fn<(id: string) => Promise<RunnerOut>>()
+
+vi.mock('@/api/harness', () => ({ pauseRunner, unpauseRunner }))
 vi.mock('@/api/drills', () => ({
   startDrill: vi.fn(),
   listDrills: vi.fn().mockResolvedValue([]),
@@ -77,5 +81,64 @@ describe('RunnerDetail', () => {
     // "ask them to declare the repo" is an available next step.
     const note = screen.getByTestId('runner-detail-readonly')
     expect(note.textContent).toContain('jjackson@dimagi.com')
+  })
+})
+
+// The remote half of ~/.canopy/PAUSED — and the ONLY way to park a box from a
+// phone, where there is no shell on that macOS account to drop a sentinel in.
+describe('RunnerDetail — pause', () => {
+  it('pauses with the typed reason and re-renders from the server’s row', async () => {
+    const paused = runner({ paused: true, paused_note: 'token limit', status: 'paused' })
+    pauseRunner.mockResolvedValue(paused)
+    const onChanged = vi.fn()
+
+    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} onChanged={onChanged} />)
+
+    fireEvent.change(screen.getByTestId('runner-pause-note'), { target: { value: 'token limit' } })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('runner-pause-toggle'))
+    })
+
+    expect(pauseRunner).toHaveBeenCalledWith('r1', 'token limit')
+    // The caller gets the SERVER's row, not an optimistic guess — a pause that
+    // only happened in the UI is the expensive failure here.
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(paused))
+  })
+
+  it('offers Resume and the recorded reason once paused', async () => {
+    unpauseRunner.mockResolvedValue(runner())
+
+    render(
+      <RunnerDetail
+        runner={runner({ paused: true, paused_note: 'token limit on this account', status: 'paused' })}
+        agents={agents}
+        onBack={() => {}}
+      />,
+    )
+
+    expect(screen.getByTestId('runner-pause-why').textContent).toContain('token limit on this account')
+    // No note box on the way out: a reason for a finished pause is stale text.
+    expect(screen.queryByTestId('runner-pause-note')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('runner-pause-toggle'))
+    })
+    expect(unpauseRunner).toHaveBeenCalledWith('r1')
+  })
+
+  it('says so when the call fails rather than looking paused', async () => {
+    pauseRunner.mockRejectedValue(new Error('pauseRunner failed: 404'))
+
+    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('runner-pause-toggle'))
+    })
+
+    expect(screen.getByTestId('runner-pause-error').textContent).toContain('404')
+  })
+
+  it('is absent on a runner the caller did not pair — POST /pause would 404', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false })} agents={agents} onBack={() => {}} />)
+    expect(screen.queryByTestId('runner-pause')).toBeNull()
   })
 })

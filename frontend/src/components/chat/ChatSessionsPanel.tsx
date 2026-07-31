@@ -17,7 +17,12 @@ import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
-import { onlineSessionCapableRunners } from './runnerEligibility'
+import {
+  onlineSessionCapableRunners,
+  parkedReason,
+  parkedSummary,
+  partitionByRunnerReachability,
+} from './runnerEligibility'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the New chat menu, before they've confirmed a runner + Start.
@@ -47,6 +52,12 @@ export function ChatSessionsPanel({
   const [loading, setLoading] = useState(true)
   const [sort, setSort] = useState<SessionSort>('time')
   const [showArchived, setShowArchived] = useState(false)
+  // Sessions whose bound runner is paused or offline are held back by default:
+  // a message sent to one does not fail, it sits QUEUED until that box returns,
+  // so listing them beside live chats invites a send that silently goes nowhere.
+  // Held back, not dropped — a pause is temporary by construction, and the
+  // conversation is still there. This toggle is how you get to it.
+  const [showOffline, setShowOffline] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -194,6 +205,14 @@ export function ChatSessionsPanel({
 
   const now = new Date()
 
+  // Split before sorting so the hidden count is honest about the whole list,
+  // not about whatever survived the current sort.
+  const { live: liveSessions, parked } = useMemo(
+    () => partitionByRunnerReachability(sessions),
+    [sessions],
+  )
+  const visible = showOffline ? sessions : liveSessions
+
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex items-center justify-between gap-2 pb-2">
@@ -283,7 +302,10 @@ export function ChatSessionsPanel({
         </DropdownMenu>
       </div>
 
-      {(sessions.length > 1 || showArchived) && (
+      {/* `parked.length` opens the toolbar too: with one session, and that one
+          held back, the sort row would never render and its own reveal toggle
+          would be unreachable — a chat you cannot get back to. */}
+      {(sessions.length > 1 || showArchived || parked.length > 0 || showOffline) && (
         <div className="flex items-center gap-1 pb-2 text-xs">
           <span className="mr-1 text-muted-foreground">Sort</span>
           {(['time', 'project'] as const).map((m) => (
@@ -313,22 +335,42 @@ export function ChatSessionsPanel({
           >
             Show archived
           </button>
+          {(parked.length > 0 || showOffline) && (
+            <button
+              type="button"
+              onClick={() => setShowOffline((v) => !v)}
+              aria-pressed={showOffline}
+              data-testid="toggle-offline"
+              className={
+                showOffline
+                  ? 'rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
+                  : 'rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
+              }
+            >
+              Show offline
+            </button>
+          )}
         </div>
       )}
 
       {error && <div className="py-2 text-sm text-destructive">{error}</div>}
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
-      ) : sessions.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
-          <div className="text-sm text-foreground">No chats yet</div>
-          <div className="text-xs text-muted-foreground">Start one with “New chat”.</div>
+          <div className="text-sm text-foreground">
+            {parked.length > 0 ? 'No chats on a live runner' : 'No chats yet'}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {parked.length > 0 ? parkedSummary(parked) : 'Start one with “New chat”.'}
+          </div>
         </div>
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border">
-          {sortSessions(sessions, sort).map((s, i, rows) => {
+          {sortSessions(visible, sort).map((s, i, rows) => {
             const label = sessionTargetLabel(agentName(s.agent_slug), s.project ?? '')
             const header = projectHeader(rows, i, sort)
+            const parkedWhy = parkedReason(s)
             return (
               <li key={s.id}>
                 {header && (
@@ -338,7 +380,10 @@ export function ChatSessionsPanel({
                 )}
                 <Link
                   to={`/w/${s.workspace}/chat/${s.id}`}
-                  className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted"
+                  data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
+                  className={`flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
+                    parkedWhy ? ' opacity-60' : ''
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-foreground">
@@ -351,7 +396,13 @@ export function ChatSessionsPanel({
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs">
-                    {s.running ? (
+                    {/* Why this row is dimmed. Sits where `running` would, because
+                        it answers the same question — can this chat act right now. */}
+                    {parkedWhy ? (
+                      <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                        runner {parkedWhy}
+                      </span>
+                    ) : s.running ? (
                       <span className="flex items-center gap-1 font-medium text-success">
                         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
                         running
@@ -371,6 +422,18 @@ export function ChatSessionsPanel({
             )
           })}
         </ul>
+      )}
+      {/* Say what is being withheld. A filtered list that does not admit it is
+          filtering reads as "that chat is gone". */}
+      {!loading && !showOffline && parked.length > 0 && visible.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowOffline(true)}
+          data-testid="parked-summary"
+          className="self-start py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {parkedSummary(parked)}
+        </button>
       )}
     </div>
   )

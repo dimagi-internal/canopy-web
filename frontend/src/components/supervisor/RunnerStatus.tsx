@@ -12,6 +12,10 @@ const DOT: Record<string, string> = {
   degraded: 'bg-warning',
   stale: 'bg-warning',
   disconnected: 'bg-muted-foreground',
+  // A parked box is not a broken one — `info` (deliberate) rather than `warning`
+  // (something went wrong). Without its own entry it fell to the grey fallback,
+  // rendering identically to a runner that had actually died.
+  paused: 'bg-info',
 }
 
 function relative(iso: string | null): string {
@@ -56,11 +60,22 @@ export function RunnerStatus({
         >
           <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[r.status] ?? 'bg-muted-foreground'}`} />
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{r.name}</span>
-          {!r.ready && (
+          {/* `paused` outranks `not ready` here for the same reason it outranks a
+              pin at claim time: it is the more recent and more specific decision,
+              and it explains the silence the other chip would blame on the box. */}
+          {r.paused ? (
+            <span
+              data-testid={`runner-paused-${r.name}`}
+              className="shrink-0 rounded bg-info/15 px-1 text-[10px] text-info"
+              title={r.paused_note || undefined}
+            >
+              paused
+            </span>
+          ) : !r.ready ? (
             <span data-testid={`runner-notready-${r.name}`} className="shrink-0 rounded bg-destructive/15 px-1 text-[10px] text-destructive">
               not ready
             </span>
-          )}
+          ) : null}
           {r.host && <span className="hidden truncate text-[11px] text-foreground-subtle sm:inline">{r.host}</span>}
           {r.drill_rollup && (
             <span

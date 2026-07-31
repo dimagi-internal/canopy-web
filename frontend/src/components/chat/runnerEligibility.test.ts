@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   isBoundRunnerOffline,
   isSessionCapable,
+  findBoundRunner,
   onlineSessionCapableRunners,
+  parkedReason,
+  parkedSummary,
+  partitionByRunnerReachability,
 } from "./runnerEligibility";
 import type { RunnerOut } from "@/api/harness";
 
@@ -100,5 +104,88 @@ describe("isBoundRunnerOffline", () => {
     expect(isBoundRunnerOffline("Alpha", fleet, false)).toBe(true);
     expect(isBoundRunnerOffline("Retired Runner", fleet, true)).toBe(false);
     expect(isBoundRunnerOffline("Beta", [], true)).toBe(false);
+  });
+});
+
+describe("parkedReason", () => {
+  it("is null for a reachable runner", () => {
+    expect(parkedReason({ runner_online: true, runner_status: "online" })).toBeNull();
+  });
+
+  it("is null when there is no binding — nothing to be offline", () => {
+    // A web chat that has never sent has no runner yet and gets one when it
+    // does; treating it as parked would hide a chat the moment you made it.
+    expect(parkedReason({})).toBeNull();
+    expect(parkedReason({ runner_online: null, runner_status: null })).toBeNull();
+  });
+
+  it("names a pause as a pause, not as generic offline", () => {
+    expect(parkedReason({ runner_online: false, runner_status: "paused" })).toBe("paused");
+  });
+
+  it("calls every other unreachable state offline", () => {
+    for (const status of ["stale", "degraded", "disconnected", "retired"]) {
+      expect(parkedReason({ runner_online: false, runner_status: status })).toBe("offline");
+    }
+    // An older payload carries no runner_status at all; the bool still decides.
+    expect(parkedReason({ runner_online: false })).toBe("offline");
+  });
+});
+
+describe("partitionByRunnerReachability", () => {
+  it("splits live from parked and preserves order within each side", () => {
+    const rows = [
+      { id: "a", runner_online: true },
+      { id: "b", runner_online: false, runner_status: "paused" },
+      { id: "c" },
+      { id: "d", runner_online: false, runner_status: "stale" },
+    ];
+    const { live, parked } = partitionByRunnerReachability(rows);
+    expect(live.map((r) => r.id)).toEqual(["a", "c"]);
+    expect(parked.map((r) => r.id)).toEqual(["b", "d"]);
+  });
+});
+
+describe("parkedSummary", () => {
+  it("is empty when nothing is held back", () => {
+    expect(parkedSummary([])).toBe("");
+  });
+
+  it("names the reason when they agree", () => {
+    expect(
+      parkedSummary([
+        { runner_online: false, runner_status: "paused" },
+        { runner_online: false, runner_status: "paused" },
+      ]),
+    ).toBe("2 hidden — runner paused");
+  });
+
+  it("stays generic when a pause and a dead box are both in there", () => {
+    expect(
+      parkedSummary([
+        { runner_online: false, runner_status: "paused" },
+        { runner_online: false, runner_status: "disconnected" },
+      ]),
+    ).toBe("2 hidden — runner unavailable");
+  });
+});
+
+describe("findBoundRunner", () => {
+  const fleet = [runner({ id: "r1", name: "Alpha" }), runner({ id: "r2", name: "Beta" })];
+
+  it("returns the fleet row matching the session's runner name", () => {
+    expect(findBoundRunner("Beta", fleet)?.id).toBe("r2");
+  });
+
+  it("is null when the session names no runner", () => {
+    expect(findBoundRunner(null, fleet)).toBeNull();
+    expect(findBoundRunner("", fleet)).toBeNull();
+  });
+
+  it("is null when the runner is not in the caller's fleet", () => {
+    // Retired, or paired by someone else — either way there is no id to act on
+    // and no permission to act with, which is what the caller does with null.
+    expect(findBoundRunner("Gamma", fleet)).toBeNull();
+    expect(findBoundRunner("Alpha", [])).toBeNull();
   });
 });

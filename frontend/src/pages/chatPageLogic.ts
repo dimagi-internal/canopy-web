@@ -70,3 +70,30 @@ export function shouldShowLoadFull(args: {
     args.origin === "runner" && !args.hasMoreBefore && !args.historyUnavailable
   );
 }
+
+/**
+ * Why the composer refuses to send, or undefined when it may.
+ *
+ * A send into a runner that cannot act does NOT fail — `send_message` enqueues
+ * it pinned to the session's binding and it sits QUEUED until that box returns,
+ * which for a pause someone applied may be never. A queued message is
+ * indistinguishable from a sent one until you notice no reply came, and nobody
+ * types into a chat meaning to schedule it for whenever a laptop wakes up. So
+ * the composer refuses up front and the placement banner holds the ways out
+ * (resume it, or continue on another runner).
+ *
+ * Fails OPEN by construction: `boundOffline` is false whenever liveness is
+ * merely UNKNOWN (no binding at all, or a fleet list that hasn't loaded), so an
+ * unknown never locks the composer — the failure mode of over-blocking is a
+ * chat you cannot use, which is worse than the queue this prevents.
+ */
+export function sendBlockReason(args: {
+  runnerName: string | null | undefined;
+  boundOffline: boolean;
+  paused: boolean;
+}): string | undefined {
+  if (!args.boundOffline || !args.runnerName) return undefined;
+  return args.paused
+    ? `${args.runnerName} is paused — resume it to send`
+    : `${args.runnerName} is unavailable — continue on another runner to send`;
+}

@@ -97,6 +97,13 @@ class SessionOut(Schema):
     # chat ("bound runner offline, turn waiting") from a slow one. None = no
     # binding, so there is nothing to be offline.
     runner_online: bool | None = None
+    # WHY it is not reachable — `Runner.live_status` verbatim (online / paused /
+    # stale / degraded / disconnected / retired), None when unbound. Served beside
+    # `runner_online` for the same reason RunnerOut serves `paused` beside
+    # `status`: a client that only reads the bool still behaves correctly, but it
+    # cannot tell a box a human PARKED from one that fell over — and those want
+    # opposite things from the reader (unpause it vs go find out what broke).
+    runner_status: str | None = None
     session_key: str = ""
 
 

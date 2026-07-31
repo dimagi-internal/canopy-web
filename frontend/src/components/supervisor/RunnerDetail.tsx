@@ -1,5 +1,5 @@
 import { useState, type JSX } from 'react'
-import type { RunnerOut } from '@/api/harness'
+import { pauseRunner, unpauseRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
@@ -17,10 +17,14 @@ export function RunnerDetail({
   runner,
   agents,
   onBack,
+  onChanged,
 }: {
   runner: RunnerOut
   agents: AgentOut[]
   onBack: () => void
+  /** A pause changed this runner server-side — hand the fresh row back so the
+   *  list behind this view stops disagreeing with the detail in front of it. */
+  onChanged?: (runner: RunnerOut) => void
 }): JSX.Element {
   const online = runner.status === 'online'
   // Real availability, not last-known ready: a stale runner's ready flag is
@@ -44,6 +48,29 @@ export function RunnerDetail({
       else next.add(slug)
       return next
     })
+
+  // Pause/resume. `note` is only read on the way IN — resuming clears it
+  // server-side, because a reason for a pause that is over is just stale text.
+  const [pausing, setPausing] = useState(false)
+  const [pauseErr, setPauseErr] = useState<string | null>(null)
+  const [note, setNote] = useState('')
+
+  const togglePause = () => {
+    setPausing(true)
+    setPauseErr(null)
+    const call = runner.paused ? unpauseRunner(runner.id) : pauseRunner(runner.id, note.trim())
+    call
+      .then((fresh) => {
+        setNote('')
+        onChanged?.(fresh)
+      })
+      .catch((err: unknown) => {
+        // Say it failed. A pause that silently didn't take is the expensive
+        // failure here — you walk away believing an account stopped spending.
+        setPauseErr(err instanceof Error ? err.message : 'could not change pause state')
+      })
+      .finally(() => setPausing(false))
+  }
 
   const row = (label: string, value: string) => (
     <div className="flex items-baseline justify-between gap-3 border-b border-border py-1.5">
@@ -104,6 +131,51 @@ export function RunnerDetail({
         {runner.code_branch && row('branch', runner.code_branch)}
         {row('status', runner.status ?? 'unknown')}
       </div>
+
+      {/* Pause — the one control this view offers on the runner itself, and the
+          only way to park a box from a phone (the alternative is the local
+          ~/.canopy/PAUSED sentinel, which needs a shell on that macOS account).
+          Pairer-only: POST /pause resolves through _runner_visibility_q, the same
+          predicate can_manage reports, so rendering it for anyone else would
+          hand out a button that 404s. */}
+      {runner.can_manage && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-pause">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              {runner.paused ? 'Paused' : 'Routing'}
+            </span>
+            <button
+              type="button"
+              onClick={togglePause}
+              disabled={pausing}
+              data-testid="runner-pause-toggle"
+              className={`ml-auto rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50 ${
+                runner.paused
+                  ? 'bg-primary text-primary-foreground'
+                  : 'border border-border text-foreground hover:bg-muted'
+              }`}
+            >
+              {pausing ? '…' : runner.paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
+          {runner.paused ? (
+            <p className="text-[12px] text-muted-foreground" data-testid="runner-pause-why">
+              {runner.paused_note || 'No reason given.'} Queued work waits for this
+              runner rather than failing — resume to let it claim again.
+            </p>
+          ) : (
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Why? (e.g. token limit on this account)"
+              maxLength={200}
+              data-testid="runner-pause-note"
+              className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-foreground-subtle"
+            />
+          )}
+          {pauseErr && <p className="text-[12px] text-destructive" data-testid="runner-pause-error">{pauseErr}</p>}
+        </div>
+      )}
 
       {/* Owner-only surface. The fleet list is workspace-scoped since
           _runner_read_q, so this view can open a runner the caller did not pair;
