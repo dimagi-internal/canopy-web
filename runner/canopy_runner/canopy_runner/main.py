@@ -374,6 +374,11 @@ def run_once(cfg: Config, client: Client) -> str:
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
     hooks.maybe_report_hooks()
+    # The hook config is shared by the whole account and written by anything that
+    # starts a listener, so it can be pointed away from us after startup. Checked
+    # every tick rather than on the report's cadence: the report is gated on hooks
+    # ARRIVING, which is the very thing a drifted config stops.
+    hooks.ensure_hook_config()
     chat_pump.pump_chat_bridges(cfg, client)
     sessions.maybe_report_sessions(cfg, client)
     streams.sync_session_streams(cfg, client)
