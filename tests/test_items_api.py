@@ -105,7 +105,10 @@ def test_implement_dispatches_to_the_named_agent(client_member, ada):
     assert resp.json()["state"] == "decided"
     turn = Turn.objects.get()
     assert turn.agent.slug == "hal"
-    assert turn.prompt == "/hal:turn"
+    # Default prompt for a spec that names no prompt, plus the decider's own words
+    # appended (dispatch._with_reply) so a steer in the comment reaches the agent.
+    assert turn.prompt.startswith("/hal:turn")
+    assert "do it" in turn.prompt
 
 
 def test_deciding_twice_is_409(client_member, ada):

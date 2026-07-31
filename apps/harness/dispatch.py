@@ -43,6 +43,27 @@ class TurnSpec:
         )
 
 
+def _with_reply(prompt: str, item: Item) -> str:
+    """Carry the human's own words to the agent that will act on them.
+
+    A card's `prompt` is written BEFORE the human replies, so on its own it is the
+    proposal, not the decision. The reply is where the steer lives — "yes, but send
+    it to hal instead", "only the retry, skip the backoff" — and an agent that never
+    sees it executes a brief the human already amended.
+    """
+    reply = (item.comment or "").strip()
+    if not reply:
+        return prompt
+    return (
+        f"{prompt}\n\n---\n"
+        f"ANSWERED BY {item.decided_by or 'a human'}: {reply}\n\n"
+        f"That reply is the authority on this card and OVERRIDES the brief above wherever "
+        f"the two disagree. If it redirects the work, narrows it, declines it, or asks a "
+        f"question back, do THAT — and report on the item instead of executing the "
+        f"original proposal."
+    )
+
+
 def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
     """Enqueue an approved Item's work. Idempotent per (item, index).
 
@@ -84,7 +105,7 @@ def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
             agent=target,
             origin=spec.origin,
             idempotency_key=f"item-{item.id}-{i}",
-            prompt=spec.prompt or f"/{target.slug}:turn",
+            prompt=_with_reply(spec.prompt or f"/{target.slug}:turn", item),
             origin_ref=spec.origin_ref,
             routing=spec.routing,
         )
