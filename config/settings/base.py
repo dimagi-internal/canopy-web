@@ -338,18 +338,6 @@ AGENT_RUNS_DRIVE_ROOTS = env.json("AGENT_RUNS_DRIVE_ROOTS", default={})
 # Machine-caller authentication: see apps/tokens/ for Personal Access
 # Tokens. Mint with `manage.py create_token --email X --label Y`; the
 # raw value goes in the `Authorization: Bearer <raw>` header and
-# ── Inbound push (apps.inbound) ───────────────────────────────────────────────
-# The Gmail Pub/Sub doorbell verifies a Google-signed OIDC JWT on every push.
-# AUDIENCE is whatever the subscription was created with (conventionally the
-# push endpoint URL). Empty means the endpoint REFUSES EVERYTHING — deliberate:
-# an unconfigured deployment must not quietly accept anonymous pushes, and the
-# runner's 300s poll means refusing costs latency, not mail.
-INBOUND_PUSH_AUDIENCE = env("INBOUND_PUSH_AUDIENCE", default="")
-# The service account the subscription signs with. Audience alone is not
-# identity — anyone who learns the audience string could mint a token for it
-# from a different account — so pin the signer too when you know it.
-INBOUND_PUSH_SERVICE_ACCOUNT = env("INBOUND_PUSH_SERVICE_ACCOUNT", default="")
-
 # `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves it to a
 # real Django user. The legacy shared-secret WORKBENCH_WRITE_TOKEN +
 # CANOPY_E2E_AUTH_TOKEN env vars were retired by the PAT refactor.

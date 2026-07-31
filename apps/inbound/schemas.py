@@ -44,3 +44,65 @@ class WatchReportOut(StrictModel):
     ok: bool
     reason: str = ""
     expires_at: str = ""
+
+
+# ── configuration (the UI's surface) ─────────────────────────────────────────
+
+
+class PushConfigIn(StrictModel):
+    audience: str = ""
+    service_account: str = ""
+    watch_topic: str = ""
+
+
+class PushConfigOut(StrictModel):
+    workspace: str
+    audience: str
+    service_account: str
+    watch_topic: str
+    push_url: str
+    """The endpoint to paste into the Pub/Sub subscription. Server-computed so
+    the UI never has to guess the deployment's own address — getting it wrong is
+    silent (pushes go nowhere) and was previously a hand-copied value."""
+    verifies: bool
+    """False when no audience is set — this workspace refuses every push."""
+    updated_at: str = ""
+
+
+class MailboxIn(StrictModel):
+    address: str
+    agent_slug: str
+    enabled: bool = True
+
+
+class MailboxPatchIn(StrictModel):
+    enabled: bool | None = None
+    agent_slug: str | None = None
+
+
+class MailboxOut(StrictModel):
+    id: int
+    address: str
+    agent_slug: str
+    workspace: str
+    enabled: bool
+    last_push_at: str = ""
+    watch_expires_at: str = ""
+    watch_state: str
+    """``armed`` | ``expiring`` | ``expired`` | ``none`` — computed server-side so
+    the UI and the event log cannot disagree about what counts as healthy."""
+
+
+class MailboxListOut(StrictModel):
+    items: list[MailboxOut]
+
+
+class RunnerMailboxOut(StrictModel):
+    """What a runner needs to arm a watch: which address, on which topic."""
+
+    address: str
+    watch_topic: str
+
+
+class RunnerMailboxListOut(StrictModel):
+    items: list[RunnerMailboxOut]

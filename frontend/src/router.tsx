@@ -15,6 +15,7 @@ import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
+import { InboundPushPage } from '@/pages/InboundPushPage'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { SystemPage } from './pages/SystemPage'
@@ -181,6 +182,7 @@ export const router = createBrowserRouter(guarded([
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },
       { path: '/w/:workspace/members', element: <WorkspaceMembersPage /> },
+      { path: '/w/:workspace/inbound', element: <InboundPushPage /> },
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },

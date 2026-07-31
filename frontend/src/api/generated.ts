@@ -621,7 +621,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/inbound/gmail/": {
+    readonly "/api/inbound/gmail/{workspace}/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -645,6 +645,85 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/inbound/config/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Read push config */
+        readonly get: operations["apps_inbound_api_get_push_config"];
+        /** Set push config (owner) */
+        readonly put: operations["apps_inbound_api_set_push_config"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/inbound/mailboxes/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List mailboxes */
+        readonly get: operations["apps_inbound_api_list_mailboxes"];
+        readonly put?: never;
+        /** Register a mailbox (owner) */
+        readonly post: operations["apps_inbound_api_create_mailbox"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/inbound/mailboxes/{workspace}/{mailbox_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove a mailbox (owner) */
+        readonly delete: operations["apps_inbound_api_delete_mailbox"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Update a mailbox (owner) */
+        readonly patch: operations["apps_inbound_api_update_mailbox"];
+        readonly trace?: never;
+    };
+    readonly "/api/inbound/runner-mailboxes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Mailboxes this caller should arm, and on which topic
+         * @description What a runner needs to keep watches armed, served from config.
+         *
+         *     The topic used to be hand-written into every runner's ``runner.json``, which
+         *     meant onboarding a tenant required editing a file on each box. Serving it
+         *     here makes the UI the single place it is set; the runner intersects this with
+         *     the mailboxes it actually holds credentials for.
+         */
+        readonly get: operations["apps_inbound_api_runner_mailboxes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/inbound/watch/": {
         readonly parameters: {
             readonly query?: never;
@@ -659,10 +738,9 @@ export interface paths {
          * @description Tell canopy-web when this mailbox's Gmail watch lapses.
          *
          *     A Gmail ``users.watch`` expires within 7 days and Google will not renew it,
-         *     so push dies weekly unless something re-arms it. Whatever does that — the
-         *     documented `curl` today, an agent turn or the runner later — reports the new
-         *     expiry here, and the log then says ``gmail.watch.expiring`` a day out and
-         *     ``gmail.watch.expired`` after.
+         *     so push dies weekly unless something re-arms it. Whatever does that reports
+         *     the new expiry here, and the log then says ``gmail.watch.expiring`` a day out
+         *     and ``gmail.watch.expired`` after.
          *
          *     Without this the cliff is SILENT: push stops, the poll quietly takes over,
          *     and the only symptom is that email feels slow again — which is precisely the
@@ -4438,6 +4516,108 @@ export interface components {
              * @default
              */
             readonly subscription: string;
+        };
+        /** PushConfigOut */
+        readonly PushConfigOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Audience */
+            readonly audience: string;
+            /** Service Account */
+            readonly service_account: string;
+            /** Watch Topic */
+            readonly watch_topic: string;
+            /** Push Url */
+            readonly push_url: string;
+            /** Verifies */
+            readonly verifies: boolean;
+            /**
+             * Updated At
+             * @default
+             */
+            readonly updated_at: string;
+        };
+        /** PushConfigIn */
+        readonly PushConfigIn: {
+            /**
+             * Audience
+             * @default
+             */
+            readonly audience: string;
+            /**
+             * Service Account
+             * @default
+             */
+            readonly service_account: string;
+            /**
+             * Watch Topic
+             * @default
+             */
+            readonly watch_topic: string;
+        };
+        /** MailboxListOut */
+        readonly MailboxListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["MailboxOut"][];
+        };
+        /** MailboxOut */
+        readonly MailboxOut: {
+            /** Id */
+            readonly id: number;
+            /** Address */
+            readonly address: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Last Push At
+             * @default
+             */
+            readonly last_push_at: string;
+            /**
+             * Watch Expires At
+             * @default
+             */
+            readonly watch_expires_at: string;
+            /** Watch State */
+            readonly watch_state: string;
+        };
+        /** MailboxIn */
+        readonly MailboxIn: {
+            /** Address */
+            readonly address: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /** MailboxPatchIn */
+        readonly MailboxPatchIn: {
+            /** Enabled */
+            readonly enabled?: boolean | null;
+            /** Agent Slug */
+            readonly agent_slug?: string | null;
+        };
+        /** RunnerMailboxListOut */
+        readonly RunnerMailboxListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["RunnerMailboxOut"][];
+        };
+        /**
+         * RunnerMailboxOut
+         * @description What a runner needs to arm a watch: which address, on which topic.
+         */
+        readonly RunnerMailboxOut: {
+            /** Address */
+            readonly address: string;
+            /** Watch Topic */
+            readonly watch_topic: string;
         };
         /** WatchReportOut */
         readonly WatchReportOut: {
@@ -9762,7 +9942,9 @@ export interface operations {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
             readonly cookie?: never;
         };
         readonly requestBody: {
@@ -9778,6 +9960,170 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PushResultOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_get_push_config: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PushConfigOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_set_push_config: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PushConfigIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PushConfigOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_list_mailboxes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailboxListOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_create_mailbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailboxIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailboxOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_delete_mailbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly mailbox_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_inbound_api_update_mailbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly mailbox_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailboxPatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailboxOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_runner_mailboxes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMailboxListOut"];
                 };
             };
         };

@@ -21,6 +21,58 @@ from __future__ import annotations
 from django.db import models
 
 
+class InboundPushConfig(models.Model):
+    """One workspace's push setup — the thing that makes this multi-tenant.
+
+    Verification used to be two deployment-global settings, which meant exactly
+    ONE Workspace could ever be verified: a second tenant's subscription signs
+    with its own service account, and a single pinned signer rejects it. A LIST
+    of allowed signers is not the fix either — that would let tenant A's service
+    account push for tenant B's mailbox. Verification has to bind to the tenant.
+
+    So it binds here, and the tenant is named in the URL
+    (``/api/inbound/gmail/{workspace}/``) rather than parsed out of the payload.
+    That ordering matters: the endpoint verifies BEFORE decoding anything, so no
+    attacker-controlled byte gets to choose which credential it is checked
+    against. It also means an unknown mailbox can be logged against the right
+    workspace instead of leaking the address into the default one.
+    """
+
+    workspace = models.OneToOneField(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        related_name="inbound_push_config",
+        primary_key=True,
+    )
+
+    audience = models.CharField(max_length=500, blank=True, default="")
+    """The OIDC audience the Pub/Sub subscription was created with —
+    conventionally the push endpoint URL. Blank REFUSES every push for this
+    workspace: an unconfigured tenant must not quietly accept anonymous callers,
+    and refusing costs latency (the 300s poll still runs), never mail."""
+
+    service_account = models.CharField(max_length=320, blank=True, default="")
+    """The service account the subscription signs with. Audience alone is not
+    identity — anyone who learns the audience string could mint a token for it
+    from a different account — so this pins the signer. Blank means audience-only
+    verification, which is weaker; the UI says so."""
+
+    watch_topic = models.CharField(max_length=500, blank=True, default="")
+    """``projects/<p>/topics/<t>``. Served to the runner so a tenant configures
+    its topic HERE rather than by hand-editing runner.json on every box. Blank
+    means this workspace's mailboxes are never armed."""
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"inbound-config:{self.workspace_id}"
+
+    @property
+    def verifies(self) -> bool:
+        """Whether this workspace can accept a push at all."""
+        return bool(self.audience)
+
+
 class InboundMailbox(models.Model):
     """A mailbox we accept push for, and the agent whose turn it becomes.
 

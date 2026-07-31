@@ -240,6 +240,15 @@ class Client:
         # the difference so a re-poll of the same unread mail reads as "nothing new".
         return {**(payload or {}), "_created": status == 201}
 
+    def runner_mailboxes(self) -> list[dict]:
+        """[{address, watch_topic}] — which mailboxes to arm, and on which topic.
+
+        Served from each workspace's InboundPushConfig so a tenant sets its topic
+        in the UI once, instead of someone hand-editing runner.json on every box.
+        """
+        _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
+        return (payload or {}).get("items", []) if isinstance(payload, dict) else []
+
     def report_watch(self, address: str, expires_at) -> dict:
         """Tell canopy-web when this mailbox's Gmail watch lapses.
 
