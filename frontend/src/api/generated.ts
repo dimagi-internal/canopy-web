@@ -593,6 +593,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/events/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List events
+         * @description Newest-touched first. ``source`` and ``kind`` are prefix matches, so
+         *     ``?source=runner`` covers every runner subsystem without the caller
+         *     knowing the full dotted names.
+         */
+        readonly get: operations["apps_events_api_list_events"];
+        readonly put?: never;
+        /**
+         * Record events (batch, coalescing)
+         * @description Repeats of ``(workspace, source, key)`` coalesce onto one row with a
+         *     count, so a permanently-stuck retry loop stays one row instead of one row
+         *     per tick. A blank key never coalesces.
+         */
+        readonly post: operations["apps_events_api_record_events"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/": {
         readonly parameters: {
             readonly query?: never;
@@ -4233,6 +4261,87 @@ export interface components {
             readonly note: string;
             /** Resolved In Version */
             readonly resolved_in_version?: number | null;
+        };
+        /** EventRecordOut */
+        readonly EventRecordOut: {
+            /** Created */
+            readonly created: number;
+            /** Coalesced */
+            readonly coalesced: number;
+        };
+        /**
+         * EventBatchIn
+         * @description Batch on purpose: a runner reports every failure streak it holds in one
+         *     call per tick, atomically, rather than one request per fault.
+         */
+        readonly EventBatchIn: {
+            /** Items */
+            readonly items: readonly components["schemas"]["EventIn"][];
+        };
+        /** EventIn */
+        readonly EventIn: {
+            /** Source */
+            readonly source: string;
+            /**
+             * Kind
+             * @default
+             */
+            readonly kind: string;
+            /**
+             * Level
+             * @default info
+             * @enum {string}
+             */
+            readonly level: "info" | "warn" | "error";
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /**
+             * Payload
+             * @default {}
+             */
+            readonly payload: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** EventListOut */
+        readonly EventListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["EventOut"][];
+        };
+        /** EventOut */
+        readonly EventOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Source */
+            readonly source: string;
+            /** Kind */
+            readonly kind: string;
+            /** Level */
+            readonly level: string;
+            /** Key */
+            readonly key: string;
+            /** Summary */
+            readonly summary: string;
+            /** Payload */
+            readonly payload: {
+                readonly [key: string]: unknown;
+            };
+            /** Count */
+            readonly count: number;
+            /** First Seen At */
+            readonly first_seen_at: string;
+            /** Last Seen At */
+            readonly last_seen_at: string;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -9452,6 +9561,56 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["FeedbackOut"];
+                };
+            };
+        };
+    };
+    readonly apps_events_api_list_events: {
+        readonly parameters: {
+            readonly query?: {
+                readonly source?: string | null;
+                readonly kind?: string | null;
+                readonly level?: string | null;
+                readonly since_minutes?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EventListOut"];
+                };
+            };
+        };
+    };
+    readonly apps_events_api_record_events: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EventBatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EventRecordOut"];
                 };
             };
         };

@@ -101,6 +101,7 @@ INSTALLED_APPS = [
     "apps.storyboards",
     "apps.realtime",
     "apps.canopy_sessions",
+    "apps.events",
 ]
 
 MIDDLEWARE = [
