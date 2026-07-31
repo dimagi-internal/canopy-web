@@ -72,38 +72,41 @@ InboundMailbox.objects.create(address="eva@dimagi-ai.com", agent=Agent.objects.g
 Explicit rather than derived from the address: `eva@dimagi-ai.com` → agent `eva`
 happens to hold today, and the day it doesn't the failure is silent.
 
-## 4. Arm the Gmail watch
+## 4. Arm the Gmail watch — automatic
 
-```bash
-# Per mailbox, with that mailbox's own OAuth credentials.
-curl -X POST "https://gmail.googleapis.com/gmail/v1/users/me/watch" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"topicName\": \"projects/${PROJECT}/topics/${TOPIC}\", \"labelIds\": [\"INBOX\"], \"labelFilterBehavior\": \"include\"}"
+Add the topic to each runner's `~/.canopy/runner.json` and restart it:
+
+```json
+{ "gmail_watch_topic": "projects/connect-labs/topics/canopy-gmail-push" }
 ```
 
-The response carries `historyId` and `expiration` (epoch ms).
+That is the whole step. The runner arms every configured mailbox on its next
+tick, re-arms 24h before expiry, and reports each expiry to
+`POST /api/inbound/watch/` so a failure to re-arm shows up as
+`gmail.watch.expiring` / `.expired` rather than as email quietly slowing down.
 
-**Then report the expiry back**, so forgetting is loud instead of silent:
+**Empty means off** — a box with no topic never touches `users.watch`, so this is
+safe to leave unset on runners you do not want arming anything.
 
-```bash
-curl -X POST "https://labs.connect.dimagi.com/canopy/api/inbound/watch/" \
-  -H "Authorization: Bearer $CANOPY_TOKEN" -H "Content-Type: application/json" \
-  -d '{"address": "eva@dimagi-ai.com", "expires_at": "2026-08-06T12:00:00Z"}'
-```
+### Why the runner and not canopy-web
 
-> **A watch expires after 7 days at most and Google will not renew it**, so this
-> section must be repeated weekly. The symptom of forgetting is that email
-> quietly goes back to taking five minutes — which is exactly why the report call
-> above matters: with an expiry on file, canopy-web logs `gmail.watch.expiring` a
-> day out and `gmail.watch.expired` after, so the cliff announces itself.
+`users.watch` must be called AS the mailbox. A service account can only do that
+with **domain-wide delegation**, and `dimagi-ai.com` is a *secondary domain
+inside the dimagi.com Workspace org* (`C018tavmm`) — established when
+`dimagi-associate.com` was added to login, PR #151 — not its own tenant. DWD is
+granted per Workspace account and cannot be scoped to a domain, an OU, or a user
+list, so granting it would cover every `dimagi.com` mailbox.
 
-`gog` has no `watch` verb and no way to print an access token — it keeps client
-credentials and refresh tokens in a keyring and never exposes a bearer — which is
-why step 4 is a raw `curl` a human runs rather than something the runner does.
-Automating it needs either a `gog` verb for minting a token (another repo) or a
-deliberate decision to hand the runner those secrets directly; that is a choice
-worth making explicitly rather than a gap to paper over.
+The runner already holds a per-mailbox OAuth grant for exactly the five agent
+accounts, which is strictly narrower than DWD and needs no admin-console change.
+`gog` has no `watch` verb and will not print a bearer, so `gmail_watch.py` does
+the refresh-token exchange itself from gog's own client file and keyring export.
+Nothing is stored anywhere new; the secrets stay on the box that already reads
+the mail.
+
+The cost of this choice: if every runner is off for 7 straight days the watch
+lapses. The log says so, and a runner that has been down a week could not have
+read the mail anyway.
 
 ## Verifying it works
 

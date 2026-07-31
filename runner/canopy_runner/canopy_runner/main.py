@@ -236,6 +236,64 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
         pass
 
 
+def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
+    """Keep each mailbox's Gmail watch armed, and report the expiry.
+
+    Rides the inbox tick because it needs nothing else, and re-arms 24h early
+    against a 7-day ceiling — six chances to succeed before push actually lapses.
+    NOT the delivery path: arming is a weekly registration call, while delivery is
+    Gmail -> Pub/Sub -> canopy-web -> the check_inbox doorbell, in seconds.
+
+    Off unless `gmail_watch_topic` is set, so a box with no Pub/Sub topic
+    provisioned behaves exactly as before. Best-effort per mailbox: one failing
+    mailbox (revoked grant, missing gog client) is logged and skipped, never
+    raised — the server's watch.expired row is what makes it loud.
+    """
+    topic = getattr(cfg, "gmail_watch_topic", "") or ""
+    if not topic or not getattr(cfg, "mailboxes", None):
+        return
+    from . import gmail_watch
+
+    state_path = (Path(cfg.state_path).with_name("gmail-watch.json")
+                  if cfg.state_path else Path("gmail-watch.json"))
+    try:
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError):
+        state = {}
+
+    now = dt.datetime.now(dt.UTC)
+    changed = False
+    for agent, box in cfg.mailboxes.items():
+        address = box.get("account") or ""
+        if not address:
+            continue
+        try:
+            prev = dt.datetime.fromisoformat(state[address]) if state.get(address) else None
+        except (TypeError, ValueError):
+            prev = None
+        if not gmail_watch.due(prev, now=now):
+            continue
+        try:
+            expires = gmail_watch.arm(address, box.get("client") or "canopy", topic)
+        except Exception as exc:  # noqa: BLE001 — one mailbox never breaks the tick
+            logger.warning("gmail watch re-arm failed for %s: %s", address, exc)
+            continue
+        state[address] = expires.isoformat()
+        changed = True
+        logger.info("gmail watch armed for %s -> expires %s", address, expires.isoformat())
+        try:
+            client.report_watch(address, expires)
+        except Exception as exc:  # noqa: BLE001 — reporting is not the arming
+            logger.warning("gmail watch report failed for %s: %s", address, exc)
+    if changed:
+        try:
+            state_path.write_text(json.dumps(state))
+        except OSError:
+            pass
+
+
 def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = None) -> None:
     """Scheduled-turn trigger: sync the schedules this runner may fire, evaluate each
     cron locally, and report any due slot so the server materializes the turn.
@@ -404,6 +462,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
     _maybe_check_inboxes(cfg, client, paused=paused)
+    # Keep the Gmail watches armed so push keeps being DELIVERED. Rides the same
+    # tick; a no-op unless a topic is configured, and internally throttled to the
+    # 24h-before-expiry window rather than firing every cycle.
+    _maybe_rearm_watches(cfg, client)
     # Fleet-audit review ingestion was removed when Ada moved to Items: approving
     # an Item dispatches its work server-side (in the decide transaction), so there
     # is no resolved review for the runner to poll. DDD findings reviews are applied

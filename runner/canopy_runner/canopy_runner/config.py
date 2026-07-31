@@ -50,6 +50,12 @@ class Config:
     # emdash launched with --remote-debugging-port=<cdp_port> (see "Emdash CDP").
     cdp_port: int = 9222
     inbox_poll_seconds: int = 300
+    # Pub/Sub topic for Gmail push, e.g. "projects/<p>/topics/canopy-gmail-push".
+    # EMPTY = the runner never touches users.watch, so a box with nothing
+    # provisioned behaves exactly as before. Arming is a weekly registration call
+    # and NOT the delivery path — delivery is Gmail -> Pub/Sub -> canopy-web ->
+    # the check_inbox doorbell, which involves this runner only as the receiver.
+    gmail_watch_topic: str = ""
     # {agent_slug: {"account": "<mailbox>", "client": "<gog client>", "query": "<opt>"}}
     # — the deterministic email trigger polls these and enqueues email-origin turns.
     # Per-mailbox "query" overrides the default Gmail search (e.g. restrict to certain
