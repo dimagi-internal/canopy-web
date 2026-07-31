@@ -13,7 +13,21 @@ export type SetupInputs = {
   serviceAccount: string
 }
 
-export const DEFAULT_PROJECT = 'connect-labs'
+/**
+ * Deliberately NOT a real project.
+ *
+ * Gmail requires the watch topic to live in the **same GCP project as the OAuth
+ * client that calls `users.watch`** — otherwise the call fails with
+ * `Invalid topicName does not match projects/<that-project>/topics/*`. Those
+ * clients live on the runner, in gog's config, so canopy-web cannot know the
+ * answer and has no business guessing it.
+ *
+ * This used to default to `connect-labs`, which is plausible, runnable, and
+ * wrong: it provisions cleanly and every `users.watch` then fails, so the
+ * mailbox silently keeps polling. A placeholder makes the generated block
+ * obviously incomplete instead of confidently broken.
+ */
+export const DEFAULT_PROJECT = '<project-owning-the-gmail-oauth-client>'
 export const DEFAULT_TOPIC = 'canopy-gmail-push'
 
 /** `canopy-push@<project>.iam.gserviceaccount.com` — the conventional name. */
@@ -32,6 +46,15 @@ export function topicPath(project: string, topic: string): string {
  * `gmail-api-push@system.gserviceaccount.com` is a FIXED Google-owned account,
  * not a placeholder — without the publisher grant, `users.watch` returns 403 and
  * the error does not say why.
+ *
+ * Step 5 grants the Pub/Sub service agent permission to mint OIDC tokens as the
+ * push identity. Creating an authenticated push subscription succeeds without it
+ * and then never delivers, which looks identical to a wrong audience.
+ *
+ * `project` must own the Gmail OAuth client — see {@link DEFAULT_PROJECT}. One
+ * topic per (project, workspace): mailboxes in a single workspace whose clients
+ * live in different projects need a topic each, which the per-workspace
+ * `watch_topic` cannot express today.
  */
 export function setupCommands({ pushUrl, project, topic, serviceAccount }: SetupInputs): string {
   const p = (project || DEFAULT_PROJECT).trim()
@@ -53,7 +76,14 @@ export function setupCommands({ pushUrl, project, topic, serviceAccount }: Setup
     `gcloud iam service-accounts create ${saName} \\`,
     `  --display-name="canopy-web inbound push"`,
     ``,
-    `# 4. The push subscription — audience MUST equal the endpoint below`,
+    `# 4. Let Pub/Sub mint OIDC tokens as that identity. Without this the`,
+    `#    subscription is created happily and then never delivers.`,
+    `PROJECT_NUMBER=$(gcloud projects describe ${p} --format='value(projectNumber)')`,
+    `gcloud iam service-accounts add-iam-policy-binding ${sa} \\`,
+    `  --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com" \\`,
+    `  --role=roles/iam.serviceAccountTokenCreator`,
+    ``,
+    `# 5. The push subscription — audience MUST equal the endpoint below`,
     `gcloud pubsub subscriptions create ${t}-sub \\`,
     `  --topic=${t} \\`,
     `  --push-endpoint="${pushUrl}" \\`,

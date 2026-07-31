@@ -568,6 +568,22 @@ Two response rules that look wrong and aren't: an unverified push gets **404, no
 
 **A Gmail `watch` expires within 7 days and Google won't renew it**, so the **runner** re-arms it (`gmail_watch.py`, 24h before expiry, on the tick it already runs) and reports the expiry. It must be the runner, not the server: `users.watch` is called AS the mailbox, which a service account can only do via **domain-wide delegation** — and `dimagi-ai.com` is a *secondary domain inside the dimagi.com Workspace org* (`C018tavmm`, established in PR #151), not its own tenant, so DWD there would cover every `dimagi.com` mailbox. The runner's per-mailbox OAuth grants are strictly narrower and need no admin-console change; since `gog` has no `watch` verb and won't print a bearer, it does the refresh-token exchange itself from gog's own client file + keyring export, storing nothing new. The topic comes from `InboundPushConfig` (local `gmail_watch_topic` is a fallback).
 
+**The watch topic must live in the GCP project that owns the mailbox's Gmail OAuth
+client** — not where canopy-web runs. Any other topic is refused with `400 Invalid
+topicName does not match projects/<client-project>/topics/*`. The clients are the
+runner's `gog` credentials, so canopy-web cannot know the project and the UI ships a
+placeholder rather than a guess (a real-looking default provisioned cleanly and then
+failed every `users.watch`, leaving the mailbox silently on the poll — paid for
+2026-07-31). Authenticated push also needs `roles/iam.serviceAccountTokenCreator` for
+the Pub/Sub service agent on the push identity, or the subscription is created happily
+and delivers nothing, indistinguishable from a wrong audience. Live on labs since
+2026-07-31 for `hal`/`ada`/`eva` (topics in `canopy-494811`), verified by real Gmail
+notifications arriving ~1s after arming. **Known limit:** `watch_topic` is
+per-*workspace* while the constraint is per-*client project*, so a workspace whose
+mailboxes span two projects cannot be fully expressed — `ace`/`echo` (clients in
+`openclaw-assistant-20260224`) are therefore `enabled=false` and stay on the 300s
+poll. Per-mailbox topics are the real fix and are not built.
+
 **Configured entirely at `/w/:workspace/inbound`** — audience, signer, topic, mailboxes, per-mailbox watch health, and copy-pasteable `gcloud` commands generated from that workspace's own push URL. There are deliberately **no deployment-global inbound settings**: config that lives in env vars and a Django shell is deployment, not configuration, and it is what made the app single-tenant.
 
 ### Storyboards (`apps/storyboards`) — the shareable arc

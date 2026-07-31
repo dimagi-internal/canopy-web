@@ -19,12 +19,43 @@ The push carries `{emailAddress, historyId}` and **no mail**. canopy-web resolve
 the mailbox to an agent, rings that agent's runners over the WS control channel,
 and the runner does the `gog` read it already does.
 
+## Which GCP project the topic must live in
+
+**The one that owns the mailbox's Gmail OAuth client — not wherever canopy-web
+runs.** Gmail refuses any other topic:
+
+```
+400: Invalid topicName does not match projects/<client-project>/topics/*
+```
+
+The clients are the runner's `gog` credentials
+(`~/Library/Application Support/gogcli/credentials-<client>.json`), so
+canopy-web cannot know the answer and the page does not guess one — the project
+field is a placeholder you must replace. Find the right project by arming once
+and reading the error, which names it.
+
+This cost a full provisioning cycle on 2026-07-31: everything was created in
+`connect-labs` (where canopy-web runs), the subscriptions verified, and every
+`users.watch` failed — mail kept arriving by poll with no push row to explain it.
+
+Consequence worth knowing before you start: **one topic per (project, workspace)
+pair.** The `dimagi` fleet's clients are split across two projects
+(`canopy-494811` for the shared `canopy` client, `openclaw-assistant-20260224`
+for `ace` and `echo`), so a workspace holding mailboxes from both needs a topic
+each — which the per-workspace `watch_topic` cannot express. Today that is
+handled by leaving the odd mailboxes `enabled=false`, which keeps them on the
+300s poll. Making `watch_topic` per-mailbox is the real fix and is not built.
+
 ## The steps
 
 1. **Provision GCP.** The page renders the `gcloud` block with your project,
    topic and push URL already filled in — including the publisher grant to the
    fixed `gmail-api-push@system.gserviceaccount.com`, without which `users.watch`
-   returns 403 and does not say why. Console links are on the page too.
+   returns 403 and does not say why, and the
+   `roles/iam.serviceAccountTokenCreator` grant to the Pub/Sub service agent,
+   without which the subscription is created happily and then never delivers
+   anything (which looks exactly like a wrong audience). Console links are on the
+   page too.
 
 2. **Tell the workspace what to trust.** Audience (must equal the push endpoint
    exactly) and the push service account. **Blank audience refuses every push** —
@@ -81,8 +112,22 @@ of a test email, and the resulting turn's `origin_ref.discovered_by == "push"`.
 If it reads `"poll"`, push is registered but not delivering — and a
 `gmail.push.missed` row at `error` will already be saying so.
 
+A freshly armed watch delivers its own notification within about a second, so
+arming is itself the end-to-end test — you should see a `gmail.push` row per
+mailbox immediately, before any mail is sent. To probe the path again later
+without making an agent burn a turn, publish a synthetic doorbell:
+
+```bash
+gcloud pubsub topics publish <topic> --project=<project> \
+  --message='{"emailAddress":"hal@dimagi-ai.com","historyId":"1"}'
+```
+
+That exercises delivery, OIDC verification and mailbox resolution; because the
+doorbell carries no mail, the worst it causes is a `gog` read that finds nothing.
+
 | you see | it means |
 |---|---|
+| `400 Invalid topicName does not match …` in the runner log | the topic is in the wrong project — see above; the error names the right one |
 | `gmail.push.unknown_mailbox` (warn) | step 3 not done for that address |
 | `gmail.push.no_runner` (warn) | push arrived, no online runner assigned to that agent |
 | `gmail.push.missed` (error) | a live watch exists but the poll found the mail first |

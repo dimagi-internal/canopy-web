@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_PROJECT,
   consoleLinks,
   setupCommands,
   suggestedServiceAccount,
@@ -44,6 +45,23 @@ describe('setupCommands', () => {
     })
     expect(out).toContain('canopy-push@my-proj.iam.gserviceaccount.com')
   })
+
+  it('lets Pub/Sub mint OIDC tokens as the push identity', () => {
+    // Omitting this creates the subscription successfully and then delivers
+    // nothing — indistinguishable from a wrong audience.
+    expect(cmds).toContain('--role=roles/iam.serviceAccountTokenCreator')
+    expect(cmds).toContain('@gcp-sa-pubsub.iam.gserviceaccount.com')
+  })
+})
+
+describe('DEFAULT_PROJECT', () => {
+  it('is a placeholder, never a real project', () => {
+    // Gmail requires the topic to live in the OAuth client's own project, which
+    // canopy-web cannot know. Defaulting to a real one (`connect-labs`) produced
+    // a runnable block whose every users.watch then failed, leaving the mailbox
+    // silently on the poll. Obviously-incomplete beats confidently-wrong.
+    expect(DEFAULT_PROJECT).toMatch(/^<.*>$/)
+  })
 })
 
 describe('topicPath', () => {
@@ -52,7 +70,7 @@ describe('topicPath', () => {
   })
 
   it('falls back rather than emitting a broken path', () => {
-    expect(topicPath('', '')).toBe('projects/connect-labs/topics/canopy-gmail-push')
+    expect(topicPath('', '')).toBe(`projects/${DEFAULT_PROJECT}/topics/canopy-gmail-push`)
   })
 })
 
