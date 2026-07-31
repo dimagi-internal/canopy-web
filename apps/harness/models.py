@@ -259,6 +259,22 @@ class Runner(models.Model):
         self-reported ready. The cascade's availability probe (spec 2026-07-24)."""
         return self.live_status == Runner.ONLINE and self.ready
 
+    @property
+    def is_reachable(self) -> bool:
+        """Is the daemon still THERE — a weaker question than `is_available`.
+
+        ONLINE, DEGRADED and PAUSED are exactly the states `live_status` can only
+        serve on a fresh heartbeat: degraded stops claiming (CDP down), paused
+        stops starting anything new, but both daemons keep their poll loop and
+        control channel up (a parked box that dies reads STALE, not PAUSED). This
+        is the gate for work that FINISHES or reads what already exists — pressing
+        a menu answer into a blocked session, shipping a transcript — never for
+        starting new work, which is `is_available`'s question. Excluding PAUSED
+        here made a parked runner refuse the very menu its own session report had
+        just delivered (2026-07-31, ada blocked on a box parked for a rate limit).
+        """
+        return self.live_status in (self.ONLINE, self.DEGRADED, self.PAUSED)
+
 
 class Turn(models.Model):
     """One unit of agent work — the execution envelope around board commands."""
