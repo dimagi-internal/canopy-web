@@ -1214,7 +1214,9 @@ def clone_or_pull_canopy_web() -> bool:
         return False
 
 
-def _expose_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> None:
+def _expose_repo_package(
+    repo_dir: pathlib.Path, name: str, purpose: str, *, parent: str = "packages"
+) -> None:
     """Put one in-repo package on `sys.path`, straight from the freshly-cloned repo.
 
     Taken from the clone rather than an index so it is always the same commit as
@@ -1246,7 +1248,7 @@ def _expose_repo_package(repo_dir: pathlib.Path, name: str, purpose: str) -> Non
     the import later fails, and the turn still runs and still finishes. A
     bootstrap step that could brick execution is worse than a missing feature.
     """
-    pkg = repo_dir / "packages" / name
+    pkg = repo_dir / parent / name
     if not (pkg / name).is_dir():
         _log(f"warn: {pkg} not in the clone; {purpose} disabled")
         return
@@ -1264,7 +1266,9 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     rather than a redeploy — the point of a switch you can actually use.
     """
     _expose_repo_package(repo_dir, "canopy_transcript", "transcript rows")
-    _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor")
+    # canopy_acp lives beside the runner programs (runner/canopy_acp), not in
+    # packages/ — looking for it there disabled the ACP executor on every boot.
+    _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor", parent="runner")
     _install_acp_adapter()
 
 
