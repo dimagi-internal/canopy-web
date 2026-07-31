@@ -40,6 +40,7 @@ from .schemas import (
     CommandResultOut,
     CountOut,
     RunnerPreferenceIn,
+    TurnModeIn,
 )
 
 router = Router(auth=session_auth, tags=["agents"])
@@ -159,6 +160,19 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
     agent = _get_agent_or_404(request, slug)
     agent.runner_preference = list(payload.runner_preference)
     agent.save(update_fields=["runner_preference", "updated_at"])
+    return AgentDetailOut.model_validate(services.agent_detail(agent))
+
+
+@router.patch("/{slug}/turn-mode", response=AgentDetailOut,
+              summary="Set an agent's turn mode (gated | auto)")
+def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> AgentDetailOut:
+    """Flip the agent's runtime autonomy posture — the board-side switch the
+    fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
+    A human decision made from the board; the agent-repo upsert (POST /) cannot
+    touch this field."""
+    agent = _get_agent_or_404(request, slug)
+    agent.turn_mode = payload.turn_mode
+    agent.save(update_fields=["turn_mode", "updated_at"])
     return AgentDetailOut.model_validate(services.agent_detail(agent))
 
 

@@ -81,6 +81,7 @@ def agent_detail(agent: Agent) -> dict:
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
         "runner_preference": list(agent.runner_preference or []),
+        "turn_mode": agent.turn_mode,
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),

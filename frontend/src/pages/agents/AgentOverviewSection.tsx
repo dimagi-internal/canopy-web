@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { CountStat, SyncCard } from '@/components/agents/cards'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
@@ -142,6 +143,17 @@ export function AgentOverviewSection() {
 
       {/* Dispatch a turn to this agent, inline */}
       <QuickTurn slug={agent.slug} />
+
+      {/* Turn mode — the runtime autonomy switch (state lives here, not in the repo) */}
+      <div className="mb-6 rounded-lg border border-border bg-card p-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
+          Turn mode
+        </span>
+        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
+          How {agent.name}&apos;s turns handle outbound actions. Read at the start of every turn.
+        </p>
+        <TurnModeToggle agentSlug={agent.slug} initialMode={agent.turn_mode} />
+      </div>
 
       {/* Ranked runner assignments — which paired runners this agent routes to, in order */}
       <div className="mb-6 rounded-lg border border-border bg-card p-3">
