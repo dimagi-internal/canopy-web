@@ -218,11 +218,19 @@ def list_sessions(
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
 
     out = [_out(s) for s in rows]
-    # Running first, then genuinely-most-recent. Sorting by created_at made a
-    # dead repo and a live one interleave arbitrarily (both "created" in the
-    # same report sweep); last_activity_at is the real signal. The client can
-    # re-group by project — this is the default order.
-    out.sort(key=lambda r: (not r["running"], -(r["last_activity_at"].timestamp())))
+    # Waiting first, then running, then genuinely-most-recent. Sorting by
+    # created_at made a dead repo and a live one interleave arbitrarily (both
+    # "created" in the same report sweep); last_activity_at is the real signal.
+    # The client can re-group by project — this is the default order.
+    #
+    # `waiting_on_you` outranks both because activity ordering actively BURIES
+    # it: a session stops writing the moment it asks, so the longer somebody has
+    # been kept waiting the further down it sinks, and the row you can actually
+    # do something about ends up below a dozen you cannot. Same trap the runner
+    # side avoids by reading the question for every session rather than the top
+    # K — this is that trap one layer up.
+    out.sort(key=lambda r: (not r["waiting_on_you"], not r["running"],
+                            -(r["last_activity_at"].timestamp())))
     # Clamp AFTER the sort, never as a queryset slice: the queryset is ordered by
     # -created_at, so slicing it could drop the running session this sort exists to
     # float. `state=active` already bounds the set; this is a payload backstop.

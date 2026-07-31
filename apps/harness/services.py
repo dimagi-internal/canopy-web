@@ -1583,6 +1583,26 @@ def replace_reported_sessions(
             groups.publish(groups.session_group(session_id),
                            {"type": "session.menu", "menu": menu})
 
+        # And to the phone in your pocket, for the agents that just STARTED
+        # waiting. Only the null -> menu edge: a retraction is not news, and the
+        # UI it would correct is already corrected by the frame above.
+        #
+        # This is the half no rendering fix could cover. A menu that renders
+        # perfectly still needs somebody to open the app, and the failure being
+        # fixed here is 52 minutes of nobody knowing there was anything to open.
+        asking = [(sid, menu) for sid, menu in menu_changes if menu]
+        if asking:
+            from apps.canopy_sessions.models import Session
+            from apps.push import services as push_services
+
+            sessions = Session.objects.select_related(
+                "agent", "runner_binding", "runner_binding__runner"
+            ).in_bulk([sid for sid, _ in asking])
+            for session_id, menu in asking:
+                session = sessions.get(session_id)
+                if session is not None:
+                    push_services.notify_session_question(session, menu)
+
     transaction.on_commit(_fire_reported)
     return len(deduped)
 

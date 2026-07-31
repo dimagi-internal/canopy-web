@@ -150,3 +150,73 @@ def mark_dirty(agent_id: int) -> None:
     """
     _dirty_set().add(agent_id)
     transaction.on_commit(_flush)
+
+
+# --- A blocked agent asking a question ---------------------------------------
+#
+# A SECOND producer, deliberately not routed through the item snapshot above.
+#
+# The snapshot exists because the waiting set is a COUNT with no natural event.
+# This is the opposite shape: an agent going from "working" to "waiting on a
+# human" is a discrete edge, observed once, and the notification can carry the
+# actual question rather than a tally. It is also not an `Item` and must not
+# become one — `Item`'s decisions are implement/skip/defer and `implement`
+# dispatches a Turn, whereas answering a dialog is a KEYSTROKE into a live
+# session. An inbox row whose buttons enqueue a turn would be wrong in a way
+# that runs code.
+#
+# Why it matters at all: rendering the menu perfectly still requires somebody to
+# open the app. `spark` sat blocked for 52 minutes on 2026-07-31 with nobody
+# looking, and no amount of UI fixes that.
+
+QUESTION_BODY_MAX = 140
+
+
+def _question_audience(session):
+    """Who should be told this session is waiting, or None.
+
+    The agent's owner when there is one; otherwise the human who PAIRED the
+    runner — the person whose laptop the session is actually sitting on. A
+    runner-discovered session (what `spark` was) has no agent, so without the
+    second leg the case that motivated this would notify nobody.
+
+    Fails closed on None, the same way `runner.paired_by` gates tenancy: with
+    nobody identifiable, we stay silent rather than broadcast a workspace.
+    """
+    agent = getattr(session, "agent", None)
+    owner = getattr(agent, "owner", None) if agent is not None else None
+    if owner is not None:
+        return owner
+    binding = getattr(session, "runner_binding", None)
+    runner = getattr(binding, "runner", None) if binding is not None else None
+    return getattr(runner, "paired_by", None) if runner is not None else None
+
+
+def notify_session_question(session, menu: dict) -> int:
+    """Push "this agent is asking you something", deep-linked to the answer.
+
+    The URL is the CHAT, not `/supervisor`: the whole point is that the tap
+    lands on the buttons. Sending someone to a dashboard to hunt for which
+    session it was is the same delay this exists to remove, just shorter.
+
+    Best-effort — a push must never cost the session report that triggered it.
+    """
+    if not menu:
+        return 0
+    user = _question_audience(session)
+    if user is None:
+        return 0
+    question = str(menu.get("question") or "").strip() or "a question"
+    if len(question) > QUESTION_BODY_MAX:
+        question = question[: QUESTION_BODY_MAX - 1].rstrip() + "…"
+    name = (session.title or "").strip() or "An agent"
+    try:
+        return send_to_user(
+            user,
+            title=f"{name} is asking",
+            body=question,
+            url=f"/w/{session.workspace_id}/chat/{session.id}",
+        )
+    except Exception:  # noqa: BLE001 — never let a notification break the report
+        logger.exception("push: session-question notify failed for %s", session.pk)
+        return 0
