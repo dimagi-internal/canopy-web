@@ -204,6 +204,17 @@ class RunnerBinding(models.Model):
     status = models.CharField(max_length=40, blank=True, default="")
     last_interacted_at = models.DateTimeField(null=True, blank=True)
     live_seen_at = models.DateTimeField(null=True, blank=True)
+    # Stamped ONLY by the report loop (apps/harness/services.py::
+    # replace_reported_sessions) — deliberately NOT by record_session, which BOTH
+    # runners call. That asymmetry is the whole point: it makes "a runner is
+    # reporting an emdash task for this session" an observable fact rather than
+    # something inferred from Runner.kind (which answers "what program is this",
+    # a different question, and is already deprecated as a behavioural input).
+    # `live_seen_at` cannot answer it — the cloud runner's record_session stamps
+    # that too, and writes a Claude session id into session_key where the laptop
+    # writes an emdash task name. Read against the same stale_cutoff() the session
+    # list uses, so "reported" and "live" can never mean different windows.
+    reported_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -1515,6 +1515,10 @@ def replace_reported_sessions(
             binding.status = s.status or ""
             binding.last_interacted_at = _aware(s.last_interacted_at)
             binding.live_seen_at = timezone.now()
+            # The one write site. See RunnerBinding.reported_at — `close` branches
+            # on this, and it is only trustworthy because record_session leaves it
+            # alone.
+            binding.reported_at = binding.live_seen_at
             binding.tail = list(s.recent_messages or [])
             binding.save()
 
