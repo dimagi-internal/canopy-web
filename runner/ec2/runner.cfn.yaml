@@ -279,6 +279,11 @@ Resources:
                 # bytes. Scoped to that command rather than relying on the AMI's
                 # default blanket NOPASSWD for `ubuntu`.
                 ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart canopy-runner.service
+                # The daemon's update NUDGE (an `update_available` WS frame) starts
+                # the update unit off-cycle instead of waiting out the 30-min timer.
+                # `start`, never the script as a child — the restart above would
+                # kill a child in the daemon's own cgroup mid-install.
+                ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block canopy-runner-update.service
             - path: /etc/systemd/system/canopy-runner-update.service
               content: |
                 [Unit]

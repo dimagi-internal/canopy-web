@@ -256,6 +256,30 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "desired": message.get("desired"),
         })
 
+    async def runner_check_inbox(self, message):
+        # runner.{id} group_send type="runner.check_inbox" — the Gmail doorbell
+        # (apps/inbound/services.ring): a push said this mailbox changed; the
+        # runner marks it due and reads it on its own poll thread. This handler
+        # is load-bearing beyond forwarding: Channels RAISES on an unhandled
+        # group-message type, so without it the doorbell frame not only never
+        # arrived, it errored the consumer carrying wake/cancel too.
+        await self.send_json({
+            "type": "check_inbox",
+            "mailbox": message.get("mailbox"),
+        })
+
+    async def runner_update_available(self, message):
+        # runner.{id} group_send type="runner.update_available" — this box's
+        # last heartbeat reported a code_sha that differs from the deployed
+        # expectation. The runner kickstarts its SEPARATE updater job, which
+        # re-checks staleness and the in-flight marker itself — the daemon never
+        # installs anything on this signal, and the updater's 30-min timer stays
+        # the rescue path for a daemon too dead to hear a frame.
+        await self.send_json({
+            "type": "update_available",
+            "expected_sha": message.get("expected_sha"),
+        })
+
     async def runner_menu_answer(self, message):
         # runner.{id} group_send type="runner.menu_answer" — a human answered, from
         # the web, the dialog an agent is blocked on. The runner presses the key in

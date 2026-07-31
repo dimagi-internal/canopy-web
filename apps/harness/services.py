@@ -150,6 +150,22 @@ def heartbeat(
             runner.capabilities = {**runner.capabilities, "projects": cleaned}
             fields.append("capabilities")
     runner.save(update_fields=fields)
+    # The update nudge: this is the one moment both shas are in hand — the
+    # deploy moved the expectation, the beat just reported what's installed.
+    # Ring the box's control channel so its updater checks NOW instead of
+    # waiting out its 30-min timer. Push is the doorbell, the timer stays the
+    # auditor (and the rescue for a daemon too dead to hear a frame). Sent on
+    # every stale beat, not edge-triggered: the frame is tiny, and the runner
+    # owns the throttle — a missed frame then costs one beat, not one timer
+    # cycle. Empty on either side is UNKNOWN, never "stale".
+    expected = runner.expected_code_sha()
+    if code_sha and expected and code_sha != expected:
+        from apps.realtime import groups
+
+        groups.publish(
+            groups.runner_group(runner.pk),
+            {"type": "runner.update_available", "expected_sha": expected},
+        )
     if active_turn_ids:
         Turn.objects.filter(
             pk__in=active_turn_ids,

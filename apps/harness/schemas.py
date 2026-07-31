@@ -146,11 +146,9 @@ class RunnerOut(Schema):
         # one sha to both would mark every cloud runner permanently stale — the
         # alert would then be pure noise on exactly the boxes it was extended to
         # cover. Either being empty still means UNKNOWN and stays silent.
-        from django.conf import settings
-        from .models import Runner
-
-        setting = "RUNNER_CLOUD_CODE_SHA" if obj.kind == Runner.CLOUD else "RUNNER_CODE_SHA"
-        return getattr(settings, setting, "") or ""
+        # The derivation lives on the model so the heartbeat's update nudge
+        # compares the same quantity this serves.
+        return obj.expected_code_sha()
 
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:

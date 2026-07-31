@@ -209,6 +209,45 @@ async def test_cancel_frame_reaches_the_runner():
     await comm.disconnect()
 
 
+async def test_check_inbox_frame_reaches_the_runner():
+    # The Gmail doorbell (apps/inbound/services.ring) publishes this type; a
+    # missing handler here doesn't just drop the frame — Channels raises on an
+    # unhandled type, so the doorbell would also cost the runner its socket.
+    from channels.layers import get_channel_layer
+
+    from apps.realtime import groups
+
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+
+    layer = get_channel_layer()
+    await layer.group_send(groups.runner_group(runner.id), {
+        "type": "runner.check_inbox", "mailbox": "hal@dimagi-ai.com",
+    })
+    frame = await comm.receive_json_from(timeout=2)
+    assert frame == {"type": "check_inbox", "mailbox": "hal@dimagi-ai.com"}
+    await comm.disconnect()
+
+
+async def test_update_available_frame_reaches_the_runner():
+    from channels.layers import get_channel_layer
+
+    from apps.realtime import groups
+
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+
+    layer = get_channel_layer()
+    await layer.group_send(groups.runner_group(runner.id), {
+        "type": "runner.update_available", "expected_sha": "a" * 40,
+    })
+    frame = await comm.receive_json_from(timeout=2)
+    assert frame == {"type": "update_available", "expected_sha": "a" * 40}
+    await comm.disconnect()
+
+
 async def test_send_message_interjects_the_running_runner():
     from apps.canopy_sessions.models import Session
     from apps.canopy_sessions.services import send_message

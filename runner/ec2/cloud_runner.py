@@ -262,6 +262,60 @@ def _mark_in_flight(count: int) -> None:
         pass
 
 
+# --- the update doorbell -----------------------------------------------------
+#
+# The server rings `update_available` down the WS the moment a heartbeat reports
+# a sha that differs from the deployed expectation — on EVERY stale beat, so a
+# missed frame costs one beat, not one timer cycle. The daemon owns the throttle.
+UPDATE_NUDGE_MIN_SECONDS = 600.0
+_last_update_nudge = 0.0
+
+
+def _start_update_unit() -> None:
+    # `systemctl start`, never running update_runner.sh as a child: the updater
+    # restarts canopy-runner.service, and a child of this process would be
+    # killed in the daemon's own cgroup mid-install by that restart. Handing
+    # the work to systemd puts it in the unit's cgroup, where the restart it
+    # performs cannot reach it. `--no-block` because the oneshot takes ~a
+    # minute and this thread carries wake and heartbeat. The scoped sudoers
+    # line ships in runner.cfn.yaml.
+    subprocess.run(
+        ["sudo", "-n", "systemctl", "start", "--no-block", "canopy-runner-update.service"],
+        capture_output=True, timeout=15, check=True,
+    )
+
+
+def _nudge_updater(expected_sha: str, *, now: float | None = None) -> bool:
+    """The `update_available` doorbell: start the SEPARATE update unit now
+    instead of waiting out its 30-minute timer.
+
+    Never installs in-process — the unit re-checks staleness and the in-flight
+    marker itself, so busy deferral and the crash-loop rescue are inherited,
+    not re-implemented. Skips when the frame raced an install that already
+    happened. Never raises: the WS loop it runs on also carries wake,
+    heartbeat and claim."""
+    global _last_update_nudge
+    now = time.time() if now is None else now
+    expected = (expected_sha or "").strip()
+    installed = build_info()["sha"]
+    # Empty on either side is UNKNOWN, never "stale" — the fleet provenance rule.
+    if not expected or not installed or expected == installed:
+        return False
+    if now - _last_update_nudge < UPDATE_NUDGE_MIN_SECONDS:
+        return False
+    # Advance the throttle on the ATTEMPT, not the success: a broken systemctl
+    # would otherwise warn on every ~20s beat, and the timer rescues that case.
+    _last_update_nudge = now
+    try:
+        _start_update_unit()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"update nudge: could not start canopy-runner-update.service: {exc}")
+        return False
+    _log(f"update nudge: started canopy-runner-update.service "
+         f"(expected {expected[:12]}, installed {installed[:12]})")
+    return True
+
+
 def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     """THE heartbeat payload — one stamping point, for all four call sites.
 
@@ -2036,6 +2090,8 @@ def run_over_ws(runner_id: str) -> bool:
                         # regardless, so a dropped frame costs one tick, never
                         # a permanently unattached viewer.
                         _sync_session_views(runner_id)
+                    elif mtype == "update_available":
+                        _nudge_updater(str(msg.get("expected_sha") or ""))
                 elif raw == "":
                     break  # server closed the socket
                 if time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
