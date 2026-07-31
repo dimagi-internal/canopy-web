@@ -20,7 +20,21 @@ export function AgentKpiCard({ agent, waiting }: { agent: AgentOut; waiting: num
       className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/40"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-semibold text-foreground">{agent.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-[13px] font-semibold text-foreground">{agent.name}</p>
+          {/* Only `auto` is badged. Gated is the default posture and the safe one —
+              badging it too would put a chip on every card and make the one that
+              actually matters (this agent sends without asking) harder to spot. */}
+          {agent.turn_mode === 'auto' && (
+            <span
+              data-testid={`agent-auto-${agent.slug}`}
+              title="Auto mode — sends without waiting for your approval"
+              className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1 py-px text-[9px] font-bold uppercase tracking-[0.06em] text-warning"
+            >
+              Auto
+            </span>
+          )}
+        </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
           {waiting > 0 ? `${waiting} waiting on you` : 'nothing waiting'}
         </p>
