@@ -400,6 +400,18 @@ RUNNER_CODE_SHA = env("RUNNER_CODE_SHA", default="")
 # rather than merely "different" (a sha is an identity, not a position).
 RUNNER_CODE_COMMITTED_AT = env.int("RUNNER_CODE_COMMITTED_AT", default=0)
 
+# The same pair for the CLOUD runner, scoped to `runner/ec2/cloud_runner.py` +
+# `runner/ec2/bootstrap_agents.sh`. A separate quantity because it is a separate
+# program: one sha cannot describe both runners, and serving the laptop's to a
+# cloud box would mark every one of them stale forever. `RunnerOut` picks the pair
+# that matches the row's `kind`.
+#
+# bootstrap_agents.sh counts as the cloud runner's code because it re-runs on every
+# service start — but nothing ever triggers a start, so before auto-update a fix to
+# it shipped only when a human restarted the box (spec 2026-07-30).
+RUNNER_CLOUD_CODE_SHA = env("RUNNER_CLOUD_CODE_SHA", default="")
+RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", default=0)
+
 # Key for at-rest field encryption (per-runner credentials — apps/common/encryption.py).
 # Empty → derived from SECRET_KEY (fine for dev). Set explicitly in production so the
 # encryption key can rotate independently of SECRET_KEY.

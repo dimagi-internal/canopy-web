@@ -320,3 +320,61 @@ async def test_ws_claim_agrees_with_the_rest_claim_payload():
                   "workspace_slug", "prompt"):
         assert claimed[field] == rest[field], f"{field} disagrees: {claimed[field]!r} vs {rest[field]!r}"
     await comm.disconnect()
+
+
+# --- heartbeat provenance ----------------------------------------------------
+# `services.heartbeat` assigns code_sha/code_branch/code_version/code_committed_at
+# UNCONDITIONALLY, so a call that omits them clears them. This is the cloud
+# runner's primary heartbeat (every 20s), so before spec 2026-07-30 anything it
+# reported over REST was erased moments later and `code_sha` read empty forever —
+# indistinguishable from a runner that never reported one.
+async def test_ws_heartbeat_records_code_provenance():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({
+        "action": "heartbeat", "active_turn_ids": [],
+        "code_sha": "abc123", "code_committed_at": 1753900000, "code_version": "9.9.9",
+    })
+    assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.code_sha == "abc123"
+    assert fresh.code_committed_at == 1753900000
+    assert fresh.code_version == "9.9.9"
+    await comm.disconnect()
+
+
+async def test_ws_heartbeat_does_not_erase_provenance_it_resent():
+    # The regression itself: beat twice and the sha must still be there. A pass
+    # here with a single beat would prove nothing — the erasure happened on the
+    # NEXT one.
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    for _ in range(2):
+        await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [],
+                                 "code_sha": "deadbee"})
+        await comm.receive_json_from(timeout=2)
+
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.code_sha == "deadbee"
+    await comm.disconnect()
+
+
+async def test_ws_heartbeat_survives_a_malformed_committed_at():
+    # Provenance is decoration on a liveness call. A runner sending garbage must
+    # lose its timestamp, never its heartbeat — losing the beat would take it
+    # offline and stop it claiming.
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [],
+                             "code_sha": "abc123", "code_committed_at": "not-a-number"})
+    assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.status == Runner.ONLINE
+    assert fresh.code_sha == "abc123"
+    assert fresh.code_committed_at == 0
+    await comm.disconnect()

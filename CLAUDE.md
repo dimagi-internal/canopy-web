@@ -395,19 +395,53 @@ Log: `~/.canopy/updater.log`. Testing a branch on a box? Bootout the updater fir
 or it reverts you to the deployed sha within 30 minutes.
 
 **Runner code provenance.** The heartbeat carries `code_version` (the package's
-`__version__`, legible) and `code_sha` — **the sha of the last commit touching
-`runner/canopy_runner/canopy_runner/`**, NOT the repo HEAD. The server holds the same
-quantity in `settings.RUNNER_CODE_SHA` (computed by the deploy workflow, which needs
-`fetch-depth: 0`, and baked in as a build arg), and `/supervisor` alerts when both are
-non-empty and differ: that box is executing an older runner. Path-scoped on purpose — HEAD
-moves on every canopy-web commit, so comparing it would demand a runner reinstall for a CSS
-change. **Empty on either side means UNKNOWN and never alerts** (the cloud runner is a
-different program and reports none; a dev server bakes in no expectation). A version number
-is deliberately not the comparison: it depends on someone remembering to bump it, and is
-therefore decorative on the day they forget. See
+`__version__`, legible) and `code_sha` — **the sha of the last commit touching the runner's
+own source**, NOT the repo HEAD. "Its own source" is **per runner kind**, because the fleet
+runs two programs: `runner/canopy_runner/canopy_runner/` for a laptop, `runner/ec2/` for a
+cloud box. The server holds the matching pair (`settings.RUNNER_CODE_SHA` /
+`RUNNER_CLOUD_CODE_SHA`, computed by the deploy workflow — which needs `fetch-depth: 0` —
+and baked in as build args); `RunnerOut.expected_code_sha` serves whichever matches the
+row's `kind`, and `/supervisor` alerts when both are non-empty and differ: that box is
+executing an older runner. Path-scoped on purpose — HEAD moves on every canopy-web commit,
+so comparing it would demand a runner reinstall for a CSS change. **Empty on either side
+means UNKNOWN and never alerts** (an unstamped install; a dev server bakes in no
+expectation). Serving ONE sha to both kinds would be worse than silence — every cloud box
+would read stale forever. A version number is deliberately not the comparison: it depends on
+someone remembering to bump it, and is therefore decorative on the day they forget. See
 `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`.
 
+Provenance also rides the **WebSocket** heartbeat frame, not just the REST one, and that is
+load-bearing rather than tidy: `services.heartbeat` assigns these fields unconditionally, so
+a beat that omits them CLEARS them. The cloud runner's primary heartbeat is the WS frame, so
+without the pass-through in `apps/realtime/consumers.py::_heartbeat` anything it reported
+elsewhere was erased 20 seconds later and `code_sha` read empty forever — looking exactly
+like a runner that never reported one. Same bug class the laptop paid for with `code_branch`
+(four of six call sites silently resetting it): each runner therefore builds its heartbeat
+payload in exactly ONE place.
+
 **The cloud runner is a separate program** (`runner/ec2/cloud_runner.py`): claims on a 15s poll and drains the queue, executes via `claude -p` (or ACP behind `RUNNER_EXECUTOR=acp`, default off), declares its repos via `RUNNER_PROJECTS`, and mirrors the laptop's viewer-stream/backfill contract on its own 3s clock. `bootstrap_agents.sh` provisions the agent fleet on the box — clones each `dimagi-internal/<slug>` repo into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps each agent to its gog OAuth client — invoked from `main()` AFTER `fetch_and_stage_credential()` (not cloud-init, where credentials don't exist yet), and deliberately not `set -e`, so one agent's failure doesn't take down the other four. See `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+
+**The cloud runner AUTO-UPDATES too**, on the laptop's rules (`runner/ec2/update_runner.sh`,
+a `canopy-runner-update.timer` every 30 min): it tracks the **deployed**
+`expected_code_sha` for its own path, defers while a turn is in flight
+(`/opt/canopy-runner/in-flight`, the same file shape `update.mark_busy` writes), is
+READ-ONLY against the control plane (a heartbeat from the updater would forge liveness for a
+daemon that may be dead), and is a **separate unit** — a runner that crash-loops can never
+update itself. It installs by `git show <that sha>:runner/ec2/cloud_runner.py` out of the
+`/opt/canopy-web` clone the box already keeps: pinned to the sha (never `origin/main`, which
+would run undeployed code AND leave the box permanently mismatched), and read from the
+object store so an agent turn that left the clone on a branch cannot change what installs.
+**Secrets Manager is now a first-boot SEED, not the update channel** — `canopy-fetch-env`
+installs it only when there is no `cloud_runner.py` on disk, because re-fetching it on every
+start would revert every update at the next restart. So `./up.sh` no longer ships runner code
+to a running box; code ships by merge + deploy, and the on-box override is
+`canopy-runner-update --ref <ref>` / `--from-secret`. Provenance for the seed comes from
+`up.sh`'s own `git log`, published as a second secret (`runner-code-sha`) rather than a
+stack parameter — a parameter lives in UserData, and changing UserData stop/starts the
+running box, which this value would do on every runner commit. Without that stamp a fresh
+box answers `unknown` forever, which looks identical to being up to date. Cloud-init only runs on an
+instance's FIRST boot, so this ships with a stack recycle (`./down.sh && ./up.sh &&
+./wire.sh --drill`). See `docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md`.
 
 **Recurring turns** — the runner-facing half of scheduling; the supervisor's CRUD is the `/api/agents/{slug}/schedules/` surface above. `runner_id` is a query param on both routes; the tenant is derived from `runner.paired_by` (the human who paired the runner) rather than the `Runner.workspace` FK — see the Design Decisions entry below.
 - `GET /api/harness/schedules/?runner_id=…` — runner syncs the schedules it may fire. **Tenant-scoped, never scoped by `capabilities`** (a caller-supplied hint, not a boundary — see b4f5ead).

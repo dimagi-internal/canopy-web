@@ -141,14 +141,28 @@ class RunnerOut(Schema):
 
     @staticmethod
     def resolve_expected_code_sha(obj) -> str:
+        # Per KIND, because the fleet runs two different programs: a laptop
+        # executes runner/canopy_runner, a cloud box executes runner/ec2. Serving
+        # one sha to both would mark every cloud runner permanently stale — the
+        # alert would then be pure noise on exactly the boxes it was extended to
+        # cover. Either being empty still means UNKNOWN and stays silent.
         from django.conf import settings
-        return getattr(settings, "RUNNER_CODE_SHA", "") or ""
+        from .models import Runner
+
+        setting = "RUNNER_CLOUD_CODE_SHA" if obj.kind == Runner.CLOUD else "RUNNER_CODE_SHA"
+        return getattr(settings, setting, "") or ""
 
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:
         from django.conf import settings
+        from .models import Runner
+
+        setting = (
+            "RUNNER_CLOUD_CODE_COMMITTED_AT" if obj.kind == Runner.CLOUD
+            else "RUNNER_CODE_COMMITTED_AT"
+        )
         try:
-            return int(getattr(settings, "RUNNER_CODE_COMMITTED_AT", 0) or 0)
+            return int(getattr(settings, setting, 0) or 0)
         except (TypeError, ValueError):
             # A malformed build arg must not 500 the whole runners list — unknown
             # (0) simply means the alert keeps today's direction-less behaviour.

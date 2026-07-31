@@ -113,17 +113,20 @@ class Runner(models.Model):
     # remembering to bump it, and is therefore decorative on the day they forget,
     # which is the day it matters).
     code_version = models.CharField(max_length=64, blank=True, default="")
-    # The sha of the last commit that touched the runner's OWN source
-    # (`runner/canopy_runner/canopy_runner/`) — NOT the repo HEAD, which moves on
-    # every canopy-web commit and would mark every runner stale on a CSS change.
-    # `settings.RUNNER_CODE_SHA` holds the same quantity computed at image-build
-    # time, and the supervisor alerts when both are non-empty and differ.
+    # The sha of the last commit that touched the runner's OWN source — NOT the
+    # repo HEAD, which moves on every canopy-web commit and would mark every runner
+    # stale on a CSS change. "Its own source" is per KIND, because the fleet runs
+    # two programs: `runner/canopy_runner/canopy_runner/` for a laptop,
+    # `runner/ec2/` for a cloud box. The server holds the matching pair
+    # (`settings.RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA`, computed at
+    # image-build time and served per row by RunnerOut), and the supervisor alerts
+    # when both are non-empty and differ.
     #
     # Empty means UNKNOWN and must stay silent: a source checkout with no git, a
-    # shallow clone, the cloud runner (a different program with its own
-    # deployment). A staleness alert fired on partial information is worse than
-    # no alert — and this repo has paid for NULL/empty-means-something predicates
-    # before (see the six tenancy predicates that grew a "means allow" leg).
+    # shallow clone, an unstamped install. A staleness alert fired on partial
+    # information is worse than no alert — and this repo has paid for
+    # NULL/empty-means-something predicates before (see the six tenancy predicates
+    # that grew a "means allow" leg).
     code_sha = models.CharField(max_length=64, blank=True, default="")
     # Committer epoch of that same commit — the ORDER a sha cannot carry.
     #

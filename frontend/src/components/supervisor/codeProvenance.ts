@@ -36,9 +36,15 @@ export function runnerCodeAlerts(runners: readonly RunnerOut[] | null): RunnerCo
       continue // one code-provenance banner per runner; the branch is the louder fault
     }
     // BOTH sides must be known. An empty sha means "unknown", not "different":
-    // the cloud runner is a separate program that reports none, a dev server has
-    // no expectation baked in, and a shallow clone yields nothing. Alerting on
-    // partial information would cry wolf on exactly the boxes we know least about.
+    // a dev server has no expectation baked in, a shallow clone yields nothing,
+    // and an unstamped install cannot say. Alerting on partial information would
+    // cry wolf on exactly the boxes we know least about.
+    //
+    // The cloud runner used to be the headline example here — a separate program
+    // reporting nothing. Since spec 2026-07-30 it reports its own sha and the
+    // server serves it the expectation for ITS path (runner/ec2), so cloud rows
+    // now participate in this alert on the same terms as laptops. Nothing below
+    // changed: both sides known, both non-empty, ordered by commit time.
     if (runner.code_sha && runner.expected_code_sha && runner.code_sha !== runner.expected_code_sha) {
       // A sha is a NAME, not a position: `!==` means different, and there are
       // three ways to differ (older, newer, divergent). Calling all of them
