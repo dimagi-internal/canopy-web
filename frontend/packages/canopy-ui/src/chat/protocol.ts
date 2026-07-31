@@ -60,16 +60,26 @@ export interface Participant {
   last_seen_at: string | null;
 }
 
-/** A dialog an agent is blocked on, read off its terminal.
+/** A dialog an agent is blocked on.
  *
  *  `title` and `body` are what makes it answerable away from the keyboard:
- *  "Do you want to proceed?" tells you nothing without the command it means. */
+ *  "Do you want to proceed?" tells you nothing without the command it means.
+ *
+ *  Two producers, one shape, so this never grows a second reader: the session
+ *  report derives it from the transcript (an `AskUserQuestion` tool call — what
+ *  actually blocks a fleet running `bypass permissions`), and the runner can
+ *  still read it off the rendered screen for the dialogs a transcript cannot
+ *  see. `source` says which, and a client is free to ignore it. */
 export interface SessionMenu {
   question: string;
   title?: string;
   body?: string;
   selected?: number | null;
-  options: { number: number; label: string }[];
+  source?: string;
+  /** `description` is present on the transcript path and is often the only
+   *  thing that distinguishes two options — "Proceed to Phase 4" does not say
+   *  that Phase 4 is test-gated, and its description does. */
+  options: { number: number; label: string; description?: string }[];
 }
 
 export interface SessionState {
@@ -83,9 +93,10 @@ export interface SessionState {
    *  those apart — but it is the difference between "still thinking, wait" and
    *  "it is waiting on YOU", which previously rendered identically. */
   activity?: "working" | "idle" | "blocked";
-  /** The dialog the agent is waiting on, when one could be read off its screen.
-   *  Absent when the agent is not blocked, or when the runner has no way to look
-   *  (no CDP) — "blocked" still arrives, it just has no buttons. */
+  /** The dialog the agent is waiting on. Carried in the CONNECT SNAPSHOT, not
+   *  only in live frames: `session.activity` is view-only and reaches a client
+   *  only if it was already connected when the agent blocked — which is exactly
+   *  the case that fails, because you go and look BECAUSE it stopped. */
   menu?: SessionMenu;
   active_draft: Draft | null;
   participants: Participant[];
@@ -113,6 +124,12 @@ export type WsEvent =
   // The agent started or finished a turn. Distinct from tool events: it fires
   // while Claude is THINKING, before any content exists to show.
   | { event: "session.activity"; data: { state: "working" | "idle" | "blocked"; menu?: SessionMenu } }
+  // The agent started, or stopped, waiting on a dialog. Its own frame rather
+  // than an overloaded `session.activity`: activity answers "is it producing",
+  // which the hook path owns on a much faster clock, and inventing a state here
+  // to carry a menu would report an agent as idle or blocked on the wrong one.
+  // `menu: null` is the retraction — somebody answered at the keyboard.
+  | { event: "session.menu"; data: { menu: SessionMenu | null } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }

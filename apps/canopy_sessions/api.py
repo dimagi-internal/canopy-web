@@ -24,7 +24,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
-from . import attachment_storage, services
+from . import attachment_storage, serializers, services
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
@@ -101,6 +101,12 @@ def _out(session: Session) -> dict:
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
         "session_key": binding.session_key if binding else "",
+        # Is this session blocked on a human? A bool on the LIST (the menu
+        # itself rides the detail read) — a list carrying every session's full
+        # dialog would pay for N sets of options to render one badge each. It
+        # answers the thing the list could not: a waiting agent and an idle one
+        # look identical, which is why spark read as "the session stopped".
+        "waiting_on_you": serializers.pending_menu(session) is not None,
     }
 
 
@@ -257,6 +263,9 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
+    # Same reader as the WS snapshot, so opening a session over REST and over
+    # the socket can never disagree about whether an agent is waiting.
+    data["menu"] = serializers.pending_menu(session)
     return data
 
 

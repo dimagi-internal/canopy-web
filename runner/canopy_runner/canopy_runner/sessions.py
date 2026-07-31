@@ -135,6 +135,12 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         transcript.attach_recent_tail(
             sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
         )
+        # The blocked-agent dialog, for EVERY reported session — the signal that
+        # makes "the session stopped" answerable from a phone. Uncapped on
+        # purpose (a waiting session sinks in an activity-ordered list, so a
+        # top-K bound would hide the ones that have waited longest); see
+        # `transcript.attach_pending_questions`.
+        transcript.attach_pending_questions(sessions)
         client.report_sessions(cfg.runner_id, sessions, archived)
     except Exception:  # noqa: BLE001
         logger.debug("session report failed (non-fatal)", exc_info=True)

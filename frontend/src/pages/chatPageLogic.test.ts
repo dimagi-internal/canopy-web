@@ -114,6 +114,34 @@ describe("sendBlockReason", () => {
     ).toBe("Laptop is paused — resume it to send");
   });
 
+  it("blocks while a dialog is up, pointing at the buttons instead", () => {
+    // The TUI draws the menu WHERE the composer would be, so a send has
+    // nothing to land in — the runner reports exactly this as
+    // COMPOSER_NOT_VISIBLE and refuses to blind-send. The answer the agent is
+    // waiting for is one tap away in the banner.
+    expect(
+      sendBlockReason({
+        runnerName: "Laptop", boundOffline: false, paused: false, blockedOnMenu: true,
+      }),
+    ).toBe("answer the question above to continue");
+  });
+
+  it("names the dialog before the runner when both are true", () => {
+    // A parked box you could resume is not the reason this send fails; the
+    // dialog is, and it is the one of the two a tap right here resolves.
+    expect(
+      sendBlockReason({
+        runnerName: "Laptop", boundOffline: true, paused: true, blockedOnMenu: true,
+      }),
+    ).toBe("answer the question above to continue");
+  });
+
+  it("still fails OPEN when no dialog is known", () => {
+    expect(
+      sendBlockReason({ runnerName: "Laptop", boundOffline: false, paused: false }),
+    ).toBeUndefined();
+  });
+
   it("blocks with the re-place instruction when the runner is merely gone", () => {
     expect(
       sendBlockReason({ runnerName: "Laptop", boundOffline: true, paused: false }),

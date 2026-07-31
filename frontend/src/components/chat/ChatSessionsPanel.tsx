@@ -402,6 +402,16 @@ export function ChatSessionsPanel({
                       <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
                         runner {parkedWhy}
                       </span>
+                    ) : s.waiting_on_you ? (
+                      /* Outranks `running`: an agent blocked on a dialog is the
+                         one row here you can do something about, and it is the
+                         one that otherwise reads as merely quiet — a waiting
+                         session stops writing, so it sinks in a list ordered by
+                         activity and looks identical to an idle one. */
+                      <span className="flex items-center gap-1 font-medium text-warning">
+                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+                        waiting on you
+                      </span>
                     ) : s.running ? (
                       <span className="flex items-center gap-1 font-medium text-success">
                         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />

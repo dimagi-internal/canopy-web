@@ -5711,8 +5711,17 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /**
+             * Waiting On You
+             * @default false
+             */
+            readonly waiting_on_you: boolean;
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Menu */
+            readonly menu?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Has More Before
              * @default false
@@ -7999,6 +8008,10 @@ export interface components {
              * @default []
              */
             readonly recent_messages: readonly unknown[];
+            /** Question */
+            readonly question?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /** StreamDescriptorOut */
         readonly StreamDescriptorOut: {
@@ -8408,6 +8421,11 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /**
+             * Waiting On You
+             * @default false
+             */
+            readonly waiting_on_you: boolean;
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {

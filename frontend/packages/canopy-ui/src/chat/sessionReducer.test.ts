@@ -617,12 +617,72 @@ describe("the dialog an agent is blocked on", () => {
     expect(after.menu).toBeUndefined();
   });
 
-  it("is cleared by a later activity frame that has no menu", () => {
+  it("is cleared by a later activity frame that says the agent is not waiting", () => {
     const blocked = sessionReducer(makeState(), {
       event: "session.activity",
       data: { state: "blocked", menu: MENU },
     });
     const idle = sessionReducer(blocked, { event: "session.activity", data: { state: "idle" } });
     expect(idle.menu).toBeUndefined();
+  });
+
+  it("survives a blocked frame that carries no menu", () => {
+    // The hook path reports `blocked` WITHOUT a menu — it deliberately does not
+    // read the screen (#510: doing so stole emdash's focus). Treating that as a
+    // retraction would erase a menu the snapshot or the session report had
+    // already supplied, which is every menu we now have.
+    const blocked = sessionReducer(makeState(), {
+      event: "session.activity",
+      data: { state: "blocked", menu: MENU },
+    });
+    const again = sessionReducer(blocked, { event: "session.activity", data: { state: "blocked" } });
+    expect(again.menu?.question).toBe("Do you want to proceed?");
+  });
+
+  it("arrives in the connect snapshot, not only in a live frame", () => {
+    // THE fix for "when I click on the session I don't see the menu". Activity
+    // frames are view-only and reach a client only if it was connected when
+    // they fired; you open the session precisely because it stopped.
+    const state = sessionReducer(makeState(), {
+      event: "session.state",
+      data: makeState({ activity: "blocked", menu: MENU }),
+    });
+    expect(state.menu?.question).toBe("Do you want to proceed?");
+  });
+
+  it("appears while you are already watching, via its own frame", () => {
+    const state = sessionReducer(makeState(), {
+      event: "session.menu",
+      data: { menu: MENU },
+    });
+    expect(state.menu?.options).toHaveLength(2);
+  });
+
+  it("is retracted when somebody answers at the keyboard", () => {
+    // `menu: null` from the session report. Buttons that outlive their dialog
+    // press a number into what is now an ordinary prompt, where the agent reads
+    // a bare "1" as an instruction.
+    const blocked = sessionReducer(makeState(), {
+      event: "session.menu",
+      data: { menu: MENU },
+    });
+    const cleared = sessionReducer(blocked, { event: "session.menu", data: { menu: null } });
+    expect(cleared.menu).toBeUndefined();
+  });
+
+  it("keeps an option's description, which is often the whole difference", () => {
+    const state = sessionReducer(makeState(), {
+      event: "session.menu",
+      data: {
+        menu: {
+          question: "How should the run proceed?",
+          options: [
+            { number: 1, label: "Proceed to Phase 4", description: "nothing reaches a real LLO" },
+            { number: 2, label: "Stop the run here", description: "end at the Phase 3 boundary" },
+          ],
+        },
+      },
+    });
+    expect(state.menu?.options[0].description).toContain("real LLO");
   });
 });

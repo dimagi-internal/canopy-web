@@ -16,6 +16,23 @@ def _iso(dt):
     return dt.isoformat() if dt else None
 
 
+def pending_menu(session) -> dict | None:
+    """The dialog this session is blocked on, or None.
+
+    ONE reader for every surface — the REST detail, the WS connect snapshot and
+    the list flag all call this, so they cannot disagree about whether an agent
+    is waiting. (The live `session.activity` frame is a fourth producer of the
+    same shape, and deliberately carries the identical dict.)
+
+    A session with no binding has no live screen and therefore nothing to be
+    blocked on: a web chat that has never been sent is not waiting on anybody.
+    """
+    binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
+    if binding is None:
+        return None
+    return binding.pending_question or None
+
+
 def message_dto(msg: Message) -> dict:
     return {
         "id": str(msg.pk),
@@ -66,4 +83,10 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         "participants": [participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),
         "current_user_id": current_user_id,
+        # The dialog the agent is waiting on, if any. In the SNAPSHOT and not
+        # only in a live frame, because `session.activity` is view-only and
+        # reaches a client only if it was already connected when the agent
+        # blocked — which is exactly the case that fails: you go to the phone
+        # BECAUSE the session stopped, so you were never watching.
+        "menu": pending_menu(session),
     }

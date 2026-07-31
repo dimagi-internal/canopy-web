@@ -200,6 +200,15 @@ class RunnerBinding(models.Model):
     # Message existence — no second flag.)
     backfill_requested = models.BooleanField(default=False)
     tail = models.JSONField(default=list)          # last N conversational messages
+    # The dialog this session is blocked on, or None. Re-derived from the
+    # transcript on every session report, so it is a CACHE of what the agent is
+    # waiting on rather than a record — the same relationship `tail` has, and
+    # for the same reason: the transcript is the durable thing.
+    #
+    # It lives here, not on Session, because it is a property of the LIVE
+    # session on a particular box. A session with no binding has no screen to be
+    # blocked on, and one whose binding moved is answered on the new runner.
+    pending_question = models.JSONField(null=True, blank=True, default=None)
     summary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=40, blank=True, default="")
     last_interacted_at = models.DateTimeField(null=True, blank=True)
