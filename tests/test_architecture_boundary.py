@@ -24,7 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPS = ROOT / "apps"
 
 # ── The tiers (canonical copy lives in ARCHITECTURE.md; keep them in sync) ──────
-FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events"}
+FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events", "inbound"}
 PRODUCT = {"projects",
            "walkthroughs", "reviews", "shareouts", "runs", "storyboards"}
 

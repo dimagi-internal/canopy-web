@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, emdash, hooks, sessions, streams
+from . import chat_bridge, chat_pump, emdash, hooks, inbox_due, sessions, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -162,28 +162,55 @@ def _paused_agents(cfg: Config) -> set[str]:
 
 def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
                          paused: set[str] | None = None) -> None:
-    """Deterministic email trigger: at most every inbox_poll_seconds, poll each
-    configured mailbox and enqueue email-origin turns. Best-effort — a failing inbox
-    (auth expired) logs and is skipped, never crashes the loop. Paused agents are
-    skipped so no new email turns are enqueued for them."""
+    """Email trigger, on two clocks: the doorbell and the timer.
+
+    A ``check_inbox`` control frame from canopy-web means Gmail just told the
+    server that mailbox changed — that mailbox is checked NOW, bypassing the
+    timer. Everything else still runs on ``inbox_poll_seconds`` (300s), which is
+    no longer the delivery mechanism but remains the AUDITOR: a message the
+    timer finds is a message push failed to ring for, and the ``discovered_by``
+    tag is what lets the server say so.
+
+    Stamps are per mailbox, so a doorbell for eva never defers hal's timer — the
+    quiet mailboxes are exactly where a silently-broken watch would hide.
+
+    Best-effort — a failing inbox (auth expired) logs and is skipped, never
+    crashes the loop. Paused agents are skipped so no new email turns are
+    enqueued for them.
+    """
     if not getattr(cfg, "mailboxes", None):
         return
-    stamp = Path(cfg.state_path).with_name("inbox-last.txt") if cfg.state_path else Path("inbox-last.txt")
+    stamp = Path(cfg.state_path).with_name("inbox-last.json") if cfg.state_path else Path("inbox-last.json")
     try:
-        last = float(stamp.read_text())
+        stamps = json.loads(stamp.read_text())
+        if not isinstance(stamps, dict):
+            stamps = {}
     except (OSError, ValueError):
-        last = 0.0
-    if now_fn() - last < cfg.inbox_poll_seconds:
+        stamps = {}
+
+    rung = inbox_due.take_pending()
+    now = now_fn()
+    due_slugs = inbox_due.due(
+        cfg.mailboxes, stamps, now=now, interval=cfg.inbox_poll_seconds, rung=rung
+    )
+    if not due_slugs:
         return
+    rung_slugs = {
+        slug for slug in due_slugs
+        if (cfg.mailboxes[slug].get("account") or "").strip().lower() in rung
+    }
+
     from . import inbox as inbox_mod
     cap = getattr(cfg, "inbox_max_threads", 8)
-    for agent, box in cfg.mailboxes.items():
+    for agent in due_slugs:
+        box = cfg.mailboxes[agent]
         if paused and agent in paused:
             continue
         try:
             res = inbox_mod.check_inbox(
                 client, agent, mailbox=box["account"], gog_client=box["client"],
                 query=box.get("query", inbox_mod.DEFAULT_QUERY), max_threads=cap,
+                discovered_by=inbox_due.discovered_by(agent, rung_slugs),
             )
             n_new, n_seen = len(res["new"]), len(res["seen"])
             n_skip = len(res.get("skipped", []))
@@ -192,13 +219,19 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # `skipped` = unread threads whose newest message is the agent's own reply
             # (already had the last word), suppressed so a re-marked-unread thread can't
             # manufacture a turn with no new inbound.
-            logger.info("inbox[%s]: polled — %d unread (%d NEW -> session, %d already tracked, "
+            logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply)",
-                        agent, n_new + n_seen + n_skip, n_new, n_seen, n_skip)
+                        agent, "RUNG" if agent in rung_slugs else "polled",
+                        n_new + n_seen + n_skip, n_new, n_seen, n_skip)
         except Exception as exc:  # noqa: BLE001 — one bad inbox never kills the loop
             logger.warning("inbox check for %s failed: %s", agent, exc)
+        finally:
+            # Stamp per mailbox, and stamp even on failure: a mailbox whose auth
+            # has expired would otherwise be retried every single tick, turning
+            # one broken credential into a subprocess storm.
+            stamps[agent] = now_fn()
     try:
-        stamp.write_text(str(now_fn()))
+        stamp.write_text(json.dumps(stamps))
     except OSError:
         pass
 
@@ -616,6 +649,13 @@ def main() -> None:
     def _on_control(msg: dict) -> None:
         if msg.get("type") == "cancel" and msg.get("turn_id"):
             CANCELLED_TURNS.add(str(msg["turn_id"]))
+        elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
+            # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
+            # on the next tick instead of waiting out inbox_poll_seconds. Only
+            # marks it due — the read itself stays on the poll thread, because a
+            # `gog` subprocess on the wake-listener thread would block the socket
+            # that also carries cancel and wake.
+            inbox_due.ring(str(msg["mailbox"]))
         elif msg.get("type") == "menu_answer" and msg.get("session_key"):
             # A human answered, from the web, the dialog an agent is blocked on.
             # Runs on the wake-listener thread and must never raise: this socket

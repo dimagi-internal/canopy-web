@@ -73,9 +73,24 @@ def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
     return None
 
 
+#: Thread states this runner has already turned into a turn, as
+#: ``{(mailbox, thread_id): messageCount}``. Process-local and deliberately not
+#: persisted: the SERVER is the authority on idempotency (the enqueue is keyed on
+#: ``email-<agent>-<thread>-<count>``), so losing this on restart costs one
+#: redundant round of work, never a duplicate turn.
+#:
+#: It exists purely to stop paying for what we already know. `newest_sender()` is
+#: a `gog gmail thread get` SUBPROCESS, and it used to run for every unread thread
+#: on every poll — before the idempotency check — then POST an enqueue the server
+#: deduped anyway. With four unread threads sitting in two mailboxes that was
+#: eight subprocess round-trips every five minutes, forever, all concluding
+#: "already tracked".
+_seen_state: dict[tuple[str, str], int] = {}
+
+
 def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 query: str = DEFAULT_QUERY, max_threads: int = 15, runner=subprocess.run,
-                sender_of=None) -> dict:
+                sender_of=None, discovered_by: str = "poll") -> dict:
     """Enqueue an email-origin turn for each new thread state. Returns
     {"new": [thread_ids that became a NEW turn], "seen": [ids already tracked],
     "skipped": [ids whose newest message is the agent's own reply]} — the split matters
@@ -103,19 +118,34 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         tid = t.get("id")
         if not tid:
             continue
+        count = t.get("messageCount", 1)
+        # Already turned this exact thread state into a turn. Skip BEFORE the
+        # `gog gmail thread get` subprocess and before the enqueue — both would
+        # be no-ops, and the subprocess is the expensive one.
+        if _seen_state.get((box, tid)) == count:
+            seen.append(tid)
+            continue
         latest = sender_of(tid)
         if latest and box in latest:
             skipped.append(tid)
+            # Remember it, so a thread the agent already answered does not cost a
+            # `thread get` on every poll for the next fourteen days.
+            _seen_state[(box, tid)] = count
             continue
-        count = t.get("messageCount", 1)
         frm, subj = t.get("from", ""), t.get("subject", "")
         # Clean command only — the agent's namespaced /<slug>:turn command does everything (reads the
         # thread, triages under guardrails, marks it read). The runner hands the exact
         # thread it already resolved so the agent doesn't re-scan the inbox.
         res = client.enqueue_turn(
             agent, "email", f"email-{agent}-{tid}-{count}",
-            origin_ref={"thread_id": tid, "from": frm, "subject": subj},
+            # `discovered_by` is what makes the 300s timer an AUDITOR of the push
+            # path: the server compares it against the mailbox's Gmail watch, and
+            # a `poll`-discovered message on a mailbox with a live watch means
+            # push is registered but not delivering.
+            origin_ref={"thread_id": tid, "from": frm, "subject": subj,
+                        "discovered_by": discovered_by},
             prompt=f"/{agent}:turn --thread {tid}",
         )
+        _seen_state[(box, tid)] = count
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped}

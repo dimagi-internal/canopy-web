@@ -621,6 +621,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/inbound/gmail/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Gmail Pub/Sub push (doorbell — carries no mail)
+         * @description Ring the runner that holds this mailbox's credentials.
+         *
+         *     This endpoint never reads mail. A Gmail notification carries
+         *     ``{emailAddress, historyId}`` and no content, so the runner — which owns the
+         *     per-agent ``gog`` OAuth clients — does the read it already does on its poll.
+         */
+        readonly post: operations["apps_inbound_api_gmail_push"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/": {
         readonly parameters: {
             readonly query?: never;
@@ -4342,6 +4366,45 @@ export interface components {
             readonly first_seen_at: string;
             /** Last Seen At */
             readonly last_seen_at: string;
+        };
+        /** PushResultOut */
+        readonly PushResultOut: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Rang
+             * @default []
+             */
+            readonly rang: readonly string[];
+        };
+        /**
+         * PushEnvelopeIn
+         * @description The Pub/Sub push envelope: ``{message: {data, messageId, ...}, subscription}``.
+         *
+         *     Deliberately NOT a ``StrictModel``. Every other schema here forbids unknown
+         *     fields so a typo 422s instead of being silently ignored — but this body is
+         *     authored by Google, not by us, and Pub/Sub is free to add envelope fields
+         *     whenever it likes. A strict model would turn that into a 422, which Pub/Sub
+         *     reads as "redeliver", turning a cosmetic change into a retry storm.
+         */
+        readonly PushEnvelopeIn: {
+            /**
+             * Message
+             * @default {}
+             */
+            readonly message: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Subscription
+             * @default
+             */
+            readonly subscription: string;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -9611,6 +9674,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EventRecordOut"];
+                };
+            };
+        };
+    };
+    readonly apps_inbound_api_gmail_push: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PushEnvelopeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PushResultOut"];
                 };
             };
         };
