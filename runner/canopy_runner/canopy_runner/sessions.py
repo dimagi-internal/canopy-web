@@ -23,6 +23,26 @@ _last_session_report = 0.0
 # signal that makes the phone reflect live emdash activity (see _session_changed).
 _tail_readers: dict[str, "TailReader | None"] = {}
 
+# Task names deleted by a `close_session` control frame, waiting to ride the next
+# report's `archived:` list.
+#
+# Queued rather than POSTed on its own because the report is WHOLESALE: the server
+# reconciles `archived` against the open set in ONE call, and `now_keys` must win
+# (emdash task names are not unique, so an open task must never be retired by a
+# closed namesake — apps/harness/services.py). Sending the closing signal separately
+# would throw that ordering away.
+_PENDING_CLOSED: set[str] = set()
+
+
+def request_close_report(task_name: str) -> None:
+    """Queue a deleted task's name for the next report's closing signal, and make
+    that report happen on the very next tick rather than at the next heartbeat.
+
+    Without this the row would wait out SESSION_LIVE_WINDOW (3 min) on absence
+    alone — the latency the relay design exists to avoid.
+    """
+    _PENDING_CLOSED.add(task_name)
+
 
 def session_changed(cfg: Config, sessions: list[dict]) -> bool:
     """True if any SHOWN session's transcript grew, or a new session appeared, since
@@ -116,7 +136,7 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except Exception:  # noqa: BLE001
         logger.debug("session list failed (non-fatal)", exc_info=True)
         return
-    changed = session_changed(cfg, sessions)
+    changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED)
     heartbeat = now_fn() - _last_session_report >= cfg.session_report_seconds
     if not changed and not heartbeat:
         return
@@ -131,6 +151,13 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except emdash.EmdashReadError:
         logger.debug("archived-task read failed (non-fatal, omitting)", exc_info=True)
         archived = []
+    # Snapshot rather than read-then-clear: `_PENDING_CLOSED` is written from the
+    # wake-listener thread (close.close_session) and this runs on the report-tick
+    # thread. A name added while the POST below is in flight must survive — a
+    # wholesale `.clear()` after the call would drop it on the floor with no
+    # fallback (emdash has already deleted the task, so nothing rediscovers it).
+    # Same discard-only-the-snapshot shape as cancel.py::CANCELLED_TURNS.
+    closing = set(_PENDING_CLOSED)
     try:
         transcript.attach_recent_tail(
             sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
@@ -141,7 +168,14 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         # top-K bound would hide the ones that have waited longest); see
         # `transcript.attach_pending_questions`.
         transcript.attach_pending_questions(sessions)
-        client.report_sessions(cfg.runner_id, sessions, archived)
+        client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing))
+        # Discard only the names this report actually carried (mutate in place —
+        # `_PENDING_CLOSED -= closing` would rebind the name, making it local
+        # under Python's scoping rules and shadowing the module-level set). A
+        # dropped POST must not lose the closing signal — the next tick retries
+        # it (this snapshot stays queued), and re-reporting an already-retired
+        # name is a no-op server-side.
+        _PENDING_CLOSED.difference_update(closing)
     except Exception:  # noqa: BLE001
         logger.debug("session report failed (non-fatal)", exc_info=True)
 

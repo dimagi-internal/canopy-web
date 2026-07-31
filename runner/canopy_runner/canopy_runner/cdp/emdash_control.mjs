@@ -14,6 +14,10 @@
 //   interrupt {task}                  -> {ok, task} opens the task (same lookup as open-send)
 //                                           and presses Escape — Claude Code's TUI treats
 //                                           this as "stop the running turn" (see runner.cancel).
+//   close-task {task}                 -> {ok, action:"deleted"|"absent"} DELETES the task
+//                                        from emdash (delete is the designed close behaviour).
+//                                        Verifies it is gone before reporting success; "absent"
+//                                        means it already was.
 // Text is delivered via CDP Input.insertText (one atomic commit, not char-by-char
 // typing) so it lands fast and narrows the window for a keystroke collision.
 // All output is a single JSON line on stdout. Occlusion-proof: uses JS-dispatched
@@ -331,6 +335,65 @@ try {
     await openTask(task);
     await page.keyboard.press('Escape');   // Claude Code: Esc interrupts the running turn
     out({ ok: true, task });
+
+  } else if (command === 'close-task') {
+    // Delete `task` from the sidebar (the designed close behaviour). emdash's context
+    // menu also offers Archive — a gentler alternative, unexplored here — but delete
+    // is what this design chose, and it is verifiable before reporting.
+    //
+    // ABSENT IS SUCCESS, not TASK_NOT_FOUND. Unlike open-send, where absence means
+    // "we must not create a duplicate", here the caller wants the task gone and it
+    // already is — a double-tap from the phone and a human who just deleted it in
+    // emdash both land here.
+    //
+    // Found by probe-close.mjs against a live emdash 1.1.40, 2026-07-31: the row's
+    // "Open task {task}" button offers no visible per-row control on hover — the
+    // delete affordance is a right-click CONTEXT MENU (contextmenu on that same
+    // button) with items "Pin task" / "Rename" / "Archive" / "Copy branch name" /
+    // "Delete" (rendered as <div class="group/context-menu-item ...">, no
+    // role=menuitem). "Delete" opens a confirmation dialog (role=dialog, title
+    // "Delete task", body: `"<task>" will be permanently deleted. This action
+    // cannot be undone.`) with two buttons: "Cancel" and "Delete⌘⏎" — clicking the
+    // latter deletes it immediately (verified live: task vanished from the sidebar).
+    const { task } = args;
+    const found = await scrollToFind(`Open task ${task}`);
+    if (!found) { out({ ok: true, action: 'absent' }); }
+    else {
+      const opened = await page.evaluate((t) => {
+        const btn = [...document.querySelectorAll('button')]
+          .find(x => x.getAttribute('aria-label') === `Open task ${t}`);
+        if (!btn) return false;
+        btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        return true;
+      }, task);
+      if (!opened) fail(`could not reach the controls for task "${task}"`);
+      await page.waitForTimeout(400);
+
+      const clicked = await page.evaluate(() => {
+        const item = [...document.querySelectorAll('[class*="context-menu-item"], [role=menuitem]')]
+          .find(e => /^\s*delete\s*$/i.test(e.textContent || ''));
+        if (!item) return false; item.click(); return true;
+      });
+      if (!clicked) fail(`no delete control for task "${task}" — emdash's UI may have changed; re-run probe-close.mjs`);
+      await page.waitForTimeout(400);
+
+      // Confirmation dialog ("Delete task" / "Cancel" / "Delete⌘⏎"). Confirm it.
+      const confirmed = await page.evaluate(() => {
+        const dlg = document.querySelector('[role=dialog]');
+        if (!dlg) return false;
+        const yes = [...dlg.querySelectorAll('button')]
+          .find(b => /delete/i.test(b.textContent || '') && !/cancel/i.test(b.textContent || ''));
+        if (!yes) return false; yes.click(); return true;
+      });
+      if (!confirmed) fail(`no confirmation dialog for deleting task "${task}" — emdash's UI may have changed; re-run probe-close.mjs`);
+      await page.waitForTimeout(900);
+
+      // VERIFY. The whole design rests on this: the server wrote nothing, so a
+      // close we merely attempted must not be reported as done.
+      const gone = !(await scrollToFind(`Open task ${task}`));
+      if (!gone) fail(`task "${task}" is still in the sidebar after the delete`);
+      out({ ok: true, action: 'deleted' });
+    }
 
   } else if (command === 'read-term') {
     // The rendered terminal, as TEXT. This is how canopy sees a dialog that only

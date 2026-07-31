@@ -291,6 +291,18 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "option": message.get("option"),
         })
 
+    async def runner_close_session(self, message):
+        # runner.{id} group_send type="runner.close_session" — a human closed this
+        # session from the web. The runner deletes the emdash task and reports the
+        # name in its `archived:` closing signal; the server wrote nothing, so the
+        # emdash task stays the single source of truth for a local session and a
+        # failed delete simply leaves the row where it is.
+        await self.send_json({
+            "type": "close_session",
+            "session_id": message.get("session_id"),
+            "session_key": message.get("session_key"),
+        })
+
     async def receive_json(self, content, **kwargs):
         action = content.get("action")
         if action == "claim":

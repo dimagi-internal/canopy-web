@@ -411,3 +411,31 @@ def test_clipped_frame_has_no_composer():
 def test_legacy_gt_marker_still_matches():
     r = _composer(_fresh_session("> typed with the old marker"))
     assert r == {"found": True, "text": "typed with the old marker"}
+
+
+# --------------------------------------------------------------------------------------
+# close_task — deletes an emdash task over CDP; absent is success, not TASK_NOT_FOUND
+# --------------------------------------------------------------------------------------
+
+
+def test_close_task_passes_the_task_and_port_through(monkeypatch):
+    calls = {}
+
+    def fake_run(command, args, **kwargs):
+        calls["command"] = command
+        calls["args"] = args
+        return {"ok": True, "action": "deleted"}
+
+    monkeypatch.setattr(cdp_control, "_run", fake_run)
+    assert cdp_control.close_task("ddd", port=9333) == {"ok": True, "action": "deleted"}
+    assert calls["command"] == "close-task"
+    assert calls["args"] == {"task": "ddd", "port": 9333}
+
+
+def test_close_task_reports_an_already_gone_task_as_absent(monkeypatch):
+    """A double-tap from the phone, or a task a human just deleted in emdash, both
+    land here. Neither is a failure — the desired state already holds."""
+    monkeypatch.setattr(
+        cdp_control, "_run", lambda c, a, **k: {"ok": True, "action": "absent"}
+    )
+    assert cdp_control.close_task("gone")["action"] == "absent"

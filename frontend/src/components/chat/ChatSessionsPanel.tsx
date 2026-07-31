@@ -10,13 +10,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
-import { createSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
+import { closeSession, createSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { getAgentRunners, listAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
+import { closeIntent, closeResultMessage } from './closeAction'
 import {
   onlineSessionCapableRunners,
   parkedReason,
@@ -60,6 +61,8 @@ export function ChatSessionsPanel({
   const [showOffline, setShowOffline] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [closingId, setClosingId] = useState<string | null>(null)
+  const [closeError, setCloseError] = useState<string | null>(null)
 
   // "Run on" picker state: a target (agent or project) picked from the New
   // chat menu, its eligible runners, and the current selection ('' = Auto).
@@ -112,6 +115,40 @@ export function ChatSessionsPanel({
     const by = new Map(agents.map((a) => [a.slug, a.name]))
     return (slug: string | null) => (slug ? by.get(slug) ?? slug : null)
   }, [agents])
+
+  // The row is NOT removed here. `closing: true` means the close was relayed
+  // and the emdash task is still the truth — the row leaves on the next
+  // `supervisor.sessions` push, once the runner's report has actually retired
+  // it. Removing it optimistically would be a lie whenever the delete failed.
+  const onClose = useCallback(
+    async (s: ChatSession) => {
+      const intent = closeIntent(s)
+      if (intent.kind === 'blocked') return
+      if (
+        intent.confirm &&
+        !window.confirm(`${s.title?.trim() || 'This chat'} is still working. Close it anyway?`)
+      ) {
+        return
+      }
+      setClosingId(s.id)
+      setCloseError(null)
+      try {
+        const result = await closeSession(s.id)
+        const message = closeResultMessage(result, s)
+        if (message) setCloseError(message)
+        // The panel has no extracted reload — its load lives inline in a
+        // useEffect and a 20s interval refresh. Re-fetch with the SAME state
+        // the effects use so a closed row leaves without waiting out the
+        // interval.
+        else setSessions(await listSessions(showArchived ? 'all' : 'active'))
+      } catch {
+        setCloseError('Couldn’t close this session')
+      } finally {
+        setClosingId(null)
+      }
+    },
+    [showArchived],
+  )
 
   const startChat = useCallback(
     (agent: AgentOut, runnerId?: string) => {
@@ -365,6 +402,7 @@ export function ChatSessionsPanel({
       )}
 
       {error && <div className="py-2 text-sm text-destructive">{error}</div>}
+      {closeError && <div className="py-2 text-sm text-destructive">{closeError}</div>}
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
       ) : visible.length === 0 ? (
@@ -382,6 +420,7 @@ export function ChatSessionsPanel({
             const label = sessionTargetLabel(agentName(s.agent_slug), s.project ?? '')
             const header = projectHeader(rows, i, sort)
             const parkedWhy = parkedReason(s)
+            const intent = closeIntent(s)
             return (
               <li key={s.id}>
                 {header && (
@@ -389,56 +428,75 @@ export function ChatSessionsPanel({
                     {header}
                   </div>
                 )}
-                <Link
-                  to={`/w/${s.workspace}/chat/${s.id}`}
-                  data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
-                  className={`flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
-                    parkedWhy ? ' opacity-60' : ''
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {s.title?.trim() || 'Untitled chat'}
+                {/* Link and Close are SIBLINGS: a button inside an anchor is
+                    invalid HTML and the anchor eats the click. */}
+                <div className="flex items-stretch">
+                  <Link
+                    to={`/w/${s.workspace}/chat/${s.id}`}
+                    data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
+                    className={`flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
+                      parkedWhy ? ' opacity-60' : ''
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {s.title?.trim() || 'Untitled chat'}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {label} · {s.workspace}
+                        {s.origin === 'runner' ? ' · discovered' : ''}
+                        {s.status !== 'active' ? ` · ${s.status}` : ''}
+                      </div>
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {label} · {s.workspace}
-                      {s.origin === 'runner' ? ' · discovered' : ''}
-                      {s.status !== 'active' ? ` · ${s.status}` : ''}
+                    <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs">
+                      {/* Why this row is dimmed. Sits where `running` would, because
+                          it answers the same question — can this chat act right now. */}
+                      {parkedWhy ? (
+                        <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                          runner {parkedWhy}
+                        </span>
+                      ) : s.waiting_on_you ? (
+                        /* Outranks `running`: an agent blocked on a dialog is the
+                           one row here you can do something about, and it is the
+                           one that otherwise reads as merely quiet — a waiting
+                           session stops writing, so it sinks in a list ordered by
+                           activity and looks identical to an idle one. */
+                        <span className="flex items-center gap-1 font-medium text-warning">
+                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+                          waiting on you
+                        </span>
+                      ) : s.running ? (
+                        <span className="flex items-center gap-1 font-medium text-success">
+                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
+                          running
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
+                      )}
+                      {s.runner_name && (
+                        <span className="text-muted-foreground">
+                          {s.runner_name}
+                          {s.runner_location ? ` · ${s.runner_location}` : ''}
+                        </span>
+                      )}
                     </div>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs">
-                    {/* Why this row is dimmed. Sits where `running` would, because
-                        it answers the same question — can this chat act right now. */}
-                    {parkedWhy ? (
-                      <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                        runner {parkedWhy}
-                      </span>
-                    ) : s.waiting_on_you ? (
-                      /* Outranks `running`: an agent blocked on a dialog is the
-                         one row here you can do something about, and it is the
-                         one that otherwise reads as merely quiet — a waiting
-                         session stops writing, so it sinks in a list ordered by
-                         activity and looks identical to an idle one. */
-                      <span className="flex items-center gap-1 font-medium text-warning">
-                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
-                        waiting on you
-                      </span>
-                    ) : s.running ? (
-                      <span className="flex items-center gap-1 font-medium text-success">
-                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-                        running
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
-                    )}
-                    {s.runner_name && (
-                      <span className="text-muted-foreground">
-                        {s.runner_name}
-                        {s.runner_location ? ` · ${s.runner_location}` : ''}
-                      </span>
-                    )}
-                  </div>
-                </Link>
+                  </Link>
+                  <button
+                    type="button"
+                    data-testid={`close-session-${s.id}`}
+                    aria-label={`Close ${s.title?.trim() || 'Untitled chat'}`}
+                    title={
+                      intent.kind === 'blocked'
+                        ? intent.why
+                        : 'Close this session (deletes its emdash task)'
+                    }
+                    disabled={intent.kind === 'blocked' || closingId === s.id}
+                    onClick={() => void onClose(s)}
+                    className="shrink-0 px-3 text-muted-foreground hover:text-destructive disabled:opacity-40"
+                  >
+                    {closingId === s.id ? '…' : '×'}
+                  </button>
+                </div>
               </li>
             )
           })}

@@ -970,3 +970,96 @@ def answer_menu(*, session: Session, option: int | None) -> str:
         "option": option,
     })
     return "sent"
+
+
+def cancel_session_turns(session: Session) -> bool:
+    """Cancel every non-terminal turn on a session. Returns whether anything moved.
+
+    ALL non-terminal turns, not just the newest: a mid-reply send queues a second
+    turn behind the one still running, so both must be reached — the running one
+    gets cancel_requested, the queued one is finished CANCELLED.
+
+    Deliberately NOT `any(cancel_turn(t) for t in turns)`: any() short-circuits on
+    the first truthy result and would skip every turn after it.
+    """
+    from apps.harness import services as harness_services  # framework->framework; lazy
+    from apps.harness.models import Turn
+
+    cancelled = False
+    for turn in Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL)):
+        if harness_services.cancel_turn(turn) is not None:
+            cancelled = True
+    return cancelled
+
+
+def _is_runner_reported(binding) -> bool:
+    """Is a runner CURRENTLY reporting an emdash task for this session?
+
+    The one question `close_session` branches on, observed rather than inferred.
+    `Runner.kind` would answer "what program is this" — a different question, and
+    already deprecated as a behavioural input. `live_seen_at` and `session_key`
+    cannot answer it at all: `record_session` is called by BOTH runners and stamps
+    both, with the cloud runner writing a Claude session id where the laptop writes
+    an emdash task name. Hence `reported_at`, which only the report loop writes.
+
+    Read against the same `stale_cutoff()` the session list uses, so "reported"
+    and "live" can never drift into meaning different windows.
+    """
+    if binding is None or binding.runner_id is None or not binding.session_key:
+        return False
+    if binding.reported_at is None:
+        return False
+    return binding.reported_at >= stale_cutoff()
+
+
+def close_session(*, session: Session) -> str:
+    """End a session for good. Returns
+    "closing" | "closed" | "unavailable" | "already_closed".
+
+    Two branches on one question — see `_is_runner_reported`.
+
+    REPORTED (a laptop's emdash task): cancel the turns, then relay a close and
+    write NOTHING to the session. The emdash task is the truth for a local session,
+    and `replace_reported_sessions` un-archives anything re-reported as open, so a
+    status write here would be undone within ~10s anyway. The runner deletes the
+    task and puts its name in the `archived:` closing signal on its next report;
+    that is what retires the row.
+
+    UNREPORTED (a cloud session, a web chat that never bound): nothing exists on a
+    box. Cancel the turns so a queued one cannot wake it, archive, done — and it
+    sticks, because nothing will ever report it back.
+
+    A refusal is a returned reason, never a raise: a session can go stale between
+    the phone rendering the list and a thumb reaching it, which is ordinary rather
+    than a client error. `unavailable` deliberately does NOT queue — a close that
+    sits until a box returns is indistinguishable from one that worked.
+    """
+    from apps.harness.models import Runner  # framework->framework; lazy, import cycle
+
+    if session.status == Session.ARCHIVED:
+        return "already_closed"
+
+    binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
+    if _is_runner_reported(binding):
+        reachable = {Runner.ONLINE, Runner.DEGRADED}
+        if binding.runner.live_status not in reachable:
+            return "unavailable"
+        # Cancel BEFORE relaying. Deleting the emdash task kills the process the
+        # turn runs in, so a live turn would otherwise stay EXECUTING with nobody
+        # left to finish it — held until the lease sweep, wedging the agent through
+        # one_executing_turn_per_agent. Cancelling first also means the ledger
+        # records a cancellation rather than a turn that merely stops emitting.
+        cancel_session_turns(session)
+        from apps.realtime import groups
+
+        groups.publish(groups.runner_group(binding.runner_id), {
+            "type": "runner.close_session",
+            "session_id": str(session.id),
+            "session_key": binding.session_key,
+        })
+        return "closing"
+
+    cancel_session_turns(session)
+    session.status = Session.ARCHIVED
+    session.save(update_fields=["status", "updated_at"])
+    return "closed"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   ChatPanel,
   PlacementBanner,
@@ -17,6 +17,7 @@ import {
   detachSession,
   requestBackfill,
   resetSession,
+  closeSession,
   placeTurn,
   answerMenu,
   ChatApiError,
@@ -24,6 +25,7 @@ import {
   uploadAttachment,
   deleteAttachment,
 } from '@/api/chat'
+import { closeIntent, closeResultMessage } from '@/components/chat/closeAction'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -57,6 +59,7 @@ const BACKFILL_SETTLE_DELAY_MS = 1200
  */
 export function ChatPage() {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const [meta, setMeta] = useState<ChatSessionDetail | null>(null)
   const [metaError, setMetaError] = useState<string | null>(null)
   // Scroll-back cursor, seeded from the REST detail (the WS `session.state`
@@ -371,6 +374,35 @@ export function ChatPage() {
     }
   }, [id])
 
+  const [closing, setClosing] = useState(false)
+  const [closeNote, setCloseNote] = useState<string | null>(null)
+
+  // Navigate away only when the session is REALLY gone (`closing: false`). When the
+  // close was relayed to a runner the emdash task is still the truth, so stay put
+  // and say so — bouncing to the list would claim a result we do not have yet.
+  const closeThisSession = useCallback(async () => {
+    if (!meta) return
+    const intent = closeIntent(meta)
+    if (intent.kind === 'blocked') {
+      setCloseNote(intent.why)
+      return
+    }
+    if (intent.confirm && !window.confirm('This chat is still working. Close it anyway?')) return
+    setClosing(true)
+    setCloseNote(null)
+    try {
+      const result = await closeSession(id)
+      const message = closeResultMessage(result, meta)
+      if (message) setCloseNote(message)
+      else if (result.closing) setCloseNote('Closing on the runner…')
+      else navigate(`/w/${meta.workspace}/chat`)
+    } catch {
+      setCloseNote('Couldn’t close this session')
+    } finally {
+      setClosing(false)
+    }
+  }, [id, meta, navigate])
+
   const loadFull = useCallback(async () => {
     if (loadingFull) return
     // See loadEarlier: capture the session this call was made for so a
@@ -557,6 +589,16 @@ export function ChatPage() {
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
+          <button
+            type="button"
+            onClick={() => void closeThisSession()}
+            disabled={closing}
+            title="Close this session — deletes its emdash task. The transcript is kept."
+            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
+          >
+            {closing ? 'Closing…' : 'Close session'}
+          </button>
           {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
           <button
             type="button"
