@@ -333,3 +333,83 @@ def test_no_menu_reader_configured_is_not_an_error():
     lis.bind_sender(lambda sid, ev: sent.append((sid, ev)))
     assert lis.handle_payload(_payload(hook_event_name="Notification")) == "activity:blocked"
     assert sent[0][1][0]["payload"] == {}
+
+
+def test_a_held_port_falls_back_instead_of_turning_live_events_off(caplog):
+    """The hook port is machine-global; the config that names it is per-account.
+
+    Two runners on one Mac (two macOS accounts) both default to 8787, so the
+    second one used to lose the bind and run with live events off FOREVER — the
+    chat UI's "running" indicator dead for every session it drove. Measured on
+    this machine 2026-07-28 → 07-30. A free port costs nothing, because we write
+    the number into ~/.claude/settings.json ourselves.
+    """
+    import socket
+
+    # `port=0` means DISABLED here, not ephemeral, so the squatter needs a real
+    # number: take one the OS just handed out and release it.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        held = probe.getsockname()[1]
+    squatter = HookListener(port=held, nonce="n", resolve_session=lambda c: "s",
+                            forward=lambda: True)
+    squatter.bind_sender(lambda sid, ev: None)
+    squatter.start()
+    try:
+        assert squatter.port == held, "the squatter did not take the port"
+        loser = HookListener(port=held, nonce="n2", resolve_session=lambda c: "s",
+                             forward=lambda: True)
+        loser.bind_sender(lambda sid, ev: None)
+        with caplog.at_level("WARNING"):
+            loser.start()
+        try:
+            assert loser._server is not None, "the second runner got no listener"
+            assert loser.port != held, "it re-bound the held port"
+            # The port it reports MUST be the one it is actually on — that is
+            # what gets written into the hook config.
+            assert loser.port == loser._server.server_address[1]
+            assert "is held by another process" in caplog.text
+        finally:
+            loser.stop()
+    finally:
+        squatter.stop()
+
+
+def test_the_hook_config_is_written_with_the_port_actually_bound(monkeypatch, tmp_path):
+    """The failure the fallback would otherwise introduce.
+
+    If `start()` re-homes to a free port but `install()` writes the CONFIGURED
+    one, every hook curls into a hole — strictly worse than the collision it was
+    meant to fix, because now nothing is listening there at all.
+    """
+    import socket
+    from canopy_runner import hooks
+    from canopy_runner.config import Config
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        held = probe.getsockname()[1]
+    squatter = HookListener(port=held, nonce="n", resolve_session=lambda c: "s",
+                            forward=lambda: True)
+    squatter.bind_sender(lambda sid, ev: None)
+    squatter.start()
+
+    installed = {}
+    monkeypatch.setattr(hooks.hook_install, "install",
+                        lambda path, port, nonce: installed.update(port=port))
+    monkeypatch.setattr(hooks.Path, "home", classmethod(lambda cls: tmp_path))
+
+    class _Client:
+        def post_session_stream(self, *a, **k):
+            pass
+
+    cfg = Config(base_url="http://x", token="t", runner_id="r", emdash_db="/nope.db",
+                 hook_port=held, forward_sessions=True)
+    listener = hooks.start_hook_listener(cfg, _Client())
+    try:
+        assert listener is not None, "a held port must not turn live events off"
+        assert installed["port"] == listener.port != held
+    finally:
+        if listener is not None:
+            listener.stop()
+        squatter.stop()

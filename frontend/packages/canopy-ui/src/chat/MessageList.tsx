@@ -4,7 +4,7 @@ import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2 } from "lucide-re
 import type { Message } from "./protocol";
 import { Button } from "../ui/button";
 import type { RenderMarkdown } from "./MessageItem";
-import { MessageItem } from "./MessageItem";
+import { MessageItem, ThinkingIndicator } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { pairToolMessages } from "./pairToolMessages";
 import { groupToolRuns, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
@@ -14,6 +14,20 @@ interface Props {
   /** Rendered when there are no messages yet (replaces ace's WelcomePanel). */
   emptyState?: ReactNode;
   renderMarkdown?: RenderMarkdown;
+  /**
+   * The agent has the floor but has produced no row yet — render a trailing
+   * "thinking" bubble at the bottom of the conversation.
+   *
+   * A trailing ELEMENT, not a row spliced into `messages`: the message array is
+   * a projection of the durable record and must keep exactly one writer, and a
+   * placeholder with a made-up id would need upsert/eviction rules against every
+   * frame that can follow it. This has none — it is on screen while the flag is
+   * true and gone when it isn't.
+   */
+  pendingReply?: boolean;
+  /** Wording for that bubble — the caller knows whether the turn is still
+   *  queued for a runner or the agent is actually working. */
+  pendingLabel?: string;
 }
 
 // Show the bulk expand/collapse toolbar once a session has more than this
@@ -22,7 +36,13 @@ const TOOLBAR_THRESHOLD = 5;
 
 type BulkState = "default" | "all" | "none";
 
-export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
+export function MessageList({
+  messages,
+  emptyState,
+  renderMarkdown,
+  pendingReply = false,
+  pendingLabel,
+}: Props) {
   const paired = useMemo(() => pairToolMessages(messages), [messages]);
   // Collapse back-to-back tool calls into one row. An agent mid-task emits long
   // stretches of them, and one row each pushes the prose you actually read off
@@ -38,7 +58,7 @@ export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
   // control back to per-row state.
   const [bulkState, setBulkState] = useState<BulkState>("default");
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && !pendingReply) {
     return <>{emptyState ?? null}</>;
   }
   const forceToolOpen =
@@ -139,6 +159,15 @@ export function MessageList({ messages, emptyState, renderMarkdown }: Props) {
             />
           );
         })}
+        {pendingReply && (
+          <div
+            data-testid="pending-reply"
+            aria-live="polite"
+            className="my-2 mr-auto max-w-[80%] rounded-2xl bg-muted px-4 py-2 text-foreground"
+          >
+            <ThinkingIndicator label={pendingLabel} />
+          </div>
+        )}
       </div>
     </div>
   );
