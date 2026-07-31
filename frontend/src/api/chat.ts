@@ -197,6 +197,24 @@ export function resetSession(id: string): Promise<ResetResult> {
   });
 }
 
+export type CloseResult = { ok: boolean; closing: boolean; reason: string };
+
+/**
+ * Close a session for good.
+ *
+ * `closing: true` means it was relayed to a runner and the row is STILL LISTED —
+ * the runner deletes the emdash task and its next report retires the session, so
+ * the client shows a pending state rather than removing the row itself. Removing
+ * it optimistically would be a lie if the delete failed.
+ *
+ * Never throws on a refusal: `ok: false` with a `reason` to render.
+ */
+export function closeSession(id: string): Promise<CloseResult> {
+  return request<CloseResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/close`, {
+    method: "POST",
+  });
+}
+
 export type Attachment = components["schemas"]["AttachmentOut"];
 
 /**
