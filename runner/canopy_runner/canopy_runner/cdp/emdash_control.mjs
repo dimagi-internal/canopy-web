@@ -15,9 +15,9 @@
 //                                           and presses Escape — Claude Code's TUI treats
 //                                           this as "stop the running turn" (see runner.cancel).
 //   close-task {task}                 -> {ok, action:"deleted"|"absent"} DELETES the task
-//                                        from emdash (there is no archive). Verifies it is
-//                                        gone before reporting success; "absent" means it
-//                                        already was.
+//                                        from emdash (delete is the designed close behaviour).
+//                                        Verifies it is gone before reporting success; "absent"
+//                                        means it already was.
 // Text is delivered via CDP Input.insertText (one atomic commit, not char-by-char
 // typing) so it lands fast and narrows the window for a keystroke collision.
 // All output is a single JSON line on stdout. Occlusion-proof: uses JS-dispatched
@@ -337,9 +337,9 @@ try {
     out({ ok: true, task });
 
   } else if (command === 'close-task') {
-    // Delete `task` from the sidebar. emdash offers DELETE only — there is no
-    // archive, which is why the server's `archived:` closing signal has never had
-    // a producer until now.
+    // Delete `task` from the sidebar (the designed close behaviour). emdash's context
+    // menu also offers Archive — a gentler alternative, unexplored here — but delete
+    // is what this design chose, and it is verifiable before reporting.
     //
     // ABSENT IS SUCCESS, not TASK_NOT_FOUND. Unlike open-send, where absence means
     // "we must not create a duplicate", here the caller wants the task gone and it

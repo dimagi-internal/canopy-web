@@ -225,13 +225,13 @@ def interrupt(task: str, *, port: int = 9222) -> dict:
 
 
 def close_task(task: str, *, port: int = 9222) -> dict:
-    """DELETE `task` from emdash. Returns {"action": "deleted"} or {"action": "absent"}.
+    """DELETE `task` from emdash (the designed close behaviour). Returns {"action": "deleted"} or {"action": "absent"}.
 
-    emdash offers delete only — there is no archive — so this is what "close" means
-    for a local session, and it is not undoable in emdash. It is not destructive to
-    the record: canopy keeps the Session, its Turns and their ledger, and Claude
-    Code's transcript (under ~/.claude/projects, resolved by path and never deleted
-    by Claude Code), so the conversation stays readable and re-derivable.
+    emdash's context menu offers both delete and archive; delete is the chosen close
+    behaviour here, not the only option. It is not undoable in emdash. It is not
+    destructive to the record: canopy keeps the Session, its Turns and their ledger,
+    and Claude Code's transcript (under ~/.claude/projects, resolved by path and never
+    deleted by Claude Code), so the conversation stays readable and re-derivable.
 
     "absent" is SUCCESS, not TASK_NOT_FOUND: a double-tap from the phone and a task
     a human just deleted both land here, and the desired state already holds. This is

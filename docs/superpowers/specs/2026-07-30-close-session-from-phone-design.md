@@ -24,10 +24,11 @@ to reach emdash, and the report is what confirms it.
 
 ## What "close" means
 
-Confirmed with the operator: **emdash offers delete only** — there is no archive
-affordance, which is why `list_recently_archived_tasks` has always returned `[]` and
-the runner's `archived:` closing signal has never fired. Close therefore means
-*delete the emdash task*, and that half is not undoable in emdash.
+Confirmed with the operator: close means *delete the emdash task*. The context menu
+offers Archive as well — found by probe in emdash 1.1.40 on 2026-07-31 — but delete
+is the designed behaviour: it is verifiable by querying the sidebar before returning,
+so the close is not optimistic. Archive remains unexplored as a possible gentler
+close; this design chose delete. It is not undoable in emdash.
 
 It is not destructive to the record. Canopy keeps the `Session` row, its `Turn`s and
 their event ledger, and the Claude Code transcript — which lives under
