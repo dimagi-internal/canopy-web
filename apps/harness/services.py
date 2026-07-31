@@ -1432,6 +1432,11 @@ def replace_reported_sessions(
         deduped.append(s)
 
     now_keys = {s.emdash_task for s in deduped}
+    # (session_id, menu|None) for every session whose dialog appeared or went
+    # away in THIS report — pushed after commit so an open chat updates without
+    # a reload. Only the edges: the report repeats every ~10s and republishing
+    # an unchanged menu would re-render the buttons under a thumb.
+    menu_changes: list[tuple] = []
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
@@ -1516,6 +1521,18 @@ def replace_reported_sessions(
             binding.last_interacted_at = _aware(s.last_interacted_at)
             binding.live_seen_at = timezone.now()
             binding.tail = list(s.recent_messages or [])
+            # Written unconditionally, INCLUDING None. The report is a fresh
+            # observation of the session's screen every ~10s, so "no dialog" has
+            # to be able to clear one — otherwise a menu answered at the laptop
+            # keeps live buttons on every phone that opens the session, and a
+            # tap then presses a number at a prompt that is no longer a dialog.
+            was_asking = binding.pending_question or None
+            # getattr, not attribute access: this service is also called
+            # directly with lightweight session objects, and a dialog must
+            # never be the reason a liveness report fails.
+            binding.pending_question = getattr(s, "question", None) or None
+            if was_asking != binding.pending_question:
+                menu_changes.append((binding.session_id, binding.pending_question))
             binding.save()
 
     # Un-archive anything re-reported as open. The DERIVED staleness half of
@@ -1554,6 +1571,17 @@ def replace_reported_sessions(
         from apps.harness.signals import sessions_reported
 
         sessions_reported.send(sender=Runner, runner=runner)
+
+        # The dialog, to anyone already looking at that chat. Its own frame
+        # rather than an overloaded `session.activity`: activity is "is the
+        # agent producing", which the hook path owns and answers within a
+        # tick — inventing a state here to carry a menu would mean reporting
+        # an agent as idle or blocked on this path's much slower clock.
+        from apps.realtime import groups
+
+        for session_id, menu in menu_changes:
+            groups.publish(groups.session_group(session_id),
+                           {"type": "session.menu", "menu": menu})
 
     transaction.on_commit(_fire_reported)
     return len(deduped)

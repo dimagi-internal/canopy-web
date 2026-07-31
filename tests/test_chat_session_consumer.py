@@ -405,3 +405,124 @@ async def test_ws_send_on_a_canopy_session_is_still_chat():
     )()
     assert origin == Turn.ORIGIN_CANOPY_WEB_CHAT
     await comm.disconnect()
+
+
+MENU = {
+    "question": "How should the run proceed?",
+    "title": "Phase 3→4",
+    "body": "",
+    "selected": None,
+    "options": [{"number": 1, "label": "Proceed", "description": "carry on"},
+                {"number": 2, "label": "Stop", "description": "end here"}],
+    "source": "transcript",
+}
+
+
+async def test_the_connect_snapshot_carries_the_pending_dialog():
+    """You open the session BECAUSE it stopped, so the menu cannot live only in
+    a live frame — by definition you were not connected when it fired."""
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+
+    def _bind():
+        from apps.canopy_sessions.models import RunnerBinding
+        RunnerBinding.objects.create(session=session, session_key="spark",
+                                     pending_question=MENU)
+
+    await database_sync_to_async(_bind)()
+    comm = await _connect(session, owner)
+    assert (await comm.connect())[0]
+    state = await _recv_match(comm, lambda f: f.get("event") == "session.state")
+    assert state["data"]["menu"]["question"] == "How should the run proceed?"
+    await comm.disconnect()
+
+
+async def test_a_dialog_appearing_reaches_a_chat_already_open():
+    """The session report pushes the EDGE, so a chat you are already watching
+    gains its buttons without a reload — and loses them when somebody answers
+    at the keyboard. A wrong group name here is a silent no-op, which is why
+    this goes over a real socket rather than asserting on the publish call."""
+    from types import SimpleNamespace
+
+    from apps.harness import services as harness_services
+    from apps.harness.models import Runner
+
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+
+    def _runner():
+        return Runner.objects.create(
+            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner,
+            status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+
+    runner = await database_sync_to_async(_runner)()
+
+    # Bind THIS session to the task the runner is about to report, so the report
+    # updates this binding and addresses its frame at this socket's group —
+    # otherwise the test proves only that the consumer can receive a frame
+    # somebody hand-published, which is the half that was never in doubt.
+    def _bind():
+        from apps.canopy_sessions.models import RunnerBinding
+        RunnerBinding.objects.create(session=session, session_key="spark",
+                                     runner=runner, host="jj-mac")
+
+    await database_sync_to_async(_bind)()
+    comm = await _connect(session, owner)
+    assert (await comm.connect())[0]
+    await _recv_match(comm, lambda f: f.get("event") == "session.state")
+
+    def _report(question):
+        harness_services.replace_reported_sessions(
+            runner, session.workspace,
+            [SimpleNamespace(emdash_task="spark", project="ace", status="",
+                             last_interacted_at=None, recent_messages=[],
+                             question=question)])
+
+    await database_sync_to_async(_report)(MENU)
+    frame = await _recv_match(comm, lambda f: f.get("event") == "session.menu")
+    assert frame["data"]["menu"]["options"][0]["label"] == "Proceed"
+
+    # Somebody answered at the keyboard: the next report carries no dialog, and
+    # the retraction has to travel too — buttons that outlive their dialog press
+    # a number into what is now an ordinary prompt.
+    await database_sync_to_async(_report)(None)
+    cleared = await _recv_match(comm, lambda f: f.get("event") == "session.menu")
+    assert cleared["data"]["menu"] is None
+    await comm.disconnect()
+
+
+async def test_an_unchanged_dialog_is_not_republished_every_report():
+    """The report repeats every ~10s. Re-sending an unchanged menu would
+    re-render the buttons under a thumb that is reaching for one."""
+    from types import SimpleNamespace
+
+    from apps.harness import services as harness_services
+    from apps.harness.models import Runner
+
+    owner, _teammate, session = await database_sync_to_async(_seed)()
+
+    def _setup():
+        from apps.canopy_sessions.models import RunnerBinding
+        runner = Runner.objects.create(
+            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner,
+            status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+        RunnerBinding.objects.create(session=session, session_key="spark",
+                                     runner=runner, host="jj-mac")
+        return runner
+
+    runner = await database_sync_to_async(_setup)()
+    comm = await _connect(session, owner)
+    assert (await comm.connect())[0]
+    await _recv_match(comm, lambda f: f.get("event") == "session.state")
+
+    def _report():
+        harness_services.replace_reported_sessions(
+            runner, session.workspace,
+            [SimpleNamespace(emdash_task="spark", project="ace", status="",
+                             last_interacted_at=None, recent_messages=[],
+                             question=MENU)])
+
+    await database_sync_to_async(_report)()
+    await _recv_match(comm, lambda f: f.get("event") == "session.menu")
+
+    await database_sync_to_async(_report)()          # same dialog, second tick
+    assert await comm.receive_nothing(timeout=0.5)
+    await comm.disconnect()

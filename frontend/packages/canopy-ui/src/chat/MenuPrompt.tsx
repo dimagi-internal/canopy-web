@@ -17,8 +17,18 @@ export interface MenuPromptProps {
  * Refusing is always offered separately from the numbered options. Every dialog
  * accepts Escape, and it is the only answer that stays correct if the dialog on
  * screen is not the one rendered here.
+ *
+ * The options render in one of two shapes, chosen by whether the dialog carries
+ * descriptions. A permission prompt's options ("Yes" / "No") are a row of chips.
+ * An AskUserQuestion's are not: its descriptions are the decision itself — on
+ * the run that motivated this, "Proceed to Phase 4" and "Stop the run here"
+ * were separated entirely by prose the labels did not contain (that Phase 4 is
+ * test-gated and reaches no real payment). Rendering those as bare chips asks
+ * somebody to choose blind, which is the same failure as showing no menu, only
+ * quieter.
  */
 export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptProps) {
+  const described = menu.options.some((o) => o.description);
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
       <div className="flex items-center gap-1.5 font-medium text-warning">
@@ -31,18 +41,41 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
         </pre>
       ) : null}
       <div className="mt-2 text-foreground">{menu.question}</div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {menu.options.map((option) => (
-          <button
-            key={option.number}
-            type="button"
-            disabled={busy}
-            onClick={() => onAnswer(option.number)}
-            className="rounded border border-input bg-card px-2 py-1 text-[13px] text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {option.label}
-          </button>
-        ))}
+      {described ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {menu.options.map((option) => (
+            <button
+              key={option.number}
+              type="button"
+              disabled={busy}
+              onClick={() => onAnswer(option.number)}
+              className="rounded border border-input bg-card px-2.5 py-2 text-left hover:bg-muted disabled:opacity-50"
+            >
+              <div className="text-[13px] font-medium text-foreground">{option.label}</div>
+              {option.description ? (
+                <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
+                  {option.description}
+                </div>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {menu.options.map((option) => (
+            <button
+              key={option.number}
+              type="button"
+              disabled={busy}
+              onClick={() => onAnswer(option.number)}
+              className="rounded border border-input bg-card px-2 py-1 text-[13px] text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2">
         <button
           type="button"
           disabled={busy}

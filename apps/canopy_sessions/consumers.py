@@ -213,6 +213,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def session_title_updated(self, message):
         await self.send_json({"event": "session.title_updated", "data": {"title": message["title"]}})
 
+    async def session_menu(self, message):
+        """The agent started — or stopped — waiting on a dialog.
+
+        Fired on the EDGE by the session report (`replace_reported_sessions`),
+        so a chat you already have open gains its buttons when the agent asks,
+        and loses them when somebody answers at the laptop. `menu: null` is the
+        retraction and must be sent: buttons that outlive their dialog press a
+        number into what is now an ordinary prompt.
+        """
+        await self.send_json({"event": "session.menu",
+                              "data": {"menu": message.get("menu")}})
+
     async def draft_updated(self, message):
         await self.send_json({"event": "draft.updated", "data": message["draft"]})
 
@@ -259,7 +271,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def _get_session(self, raw_id):
         try:
-            return Session.objects.get(pk=uuid.UUID(str(raw_id)))
+            # runner_binding comes along because the connect snapshot reads the
+            # pending dialog off it — otherwise every socket open pays a second
+            # query in a different sync context to answer "is it waiting on me".
+            return Session.objects.select_related("runner_binding").get(
+                pk=uuid.UUID(str(raw_id)))
         except (Session.DoesNotExist, ValueError):
             return None
 

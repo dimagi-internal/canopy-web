@@ -183,6 +183,7 @@ export function ChatPage() {
     runnerName: meta?.runner_name,
     boundOffline,
     paused: boundPaused,
+    blockedOnMenu: Boolean(socket.state.menu),
   })
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.

@@ -73,6 +73,18 @@ MAX_MSG_CHARS = 2000
 # be tens of MB, and the runner reads several of them on every poll tick (top-K).
 TAIL_BYTES = 256 * 1024
 
+# A separate, much smaller bound for the blocked-agent question. It can be small
+# because of what "blocked" means: the agent asked and STOPPED, so the
+# `AskUserQuestion` call is the final record in the file, and its answer (when
+# one comes) is the record straight after it. Nothing else has to be in view.
+#
+# Small matters here in a way it does not for the message tail: the tail is read
+# for the handful of sessions the phone shows, while this is read for EVERY open
+# session on the box (see `attach_pending_questions`). Measured on the live
+# fleet against a 2.5 MB transcript: 0.31 ms per session, ~31 ms for a full
+# 100-session report.
+QUESTION_TAIL_BYTES = 64 * 1024
+
 # emdash appends a short random suffix to a worktree dir name to de-dupe it
 # (e.g. the task "ace-nutrition-demo-9619-0720-1352" lives in a worktree dir
 # "...-1352-cysov"). The Claude transcript project dir therefore ends in the
@@ -307,3 +319,92 @@ def attach_recent_tail(
         newest = newest_record_time(path)
         if newest and _is_later(newest, s.get("last_interacted_at")):
             s["last_interacted_at"] = newest
+
+
+# --- The dialog a blocked agent is waiting on -------------------------------
+#
+# Reported for EVERY open session, not just the shown ones, and derived from the
+# transcript rather than the screen. See `canopy_transcript.questions` for why
+# the transcript is the primary source (short version: what actually blocks the
+# fleet is AskUserQuestion, which is a tool call, so the whole dialog is already
+# in a file the runner reads — no CDP, and therefore no stolen focus).
+
+from canopy_transcript import pending_question as _pending_question  # noqa: E402
+
+
+def _tail_records(path: Path, nbytes: int) -> list[dict]:
+    """The last `nbytes` of a transcript, parsed. Never raises.
+
+    A cut first line simply fails to parse and is skipped — harmless, because
+    every caller wants recent records, not the head of the file.
+    """
+    try:
+        with path.open("rb") as f:
+            size = f.seek(0, 2)
+            f.seek(max(0, size - nbytes))
+            raw = f.read()
+    except OSError:
+        return []
+    out: list[dict] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            out.append(record)
+    return out
+
+
+def pending_question_for(
+    repo: str,
+    task: str,
+    *,
+    home: Path | None = None,
+    claude_home: Path | None = None,
+) -> dict | None:
+    """The unanswered dialog on this session, or None. NEVER raises.
+
+    None is a real answer — "I looked and there is nothing" — and the caller
+    ships it, because that is what retires a menu server-side once the human
+    answers at the laptop.
+    """
+    home = home or Path.home()
+    claude_home = claude_home or (home / ".claude" / "projects")
+    try:
+        path = resolve_transcript(repo or "", task or "", home=home, claude_home=claude_home)
+        if path is None:
+            return None
+        return _pending_question(_tail_records(path, QUESTION_TAIL_BYTES))
+    except Exception:  # noqa: BLE001 — this runs inside the liveness report
+        logger.debug("pending-question read failed for %s/%s", repo, task, exc_info=True)
+        return None
+
+
+def attach_pending_questions(
+    sessions: list[dict],
+    *,
+    home: Path | None = None,
+    claude_home: Path | None = None,
+) -> None:
+    """Fill `question` on EVERY reported session, in place. Best-effort.
+
+    Deliberately uncapped, unlike `attach_recent_tail`. A tail is only rendered
+    for the sessions at the top of the list, so reading the top K is the whole
+    job there. A blocked session is the mirror image: it stops writing the
+    instant it asks, so it sinks in a list ordered by last activity — the longer
+    somebody is kept waiting, the further down it goes. A top-K bound here would
+    hide precisely the sessions this exists to surface. It is affordable because
+    the read is bounded by `QUESTION_TAIL_BYTES` (~31 ms for a 100-session
+    report, measured).
+    """
+    home = home or Path.home()
+    claude_home = claude_home or (home / ".claude" / "projects")
+    for s in sessions:
+        s["question"] = pending_question_for(
+            s.get("project", ""), s.get("emdash_task", ""),
+            home=home, claude_home=claude_home,
+        )

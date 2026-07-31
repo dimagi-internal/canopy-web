@@ -253,6 +253,16 @@ class ReportedSessionIn(Schema):
     status: str = ""
     last_interacted_at: dt.datetime | None = None
     recent_messages: list = []  # Phase B populates this; ignored/empty in Phase A
+    # The dialog this session is blocked on, read from its transcript, or None
+    # for "I looked and there is none". `None` is a REAL answer and is written
+    # through: it is what retires a menu once the human answers at the laptop.
+    #
+    # Defaulted so a runner that predates this keeps working — but note what its
+    # default MEANS. An old runner sends nothing, which lands as None and clears
+    # the field, i.e. "no dialog". That is the safe direction: the failure is a
+    # phone with no buttons (the terminal still answers), never a phone offering
+    # buttons against a dialog that is gone.
+    question: dict | None = None
 
 
 class ReportSessionsIn(Schema):
