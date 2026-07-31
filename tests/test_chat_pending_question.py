@@ -181,3 +181,114 @@ def test_the_snapshot_shape_is_stable_when_nothing_is_pending():
         draft=None, messages=[],
     )
     assert "menu" in dto and dto["menu"] is None
+
+
+# -- you are TOLD, rather than having to go and look ------------------------
+#
+# NOTE the `django_capture_on_commit_callbacks` fixture on every test here. The
+# push fires from `transaction.on_commit`, which NEVER runs under the default
+# non-transactional test DB — so without it these tests pass while asserting
+# nothing, including the one that checks a push failure is survivable.
+
+
+def _sent(monkeypatch):
+    from apps.push import services as push_services
+
+    calls = []
+    monkeypatch.setattr(push_services, "send_to_user",
+                        lambda user, **kw: calls.append((user, kw)) or 1)
+    return calls
+
+
+def test_a_new_question_pushes_to_the_runner_s_owner(
+        monkeypatch, django_capture_on_commit_callbacks):
+    """The half no rendering fix covers. A perfectly rendered menu still needs
+    somebody to open the app; spark's 52 minutes were 52 minutes of nobody
+    knowing there was anything to open.
+
+    A runner-discovered session has NO agent, so the audience has to fall back
+    to whoever paired the runner — otherwise the exact case that motivated this
+    notifies nobody."""
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    with django_capture_on_commit_callbacks(execute=True):
+        _report(client, runner.id, [
+            {"emdash_task": "spark", "project": "ace", "question": MENU}])
+
+    assert len(sent) == 1, "nobody was told the agent is waiting"
+    user, kw = sent[0]
+    assert user.username == "jj"                        # the runner's pairer
+    assert kw["body"] == "How should the run proceed?"  # the question itself
+    session = Session.objects.get(runner_binding__session_key="spark")
+    # The CHAT, not /supervisor: the tap has to land on the buttons.
+    assert kw["url"] == f"/w/dimagi/chat/{session.id}"
+
+
+def test_the_same_question_does_not_push_again_every_ten_seconds(
+        monkeypatch, django_capture_on_commit_callbacks):
+    """The report repeats on a ~10s heartbeat. Re-pushing an unchanged dialog
+    would turn one agent waiting into a notification every ten seconds."""
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    for _ in range(3):
+        with django_capture_on_commit_callbacks(execute=True):
+            _report(client, runner.id, [
+                {"emdash_task": "spark", "project": "ace", "question": MENU}])
+    assert len(sent) == 1
+
+
+def test_answering_does_not_push(monkeypatch, django_capture_on_commit_callbacks):
+    """A retraction is not news — and the UI it would correct has already been
+    corrected by the session.menu frame."""
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    for question in (MENU, None):
+        with django_capture_on_commit_callbacks(execute=True):
+            _report(client, runner.id, [
+                {"emdash_task": "spark", "project": "ace", "question": question}])
+    assert len(sent) == 1
+
+
+def test_a_long_question_is_truncated_for_a_lock_screen(
+        monkeypatch, django_capture_on_commit_callbacks):
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    long_menu = {**MENU, "question": "Why " * 200}
+    with django_capture_on_commit_callbacks(execute=True):
+        _report(client, runner.id, [
+            {"emdash_task": "spark", "project": "ace", "question": long_menu}])
+    body = sent[0][1]["body"]
+    assert len(body) <= 140 and body.endswith("…")
+
+
+def test_a_push_failure_never_costs_the_session_report(
+        monkeypatch, django_capture_on_commit_callbacks):
+    """This runs inside the liveness report. A notification must never be the
+    reason the fleet stops reporting which sessions are alive."""
+    from apps.push import services as push_services
+
+    def _boom(*a, **kw):
+        raise RuntimeError("push service down")
+
+    monkeypatch.setattr(push_services, "send_to_user", _boom)
+
+    _jj, _ws, runner, client = _setup()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _report(client, runner.id, [
+            {"emdash_task": "spark", "project": "ace", "question": MENU},
+        ]).status_code == 200
+    assert RunnerBinding.objects.get(session_key="spark").pending_question is not None
+
+
+def test_a_waiting_session_sorts_above_everything(monkeypatch):
+    """Activity ordering BURIES it: a session stops writing the instant it asks,
+    so the longer somebody has been kept waiting the further down it sinks."""
+    _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    _report(client, runner.id, [
+        {"emdash_task": "chatty", "project": "ace", "question": None},
+        {"emdash_task": "louder", "project": "ace", "question": None},
+        {"emdash_task": "spark", "project": "ace", "question": MENU},
+    ])
+    titles = [r["title"] for r in client.get("/api/canopy-sessions/").json()]
+    assert titles[0] == "spark", f"the waiting session sank to {titles.index('spark')}"
