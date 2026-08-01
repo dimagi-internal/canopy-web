@@ -366,3 +366,59 @@ def test_clearing_a_stale_menu_does_not_touch_another_runners_sessions():
     replace_reported_sessions(mine, ws, [_reported("mine")])
 
     assert RunnerBinding.objects.get(session_key="elsewhere").pending_question is not None
+
+
+@pytest.mark.django_db
+def test_an_agent_session_tells_the_runner_which_emdash_project_it_lives_under():
+    """The runner resolves a transcript by (project, task). An agent chat leaves
+    `Session.project` blank — its worktree lives under the AGENT's repo — so
+    shipping a bare `project` sent "" and the runner's `resolve_transcript`
+    returned None. Both consumers then `continue`d, silently and forever: agent
+    chats were never streamed and never backfilled.
+
+    Measured on labs 2026-08-01 — a fresh hal session sat at zero durable rows
+    through a 7-minute backfill wait, so "load full session" could not work for
+    any agent chat on the fleet.
+    """
+    from django.test import Client as DjangoClient
+
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+    replace_reported_sessions(runner, ws, [_reported("hal-chat-1")])
+
+    binding = RunnerBinding.objects.get(session_key="hal-chat-1")
+    session = binding.session
+    from apps.agents.models import Agent
+
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+    session.project = ""            # an agent chat, not a repo chat
+    session.agent = hal
+    session.save(update_fields=["project", "agent"])
+    binding.backfill_requested = True
+    binding.save(update_fields=["backfill_requested"])
+
+    assert session.emdash_project == "hal"
+
+    client = DjangoClient()
+    client.force_login(jj)
+    for path, key in ((f"/api/harness/runners/{runner.id}/backfills", "backfills"),
+                      (f"/api/harness/runners/{runner.id}/streams", "streams")):
+        rows = client.get(path).json()[key]
+        mine = [r for r in rows if r["session_key"] == "hal-chat-1"]
+        assert mine, f"{key} did not list the session at all"
+        assert mine[0]["project"] == "hal", (
+            f"{key} sent project={mine[0]['project']!r}; the runner cannot resolve "
+            f"a transcript without it")
+
+
+@pytest.mark.django_db
+def test_a_repo_chat_still_reports_its_own_project():
+    """The fallback must not swallow the case it is falling back FROM."""
+    from apps.canopy_sessions.models import Session
+
+    assert Session(project="canopy-web").emdash_project == "canopy-web"
+    assert Session(project="").emdash_project == ""

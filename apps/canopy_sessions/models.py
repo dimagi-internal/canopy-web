@@ -41,6 +41,25 @@ class Session(models.Model):
     # projects.Project, so this framework-tier app never imports product code. A
     # session targets an agent XOR a project (or neither).
     project = models.CharField(max_length=100, blank=True, default="")
+
+    @property
+    def emdash_project(self) -> str:
+        """The emdash PROJECT this session's worktree lives under.
+
+        Not the same question as `project`, which is only set for an agentless
+        repo chat. An agent chat leaves it blank — but its worktree is still
+        under a project, and that project is the agent's own repo:
+        `~/emdash/worktrees/hal/emdash/hal-canopy-web-chat-…`.
+
+        This exists because the runner resolves a transcript by (project, task),
+        and every caller that shipped a bare `session.project` silently sent ""
+        for agent sessions. `resolve_transcript` then returned None and the
+        caller `continue`d, so agent chats were never streamed and never
+        backfilled — permanently, and with no error anywhere. Measured on labs
+        2026-08-01: a fresh hal session sat at zero durable rows through a 7-minute
+        backfill wait, and "load full session" could not work for any agent chat.
+        """
+        return self.project or (self.agent.slug if self.agent_id else "")
     title = models.CharField(max_length=200, blank=True, default="")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=ACTIVE)
     origin = models.CharField(max_length=10, choices=ORIGIN_CHOICES, default=ORIGIN_WEB)
