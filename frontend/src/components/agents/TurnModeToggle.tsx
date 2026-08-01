@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { setAgentTurnMode, type TurnMode } from '@/api/agents'
 
 const MODES: { mode: TurnMode; label: string; blurb: string }[] = [
-  { mode: 'gated', label: 'Gated', blurb: 'Outbound actions wait for your approval.' },
+  { mode: 'manual', label: 'Manual', blurb: 'Outbound actions wait for your approval.' },
   { mode: 'auto', label: 'Auto', blurb: 'Self-review-and-send; audit lands here on the board.' },
 ]
 

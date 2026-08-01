@@ -21,7 +21,7 @@ function agent(overrides: Partial<AgentOut> = {}): AgentOut {
     avatar_url: '',
     workspace: 'canopy',
     runner_preference: [],
-    turn_mode: 'gated',
+    turn_mode: 'manual',
     created_at: '2026-07-31T00:00:00Z',
     updated_at: '2026-07-31T00:00:00Z',
     ...overrides,
@@ -56,31 +56,31 @@ describe('AgentKpiCard turn-mode chip', () => {
     renderCard(agent({ turn_mode: 'auto' }))
     expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Auto')
     cleanup()
-    renderCard(agent({ turn_mode: 'gated' }))
-    expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Gated')
+    renderCard(agent({ turn_mode: 'manual' }))
+    expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Manual')
   })
 
   it('turning auto ON asks first, then flips', async () => {
-    renderCard(agent({ turn_mode: 'gated' }))
+    renderCard(agent({ turn_mode: 'manual' }))
     fireEvent.click(screen.getByTestId('agent-mode-echo'))
     expect(window.confirm).toHaveBeenCalledOnce()
     await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'auto'))
     expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Auto')
   })
 
-  it('declining the confirm leaves the agent gated and calls nothing', () => {
+  it('declining the confirm leaves the agent manual and calls nothing', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
-    renderCard(agent({ turn_mode: 'gated' }))
+    renderCard(agent({ turn_mode: 'manual' }))
     fireEvent.click(screen.getByTestId('agent-mode-echo'))
     expect(setAgentTurnMode).not.toHaveBeenCalled()
-    expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Gated')
+    expect(screen.getByTestId('agent-mode-echo').textContent).toBe('Manual')
   })
 
   it('turning auto OFF needs no confirm — the safe direction is one tap', async () => {
     renderCard(agent({ turn_mode: 'auto' }))
     fireEvent.click(screen.getByTestId('agent-mode-echo'))
     expect(window.confirm).not.toHaveBeenCalled()
-    await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'gated'))
+    await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'manual'))
   })
 
   it('tapping the chip does not navigate to the agent page', async () => {

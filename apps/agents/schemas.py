@@ -50,7 +50,7 @@ class TurnModeIn(StrictModel):
     Deliberately its own endpoint (not part of AgentIn): the agent-repo
     self-publish upsert must never be able to change its own autonomy."""
 
-    turn_mode: Literal["gated", "auto"]
+    turn_mode: Literal["manual", "auto"]
 
 
 class AgentRunnerOut(StrictModel):
@@ -173,11 +173,11 @@ class AgentOut(StrictModel):
     # the Agent.runner_preference JSONField by AgentOut.model_validate(agent);
     # AgentDetailOut inherits it.
     runner_preference: list[str] = Field(default_factory=list)
-    # Runtime autonomy posture (gated | auto) — operational state a turn reads
+    # Runtime autonomy posture (manual | auto) — operational state a turn reads
     # at preflight, flipped from the board. On the base schema so both the
     # agents LIST and the detail view carry it. Literal so the generated TS
     # client gets the union, not string.
-    turn_mode: Literal["gated", "auto"] = "gated"
+    turn_mode: Literal["manual", "auto"] = "manual"
 
 
 class AgentDetailOut(AgentOut):

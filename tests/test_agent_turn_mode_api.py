@@ -51,10 +51,10 @@ def _patch(client, slug, mode):
     )
 
 
-def test_new_agent_defaults_to_gated(client, agent):
+def test_new_agent_defaults_to_manual(client, agent):
     res = client.get(f"/api/agents/{agent.slug}/")
     assert res.status_code == 200
-    assert res.json()["turn_mode"] == "gated"
+    assert res.json()["turn_mode"] == "manual"
 
 
 def test_patch_flips_mode_and_returns_it(client, agent):
@@ -64,17 +64,17 @@ def test_patch_flips_mode_and_returns_it(client, agent):
     agent.refresh_from_db()
     assert agent.turn_mode == Agent.AUTO
 
-    res = _patch(client, agent.slug, "gated")
+    res = _patch(client, agent.slug, "manual")
     assert res.status_code == 200
     agent.refresh_from_db()
-    assert agent.turn_mode == Agent.GATED
+    assert agent.turn_mode == Agent.MANUAL
 
 
 def test_patch_rejects_unknown_mode(client, agent):
     res = _patch(client, agent.slug, "yolo")
     assert res.status_code == 422
     agent.refresh_from_db()
-    assert agent.turn_mode == Agent.GATED
+    assert agent.turn_mode == Agent.MANUAL
 
 
 def test_repo_upsert_cannot_touch_turn_mode(client, agent):
@@ -95,7 +95,7 @@ def test_repo_upsert_cannot_touch_turn_mode(client, agent):
     # …and naming the field outright is rejected (AgentIn is strict).
     res = client.post(
         "/api/agents/",
-        data=json.dumps({"slug": "echo", "name": "Echo", "turn_mode": "gated"}),
+        data=json.dumps({"slug": "echo", "name": "Echo", "turn_mode": "manual"}),
         content_type="application/json",
     )
     assert res.status_code == 422
@@ -109,3 +109,41 @@ def test_patch_404s_outside_visible_workspaces(client, agent):
     Agent.objects.create(slug="eva", name="Eva", workspace=other_ws)
     res = _patch(client, "eva", "auto")
     assert res.status_code == 404
+
+
+def test_migration_0015_backfill_renames_stored_gated_rows(agent):
+    """The rename is a DATA change, not just a choices change: any row written
+    before 0015 holds the literal 'gated'. AlterField alone would strand those
+    on a value that no longer validates, so the migration carries a RunPython —
+    this exercises that function against a row forced back to the old value."""
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    mig = importlib.import_module("apps.agents.migrations.0015_alter_agent_turn_mode")
+
+    # .update() bypasses field validation, which is exactly how the pre-rename
+    # rows exist in the deployed DB.
+    Agent.objects.filter(pk=agent.pk).update(turn_mode="gated")
+    mig.gated_to_manual(django_apps, None)
+    agent.refresh_from_db()
+    assert agent.turn_mode == "manual"
+
+    # And it reverses, so 0015 is not a one-way door.
+    mig.manual_to_gated(django_apps, None)
+    agent.refresh_from_db()
+    assert agent.turn_mode == "gated"
+
+
+def test_migration_0015_backfill_leaves_auto_agents_alone(agent):
+    """Only the renamed value moves — an agent someone put in auto must not be
+    quietly de-escalated by a rename migration."""
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    mig = importlib.import_module("apps.agents.migrations.0015_alter_agent_turn_mode")
+    Agent.objects.filter(pk=agent.pk).update(turn_mode="auto")
+    mig.gated_to_manual(django_apps, None)
+    agent.refresh_from_db()
+    assert agent.turn_mode == "auto"
