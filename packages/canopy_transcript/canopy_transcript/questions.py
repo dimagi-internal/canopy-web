@@ -169,6 +169,49 @@ def menu_from_hook(payload) -> dict | None:
     return menu
 
 
+# What Claude Code calls the hook that means "I want a human". It carries a
+# message and nothing else — no options, no command, no way to reply.
+NOTIFY_EVENT = "Notification"
+
+
+def marker_from_hook(payload) -> dict | None:
+    """A `Notification` hook -> a menu-shaped record with NO options, or None.
+
+    **Why an option-less menu is worth having.** `AskUserQuestion` is a tool call
+    and so arrives whole. The other things that stop an agent — a permission
+    prompt, a trust gate — are drawn by Claude Code with no tool call behind
+    them, so the only place they exist is the rendered terminal, and reading that
+    means driving CDP, which CLICKS the task and steals focus (#510 was reverted
+    for exactly that). The result was that those dialogs reached a phone only if
+    somebody happened to be watching the session at the instant they appeared.
+
+    A `Notification` needs neither: it says a human is wanted, and its `message`
+    says roughly why. That is strictly more than nothing, and it is honest about
+    being less than a menu — the client renders the words with no buttons and
+    points at emdash.
+
+    It is deliberately NOT parsed to work out which kind of dialog it is. The
+    message is passed through as written, because guessing at its wording is how
+    a signal starts lying, and the human reading it can tell.
+
+    **Escape still works on it.** The runner re-reads the real screen before
+    pressing anything, and a permission prompt parses there — so refusing is a
+    genuine action even when no options could be listed here.
+    """
+    if not isinstance(payload, dict) or payload.get("hook_event_name") != NOTIFY_EVENT:
+        return None
+    message = payload.get("message")
+    message = message.strip() if isinstance(message, str) else ""
+    return {
+        "question": message or "This session is waiting on you.",
+        "title": "Waiting on you",
+        "body": "",
+        "selected": None,
+        "options": [],
+        "source": "notification",
+    }
+
+
 def hook_retires_menu(payload) -> bool:
     """Whether this hook event means any dialog on that session is gone.
 

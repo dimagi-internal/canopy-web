@@ -330,3 +330,48 @@ def test_a_corrupt_store_is_an_empty_one(tmp_path):
     path.write_text("{not json at all")
     assert MenuStore(path).load() == {}
     assert MenuStore(tmp_path / "nope.json").load() == {}
+
+
+# --- dialogs with no readable menu ----------------------------------------
+
+NOTIFY = {"hook_event_name": "Notification", "cwd": CWD,
+          "message": "Claude needs your permission to use Bash"}
+
+
+def test_a_notification_reaches_the_phone_with_no_options():
+    """A permission prompt or trust gate has no tool call behind it, so it exists
+    only on the terminal — and reading that steals focus. Before this, those
+    dialogs reached a phone only if somebody happened to be watching at the
+    instant they appeared."""
+    hl = listener()
+    hl.handle_payload(NOTIFY)
+    menu = hl.pending_menu(*KEY)
+    assert menu is not None
+    assert menu["options"] == []
+    assert menu["question"] == "Claude needs your permission to use Bash"
+
+
+def test_a_notification_never_downgrades_a_real_menu():
+    """Buttons that work must not be replaced by words that do not. An agent can
+    emit a Notification while an AskUserQuestion is already up."""
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.handle_payload(NOTIFY)
+    menu = hl.pending_menu(*KEY)
+    assert [o["number"] for o in menu["options"]] == [1, 2]
+    assert menu["source"] == "hook"
+
+
+def test_a_real_menu_replaces_a_notification():
+    """The other direction is an upgrade and must go through."""
+    hl = listener()
+    hl.handle_payload(NOTIFY)
+    hl.handle_payload(ASK)
+    assert len(hl.pending_menu(*KEY)["options"]) == 2
+
+
+def test_the_turn_ending_retires_a_notification_too():
+    hl = listener()
+    hl.handle_payload(NOTIFY)
+    hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})
+    assert hl.pending_menu(*KEY) is None
