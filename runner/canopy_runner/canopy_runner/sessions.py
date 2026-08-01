@@ -9,7 +9,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import emdash, transcript
+from . import emdash, hooks, transcript
 from .client import Client
 from .config import Config
 from .tail import TailReader
@@ -167,7 +167,9 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         # purpose (a waiting session sinks in an activity-ordered list, so a
         # top-K bound would hide the ones that have waited longest); see
         # `transcript.attach_pending_questions`.
-        transcript.attach_pending_questions(sessions)
+        transcript.attach_pending_questions(
+            sessions, hook_menu_for=hooks.pending_hook_menu
+        )
         client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing))
         # Discard only the names this report actually carried (mutate in place —
         # `_PENDING_CLOSED -= closing` would rebind the name, making it local

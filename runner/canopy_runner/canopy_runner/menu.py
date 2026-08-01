@@ -45,6 +45,12 @@ _FOOTER = re.compile(r"(Esc to cancel|Enter to confirm|Tab to amend|ctrl\+e to e
 # The rule drawn above a dialog. Marks where the subject block starts.
 _RULE = re.compile(r"^[─━-]{10,}$")
 
+# How far short of the frame width a word-wrapped line may stop. Wrapping breaks
+# at a space, so the break lands wherever the next word began — a few characters
+# of slack, not a full word, because the wider this is the more readily a short
+# line of SUBJECT gets swallowed into the question above the options.
+_WRAP_SLACK = 4
+
 
 @dataclass
 class Option:
@@ -98,6 +104,59 @@ def _join_wrapped(lines: list[str]) -> str:
     return out
 
 
+def _dialog_runs_to_the_bottom(lines: list[str], selected: int | None) -> bool:
+    """Whether this looks like a live dialog whose footer fell off the frame.
+
+    Two conditions, and dropping either one lets prose through:
+
+    `selected is not None` — the TUI painted its selection cursor on an option.
+    An agent writing a numbered list does not draw "❯" at the head of one.
+
+    The last drawn line is an option — the dialog is the bottom of the screen.
+    Claude Code draws a dialog where the composer would be, so nothing follows a
+    live one. A menu an agent *quoted* (this very session pasted one into a
+    report) has prose or a composer beneath it and is rejected here.
+    """
+    if selected is None:
+        return False
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        return _OPTION.match(line) is not None
+    return False
+
+
+def _unwrap_question(lines: list[str], question: str, question_line: int):
+    """Reattach the earlier grid lines a long question was word-wrapped across.
+
+    The question is found as the last line ending in '?', which on a wrapped one
+    is only its TAIL: a real dialog reached the phone reading "press into that
+    session?" — grammatical, useless, and indistinguishable from a short question
+    (captured 2026-08-01).
+
+    Joined only on the hard-wrap signature: the line above ran to the frame's own
+    width and broke at a space. That is deliberately narrow. A dialog's SUBJECT
+    also sits directly above its question — the permission prompt's "Delete
+    target.txt and verify" above "Do you want to proceed?" — and those are two
+    different things; swallowing one into the other would misreport what is being
+    asked, which is worse than a truncated question.
+    """
+    width = max((len(l) for l in lines), default=0)
+    if width <= 0:
+        return question, question_line
+    start = question_line
+    while start > 0:
+        above = lines[start - 1]
+        if not above.strip() or _RULE.match(above.strip()):
+            break
+        if not above.endswith(" ") or len(above) < width - _WRAP_SLACK:
+            break
+        start -= 1
+    if start == question_line:
+        return question, question_line
+    return " ".join(l.strip() for l in lines[start:question_line + 1]), start
+
+
 def find_menu(text: str) -> Menu | None:
     """The dialog on this screen, or None.
 
@@ -133,17 +192,29 @@ def find_menu(text: str) -> Menu | None:
     if len(options) < 2 or first_option_line is None:
         return None
 
-    # A dialog always offers a way out, and prose never does. Requiring that
-    # footer BELOW the options is what separates a real menu from an agent
-    # writing "1. Read the file / 2. Change the thing" — which parsed as a menu
-    # until this check existed. Numbered lines are simply not evidence: they are
-    # the most common shape in an agent's own output.
+    # A dialog offers a way out, and prose never does. Requiring that footer
+    # BELOW the options is what separates a real menu from an agent writing
+    # "1. Read the file / 2. Change the thing" — which parsed as a menu until
+    # this check existed. Numbered lines are simply not evidence: they are the
+    # most common shape in an agent's own output.
     #
-    # Fails closed on purpose. A dialog with no footer would be missed (the
-    # phone shows "needs you" with no buttons, which the terminal can still
-    # answer); a false positive tells you an agent is blocked while it works,
-    # and a few of those and the signal is worthless.
-    if not any(_FOOTER.search(line) for line in lines[first_option_line:]):
+    # But the footer is only drawn if there is a ROW LEFT TO DRAW IT ON. A tall
+    # AskUserQuestion — a long question, five or six options, a description
+    # under each — overflows a short emdash pane, and the line that falls off the
+    # bottom is the footer. Captured live 2026-08-01 from two sessions blocked
+    # this way, one for 15 minutes and one for 1h20m, both showing the phone
+    # nothing: 41-row frames ending mid-dialog on "6. Chat about this", no
+    # footer anywhere. The docstring predicted the miss ("a dialog with no
+    # footer would be missed"); this is that case, and it is not rare.
+    #
+    # So a second, equally strict acceptance: the TUI's own selection cursor
+    # sits on one of the options AND the dialog runs to the bottom of the frame.
+    # Both halves matter. Prose does not draw "❯" at the head of a numbered
+    # line, and a live dialog is always the LAST thing on the screen — the TUI
+    # draws it where the composer would be — so a menu an agent merely quoted
+    # has its own output below it and is still rejected.
+    if not any(_FOOTER.search(line) for line in lines[first_option_line:]) \
+            and not _dialog_runs_to_the_bottom(lines, selected):
         return None
 
     # The question is the last line ending in '?' ABOVE the options.
@@ -163,6 +234,7 @@ def find_menu(text: str) -> Menu | None:
                 break
     if not question:
         return None
+    question, question_line = _unwrap_question(lines, question, question_line)
 
     # Subject: everything between the rule above and the question. First line is
     # the title ("Bash command"), the rest is the body (the command itself).

@@ -187,3 +187,58 @@ def test_the_shape_matches_the_screen_reader_s():
     menu = ct.pending_question([_ask()])
     assert set(menu) == {"question", "title", "body", "selected", "options", "source"}
     assert menu["selected"] is None      # a transcript cannot see the cursor
+
+
+# --- the hook path -------------------------------------------------------
+#
+# `pending_question` above can only ever report a dialog that is OVER. Claude
+# Code writes the AskUserQuestion tool_use record when the ask is answered, not
+# when it is made: measured 2026-08-01 across 60 transcripts on a live box, 39
+# such records, all already answered, zero pending — while two sessions sat
+# blocked on visible dialogs with nothing in their files at all. `PreToolUse`
+# fires at the other end, when the ask starts, carrying the same tool_input.
+
+PRE_TOOL_USE = {
+    "hook_event_name": "PreToolUse",
+    "tool_name": "AskUserQuestion",
+    "tool_input": SPARK_ASK,
+}
+
+
+def test_a_hook_produces_the_same_menu_the_transcript_would_have():
+    """One dict from either half — a client must never learn which found it."""
+    from_hook = ct.menu_from_hook(PRE_TOOL_USE)
+    from_transcript = ct.pending_question([
+        {"message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "AskUserQuestion",
+             "input": SPARK_ASK},
+        ]}},
+    ])
+    assert from_hook is not None and from_transcript is not None
+    assert {k: v for k, v in from_hook.items() if k != "source"} == \
+           {k: v for k, v in from_transcript.items() if k != "source"}
+
+
+def test_the_hook_menu_names_its_source():
+    assert ct.menu_from_hook(PRE_TOOL_USE)["source"] == "hook"
+
+
+def test_only_the_ask_starting_is_a_menu():
+    """PostToolUse for the same tool carries the same input — reading it as a
+    menu would re-raise the dialog the human just dismissed."""
+    assert ct.menu_from_hook({**PRE_TOOL_USE, "hook_event_name": "PostToolUse"}) is None
+    assert ct.menu_from_hook({**PRE_TOOL_USE, "tool_name": "Bash"}) is None
+    assert ct.menu_from_hook(None) is None
+    assert ct.menu_from_hook({}) is None
+
+
+def test_what_retires_a_menu():
+    assert ct.hook_retires_menu({"hook_event_name": "PostToolUse",
+                                 "tool_name": "AskUserQuestion"})
+    assert ct.hook_retires_menu({"hook_event_name": "Stop"})
+    assert ct.hook_retires_menu({"hook_event_name": "UserPromptSubmit"})
+    # A tool finishing while the dialog is up must not clear it — the ask is
+    # itself a tool call, and parallel calls are ordinary.
+    assert not ct.hook_retires_menu({"hook_event_name": "PostToolUse", "tool_name": "Bash"})
+    assert not ct.hook_retires_menu(PRE_TOOL_USE)
+    assert not ct.hook_retires_menu(None)

@@ -32,7 +32,12 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from canopy_transcript import activity_for_hook, events_for_hook
+from canopy_transcript import (
+    activity_for_hook,
+    events_for_hook,
+    hook_retires_menu,
+    menu_from_hook,
+)
 
 logger = logging.getLogger("canopy_runner.hooks")
 
@@ -50,11 +55,20 @@ class HookListener:
     """
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
-                 read_menu=None):
+                 read_menu=None, resolve_task=None):
         self.port = port
         self.nonce = nonce
         self._resolve_session = resolve_session
         self._forward = forward
+        # Injected: cwd -> (project, emdash task), the key the session report is
+        # built on. Injected for the same reason `resolve_session` is — this
+        # module stays testable with no emdash and no worktree on disk.
+        self._resolve_task = resolve_task
+        # The live dialog per (project, task), captured from `PreToolUse`.
+        # Written from listener threads and read from the report thread; dict
+        # get/set on a str key is atomic under the GIL, and a menu arriving
+        # one tick late is a non-event, so no lock.
+        self._pending_menus: dict[tuple[str, str], dict] = {}
         # Injected: given a cwd, return the dialog on that session's screen (or
         # None). Injected rather than imported so this module stays testable
         # without CDP, emdash, or a live terminal — and so a runner with no CDP
@@ -72,6 +86,11 @@ class HookListener:
         and tests. Never raises — the caller must answer 200 regardless."""
         self.received += 1
         try:
+            # BEFORE every gate below. A dialog is state this box holds for the
+            # session report to read, not an event to ship — so it must survive
+            # `forward_sessions` being off, and it must be recorded even for a
+            # hook kind that forwards nothing.
+            self._track_menu(payload)
             activity = activity_for_hook(payload)
             if activity is not None:
                 cwd = payload.get("cwd") or ""
@@ -120,6 +139,35 @@ class HookListener:
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("hook handling failed (non-fatal)", exc_info=True)
             return "error"
+
+    def _track_menu(self, payload: dict) -> None:
+        """Hold, or drop, the dialog this session is waiting on.
+
+        This is the ONLY producer that sees a menu while it is still up. The
+        transcript cannot: Claude Code writes the `AskUserQuestion` tool_use
+        record when the dialog is ANSWERED, so `pending_question` is structurally
+        blind to a live one (39 records across 60 transcripts on a live box, all
+        already answered, zero pending — 2026-08-01). The screen reader can, but
+        only by driving CDP, which clicks the task and steals focus, so it can
+        never run on a cadence.
+        """
+        if self._resolve_task is None:
+            return
+        try:
+            key = self._resolve_task(payload.get("cwd") or "")
+            if not key or not key[1]:
+                return
+            menu = menu_from_hook(payload)
+            if menu is not None:
+                self._pending_menus[key] = menu
+            elif hook_retires_menu(payload):
+                self._pending_menus.pop(key, None)
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.debug("menu tracking failed (non-fatal)", exc_info=True)
+
+    def pending_menu(self, project: str, task: str) -> dict | None:
+        """The dialog this session is waiting on, or None."""
+        return self._pending_menus.get((project or "", task or ""))
 
     def _safe_read_menu(self, cwd: str):
         """The dialog on this session's screen, or None.
