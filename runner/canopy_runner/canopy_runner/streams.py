@@ -143,6 +143,46 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         st["count"] = base + len(new_records)
 
 
+def drain_menu_answers(cfg: Config, client: Client) -> None:
+    """Press any answer a human has given that has not reached us yet.
+
+    The WS control frame is the fast path and usually wins. This is what makes an
+    answer SURVIVE the channel being down: a frame published into a group with no
+    consumer is discarded silently, while the runner keeps heartbeating over REST
+    and so still reads ONLINE — the API says `ok:true` and the tap simply
+    evaporates. Measured on labs 2026-08-01: an answer sent at 10:50 never
+    arrived, between control-channel reconnects at 10:16 and 10:58.
+
+    Best-effort, like every other drain here: a failure is retried next tick,
+    because the server only retires an answer once we report on it.
+    """
+    from . import hooks
+
+    try:
+        answers = client.sync_menu_answers(cfg.runner_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("menu-answer sync failed (non-fatal)", exc_info=True)
+        return
+    for a in answers:
+        session_key, answer_id = a.get("session_key") or "", a.get("answer_id") or ""
+        if not (session_key and answer_id):
+            continue
+        outcome, screen = hooks.answer_menu(session_key, a.get("option"),
+                                            cdp_port=cfg.cdp_port)
+        hooks.note_answer_outcome(session_key, outcome, screen)
+        try:
+            client.post_menu_answer_result(cfg.runner_id, a.get("session_id") or "",
+                                           answer_id, outcome)
+        except Exception:  # noqa: BLE001
+            # Leave it set: pressing twice is worse than pressing late, and the
+            # re-read before every press is what makes the retry safe.
+            logger.debug("could not retire menu answer %s (non-fatal)", answer_id,
+                         exc_info=True)
+        else:
+            logger.info("menu answer for %s applied from the poll tick (%s)",
+                        session_key, outcome)
+
+
 def drain_backfills(cfg: Config, client: Client) -> None:
     """Ship full transcript history — with ordinals, so the server upsert-fills the
     older rows around anything the live stream already persisted. Best-effort — a

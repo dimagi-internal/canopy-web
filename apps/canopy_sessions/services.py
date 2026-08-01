@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -999,12 +1000,20 @@ def answer_menu(*, session: Session, option: int | None) -> str:
     # is the runner whose session report delivered this very menu.
     if not binding.runner.is_reachable:
         return "unavailable"
+    # Record BEFORE publishing. The frame is the doorbell; this is the record the
+    # runner drains on its poll tick. Publishing alone is how an answer gets lost
+    # in silence when the control channel is down — see RunnerBinding.pending_answer.
+    answer_id = str(uuid.uuid4())
+    binding.pending_answer = {"id": answer_id, "option": option, "at": time.time()}
+    binding.save(update_fields=["pending_answer"])
+
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {
         "type": "runner.menu_answer",
         "session_id": str(session.id),
         "session_key": binding.session_key,
         "option": option,
+        "answer_id": answer_id,
     })
     return "sent"
 

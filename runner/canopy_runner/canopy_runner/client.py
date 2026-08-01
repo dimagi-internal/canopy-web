@@ -174,6 +174,18 @@ class Client:
         self._call("POST", f"/runners/{runner_id}/session-stream",
                    {"session_id": session_id, "events": events})
 
+    def sync_menu_answers(self, runner_id: str) -> list[dict]:
+        """Answers a human has given that we have not pressed yet."""
+        _, payload = self._call("GET", f"/runners/{runner_id}/menu-answers")
+        return (payload or {}).get("answers", [])
+
+    def post_menu_answer_result(self, runner_id: str, session_id: str,
+                                answer_id: str, outcome: str) -> None:
+        """Retire an answer we have acted on. Echoing the id back is what stops a
+        stale result clearing a NEWER answer — which would drop a real tap."""
+        self._call("POST", f"/runners/{runner_id}/menu-answer-result",
+                   {"session_id": session_id, "answer_id": answer_id, "outcome": outcome})
+
     def sync_backfills(self, runner_id: str) -> list[dict]:
         """Sessions the server asked this runner to ship full history for."""
         _, payload = self._call("GET", f"/runners/{runner_id}/backfills")

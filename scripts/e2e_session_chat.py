@@ -426,16 +426,17 @@ def main() -> int:
 
     print(f"canopy session-chat e2e · {args.base_url}")
     print(f"agent={args.agent} · pinned runner={runner_id} · nonce={ctx['nonce']}")
-    print("this spawns a REAL agent session and spends tokens.\n")
+    print("this spawns a REAL agent session and spends tokens.\n", flush=True)
 
     failed = None
     for name in steps:
         started = time.time()
+        print(f"  ....  {name:<24}", end="\r", flush=True)   # a step takes minutes
         try:
             detail = STEPS[name](ctx)
-            print(f"  PASS  {name:<24}{time.time()-started:7.1f}s  {detail}")
+            print(f"  PASS  {name:<24}{time.time()-started:7.1f}s  {detail}", flush=True)
         except Failure as exc:
-            print(f"  FAIL  {name:<24}{time.time()-started:7.1f}s  {exc}")
+            print(f"  FAIL  {name:<24}{time.time()-started:7.1f}s  {exc}", flush=True)
             failed = name
             break
         except KeyboardInterrupt:

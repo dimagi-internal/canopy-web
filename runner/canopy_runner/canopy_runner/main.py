@@ -456,6 +456,7 @@ def run_once(cfg: Config, client: Client) -> str:
     chat_pump.pump_chat_bridges(cfg, client)
     sessions.maybe_report_sessions(cfg, client)
     streams.sync_session_streams(cfg, client)
+    streams.drain_menu_answers(cfg, client)
     streams.drain_backfills(cfg, client)
 
     # THE PAUSE. One state, settable from either end: reconcile the local sentinel
