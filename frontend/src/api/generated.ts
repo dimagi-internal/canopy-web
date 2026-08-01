@@ -1434,7 +1434,7 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         /**
-         * Set an agent's turn mode (gated | auto)
+         * Set an agent's turn mode (manual | auto)
          * @description Flip the agent's runtime autonomy posture — the board-side switch the
          *     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
          *     A human decision made from the board; the agent-repo upsert (POST /) cannot
@@ -6046,10 +6046,10 @@ export interface components {
             readonly runner_preference?: readonly string[];
             /**
              * Turn Mode
-             * @default gated
+             * @default manual
              * @enum {string}
              */
-            readonly turn_mode: "gated" | "auto";
+            readonly turn_mode: "manual" | "auto";
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -6139,10 +6139,10 @@ export interface components {
             readonly runner_preference?: readonly string[];
             /**
              * Turn Mode
-             * @default gated
+             * @default manual
              * @enum {string}
              */
-            readonly turn_mode: "gated" | "auto";
+            readonly turn_mode: "manual" | "auto";
             /**
              * Sync Count
              * @default 0
@@ -6193,7 +6193,7 @@ export interface components {
              * Turn Mode
              * @enum {string}
              */
-            readonly turn_mode: "gated" | "auto";
+            readonly turn_mode: "manual" | "auto";
         };
         /**
          * AgentRuntimeOut

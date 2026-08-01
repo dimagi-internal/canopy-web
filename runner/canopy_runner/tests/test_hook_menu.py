@@ -338,12 +338,16 @@ NOTIFY = {"hook_event_name": "Notification", "cwd": CWD,
           "message": "Claude needs your permission to use Bash"}
 
 
+PROMPT = {"hook_event_name": "UserPromptSubmit", "cwd": CWD}
+
+
 def test_a_notification_reaches_the_phone_with_no_options():
     """A permission prompt or trust gate has no tool call behind it, so it exists
     only on the terminal — and reading that steals focus. Before this, those
     dialogs reached a phone only if somebody happened to be watching at the
     instant they appeared."""
     hl = listener()
+    hl.handle_payload(PROMPT)          # a turn is in flight
     hl.handle_payload(NOTIFY)
     menu = hl.pending_menu(*KEY)
     assert menu is not None
@@ -355,6 +359,7 @@ def test_a_notification_never_downgrades_a_real_menu():
     """Buttons that work must not be replaced by words that do not. An agent can
     emit a Notification while an AskUserQuestion is already up."""
     hl = listener()
+    hl.handle_payload(PROMPT)
     hl.handle_payload(ASK)
     hl.handle_payload(NOTIFY)
     menu = hl.pending_menu(*KEY)
@@ -365,6 +370,7 @@ def test_a_notification_never_downgrades_a_real_menu():
 def test_a_real_menu_replaces_a_notification():
     """The other direction is an upgrade and must go through."""
     hl = listener()
+    hl.handle_payload(PROMPT)
     hl.handle_payload(NOTIFY)
     hl.handle_payload(ASK)
     assert len(hl.pending_menu(*KEY)["options"]) == 2
@@ -372,6 +378,7 @@ def test_a_real_menu_replaces_a_notification():
 
 def test_the_turn_ending_retires_a_notification_too():
     hl = listener()
+    hl.handle_payload(PROMPT)
     hl.handle_payload(NOTIFY)
     hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})
     assert hl.pending_menu(*KEY) is None
@@ -444,3 +451,62 @@ def test_a_gone_session_is_told_apart_from_a_dead_box():
     finally:
         hooks.cdp_control = orig
     assert hooks.ANSWER_NOTES[hooks.NO_SESSION]
+
+
+def test_an_idle_prompt_is_not_somebody_waiting_on_you():
+    """`Notification` fires both when an agent stops MID-TURN to ask and when a
+    prompt simply sits idle after a turn ends. Counting the second put four
+    merely-idle sessions on the fleet's "waiting on you" list within minutes of
+    shipping this (labs, 2026-08-01), and a badge that counts every idle session
+    is a badge nobody reads."""
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})   # turn over
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_the_discriminator_is_turn_state_not_the_wording():
+    """The same message mid-turn IS a human being waited on. Parsing the text
+    would be guessing at strings Claude Code is free to change."""
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is not None
+
+
+def test_a_notification_with_no_turn_ever_seen_fails_closed():
+    """A runner that restarted mid-turn has no idea. Missing a real dialog costs
+    a menu; raising a false one costs the signal."""
+    hl = listener()
+    hl.handle_payload(NOTIFY)
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_notification_marker_does_not_survive_a_restart(tmp_path):
+    """It is a claim that a turn was in flight, and turn state is deliberately
+    not persisted — so after a restart nothing can still justify it, and nothing
+    can retire it either: the `Stop` that would belongs to a turn that ended
+    while the process was down. Observed on `spark`, stuck on the fleet's waiting
+    list reading "Claude is waiting for your input" with no way to clear it."""
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "m.json"
+    hl = listener(menu_store=MenuStore(path))
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(NOTIFY)
+    assert hl.pending_menu(*KEY) is not None
+
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is None
+
+
+def test_a_real_menu_still_survives_a_restart(tmp_path):
+    """The distinction that makes the drop above safe: a real menu describes a
+    dialog still drawn on a screen, and a tap verifies it there."""
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "m.json"
+    listener(menu_store=MenuStore(path)).handle_payload(ASK)
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is not None

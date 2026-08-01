@@ -20,14 +20,14 @@ afterEach(() => {
 
 describe('TurnModeToggle', () => {
   it('renders the initial mode as checked', () => {
-    render(<TurnModeToggle agentSlug="echo" initialMode="gated" />)
-    expect(checked('turn-mode-gated')).toBe('true')
+    render(<TurnModeToggle agentSlug="echo" initialMode="manual" />)
+    expect(checked('turn-mode-manual')).toBe('true')
     expect(checked('turn-mode-auto')).toBe('false')
   })
 
   it('flips the mode through the API on click', async () => {
     setAgentTurnMode.mockResolvedValue('auto')
-    render(<TurnModeToggle agentSlug="echo" initialMode="gated" />)
+    render(<TurnModeToggle agentSlug="echo" initialMode="manual" />)
     fireEvent.click(screen.getByTestId('turn-mode-auto'))
     await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'auto'))
     expect(checked('turn-mode-auto')).toBe('true')
@@ -35,10 +35,10 @@ describe('TurnModeToggle', () => {
 
   it('reverts and shows the error when the API rejects', async () => {
     setAgentTurnMode.mockRejectedValue(new Error('nope'))
-    render(<TurnModeToggle agentSlug="echo" initialMode="gated" />)
+    render(<TurnModeToggle agentSlug="echo" initialMode="manual" />)
     fireEvent.click(screen.getByTestId('turn-mode-auto'))
     await waitFor(() => expect(screen.getByText(/nope/)).toBeTruthy())
-    expect(checked('turn-mode-gated')).toBe('true')
+    expect(checked('turn-mode-manual')).toBe('true')
   })
 
   it('clicking the current mode is a no-op', () => {

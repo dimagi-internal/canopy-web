@@ -10,9 +10,9 @@ import { setAgentTurnMode, type AgentOut, type TurnMode } from '@/api/agents'
 // It lives INSIDE the card's <Link>, so every handler preventDefault +
 // stopPropagation — a tap on the chip must never also navigate.
 //
-// Asymmetric by design. gated -> auto hands an agent permission to send without
+// Asymmetric by design. manual -> auto hands an agent permission to send without
 // asking, so it takes a confirm (a fat-fingered tap on a phone must not put an
-// agent on the loose). auto -> gated only ever REMOVES permission, so it applies
+// agent on the loose). auto -> manual only ever REMOVES permission, so it applies
 // on first tap: never make the safe direction harder than the dangerous one.
 function TurnModeChip({ slug, mode }: { slug: string; mode: TurnMode }): JSX.Element {
   const [current, setCurrent] = useState<TurnMode>(mode)
@@ -23,7 +23,7 @@ function TurnModeChip({ slug, mode }: { slug: string; mode: TurnMode }): JSX.Ele
     e.preventDefault()
     e.stopPropagation()
     if (busy) return
-    const next: TurnMode = current === 'auto' ? 'gated' : 'auto'
+    const next: TurnMode = current === 'auto' ? 'manual' : 'auto'
     if (
       next === 'auto' &&
       !window.confirm(
@@ -55,11 +55,11 @@ function TurnModeChip({ slug, mode }: { slug: string; mode: TurnMode }): JSX.Ele
       onClick={(e) => void onTap(e)}
       disabled={busy}
       data-testid={`agent-mode-${slug}`}
-      aria-label={`${slug} turn mode: ${current}. Activate to switch to ${auto ? 'gated' : 'auto'}.`}
+      aria-label={`${slug} turn mode: ${current}. Activate to switch to ${auto ? 'manual' : 'auto'}.`}
       title={
         auto
           ? 'Auto — sends without waiting for you. Tap to require approval again.'
-          : 'Gated — outbound waits for your approval. Tap to allow unattended sending.'
+          : 'Manual — outbound waits for your approval. Tap to allow unattended sending.'
       }
       className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em] transition-colors disabled:opacity-50 ${
         auto
@@ -67,7 +67,7 @@ function TurnModeChip({ slug, mode }: { slug: string; mode: TurnMode }): JSX.Ele
           : 'border-border bg-muted/40 text-muted-foreground'
       }`}
     >
-      {failed ? 'Retry' : auto ? 'Auto' : 'Gated'}
+      {failed ? 'Retry' : auto ? 'Auto' : 'Manual'}
     </button>
   )
 }

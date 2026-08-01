@@ -164,7 +164,7 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
 
 
 @router.patch("/{slug}/turn-mode", response=AgentDetailOut,
-              summary="Set an agent's turn mode (gated | auto)")
+              summary="Set an agent's turn mode (manual | auto)")
 def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> AgentDetailOut:
     """Flip the agent's runtime autonomy posture — the board-side switch the
     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).

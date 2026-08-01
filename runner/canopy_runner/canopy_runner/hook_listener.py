@@ -85,6 +85,11 @@ class HookListener:
         # and the transcript will not carry the ask until it is answered. The
         # runner auto-updates itself, so restarts are routine, not rare.
         self._menu_store = menu_store
+        # Sessions with a turn in flight: added on `UserPromptSubmit`, dropped on
+        # `Stop`. This is what tells a real dialog apart from an idle prompt —
+        # see `_track_menu`. Deliberately NOT persisted: after a restart we
+        # genuinely do not know, and the safe answer there is silence.
+        self._in_turn: set[tuple[str, str]] = set()
         if menu_store is not None:
             try:
                 self._pending_menus.update(menu_store.load())
@@ -185,7 +190,31 @@ class HookListener:
             # better is already held: a real menu is strictly more useful, and
             # letting a notification overwrite one would replace buttons that work
             # with words that do not.
-            marker = None if (menu is not None or retire) else marker_from_hook(payload)
+            # Turn state first — a Notification's meaning depends on it.
+            event = payload.get("hook_event_name")
+            if event == "UserPromptSubmit":
+                self._in_turn.update(keys)
+            elif event == "Stop":
+                self._in_turn.difference_update(keys)
+
+            # A `Notification` fires for two different things: an agent stopping
+            # MID-TURN to ask a human, and a prompt simply sitting idle after a
+            # turn ends. Only the first is somebody waiting on you. Treating both
+            # as blocked put four merely-idle sessions on the fleet's "waiting on
+            # you" list within minutes of shipping it (labs, 2026-08-01) — and a
+            # badge that counts every idle session is a badge nobody reads.
+            #
+            # The discriminator is turn STATE, not the message text: an idle
+            # notification arrives after `Stop`, a real one between
+            # `UserPromptSubmit` and `Stop`. Parsing the wording would be
+            # guessing at strings Claude Code is free to change; this is observed.
+            #
+            # Fails closed. If we never saw the turn start (a runner restarted
+            # mid-turn), a real permission prompt is missed rather than a false
+            # "blocked" raised — silence costs a menu, noise costs the signal.
+            marker = None
+            if menu is None and not retire and any(k in self._in_turn for k in keys):
+                marker = marker_from_hook(payload)
             if menu is None and marker is None and not retire:
                 return
             for key in keys:
