@@ -60,9 +60,13 @@ class HookListener:
         self.nonce = nonce
         self._resolve_session = resolve_session
         self._forward = forward
-        # Injected: cwd -> (project, emdash task), the key the session report is
+        # Injected: cwd -> the (project, emdash task) keys the session report is
         # built on. Injected for the same reason `resolve_session` is — this
         # module stays testable with no emdash and no worktree on disk.
+        #
+        # Note it is NOT `resolve_session`: that one answers with a canopy session
+        # id and can only do so for a session a viewer is attached to, which is
+        # precisely the case a blocked-agent menu does not need.
         self._resolve_task = resolve_task
         # The live dialog per (project, task), captured from `PreToolUse`.
         # Written from listener threads and read from the report thread; dict
@@ -154,14 +158,17 @@ class HookListener:
         if self._resolve_task is None:
             return
         try:
-            key = self._resolve_task(payload.get("cwd") or "")
-            if not key or not key[1]:
+            keys = self._resolve_task(payload.get("cwd") or "")
+            if not keys:
                 return
             menu = menu_from_hook(payload)
-            if menu is not None:
-                self._pending_menus[key] = menu
-            elif hook_retires_menu(payload):
-                self._pending_menus.pop(key, None)
+            if menu is None and not hook_retires_menu(payload):
+                return
+            for key in keys:
+                if menu is not None:
+                    self._pending_menus[key] = menu
+                else:
+                    self._pending_menus.pop(key, None)
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("menu tracking failed (non-fatal)", exc_info=True)
 
