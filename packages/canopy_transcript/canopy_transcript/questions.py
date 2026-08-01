@@ -52,7 +52,26 @@ a wrong keypress.
 """
 from __future__ import annotations
 
+import time
+
 ASK_TOOL = "AskUserQuestion"
+
+
+def stamp_observed(menu: dict | None, *, now=None) -> dict | None:
+    """Mark WHEN this dialog was seen. Every producer stamps; nothing else does.
+
+    Without it a menu is undatable, and a client cannot tell one seen three
+    seconds ago from one seen forty minutes ago — so the only way to discover a
+    stale dialog is to tap it and be refused. That is the discovery path this
+    whole surface exists to remove.
+
+    Epoch seconds rather than an ISO string: the reader is arithmetic ("how old
+    is this?"), the producers are a Django-free library and a runner, and there
+    is no timezone in the question.
+    """
+    if menu is None:
+        return None
+    return {**menu, "observed_at": (now if now is not None else time.time())}
 
 # The menu the client renders is one shape whichever half produced it. Keep this
 # in lockstep with `canopy_runner.hooks.read_hook_menu_from`.
@@ -166,7 +185,7 @@ def menu_from_hook(payload) -> dict | None:
     menu = _menu_from_input(payload.get("tool_input"))
     if menu is not None:
         menu["source"] = "hook"
-    return menu
+    return stamp_observed(menu)
 
 
 # What Claude Code calls the hook that means "I want a human". It carries a
@@ -202,14 +221,14 @@ def marker_from_hook(payload) -> dict | None:
         return None
     message = payload.get("message")
     message = message.strip() if isinstance(message, str) else ""
-    return {
+    return stamp_observed({
         "question": message or "This session is waiting on you.",
         "title": "Waiting on you",
         "body": "",
         "selected": None,
         "options": [],
         "source": "notification",
-    }
+    })
 
 
 def hook_retires_menu(payload) -> bool:
@@ -265,5 +284,5 @@ def pending_question(records) -> dict | None:
             continue
         menu = _menu_from_input(payload)
         if menu is not None:
-            return menu
+            return stamp_observed(menu)
     return None

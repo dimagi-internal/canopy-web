@@ -43,6 +43,7 @@ from canopy_transcript import (
 # Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
 # the runner's CDP/emdash imports, which is what lets it unit-test standalone.
 ANSWERED = "answered"
+NO_DIALOG = "no_dialog"
 
 logger = logging.getLogger("canopy_runner.hooks")
 
@@ -232,27 +233,45 @@ class HookListener:
         """The dialog this session is waiting on, or None."""
         return self._pending_menus.get((project or "", task or ""))
 
-    def note_answer(self, keys, outcome: str, note: str = "") -> None:
-        """Record what became of a human's tap, so the next report carries it.
+    def note_answer(self, keys, outcome: str, note: str = "", screen=None) -> None:
+        """Reconcile the cached menu against what the terminal actually showed.
 
-        On success the menu is dropped immediately rather than waiting for the
-        agent's `PostToolUse`: the dialog is gone the moment the key lands, and
-        leaving it up for another report cycle invites a second tap at a dialog
-        that has already moved on.
+        **The rule, and it is the whole state model in one line:** a tap always
+        reconciles the cache to the authority. The dialog lives on a terminal;
+        everything else — this dict, the store, `RunnerBinding.pending_question`,
+        the phone — is a copy. The tap is the one moment both are in hand, so it
+        is where they are made to agree.
 
-        On a refusal the menu STAYS and gains `answer_error`. That pairing is the
-        point — the phone shows the same buttons plus the reason they did not
-        work, instead of the silence that made a correct refusal look like a dead
-        button.
+            could we read the screen?
+              yes -> the screen wins. Clear if it showed nothing, REPLACE if it
+                     showed a different dialog. Never keep a cache the authority
+                     has just contradicted.
+              no  -> keep the cache and say why we could not check.
+
+        That is what makes a refusal useful rather than merely honest: tapping a
+        dialog somebody already answered removes it from your phone instead of
+        leaving the buttons sitting there, and tapping one that CHANGED shows you
+        what it changed to, so the next tap is against truth.
+
+        `answer_error` therefore only ever rides a menu we are keeping — the
+        outcomes where we could not consult the screen. A cleared menu carries no
+        note by construction: there is no object left to hang it on, and the
+        client knows it just tapped.
         """
         for key in keys or ():
-            if outcome == ANSWERED:
+            if outcome in (ANSWERED, NO_DIALOG):
+                # ANSWERED: the key landed, the dialog is gone. NO_DIALOG: the
+                # screen says there is nothing there — which is authoritative,
+                # so the cache is wrong and goes.
                 self._pending_menus.pop(key, None)
-                continue
-            menu = self._pending_menus.get(key)
-            if menu is not None:
-                self._pending_menus[key] = {**menu, "answer_error": outcome,
-                                            "answer_note": note}
+            elif screen is not None:
+                # The screen showed a DIFFERENT dialog. Show that one.
+                self._pending_menus[key] = {**screen, "answer_note": note}
+            else:
+                menu = self._pending_menus.get(key)
+                if menu is not None:
+                    self._pending_menus[key] = {**menu, "answer_error": outcome,
+                                                "answer_note": note}
         self._persist()
 
     def _persist(self) -> None:

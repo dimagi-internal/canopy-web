@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef} from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ChatPanel,
@@ -520,11 +520,18 @@ export function ChatPage() {
   // against a dialog that is already gone.
   const [answering, setAnswering] = useState(false)
   const [answerError, setAnswerError] = useState('')
+  const answeredAt = useRef(0)
   const onAnswerMenu = useCallback(
     async (option: number | null) => {
       if (!id) return
       setAnswering(true)
       setAnswerError('')
+      // Remember what we were looking at: if the menu DISAPPEARS right after this
+      // tap, the runner reconciled it away — either the key landed, or the screen
+      // said the dialog was already gone. A cleared menu carries no note (there
+      // is no object left to hang one on), so the transient explanation belongs
+      // here, where we know a tap just happened.
+      answeredAt.current = Date.now()
       try {
         const res = await answerMenu(id, option)
         if (!res.ok) {
@@ -544,6 +551,22 @@ export function ChatPage() {
     },
     [id],
   )
+
+  // The reconciliation rule, client side: the runner clears a menu both when the
+  // key LANDED and when the screen turned out to have no dialog. Neither leaves
+  // a note on the server (the object is gone), and neither needs one — except in
+  // the second case, where nothing visibly happened and silence would read as
+  // the button failing again. We know a tap just happened, so we say it here.
+  const [vanishedNote, setVanishedNote] = useState('')
+  const hadMenu = useRef(false)
+  useEffect(() => {
+    const has = Boolean(socket.state.menu)
+    if (hadMenu.current && !has && Date.now() - answeredAt.current < 30_000) {
+      setVanishedNote('That dialog is gone — either your answer landed, or it had already been answered.')
+    }
+    if (has) setVanishedNote('')
+    hadMenu.current = has
+  }, [socket.state.menu])
 
   // undefined = no hook has reported for this session yet, so defer to the
   // server's coarser flag rather than asserting idle.
@@ -674,6 +697,10 @@ export function ChatPage() {
                 error={answerError}
                 onAnswer={onAnswerMenu}
               />
+            ) : vanishedNote ? (
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-muted-foreground">
+                {vanishedNote}
+              </div>
             ) : boundOffline ? (
               <PlacementBanner
                 runnerName={meta?.runner_name ?? ''}

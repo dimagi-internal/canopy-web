@@ -91,6 +91,10 @@ export interface SessionMenu {
   /** Carried across a runner restart rather than observed this process. Nothing
    *  should branch on it — a tap verifies against the real screen either way. */
   restored?: boolean;
+  /** Epoch seconds when a producer last SAW this dialog. The dialog lives on a
+   *  terminal; this object is a copy, and without an age the only way to find
+   *  out the copy is stale is to tap it and be refused. */
+  observed_at?: number;
 }
 
 export interface SessionState {

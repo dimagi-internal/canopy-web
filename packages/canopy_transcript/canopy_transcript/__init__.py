@@ -28,6 +28,7 @@ from .questions import (
     marker_from_hook,
     menu_from_hook,
     pending_question,
+    stamp_observed,
 )
 from .records import read_records
 from .rows import (
@@ -50,7 +51,7 @@ from .tail import TailReader
 __all__ = [
     "ACTIVITY_EVENTS", "ASK_TOOL", "BLOCK_STRIDE", "FORWARDED_EVENTS",
     "STATUS_COMPLETE", "STATUS_PENDING", "pending_question", "hook_retires_menu",
-    "menu_from_hook", "marker_from_hook",
+    "menu_from_hook", "marker_from_hook", "stamp_observed",
     "SYSTEM_NOISE_PREFIXES", "is_system_noise",
     "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
     "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "assistant_text", "chunk_raw_lines",
