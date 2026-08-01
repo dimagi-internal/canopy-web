@@ -171,7 +171,7 @@ def hook_project_task_keys(cwd: str, *, home: Path | None = None) -> list[tuple[
     return [(project, c) for c in transcript_core.emdash_task_candidates(task) if c]
 
 
-def note_answer_outcome(session_key: str, outcome: str) -> None:
+def note_answer_outcome(session_key: str, outcome: str, screen=None) -> None:
     """Record a tap's outcome against the menu it was aimed at.
 
     Keyed by emdash task name across every project, because a `menu_answer` frame
@@ -185,7 +185,7 @@ def note_answer_outcome(session_key: str, outcome: str) -> None:
         return
     try:
         keys = [k for k in listener._pending_menus if k[1] == session_key]
-        listener.note_answer(keys, outcome, ANSWER_NOTES.get(outcome, ""))
+        listener.note_answer(keys, outcome, ANSWER_NOTES.get(outcome, ""), screen=screen)
     except Exception:  # noqa: BLE001 — never cost the wake listener its socket
         logger.debug("could not record the answer outcome for %s", session_key, exc_info=True)
 
@@ -259,13 +259,7 @@ def read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
     found = menu.find_menu(cdp.read_terminal(task, port=cdp_port))
     if found is None:
         return None
-    return {
-        "question": found.question,
-        "title": found.title,
-        "body": found.body,
-        "selected": found.selected,
-        "options": [{"number": o.number, "label": o.label} for o in found.options],
-    }
+    return _menu_dict(found, source="screen")
 
 
 # What became of a human's tap. Every one of these is reported back rather than
@@ -293,8 +287,24 @@ ANSWER_NOTES = {
 }
 
 
-def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> str:
-    """Press a human's answer into `session_key`'s terminal. Returns an outcome.
+def _menu_dict(found, *, source: str) -> dict:
+    """A parsed screen dialog as the one shape every producer emits."""
+    return transcript_core.stamp_observed({
+        "question": found.question,
+        "title": found.title,
+        "body": found.body,
+        "selected": found.selected,
+        "options": [{"number": o.number, "label": o.label} for o in found.options],
+        "source": source,
+    })
+
+
+def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222):
+    """Press a human's answer into `session_key`'s terminal.
+
+    Returns `(outcome, screen)` — the verdict, and what the terminal ACTUALLY
+    showed when we looked (a menu dict, or None for "no dialog", or None when we
+    could not look at all). The caller reconciles the cached menu against it.
 
     Re-reads the screen FIRST and refuses an option that is not on it. A menu can
     go stale between the phone rendering it and a thumb reaching it — and a
@@ -314,16 +324,16 @@ def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> 
         lambda: cdp.read_terminal(session_key, port=cdp_port))
     if current is None:
         logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
-        return NO_DIALOG
+        return NO_DIALOG, None
     number = None if option is None else int(option)
     if not current.allows(number):
         logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
                        number, session_key, len(current.options))
-        return NOT_ON_MENU
+        return NOT_ON_MENU, _menu_dict(current, source="screen")
     cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port)
     logger.info("answered the dialog on %s with %s", session_key,
                 "Esc" if number is None else f"option {number}")
-    return ANSWERED
+    return ANSWERED, None
 
 
 def read_hook_menu(cwd: str, *, cdp_port: int):
@@ -336,7 +346,7 @@ def read_hook_menu(cwd: str, *, cdp_port: int):
     return read_hook_menu_from(cdp_control, hook_task_name(cwd), cdp_port=cdp_port)
 
 
-def answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> str:
+def answer_menu(session_key: str, option, *, cdp_port: int = 9222):
     """`answer_menu_with` bound to real CDP, with transport failures classified.
 
     Never raises: this runs on the wake-listener thread, which also carries wake
@@ -364,7 +374,8 @@ def answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> str:
         else:
             outcome = UNREACHABLE
         logger.warning("menu answer for %s failed (%s)", session_key, outcome, exc_info=True)
-        return outcome
+        # No screen: we never got to look, which is what keeps the cached menu.
+        return outcome, None
 
 
 

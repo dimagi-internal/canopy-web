@@ -185,7 +185,8 @@ def test_the_shape_matches_the_screen_reader_s():
     grow two readers (the rule execute.py's _blocking_dialog_note already
     follows)."""
     menu = ct.pending_question([_ask()])
-    assert set(menu) == {"question", "title", "body", "selected", "options", "source"}
+    assert set(menu) == {"question", "title", "body", "selected", "options", "source",
+                         "observed_at"}
     assert menu["selected"] is None      # a transcript cannot see the cursor
 
 
@@ -215,8 +216,9 @@ def test_a_hook_produces_the_same_menu_the_transcript_would_have():
         ]}},
     ])
     assert from_hook is not None and from_transcript is not None
-    assert {k: v for k, v in from_hook.items() if k != "source"} == \
-           {k: v for k, v in from_transcript.items() if k != "source"}
+    skip = {"source", "observed_at"}   # when and by whom, not what
+    assert {k: v for k, v in from_hook.items() if k not in skip} == \
+           {k: v for k, v in from_transcript.items() if k not in skip}
 
 
 def test_the_hook_menu_names_its_source():
@@ -281,3 +283,20 @@ def test_only_a_notification_makes_a_marker():
     assert ct.marker_from_hook(PRE_TOOL_USE) is None
     assert ct.marker_from_hook({"hook_event_name": "Stop"}) is None
     assert ct.marker_from_hook(None) is None
+
+
+def test_every_producer_stamps_when_it_looked():
+    """Without this a menu is undatable, so the only way to find out a dialog is
+    stale is to tap it and be refused — the discovery path this surface exists to
+    remove. All three producers stamp; nothing downstream has to guess."""
+    assert ct.menu_from_hook(PRE_TOOL_USE)["observed_at"] > 0
+    assert ct.marker_from_hook(NOTIFY)["observed_at"] > 0
+    assert ct.pending_question([
+        {"message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "AskUserQuestion", "input": SPARK_ASK}]}},
+    ])["observed_at"] > 0
+
+
+def test_stamping_is_injectable_so_ages_are_testable():
+    assert ct.stamp_observed({"a": 1}, now=123.0) == {"a": 1, "observed_at": 123.0}
+    assert ct.stamp_observed(None) is None

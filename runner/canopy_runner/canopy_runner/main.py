@@ -709,9 +709,9 @@ def make_control_handler(cfg: Config, waker):
             # nothing, so nothing would mark it changed, and the answer to "did my
             # tap work?" would wait out the whole heartbeat window.
             session_key = str(msg["session_key"])
-            outcome = hooks.answer_menu(session_key, msg.get("option"),
-                                        cdp_port=cfg.cdp_port)
-            hooks.note_answer_outcome(session_key, outcome)
+            outcome, screen = hooks.answer_menu(session_key, msg.get("option"),
+                                                cdp_port=cfg.cdp_port)
+            hooks.note_answer_outcome(session_key, outcome, screen)
             sessions.request_report_now()
         elif msg.get("type") == "close_session" and msg.get("session_key"):
             # A human closed this session from the web. Runs on the wake-listener

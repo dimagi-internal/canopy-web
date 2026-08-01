@@ -5,6 +5,22 @@ export interface MenuPromptProps {
   busy?: boolean;
   error?: string;
   onAnswer: (option: number | null) => void;
+  /** Injectable for tests; defaults to the wall clock. */
+  now?: number;
+}
+
+/** How old a dialog may be before we say so. The runner re-reports every ~10s,
+ *  so anything past a couple of minutes is not merely lagging — it is a dialog
+ *  nobody has confirmed lately, and the honest thing is to show its age rather
+ *  than let a confident-looking button be the way you discover it. */
+const STALE_AFTER_MS = 120_000;
+
+export function menuAge(menu: SessionMenu, now: number): string {
+  if (!menu.observed_at) return "";
+  const ms = now - menu.observed_at * 1000;
+  if (ms < STALE_AFTER_MS) return "";
+  const mins = Math.round(ms / 60_000);
+  return mins < 60 ? `last seen ${mins}m ago` : `last seen ${Math.round(mins / 60)}h ago`;
 }
 
 /**
@@ -34,7 +50,7 @@ export interface MenuPromptProps {
  * somebody to choose blind, which is the same failure as showing no menu, only
  * quieter.
  */
-export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptProps) {
+export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now() }: MenuPromptProps) {
   const described = menu.options.some((o) => o.description);
   // A dialog Claude Code drew with no tool call behind it — a permission prompt,
   // a trust gate. The `Notification` hook says a human is wanted and carries a
@@ -46,11 +62,15 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
   // before pressing anything, and a permission prompt parses there — so the
   // refuse button below is an action, not a placeholder.
   const optionless = menu.options.length === 0;
+  const age = menuAge(menu, now);
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
       <div className="flex items-center gap-1.5 font-medium text-warning">
         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
         {menu.title || "Waiting on you"}
+        {age ? (
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground">{age}</span>
+        ) : null}
       </div>
       {menu.body ? (
         <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-[12px] text-foreground-secondary">

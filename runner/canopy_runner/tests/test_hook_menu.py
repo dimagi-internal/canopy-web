@@ -222,9 +222,10 @@ def test_a_successful_answer_drops_the_menu_at_once():
     assert hl.pending_menu(*KEY) is None
 
 
-def test_a_refused_answer_keeps_the_menu_and_says_why():
-    """The pairing is the point — the same buttons, plus the reason they did not
-    work. Dropping the menu here would leave a phone with nothing to retry."""
+def test_a_refusal_we_could_not_verify_keeps_the_menu_and_says_why():
+    """`wrong_pane` means we never got to look at the screen, so the cache is not
+    contradicted — it stays, with the reason beside it. Dropping it here would
+    leave a phone with nothing to retry and nothing to explain the failure."""
     from canopy_runner import hooks
 
     hl = listener()
@@ -256,16 +257,19 @@ def test_answering_reports_the_outcome_instead_of_raising():
 
     class NoDialog:
         def read_terminal(self, *a, **k): return "just output\nnothing here"
-    assert hooks.answer_menu_with(NoDialog(), "t", 1) == hooks.NO_DIALOG
+    assert hooks.answer_menu_with(NoDialog(), "t", 1) == (hooks.NO_DIALOG, None)
 
     class Real:
         sent = None
         def read_terminal(self, *a, **k): return DIALOG
         def send_keys(self, task, keys, **k): Real.sent = keys
     cdp = Real()
-    assert hooks.answer_menu_with(cdp, "t", 9) == hooks.NOT_ON_MENU   # not on the menu
+    outcome, screen = hooks.answer_menu_with(cdp, "t", 9)             # not on the menu
+    assert outcome == hooks.NOT_ON_MENU
+    assert screen is not None, "a rejected tap must carry back what IS on screen"
+    assert screen["options"][0]["label"] == "Yes, I trust this folder"
     assert Real.sent is None, "a rejected option must never reach the terminal"
-    assert hooks.answer_menu_with(cdp, "t", 1) == hooks.ANSWERED
+    assert hooks.answer_menu_with(cdp, "t", 1) == (hooks.ANSWERED, None)
     assert Real.sent == ["1", "\r"]
 
 
@@ -284,9 +288,9 @@ def test_a_wrong_pane_is_told_apart_from_a_dead_runner():
     orig = hooks.cdp_control
     try:
         hooks.cdp_control = Boom()
-        assert hooks.answer_menu("t", 1) == hooks.WRONG_PANE
+        assert hooks.answer_menu("t", 1) == (hooks.WRONG_PANE, None)
         hooks.cdp_control = Dead()
-        assert hooks.answer_menu("t", 1) == hooks.UNREACHABLE
+        assert hooks.answer_menu("t", 1) == (hooks.UNREACHABLE, None)
     finally:
         hooks.cdp_control = orig
 
@@ -447,7 +451,7 @@ def test_a_gone_session_is_told_apart_from_a_dead_box():
     orig = hooks.cdp_control
     try:
         hooks.cdp_control = Gone()
-        assert hooks.answer_menu("t", 1) == hooks.NO_SESSION
+        assert hooks.answer_menu("t", 1) == (hooks.NO_SESSION, None)
     finally:
         hooks.cdp_control = orig
     assert hooks.ANSWER_NOTES[hooks.NO_SESSION]
@@ -510,3 +514,51 @@ def test_a_real_menu_still_survives_a_restart(tmp_path):
     path = tmp_path / "m.json"
     listener(menu_store=MenuStore(path)).handle_payload(ASK)
     assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is not None
+
+
+# --- the reconciliation rule ----------------------------------------------
+#
+# A tap is the one moment the cache and the authority (the terminal) are both in
+# hand, so it is where they are made to agree. Could we read the screen? Then the
+# screen wins — clear, or replace. Could we not? Keep the cache and say why.
+
+def test_tapping_a_dialog_that_is_already_gone_clears_it():
+    """The screen is authoritative and it says there is nothing there. Keeping
+    the buttons would leave a phone showing something the runner has just
+    disproven — which is the same bug class this whole path exists to end."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.note_answer([KEY], hooks.NO_DIALOG, hooks.ANSWER_NOTES[hooks.NO_DIALOG])
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_tapping_a_dialog_that_CHANGED_shows_you_the_new_one():
+    """Refusing and leaving the stale dialog up guarantees the next tap is stale
+    too. Replacing it makes the tap self-correcting."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    hl.handle_payload(ASK)
+    fresh = {"question": "Something else entirely?", "title": "", "body": "",
+             "selected": 1, "source": "screen",
+             "options": [{"number": 1, "label": "Keep going"}]}
+    hl.note_answer([KEY], hooks.NOT_ON_MENU, "changed", screen=fresh)
+    now = hl.pending_menu(*KEY)
+    assert now["question"] == "Something else entirely?"
+    assert [o["label"] for o in now["options"]] == ["Keep going"]
+    assert now["answer_note"] == "changed"
+    assert "answer_error" not in now, "a menu we can act on is not an error state"
+
+
+def test_a_cleared_menu_carries_no_error_to_hang_a_note_on():
+    """Deliberate: there is no object left. The client knows it just tapped, so
+    the transient explanation belongs there rather than as server state nobody
+    can retire."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.note_answer([KEY], hooks.ANSWERED, "")
+    assert hl.pending_menu(*KEY) is None
