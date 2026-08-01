@@ -139,6 +139,37 @@ def resolve_hook_session(cwd: str) -> str:
     return ""
 
 
+def hook_project_task(cwd: str) -> tuple[str, str]:
+    """This cwd as (project, emdash task), or ("", "") — the session report's key.
+
+    Deliberately NOT keyed on the task alone: emdash task names are not unique
+    across projects (the server carries the same warning), and a menu attached to
+    the wrong session would put someone else's buttons on your phone.
+    """
+    if not cwd:
+        return ("", "")
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
+    if parsed is None:
+        return ("", "")
+    project, task = parsed
+    for candidate in transcript_core.emdash_task_candidates(task):
+        if _hook_sessions.get((project, candidate)):
+            return (project, candidate)
+    return ("", "")
+
+
+def pending_hook_menu(project: str, task: str):
+    """The dialog this session is waiting on, per the hook listener, or None."""
+    listener = _hook_listener
+    if listener is None:
+        return None
+    try:
+        return listener.pending_menu(project, task)
+    except Exception:  # noqa: BLE001 — this runs inside the liveness report
+        logger.debug("pending hook menu read failed for %s/%s", project, task, exc_info=True)
+        return None
+
+
 def hook_task_name(cwd: str) -> str:
     """The emdash task backing this cwd, or "" — the handle CDP drives by."""
     if not cwd:
@@ -256,6 +287,10 @@ def start_hook_listener(cfg: Config, client: Client):
         port=cfg.hook_port, nonce=nonce,
         resolve_session=resolve_hook_session,
         forward=lambda: cfg.forward_sessions,
+        # NOT read_menu (see above) — this is the cheap half: `PreToolUse` for
+        # AskUserQuestion already carries the whole dialog, so the listener can
+        # hold it for the session report without touching emdash at all.
+        resolve_task=hook_project_task,
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

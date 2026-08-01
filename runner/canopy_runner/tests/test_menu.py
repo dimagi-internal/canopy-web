@@ -217,3 +217,96 @@ def test_a_rule_between_options_does_not_truncate_the_menu():
     """The TUI drew a box rule between options 3 and 4. Stopping at it would hide
     a real choice from the phone."""
     assert len(find_menu(ASK_USER_QUESTION).options) == 4
+
+
+# Captured live 2026-08-01, over CDP, off a session that had been blocked for
+# 1h20m with the phone showing nothing. Six options each carrying a description
+# overflowed the pane, so the footer — the thing the parser required — was never
+# drawn: the frame simply ends on the last option. Verbatim, including the
+# trailing space after the title and the wrapped description lines.
+FOOTERLESS = """\
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Scope
+
+How far do you want to take this?
+
+❯ 1. Both, bulk_create first (Recommended)
+     Fix the write path (chunked bulk_create + chunked POST), then make the runner persist every session eagerly so the server's copy is
+     complete. 'Load full session' becomes a pure server read. Deletes 4 of the 5 audit findings.
+  2. Fast only — fix the write path
+     Chunked bulk_create + chunked backfill POST + client polls instead of guessing 1200ms + laptop runner handles the 'stream' frame. Keeps
+     backfill on-demand; server stays at ~16% until asked. Much smaller diff.
+  3. Accurate only — eager persist
+     Runner persists every session it tracks, so the server converges to 100%.
+  4. Just the audit for now
+     Stop here. I write this up as an issue or spec against canopy-web and you decide later.
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+"""
+
+
+def test_a_dialog_whose_footer_fell_off_the_frame_still_parses():
+    """The regression this file exists to prevent, found in production twice on
+    2026-08-01: a real dialog, unanswerable from a phone because the pane was too
+    short to draw the footer the parser demanded."""
+    menu = find_menu(FOOTERLESS)
+    assert menu is not None
+    assert menu.question == "How far do you want to take this?"
+    assert menu.selected == 1
+    assert [o.number for o in menu.options] == [1, 2, 3, 4, 5, 6]
+    assert menu.options[3].label == "Just the audit for now"
+
+
+def test_a_footerless_dialog_needs_the_selection_cursor():
+    """The cursor is what separates the frame above from an agent's numbered
+    list. Without it, a footerless block of numbers is prose."""
+    assert find_menu(FOOTERLESS.replace("❯ 1.", "  1.")) is None
+
+
+def test_a_menu_an_agent_QUOTED_is_not_a_menu():
+    """This session pasted a live dialog — cursor and all — into a written
+    report. A dialog is drawn where the composer would be, so nothing follows a
+    real one; prose beneath it is what gives the quote away."""
+    quoted = FOOTERLESS + "\n⏺ That is the dialog it is stuck on. Two options:\n"
+    assert find_menu(quoted) is None
+
+
+# The same bug's other half, captured live 2026-08-01 from a session blocked for
+# 15 minutes. The question ran past the 140-column pane, so the TUI word-wrapped
+# it — and "the last line ending in '?'" is then only its tail. Kept verbatim,
+# trailing space and all: that space IS the wrap, and the parser keys on it.
+WRAPPED_QUESTION = """\
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Unstick ada 
+
+Ada is blocked on "Where does the auto-mode switch live, and what's its scope?" — the wire is working right now, so which answer should I 
+press into that session?
+
+❯ 1. Option 1 — Agent-repo config
+  2. Option 3 — Both: config + override
+  3. Option 2 — Per-dispatch flag
+  4. Escape — cancel the dialog
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+"""
+
+
+def test_a_word_wrapped_question_is_rejoined():
+    """The phone was shown "press into that session?" — grammatical, useless, and
+    indistinguishable from a genuinely short question."""
+    menu = find_menu(WRAPPED_QUESTION)
+    assert menu is not None
+    assert menu.question.startswith("Ada is blocked on")
+    assert menu.question.endswith("so which answer should I press into that session?")
+    assert menu.title == "\u2610 Unstick ada"
+
+
+def test_a_subject_line_is_never_swallowed_into_the_question():
+    """A permission dialog's subject sits directly above its question and is a
+    different thing. Only a line that ran to the frame's width and broke at a
+    space is a continuation — this one is short, so it stays the subject."""
+    menu = find_menu(PERMISSION)
+    assert menu.question == "Do you want to proceed?"
+    assert "Delete target.txt and verify" not in menu.question

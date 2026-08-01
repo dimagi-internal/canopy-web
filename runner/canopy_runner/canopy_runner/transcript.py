@@ -389,6 +389,7 @@ def attach_pending_questions(
     *,
     home: Path | None = None,
     claude_home: Path | None = None,
+    hook_menu_for=None,
 ) -> None:
     """Fill `question` on EVERY reported session, in place. Best-effort.
 
@@ -404,7 +405,17 @@ def attach_pending_questions(
     home = home or Path.home()
     claude_home = claude_home or (home / ".claude" / "projects")
     for s in sessions:
-        s["question"] = pending_question_for(
-            s.get("project", ""), s.get("emdash_task", ""),
-            home=home, claude_home=claude_home,
+        project, task = s.get("project", ""), s.get("emdash_task", "")
+        question = pending_question_for(
+            project, task, home=home, claude_home=claude_home,
         )
+        # The transcript is the WEAKER source here and has to be, because Claude
+        # Code writes the ask's record only once it is answered — so it reports
+        # dialogs that are over and never one that is waiting. The hook fires
+        # when the ask STARTS, which is the only moment worth reporting; it is
+        # consulted second purely so the durable file wins on a session whose
+        # hooks were never installed. `None` still ships (see the docstring):
+        # that is what retires a menu somebody answered at the laptop.
+        if question is None and hook_menu_for is not None:
+            question = hook_menu_for(project, task)
+        s["question"] = question
