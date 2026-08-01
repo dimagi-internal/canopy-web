@@ -24,6 +24,9 @@ from .schedule_services import serialize_schedule
 from .schemas import (
     BackfillSyncOut,
     BackfillWriteOut,
+    MenuAnswerResultIn,
+    MenuAnswerResultOut,
+    MenuAnswerSyncOut,
     DrillIn,
     DrillReportIn,
     EmdashSessionOut,
@@ -799,6 +802,60 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
          "project": b.session.emdash_project}
         for b in bindings
     ]}
+
+
+@router.get("/runners/{runner_id}/menu-answers", response=MenuAnswerSyncOut)
+def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
+    """Answers a human has given that this runner has not pressed yet.
+
+    The WS control frame is the fast path; this is the one that makes the answer
+    SURVIVE. A frame published while the runner's control channel is down goes to
+    a Channels group with no consumer and is discarded — and because the runner
+    still heartbeats over REST it reads ONLINE the whole time, so the API answers
+    `ok:true` and nothing records the loss. Measured on labs 2026-08-01: an answer
+    sent at 10:50 never reached the runner, between reconnects at 10:16 and 10:58.
+
+    Drained on the poll tick the runner already runs, same as `/backfills`.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+
+    runner = _runner_or_404(request, runner_id)
+    bindings = (
+        RunnerBinding.objects.select_related("session")
+        .filter(runner=runner)
+        .exclude(pending_answer__isnull=True)
+        .exclude(session_key="")
+    )
+    return {"answers": [
+        {"session_id": str(b.session_id), "session_key": b.session_key,
+         "answer_id": (b.pending_answer or {}).get("id") or "",
+         "option": (b.pending_answer or {}).get("option")}
+        for b in bindings
+    ]}
+
+
+@router.post("/runners/{runner_id}/menu-answer-result", response=MenuAnswerResultOut)
+def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: MenuAnswerResultIn):
+    """The runner reports what became of an answer, which retires it.
+
+    Matched on `answer_id`: applying an answer twice means a SECOND keystroke into
+    a session that has already moved on, so a result for an answer that has since
+    been replaced must NOT clear the newer one.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+
+    runner = _runner_or_404(request, runner_id)
+    binding = RunnerBinding.objects.filter(
+        session_id=payload.session_id, runner=runner).first()
+    if binding is None:
+        return {"ok": False}
+    current = (binding.pending_answer or {}).get("id")
+    if not current or current != payload.answer_id:
+        return {"ok": False}
+    binding.pending_answer = None
+    binding.save(update_fields=["pending_answer"])
+    return {"ok": True}
 
 
 @router.post("/runners/{runner_id}/session-backfill", response=BackfillWriteOut)

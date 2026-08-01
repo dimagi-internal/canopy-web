@@ -228,6 +228,30 @@ class RunnerBinding(models.Model):
     # session on a particular box. A session with no binding has no screen to be
     # blocked on, and one whose binding moved is answered on the new runner.
     pending_question = models.JSONField(null=True, blank=True, default=None)
+
+    # A human's answer, waiting for the runner to press it.
+    #
+    # `{"id": "<uuid>", "option": <int|null>, "at": <epoch>}`.
+    #
+    # The answer used to exist ONLY as a WebSocket control frame. When that
+    # channel is down the frame lands in a Channels group with no consumer and is
+    # discarded — while the runner still heartbeats over REST, so it reads ONLINE,
+    # `is_reachable` is true, and the API answers `ok:true`. Nothing anywhere
+    # records that the tap was lost. Measured on labs 2026-08-01: the control
+    # channel reconnected at 10:16 and again at 10:58, and an answer sent at 10:50
+    # never reached the runner at all — no keystroke, no refusal, no log line.
+    # That is the purest form of "clicking does nothing".
+    #
+    # So the frame becomes the doorbell and this is the record: the runner drains
+    # it on the poll tick it already runs, exactly as it does for backfills and
+    # streams. A dropped channel now costs one tick of latency instead of the
+    # answer. Same "push is the doorbell, the timer is the auditor" shape as
+    # inbound mail and runner updates.
+    #
+    # Carries an `id` because applying an answer twice means a SECOND keystroke
+    # into a session that has moved on: the runner echoes the id back and the
+    # server clears only that one.
+    pending_answer = models.JSONField(null=True, blank=True, default=None)
     summary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=40, blank=True, default="")
     last_interacted_at = models.DateTimeField(null=True, blank=True)

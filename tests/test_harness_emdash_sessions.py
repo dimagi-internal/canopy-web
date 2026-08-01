@@ -422,3 +422,77 @@ def test_a_repo_chat_still_reports_its_own_project():
 
     assert Session(project="canopy-web").emdash_project == "canopy-web"
     assert Session(project="").emdash_project == ""
+
+
+@pytest.mark.django_db
+def test_an_answer_survives_the_control_channel_being_down():
+    """The WS frame is the doorbell; the record is what makes the tap survive.
+
+    A frame published while the runner's control channel is down lands in a
+    Channels group with no consumer and is discarded — and because the runner
+    keeps heartbeating over REST it reads ONLINE the whole time, so the API
+    answers `ok:true` and NOTHING records the loss. Measured on labs 2026-08-01:
+    an answer sent at 10:50 never reached the runner at all (no keystroke, no
+    refusal, no log line), between control-channel reconnects at 10:16 and 10:58.
+    That is the purest form of "clicking does nothing".
+    """
+    from django.test import Client as DjangoClient
+
+    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+    replace_reported_sessions(runner, ws, [_reported("chat-1")])
+    binding = RunnerBinding.objects.get(session_key="chat-1")
+
+    assert chat_services.answer_menu(session=binding.session, option=2) == "sent"
+
+    client = DjangoClient()
+    client.force_login(jj)
+    answers = client.get(f"/api/harness/runners/{runner.id}/menu-answers").json()["answers"]
+    assert [(a["session_key"], a["option"]) for a in answers] == [("chat-1", 2)], (
+        "an answer that only ever existed as a WS frame is one the runner can "
+        "never recover")
+    answer_id = answers[0]["answer_id"]
+
+    ok = client.post(f"/api/harness/runners/{runner.id}/menu-answer-result",
+                     data={"session_id": str(binding.session_id),
+                           "answer_id": answer_id, "outcome": "answered"},
+                     content_type="application/json").json()
+    assert ok["ok"] is True
+    assert client.get(f"/api/harness/runners/{runner.id}/menu-answers").json()["answers"] == []
+
+
+@pytest.mark.django_db
+def test_a_stale_result_never_retires_a_newer_answer():
+    """Pressing an answer twice means a SECOND keystroke into a session that has
+    moved on, so results are matched on id rather than on session."""
+    from django.test import Client as DjangoClient
+
+    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+    replace_reported_sessions(runner, ws, [_reported("chat-1")])
+    binding = RunnerBinding.objects.get(session_key="chat-1")
+
+    chat_services.answer_menu(session=binding.session, option=1)
+    binding.refresh_from_db()
+    stale_id = binding.pending_answer["id"]
+    chat_services.answer_menu(session=binding.session, option=2)   # they tapped again
+
+    client = DjangoClient()
+    client.force_login(jj)
+    out = client.post(f"/api/harness/runners/{runner.id}/menu-answer-result",
+                      data={"session_id": str(binding.session_id),
+                            "answer_id": stale_id, "outcome": "answered"},
+                      content_type="application/json").json()
+    assert out["ok"] is False
+    binding.refresh_from_db()
+    assert binding.pending_answer["option"] == 2, "the newer tap was thrown away"

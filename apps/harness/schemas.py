@@ -795,3 +795,27 @@ class DrillIn(Schema):
 class DrillReportIn(Schema):
     outcome: Literal["pass", "fail"]
     summary: str = ""
+
+
+class MenuAnswerOut(Schema):
+    session_id: str
+    session_key: str
+    answer_id: str
+    option: int | None = None
+
+
+class MenuAnswerSyncOut(Schema):
+    answers: list[MenuAnswerOut] = []
+
+
+class MenuAnswerResultOut(Schema):
+    ok: bool
+
+
+class MenuAnswerResultIn(Schema):
+    session_id: uuid.UUID
+    answer_id: str
+    # What the runner did with it. Free-form on purpose: the vocabulary lives in
+    # `canopy_runner.hooks` (answered / no_dialog / wrong_pane / …) and the server
+    # only needs to know the answer is retired, not to re-litigate the outcome.
+    outcome: str = ""
