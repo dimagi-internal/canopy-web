@@ -222,17 +222,26 @@ def visible_transcript(session, *, full: bool = False):
 
 
 def request_backfill(session) -> str:
-    """The client asked for full history. 'ready' if we already hold the START of
-    the transcript (a row at turn_index 0); 'requested' if a live runner is bound
-    (signal it — streamed ordinal rows alone are not the full history); 'unavailable'
-    otherwise (tail still shows)."""
+    """The client asked for full history. 'requested' if a reachable runner is
+    bound (signal it, and `backfill_pending` stays true until it ships the last
+    chunk); 'unavailable' otherwise (the tail still shows).
+
+    There is deliberately NO 'we already have it' short-circuit any more. It used
+    to return `ready` when a row existed at turn_index 0 — a check that cannot
+    fire in practice: under the composite ordinal scheme (`record * BLOCK_STRIDE
+    + block`) index 0 means record 0 / block 0, and record 0 of a Claude
+    transcript is a summary or a noise-filtered harness record, both of which are
+    DROPPED rather than renumbered. Verified on labs (2026-07-31): after a
+    complete backfill, session cf2d5089's oldest index was 448 and a second click
+    still answered `requested`. A condition that is always false is not an
+    optimization, it is a claim the code makes and never honours.
+
+    Asking unconditionally is now cheap in the way that matters: the write is
+    ordinal-keyed, so a re-ship of rows we already hold costs one existence probe
+    and zero inserts. `ready` survives in the client's vocabulary
+    (`backfillAction`) for old servers."""
     from apps.canopy_sessions.models import RunnerBinding
 
-    first = (
-        session.messages.order_by("turn_index").values_list("turn_index", flat=True).first()
-    )
-    if first == 0:
-        return "ready"
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
     # turns (`Runner.is_reachable`). Gating on ONLINE alone made backfill

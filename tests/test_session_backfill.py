@@ -72,10 +72,52 @@ def test_backfill_unavailable_when_runner_heartbeat_is_stale():
     assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "unavailable"}
 
 
-def test_backfill_ready_when_rows_exist():
-    _u, _w, s, _r, c = _ctx()
-    Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="hi")
-    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "ready"}
+def test_backfill_asks_the_runner_even_when_rows_exist():
+    """Deliberately replaces "ready when rows exist".
+
+    That short-circuit tested `turn_index == 0`, which under the composite
+    ordinal scheme means record 0 / block 0 — a summary or a noise-filtered
+    harness record, both DROPPED rather than renumbered. So it could not fire on
+    a real transcript: verified on labs (2026-07-31), session cf2d5089's oldest
+    index after a COMPLETE backfill was 448, and a second click still answered
+    `requested`. A branch that is always false is a claim the code never honours,
+    and it hid the fact that every click re-shipped the whole transcript.
+
+    Asking unconditionally is cheap in the way that matters — the write is
+    ordinal-keyed, so re-shipping held rows costs one probe and zero inserts.
+    """
+    _u, _w, s, _r, c = _ctx(runner_online=True)
+    Message.objects.create(session=s, turn_index=448, role=Message.USER, plaintext="hi")
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
+
+
+def test_session_reports_whether_a_ship_is_still_outstanding():
+    """`backfill_pending` is what lets the client wait on an exact signal.
+
+    It previously slept a flat 1200 ms and read once — 13 s early on labs, so the
+    button reported success having changed nothing. Watching the row count grow
+    instead is no better on its own: an already-complete session never grows, so
+    the client would spin for its whole timeout on the common case.
+    """
+    _u, _w, s, _r, c = _ctx(runner_online=True)
+    assert c.get(f"/api/canopy-sessions/{s.id}").json()["backfill_pending"] is False
+    c.post(f"/api/canopy-sessions/{s.id}/backfill")
+    assert c.get(f"/api/canopy-sessions/{s.id}").json()["backfill_pending"] is True
+    # Cleared by the runner's final chunk — mirroring post_session_backfill.
+    b = RunnerBinding.objects.get(session=s)
+    b.backfill_requested = False
+    b.save(update_fields=["backfill_requested"])
+    assert c.get(f"/api/canopy-sessions/{s.id}").json()["backfill_pending"] is False
+
+
+def test_backfill_pending_is_false_for_a_session_with_no_runner():
+    """No binding means nothing can be in flight — the client must not wait."""
+    user = User.objects.create_user("solo", "solo@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w9", display_name="W9", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    s = Session.objects.create(workspace=ws, created_by=user, title="web only")
+    c = Client(); c.force_login(user)
+    assert c.get(f"/api/canopy-sessions/{s.id}").json()["backfill_pending"] is False
 
 
 def test_backfill_requested_when_runner_live(monkeypatch):

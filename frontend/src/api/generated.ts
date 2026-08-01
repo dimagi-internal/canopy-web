@@ -5915,6 +5915,11 @@ export interface components {
         /** SessionDetailOut */
         readonly SessionDetailOut: {
             /**
+             * Backfill Pending
+             * @default false
+             */
+            readonly backfill_pending: boolean;
+            /**
              * Id
              * Format: uuid
              */
@@ -8662,6 +8667,11 @@ export interface components {
         };
         /** SessionOut */
         readonly SessionOut: {
+            /**
+             * Backfill Pending
+             * @default false
+             */
+            readonly backfill_pending: boolean;
             /**
              * Id
              * Format: uuid

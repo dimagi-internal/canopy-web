@@ -193,15 +193,26 @@ def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
     assert _rows(s) == [(0, "user", "q"), (1, "assistant", "a")]
 
 
-def test_request_backfill_requested_when_rows_lack_the_start(monkeypatch):
-    """Streamed rows alone (ordinals > 0) are not the full history — 'ready' only
-    when the start of the transcript (turn_index 0) is present."""
+def test_request_backfill_always_asks_a_reachable_runner(monkeypatch):
+    """The `turn_index == 0` short-circuit is gone; it could not fire.
+
+    Under the composite ordinal scheme index 0 means record 0 / block 0, and
+    record 0 of a Claude transcript is a summary or a noise-filtered harness
+    record — both DROPPED rather than renumbered, so no real session has a row
+    there. Verified on labs (2026-07-31): after a COMPLETE backfill, session
+    cf2d5089's oldest index was 448 and a second click still answered
+    `requested`. The branch only ever looked like an optimization.
+
+    Asking every time is cheap where it counts — the write is ordinal-keyed, so
+    re-shipping rows we hold is one existence probe and zero inserts — and the
+    client now waits on `backfill_pending` rather than on this status.
+    """
     monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
     _u, _w, _r, s, c = _ctx()
     Message.objects.create(session=s, turn_index=3, role=Message.ASSISTANT, plaintext="a")
     assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
     Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="q")
-    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "ready"}
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
 
 
 # --- send_message: the transcript is the sole durable source ---------------

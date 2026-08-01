@@ -434,17 +434,20 @@ export function ChatPage() {
       }
       let full = before
       if (action === 'reload-after-delay') {
-        // The runner is shipping. Poll until the transcript actually grows
-        // rather than sleeping a fixed guess — see BACKFILL_POLL_MS. Whatever
-        // has landed by the deadline is still applied: a partially rebuilt
-        // history beats discarding it and showing the tail.
+        // The runner is shipping. Poll until the SERVER says it has finished
+        // (`backfill_pending` clears on the final chunk) rather than sleeping a
+        // fixed guess or watching for the row count to grow — growth cannot
+        // distinguish "still arriving" from "there was nothing more to send", so
+        // an already-complete session would spin for the whole timeout.
+        // Whatever has landed by the deadline is applied regardless: a partially
+        // rebuilt history beats discarding it and showing the tail.
         const deadline = Date.now() + BACKFILL_TIMEOUT_MS
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, BACKFILL_POLL_MS))
           if (requestedId !== id) return
           full = await getSession(requestedId, { full: true })
           if (requestedId !== id) return
-          if (full.messages.length > before.messages.length) break
+          if (!full.backfill_pending) break
         }
       } else {
         full = await getSession(requestedId, { full: true })
