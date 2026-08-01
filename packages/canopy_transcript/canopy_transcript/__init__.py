@@ -4,7 +4,7 @@ Re-exports the names consumers actually use so a caller writes
 `from canopy_transcript import conversational_messages` rather than reaching
 into a submodule.
 """
-from .batching import TRANSCRIPT_BATCH_MAX_BYTES, chunk_raw_lines
+from .batching import TRANSCRIPT_BATCH_MAX_BYTES, chunk_raw_lines, chunk_rows
 from .hooks import (
     ACTIVITY_EVENTS,
     FORWARDED_EVENTS,
@@ -41,6 +41,7 @@ from .rows import (
     end_index,
     row_payload,
     rows_for_record,
+    rows_to_ship,
     scrub,
     user_text,
 )
@@ -53,7 +54,8 @@ __all__ = [
     "SYSTEM_NOISE_PREFIXES", "is_system_noise",
     "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
     "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "assistant_text", "chunk_raw_lines",
-    "compose_index", "conversational_messages", "encode_project_dir", "end_index",
+    "chunk_rows", "compose_index", "conversational_messages", "encode_project_dir",
+    "end_index", "rows_to_ship",
     "activity_for_hook", "emdash_task_candidates", "events_for_hook", "parse_emdash_worktree",
     "read_records", "resolve_cli_transcript",
     "resolve_emdash_transcript", "rows_for_hook",

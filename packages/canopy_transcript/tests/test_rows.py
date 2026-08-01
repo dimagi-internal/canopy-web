@@ -219,3 +219,48 @@ def test_task_candidates_keep_the_suffix_ambiguity_open():
     actually has rather than guessing."""
     assert ct.emdash_task_candidates("runner-yipnn") == ["runner-yipnn", "runner"]
     assert ct.emdash_task_candidates("plain") == ["plain"]
+
+
+# --- rows_to_ship: what the server still needs ----------------------------
+
+
+from canopy_transcript import rows_to_ship  # noqa: E402
+
+
+def _rows(*indices):
+    return [{"index": i, "role": "assistant", "text": f"r{i}"} for i in indices]
+
+
+def test_ships_everything_when_the_server_holds_nothing():
+    rows = _rows(0, 64, 128)
+    assert rows_to_ship(rows, first_held=None, last_held=None) == rows
+
+
+def test_ships_only_what_is_newer_when_the_server_has_the_head():
+    rows = _rows(0, 64, 128)
+    assert rows_to_ship(rows, first_held=0, last_held=64) == _rows(128)
+
+
+def test_ships_the_whole_history_when_the_server_is_missing_the_head():
+    """The case a max-only marker cannot express. Rows are only ever appended
+    above the high-water mark, so a server holding 64..128 of a transcript that
+    starts at 0 can never repair itself by streaming — labs had a session pinned
+    at 8.6% for exactly this reason."""
+    rows = _rows(0, 64, 128)
+    assert rows_to_ship(rows, first_held=64, last_held=128) == rows
+
+
+def test_an_empty_transcript_ships_nothing():
+    assert rows_to_ship([], first_held=None, last_held=None) == []
+
+
+def test_a_server_caught_up_to_the_end_ships_nothing():
+    rows = _rows(0, 64)
+    assert rows_to_ship(rows, first_held=0, last_held=64) == []
+
+
+def test_index_zero_is_a_real_ordinal_not_a_falsy_marker():
+    """`first_held=0` means the server holds record 0 block 0. A truthiness test
+    would read it as "holds nothing" and re-ship the whole history every tick."""
+    rows = _rows(0, 64)
+    assert rows_to_ship(rows, first_held=0, last_held=0) == _rows(64)

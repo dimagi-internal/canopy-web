@@ -2593,9 +2593,27 @@ export interface paths {
         };
         /**
          * List Streams
-         * @description The sessions this runner should be tailing live (a viewer is attached). The
-         *     observable half of attach/detach — the runner syncs this each tick and starts/
-         *     stops tailers; the WS runner.stream frame is only a latency optimization.
+         * @description Every session this runner backs, with what the server already holds of each.
+         *
+         *     NOT just the watched ones any more, and that is the point. While this filtered
+         *     on `stream_desired=True`, transcript rows only ever reached the server for a
+         *     session someone happened to have open, and only from the moment they opened it
+         *     — so the durable record was a side effect of being looked at. Measured on labs
+         *     (2026-07-31) across 12 live sessions: the server held 983 of 6119 rows (16%),
+         *     with 8 sessions at exactly zero. "Load full session" existed to paper over that
+         *     by asking the runner at read time, which is why it was both slow and unreliable.
+         *
+         *     `live` is the old `stream_desired` — it now decides only whether rows FAN OUT
+         *     to watching clients, never whether they are persisted. Persisting is
+         *     unconditional because the transcript is the durable source (spec 2026-07-24)
+         *     and building the rows costs the runner ~29 ms for a 6.5 MB file; there was
+         *     never a cost argument for keeping it, only the accident that live-view and
+         *     durability shared one flag.
+         *
+         *     `first_index`/`last_index` bound what the server holds, so the runner can tell
+         *     "ship only what is new" from "ship the history I am missing" — a Max alone can
+         *     only ever append above the high-water mark and so can never fill a hole below
+         *     it, which is how a session ended up stuck at 8.6% with no way to self-heal.
          */
         readonly get: operations["apps_harness_api_list_streams"];
         readonly put?: never;
@@ -5897,6 +5915,11 @@ export interface components {
         /** SessionDetailOut */
         readonly SessionDetailOut: {
             /**
+             * Backfill Pending
+             * @default false
+             */
+            readonly backfill_pending: boolean;
+            /**
              * Id
              * Format: uuid
              */
@@ -8282,6 +8305,13 @@ export interface components {
             readonly project: string;
             /** Last Index */
             readonly last_index?: number | null;
+            /** First Index */
+            readonly first_index?: number | null;
+            /**
+             * Live
+             * @default true
+             */
+            readonly live: boolean;
         };
         /** StreamSyncOut */
         readonly StreamSyncOut: {
@@ -8384,6 +8414,11 @@ export interface components {
              * @default []
              */
             readonly messages: readonly components["schemas"]["BackfillMessageIn"][];
+            /**
+             * Final
+             * @default true
+             */
+            readonly final: boolean;
         };
         /**
          * UnclaimableTurnOut
@@ -8632,6 +8667,11 @@ export interface components {
         };
         /** SessionOut */
         readonly SessionOut: {
+            /**
+             * Backfill Pending
+             * @default false
+             */
+            readonly backfill_pending: boolean;
             /**
              * Id
              * Format: uuid

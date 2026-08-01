@@ -1685,20 +1685,31 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list) -> bool:
          "payload": ct.row_payload(r)}
         for r in rows
     ]
-    status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
-                     {"session_id": session_id, "events": events})
-    return status == 200
+    # Chunked: a first-sight ship now carries a session's whole history, which on
+    # the longest transcripts blows past the server's 2.5 MB request ceiling and
+    # dies as an unhandled 500 (RequestDataTooBig, raised before the view runs).
+    for batch in ct.chunk_rows(events) or [[]]:
+        status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
+                         {"session_id": session_id, "events": batch})
+        if status != 200:
+            return False
+    return True
 
 
 def _sync_session_streams(runner_id: str) -> None:
-    """Tail every session a viewer is attached to and ship new rows.
+    """Tail every session this runner backs and ship its rows.
 
-    The resume point is SERVER-side (`last_index`, the max persisted turn_index),
-    refreshed every tick as our own posts land. There is deliberately no local
-    offset checkpoint: a failed post drops the tailer, so the next tick
-    re-attaches from the server marker and a restart recovers identically.
-    Best-effort throughout — a hiccup here costs live latency, never history,
-    because the turn-end ship and the backfill both still run.
+    Every session, not only watched ones — /streams now lists them all and the
+    server persists unconditionally, fanning out live only where a viewer is
+    attached. Mirrors canopy_runner.streams.sync_session_streams; the two must
+    stay in step or cloud chats silently keep the old 16%-complete behaviour.
+
+    The resume point is SERVER-side (`first_index`/`last_index`, the bounds of
+    what it holds), refreshed every tick as our own posts land. There is
+    deliberately no local offset checkpoint: a failed post drops the tailer, so
+    the next tick re-attaches from the server markers and a restart recovers
+    identically. Best-effort throughout — a hiccup here costs live latency, never
+    history, because the turn-end ship and the backfill both still run.
     """
     ct = _transcript_core()
     if ct is None:
@@ -1716,6 +1727,7 @@ def _sync_session_streams(runner_id: str) -> None:
         st = _STREAM_READERS.setdefault(sid, {"reader": None, "count": 0})
         st["session_key"] = descriptor.get("session_key") or ""
         st["last_index"] = descriptor.get("last_index")
+        st["first_index"] = descriptor.get("first_index")
         try:
             if st["reader"] is None:
                 path = _session_transcript_path(sid, st["session_key"])
@@ -1723,10 +1735,10 @@ def _sync_session_streams(runner_id: str) -> None:
                     continue  # not spawned yet, or a different box owns it
                 reader = ct.TailReader(str(path))
                 records = reader.read_new()
-                last = st["last_index"]
-                # No marker yet -> stream forward only; history is the backfill's job.
-                since = ct.end_index(len(records)) if last is None else int(last)
-                rows = ct.conversational_messages(records, since)
+                rows = ct.rows_to_ship(
+                    ct.conversational_messages(records, -1),
+                    first_held=st.get("first_index"), last_held=st.get("last_index"),
+                )
                 if rows and not _post_stream_rows(runner_id, sid, rows):
                     continue  # nothing consumed — re-attach next tick
                 st["reader"], st["count"] = reader, len(records)
@@ -1766,9 +1778,17 @@ def _drain_backfills(runner_id: str) -> None:
             continue  # unresolvable -> leave the request standing, server keeps the tail
         try:
             messages = ct.conversational_messages(ct.read_records(path), -1)
-            st, _ = _api("POST", f"/runners/{runner_id}/session-backfill",
-                         {"session_id": sid, "messages": messages})
-            _log(f"backfill {sid[:8]}: shipped {len(messages)} rows -> {st}")
+            # Chunked, and only the LAST chunk is `final` — an earlier one would
+            # retire the request while the rest was still in flight, stranding a
+            # permanently partial history behind a cleared flag.
+            batches = ct.chunk_rows(messages) or [[]]
+            st = None
+            for i, batch in enumerate(batches):
+                st, _ = _api("POST", f"/runners/{runner_id}/session-backfill",
+                             {"session_id": sid, "messages": batch,
+                              "final": i == len(batches) - 1})
+            _log(f"backfill {sid[:8]}: shipped {len(messages)} rows "
+                 f"in {len(batches)} chunk(s) -> {st}")
         except Exception as exc:  # noqa: BLE001
             # A backfill that keeps failing never rebuilds history and never stops
             # trying — exactly the case that must not be silent.

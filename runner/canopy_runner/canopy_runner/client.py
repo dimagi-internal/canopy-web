@@ -179,10 +179,13 @@ class Client:
         _, payload = self._call("GET", f"/runners/{runner_id}/backfills")
         return (payload or {}).get("backfills", [])
 
-    def post_session_backfill(self, runner_id: str, session_id: str, messages: list[dict]) -> None:
-        """Ship a session's full transcript for the server to write as Message rows."""
+    def post_session_backfill(self, runner_id: str, session_id: str, messages: list[dict],
+                              final: bool = True) -> None:
+        """Ship a chunk of a session's transcript for the server to write as Message
+        rows. `final=False` means more chunks follow, so the server keeps the ask
+        set — see streams.chunk_rows for why one request is not enough."""
         self._call("POST", f"/runners/{runner_id}/session-backfill",
-                   {"session_id": session_id, "messages": messages})
+                   {"session_id": session_id, "messages": messages, "final": final})
 
     def claim(self, runner_id: str, paused_agents: list[str] | None = None) -> dict | None:
         # paused_agents (per-agent pause) → server skips those agents' queued turns.

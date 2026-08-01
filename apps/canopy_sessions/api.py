@@ -105,6 +105,16 @@ def _out(session: Session) -> dict:
         # answers the thing the list could not: a waiting agent and an idle one
         # look identical, which is why spark read as "the session stopped".
         "waiting_on_you": serializers.pending_menu(session) is not None,
+        # Is a requested full-history ship still outstanding? EXACT, where the
+        # client previously had to guess: it slept a flat 1200 ms and read once,
+        # which on labs was 13 s early (rows landed at t+14.6s), so the button
+        # reported success having changed nothing. Polling until rows GROW is no
+        # better on its own — an already-complete session never grows, so the
+        # client would spin for its whole timeout on the common case. The runner
+        # clears this flag when it ships the final chunk, so it answers "is
+        # anything still coming?" directly instead of inferring it from an
+        # absence.
+        "backfill_pending": bool(binding and binding.backfill_requested),
     }
 
 

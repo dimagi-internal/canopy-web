@@ -222,17 +222,26 @@ def visible_transcript(session, *, full: bool = False):
 
 
 def request_backfill(session) -> str:
-    """The client asked for full history. 'ready' if we already hold the START of
-    the transcript (a row at turn_index 0); 'requested' if a live runner is bound
-    (signal it — streamed ordinal rows alone are not the full history); 'unavailable'
-    otherwise (tail still shows)."""
+    """The client asked for full history. 'requested' if a reachable runner is
+    bound (signal it, and `backfill_pending` stays true until it ships the last
+    chunk); 'unavailable' otherwise (the tail still shows).
+
+    There is deliberately NO 'we already have it' short-circuit any more. It used
+    to return `ready` when a row existed at turn_index 0 — a check that cannot
+    fire in practice: under the composite ordinal scheme (`record * BLOCK_STRIDE
+    + block`) index 0 means record 0 / block 0, and record 0 of a Claude
+    transcript is a summary or a noise-filtered harness record, both of which are
+    DROPPED rather than renumbered. Verified on labs (2026-07-31): after a
+    complete backfill, session cf2d5089's oldest index was 448 and a second click
+    still answered `requested`. A condition that is always false is not an
+    optimization, it is a claim the code makes and never honours.
+
+    Asking unconditionally is now cheap in the way that matters: the write is
+    ordinal-keyed, so a re-ship of rows we already hold costs one existence probe
+    and zero inserts. `ready` survives in the client's vocabulary
+    (`backfillAction`) for old servers."""
     from apps.canopy_sessions.models import RunnerBinding
 
-    first = (
-        session.messages.order_by("turn_index").values_list("turn_index", flat=True).first()
-    )
-    if first == 0:
-        return "ready"
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
     # turns (`Runner.is_reachable`). Gating on ONLINE alone made backfill
@@ -309,11 +318,19 @@ def persist_transcript_rows(session, rows) -> int:
     `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see
     `canopy_transcript.compose_index`, imported above so this scheme has exactly
     one definition) — because the stream (forward) and
-    backfill (older) both key on it, they produce the SAME rows by identity and
-    `get_or_create` makes every re-ship (retry, overlap, catch-up) a no-op.
+    backfill (older) both key on it, they produce the SAME rows by identity, so
+    every re-ship (retry, overlap, catch-up) is a no-op.
     index < 0 (an old runner) falls back to sequential server-side assignment.
-    Returns rows actually created."""
-    written = 0
+    Returns rows actually created.
+
+    BULK, deliberately. This was one `get_or_create` per row — four round trips
+    each (SELECT, SAVEPOINT, INSERT, RELEASE), measured at 805 queries for 200
+    rows. On labs a 846-row backfill took ~14.6s end to end while the runner's
+    whole share (reading and parsing a 6.5 MB transcript) was 29 ms; the rest was
+    sequential round trips to RDS. Every durable path funnels through here — live
+    stream, backfill, reset — so the cost was paid on all of them, and it scaled
+    with session length, i.e. it was worst exactly where history matters most.
+    Now: one existence probe plus batched inserts, regardless of row count."""
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
         # `is not None`, never a truthiness test: index 0 is a real ordinal (the
@@ -321,6 +338,8 @@ def persist_transcript_rows(session, rows) -> int:
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
             _ensure_current_ordinal_scheme(locked)
         next_index = None
+        prepared: list[tuple[int, str, str, dict]] = []
+        claimed: set[int] = set()
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -344,6 +363,13 @@ def persist_transcript_rows(session, rows) -> int:
                 if next_index is None:
                     next_index = _next_index(locked)
                 index, next_index = next_index, next_index + 1
+            # First occurrence wins, matching what `get_or_create` did implicitly:
+            # a repeat within ONE payload used to find the row its predecessor had
+            # just written. A bulk insert has no such ordering, and the pair would
+            # violate the unique constraint, so the dedupe has to be explicit.
+            if index in claimed:
+                continue
+            claimed.add(index)
             content = row.get("content")
             if not isinstance(content, dict):
                 content = {}
@@ -352,12 +378,26 @@ def persist_transcript_rows(session, rows) -> int:
             # every other row with it. See transcript_noise.scrub_nul.
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
-            _, created = Message.objects.get_or_create(
-                session=locked, turn_index=index,
-                defaults={"role": role, "plaintext": text, "content": content},
-            )
-            written += 1 if created else 0
-    return written
+            prepared.append((index, role, text, content))
+        if not prepared:
+            return 0
+        held = set(
+            Message.objects.filter(
+                session=locked, turn_index__in=[p[0] for p in prepared]
+            ).values_list("turn_index", flat=True)
+        )
+        fresh = [
+            Message(session=locked, turn_index=i, role=r, plaintext=t, content=c)
+            for (i, r, t, c) in prepared
+            if i not in held
+        ]
+        if not fresh:
+            return 0
+        # `ignore_conflicts` is belt-and-braces on top of the row lock above (which
+        # already serializes writers for THIS session), so a racing writer costs a
+        # skipped row rather than a failed batch.
+        Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
+        return len(fresh)
 
 
 def write_backfill(session, messages) -> int:

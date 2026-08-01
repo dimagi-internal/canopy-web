@@ -2,7 +2,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.canopy_sessions.models import RunnerBinding, Session
+from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -19,18 +19,46 @@ def _ctx():
     return user, ws, runner, c
 
 
-def test_streams_lists_only_desired_bindings():
+def test_streams_lists_every_binding_and_flags_which_are_watched():
+    """All backed sessions, watched or not — `live` only governs fan-out.
+
+    This deliberately replaces "only desired bindings". While the list was scoped
+    to attached sessions, transcript rows reached the server only for a session
+    someone had open, and only from the moment they opened it: labs held 983 of
+    6119 rows across 12 live sessions (16%), 8 of them at exactly zero. Durability
+    must not be a side effect of being looked at, so the runner tails everything
+    and `live` decides only whether rows are also pushed to watching clients.
+    """
     user, ws, runner, c = _ctx()
     s1 = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, project="echo", title="a")
     s2 = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="b")
     RunnerBinding.objects.create(session=s1, runner=runner, session_key="echo-1",
                                  stream_desired=True)
     RunnerBinding.objects.create(session=s2, runner=runner, session_key="echo-2",
-                                 stream_desired=False)  # not attached -> excluded
+                                 stream_desired=False)  # unwatched -> still persisted
     body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
-    assert [x["session_key"] for x in body["streams"]] == ["echo-1"]
-    assert body["streams"][0]["session_id"] == str(s1.id)
-    assert body["streams"][0]["project"] == "echo"
+    by_key = {x["session_key"]: x for x in body["streams"]}
+    assert sorted(by_key) == ["echo-1", "echo-2"]
+    assert by_key["echo-1"]["session_id"] == str(s1.id)
+    assert by_key["echo-1"]["project"] == "echo"
+    assert by_key["echo-1"]["live"] is True
+    assert by_key["echo-2"]["live"] is False
+
+
+def test_streams_reports_both_bounds_of_what_the_server_holds():
+    """`first_index` as well as `last_index`, because a max alone cannot express
+    "you are missing the beginning" — and rows can only be appended above the
+    high-water mark, so a session whose head was never captured could otherwise
+    never repair itself (labs had one pinned at 8.6%)."""
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1")
+    empty = c.get(f"/api/harness/runners/{runner.id}/streams").json()["streams"][0]
+    assert empty["first_index"] is None and empty["last_index"] is None
+    Message.objects.create(session=s, turn_index=448, role="assistant", plaintext="a")
+    Message.objects.create(session=s, turn_index=1024, role="assistant", plaintext="b")
+    held = c.get(f"/api/harness/runners/{runner.id}/streams").json()["streams"][0]
+    assert (held["first_index"], held["last_index"]) == (448, 1024)
 
 
 def test_session_stream_publishes_stream_frames(monkeypatch):
@@ -196,3 +224,23 @@ def test_activity_events_fan_out_and_never_persist(monkeypatch):
     ])
     assert [m["event"]["kind"] for m in published] == ["activity:working"]
     assert s.messages.count() == 0
+
+
+def test_streams_excludes_archived_sessions():
+    """Eager tailing must not sweep in every session the box ever held.
+
+    Widening the list from `stream_desired` to "everything" would otherwise
+    re-ship the full history of every retired conversation on each runner
+    restart — labs accumulated 71 sessions at one point — for transcripts that
+    are not growing and nobody is reading. `drain_backfills` is a separate path
+    this filter does not touch, so an explicit "Load full session" on an archived
+    session still works: eager for live, on demand for retired.
+    """
+    user, ws, runner, c = _ctx()
+    live = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    gone = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="b",
+                                  status=Session.ARCHIVED)
+    RunnerBinding.objects.create(session=live, runner=runner, session_key="live-1")
+    RunnerBinding.objects.create(session=gone, runner=runner, session_key="gone-1")
+    body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
+    assert [x["session_key"] for x in body["streams"]] == ["live-1"]

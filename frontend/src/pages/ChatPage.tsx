@@ -48,7 +48,19 @@ function renderMarkdown(text: string) {
   return <Markdown className="text-sm leading-relaxed">{text}</Markdown>
 }
 
-const BACKFILL_SETTLE_DELAY_MS = 1200
+/**
+ * "Load full session" WAITS for the rows, it does not guess at them.
+ *
+ * It used to sleep a flat 1200 ms and read once. Measured on labs (2026-07-31)
+ * the rows landed at t+14.6s, so the read happened 13 s early, returned the
+ * identical tail, and the button reported success having changed nothing —
+ * which is exactly what it looks like from a phone. Now it polls until the
+ * transcript actually grows, which is also the only formulation that stays
+ * correct as the runner gets faster: with eager persistence most sessions are
+ * already complete server-side and the first poll returns immediately.
+ */
+const BACKFILL_POLL_MS = 600
+const BACKFILL_TIMEOUT_MS = 30_000
 
 /**
  * Standalone live-chat route (/w/:workspace/chat/:id). Wires canopy's
@@ -411,6 +423,8 @@ export function ChatPage() {
     setHistoryUnavailable(false)
     setLoadingFull(true)
     try {
+      const before = await getSession(requestedId, { full: true })
+      if (requestedId !== id) return
       const res = await requestBackfill(requestedId)
       if (requestedId !== id) return
       const action = backfillAction(res.status)
@@ -418,13 +432,27 @@ export function ChatPage() {
         setHistoryUnavailable(true)
         return
       }
-      // reload-now = already server-full; reload-after-delay = the runner is
-      // shipping it — give it a beat to land before pulling the full session.
+      let full = before
       if (action === 'reload-after-delay') {
-        await new Promise((r) => setTimeout(r, BACKFILL_SETTLE_DELAY_MS))
+        // The runner is shipping. Poll until the SERVER says it has finished
+        // (`backfill_pending` clears on the final chunk) rather than sleeping a
+        // fixed guess or watching for the row count to grow — growth cannot
+        // distinguish "still arriving" from "there was nothing more to send", so
+        // an already-complete session would spin for the whole timeout.
+        // Whatever has landed by the deadline is applied regardless: a partially
+        // rebuilt history beats discarding it and showing the tail.
+        const deadline = Date.now() + BACKFILL_TIMEOUT_MS
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, BACKFILL_POLL_MS))
+          if (requestedId !== id) return
+          full = await getSession(requestedId, { full: true })
+          if (requestedId !== id) return
+          if (!full.backfill_pending) break
+        }
+      } else {
+        full = await getSession(requestedId, { full: true })
+        if (requestedId !== id) return
       }
-      const full = await getSession(requestedId, { full: true })
-      if (requestedId !== id) return
       socket.prependMessages(full.messages.map(restToKitMessage))
       setHasMoreBefore(false)
       setOldestTurn(full.oldest_loaded_turn_index ?? null)
@@ -446,7 +474,7 @@ export function ChatPage() {
   )
 
   const showLoadFull = shouldShowLoadFull({
-    origin: meta?.origin,
+    runnerName: meta?.runner_name,
     hasMoreBefore,
     historyUnavailable,
   })

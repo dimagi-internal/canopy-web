@@ -1411,6 +1411,17 @@ class _FakeCore:
     def read_records(self, path):
         return self.records
 
+    # The REAL implementations, not stubs. Both are pure and Django-free, and
+    # they are precisely the two questions the laptop and the cloud box must
+    # answer identically ("what does the server still need" and "how big may one
+    # request be") — a hand-written fake here could agree with the test while the
+    # box disagreed with the library it actually runs.
+    from canopy_transcript import chunk_rows as _chunk_rows
+    from canopy_transcript import rows_to_ship as _rows_to_ship
+
+    chunk_rows = staticmethod(_chunk_rows)
+    rows_to_ship = staticmethod(_rows_to_ship)
+
     class TailReader:
         def __init__(self, path):
             self.path = path
@@ -1453,44 +1464,49 @@ def test_stream_sync_attaches_and_ships_rows(cloud_runner, monkeypatch):
     assert cwd.endswith("sessions/sess-1") and cli == "cli-9"
 
 
+def _ship(cloud_runner, monkeypatch, core, descriptor):
+    """Run one stream sync against `descriptor` and return the ordinals shipped."""
+    posted = []
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k",
+                                      "project": "", **descriptor}]}
+        if method == "POST" and path.endswith("/session-stream"):
+            posted.append(body)
+            return 200, {"count": len(body["events"])}
+        return 200, {}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    return [e["index"] for b in posted for e in b["events"]]
+
+
 def test_stream_sync_uses_server_marker_not_a_local_checkpoint(cloud_runner, monkeypatch):
-    core = _FakeCore()
-    seen_since = []
-    orig = core.conversational_messages
-
-    def spy(records, since, record_offset=0):
-        seen_since.append(since)
-        return orig(records, since, record_offset=record_offset)
-
-    core.conversational_messages = spy
-
-    def api(method, path, body=None):
-        if method == "GET" and path.endswith("/streams"):
-            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": 42}]}
-        return 200, {}
-
-    _wire(cloud_runner, monkeypatch, core, api)
-    cloud_runner._sync_session_streams("r")
-    assert seen_since[0] == 42
+    """Asserts the ROWS SHIPPED, not the argument passed downstream: the
+    ship/skip decision moved into canopy_transcript.rows_to_ship so both runners
+    share one answer. The fake's records are ordinals 10 and 11."""
+    shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
+                    {"first_index": 0, "last_index": 10})
+    assert shipped == [11]
 
 
-def test_stream_sync_with_no_marker_streams_forward_only(cloud_runner, monkeypatch):
-    # last_index None => a fresh attach must NOT replay history; that is the
-    # backfill's job. end_index(len(records)) is the "everything already seen" marker.
-    core = _FakeCore()
-    seen_since = []
-    orig = core.conversational_messages
-    core.conversational_messages = lambda r, s, record_offset=0: (
-        seen_since.append(s) or orig(r, s, record_offset=record_offset))
+def test_stream_sync_with_no_marker_ships_the_whole_history(cloud_runner, monkeypatch):
+    """Deliberately replaces "streams forward only". Forward-only on first sight
+    is what left the server holding 16% of the fleet's transcript rows; the
+    transcript is the durable source, so first sight is when to capture it."""
+    shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
+                    {"first_index": None, "last_index": None})
+    assert shipped == [10, 11]
 
-    def api(method, path, body=None):
-        if method == "GET" and path.endswith("/streams"):
-            return 200, {"streams": [{"session_id": "s", "session_key": "k", "last_index": None}]}
-        return 200, {}
 
-    _wire(cloud_runner, monkeypatch, core, api)
-    cloud_runner._sync_session_streams("r")
-    assert seen_since[0] == core.end_index(2)
+def test_stream_sync_ships_history_when_the_server_is_missing_the_head(cloud_runner, monkeypatch):
+    """A max alone cannot express "you are missing the beginning", and rows only
+    ever append above the high-water mark — so without `first_index` a session
+    whose head was never captured could never repair itself."""
+    shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
+                    {"first_index": 11, "last_index": 11})
+    assert shipped == [10, 11]
 
 
 def test_stream_sync_drops_tailers_for_detached_sessions(cloud_runner, monkeypatch):

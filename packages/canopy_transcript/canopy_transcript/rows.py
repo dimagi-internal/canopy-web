@@ -294,3 +294,28 @@ def hands_back_to_human(rec: dict) -> bool:
 # the turn as active, so the real ceiling is "before a human gives up".
 IDLE_TICKS = 180          # ~15 min of a completely silent transcript
 MAX_TICKS = 2880          # ~4 h total, so a wedged bridge can't hold a session forever
+
+
+def rows_to_ship(all_rows: list[dict], *, first_held, last_held) -> list[dict]:
+    """Which of a transcript's rows a server still needs, given the bounds of what
+    it already holds.
+
+    Ships the WHOLE history when the server does not hold the transcript's first
+    row, and only what is newer than `last_held` otherwise. The distinction is the
+    point: rows can only ever be appended above the high-water mark, so a session
+    whose beginning was never captured cannot repair itself by streaming — labs had
+    one pinned at 8.6% (2026-07-31) that would have stayed there indefinitely.
+
+    Erring toward re-shipping is free: the server keys on the transcript ordinal,
+    so a row it already holds costs an existence check and no write. Lives here, in
+    the library BOTH runners share, because the laptop and the cloud box each
+    implement this loop and a divergence means one fleet half silently keeps the
+    old 16%-complete behaviour.
+    """
+    if not all_rows:
+        return []
+    if first_held is None or int(first_held) > int(all_rows[0]["index"]):
+        return all_rows
+    if last_held is None:
+        return all_rows
+    return [r for r in all_rows if int(r["index"]) > int(last_held)]

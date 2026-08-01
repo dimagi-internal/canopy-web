@@ -20,7 +20,14 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
-def _ctx(*, origin=Session.ORIGIN_RUNNER):
+def _ctx(*, origin=Session.ORIGIN_RUNNER, watched=True):
+    """`watched` = a viewer is attached (RunnerBinding.stream_desired).
+
+    Defaults True because these tests were written when fan-out was unconditional,
+    so that is the behaviour they were asserting. It governs LIVE PUSH only — the
+    durable write happens either way, which
+    `test_stream_post_persists_for_an_unwatched_session` pins directly.
+    """
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
@@ -31,7 +38,7 @@ def _ctx(*, origin=Session.ORIGIN_RUNNER):
     s = Session.objects.create(workspace=ws, origin=origin, created_by=user, title="ace-demo")
     RunnerBinding.objects.create(
         session=s, runner=runner, session_key="ace-demo",
-        thread_key="emdash:ace-demo", host=runner.host,
+        thread_key="emdash:ace-demo", host=runner.host, stream_desired=watched,
     )
     c = Client(); c.force_login(user)
     return user, ws, runner, s, c
@@ -105,6 +112,27 @@ def test_stream_post_persists_ordinal_rows_and_fans_out_both_roles(monkeypatch):
     assert kinds == ["user", "assistant"]
 
 
+def test_stream_post_persists_for_an_unwatched_session(monkeypatch):
+    """Durability does not depend on anyone looking.
+
+    The runner now tails every session it backs, not just attached ones, because
+    the transcript is the durable source and gating the write on `stream_desired`
+    made history a side effect of having the chat open: labs held 16% of its rows,
+    8 of 12 sessions at zero. Rows persist; only the live push is withheld, since
+    there is no client joined to that session group to push to.
+    """
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+    _u, _w, runner, s, c = _ctx(watched=False)
+    body = _post_stream(c, runner, s, [
+        {"kind": "user", "seq": 5, "index": 5, "payload": {"text": "q1"}},
+        {"kind": "assistant", "seq": 7, "index": 7, "payload": {"text": "a1"}},
+    ]).json()
+    assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
+    assert published == []
+    assert body == {"count": 0}
+
+
 def test_stream_post_without_ordinal_does_not_persist(monkeypatch):
     """An OLD runner (no index) keeps the legacy live-view-only contract: persisting
     assistant-only rows would kill the tail fallback's human side (trap 2)."""
@@ -165,15 +193,26 @@ def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
     assert _rows(s) == [(0, "user", "q"), (1, "assistant", "a")]
 
 
-def test_request_backfill_requested_when_rows_lack_the_start(monkeypatch):
-    """Streamed rows alone (ordinals > 0) are not the full history — 'ready' only
-    when the start of the transcript (turn_index 0) is present."""
+def test_request_backfill_always_asks_a_reachable_runner(monkeypatch):
+    """The `turn_index == 0` short-circuit is gone; it could not fire.
+
+    Under the composite ordinal scheme index 0 means record 0 / block 0, and
+    record 0 of a Claude transcript is a summary or a noise-filtered harness
+    record — both DROPPED rather than renumbered, so no real session has a row
+    there. Verified on labs (2026-07-31): after a COMPLETE backfill, session
+    cf2d5089's oldest index was 448 and a second click still answered
+    `requested`. The branch only ever looked like an optimization.
+
+    Asking every time is cheap where it counts — the write is ordinal-keyed, so
+    re-shipping rows we hold is one existence probe and zero inserts — and the
+    client now waits on `backfill_pending` rather than on this status.
+    """
     monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: None)
     _u, _w, _r, s, c = _ctx()
     Message.objects.create(session=s, turn_index=3, role=Message.ASSISTANT, plaintext="a")
     assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
     Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="q")
-    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "ready"}
+    assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
 
 
 # --- send_message: the transcript is the sole durable source ---------------
@@ -432,3 +471,45 @@ def test_a_text_that_differs_from_plaintext_is_kept():
     ])
     msg = s.messages.get()
     assert msg.content == {"text": "different", "id": "x"}
+
+
+# --- the write is bulk, not row-at-a-time --------------------------------
+
+def test_persist_rows_costs_a_bounded_number_of_queries():
+    """The write must not be O(rows).
+
+    It was: one `get_or_create` per row inside a single transaction. Measured on
+    labs (2026-07-31), a 846-row backfill took ~14.6s end to end while the
+    runner's own share — reading and parsing a 6.5 MB transcript — was 29 ms.
+    The rest was 846 sequential round trips to RDS, and every path funnels
+    through here (live stream, backfill, reset), so the cost is paid constantly.
+
+    Bounded, not exact: the ordinal-scheme check, the existing-index probe, the
+    insert batches and the session lock are all legitimate. O(n) is not.
+    """
+    _u, _w, _r, s, _c = _ctx()
+    rows = [{"index": i, "role": "assistant", "text": f"a{i}"} for i in range(200)]
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as ctx:
+        assert services.persist_transcript_rows(s, rows) == 200
+    assert len(ctx.captured_queries) < 20, (
+        f"{len(ctx.captured_queries)} queries for 200 rows — the write is still row-at-a-time"
+    )
+
+
+def test_persist_rows_dedupes_repeats_inside_one_batch():
+    """Two rows with the same ordinal in ONE payload collapse to one row.
+
+    `get_or_create` deduped this implicitly (the second call found the first).
+    A bulk insert does not, and the pair violates the unique constraint, so the
+    dedupe has to become explicit or the whole batch fails.
+    """
+    _u, _w, _r, s, _c = _ctx()
+    written = services.persist_transcript_rows(s, [
+        {"index": 4, "role": "assistant", "text": "first"},
+        {"index": 4, "role": "assistant", "text": "second"},
+    ])
+    assert written == 1
+    assert _rows(s) == [(4, "assistant", "first")]

@@ -591,6 +591,16 @@ class StreamDescriptorOut(Schema):
     # (None = no rows yet). The runner ships transcript records AFTER this on
     # attach, so a restart/failover never loses the resume point.
     last_index: int | None = None
+    # The OLDEST turn_index the server holds (None = no rows). Paired with
+    # last_index so the runner can distinguish "you are up to date, send what's
+    # new" from "you are missing the head, send everything": a max alone only ever
+    # licenses appending above the high-water mark, so a session whose beginning
+    # was never captured could never repair itself no matter how long it streamed.
+    first_index: int | None = None
+    # Whether a viewer is attached. Governs live fan-out ONLY — rows are persisted
+    # for every session either way (see list_streams). Old runners ignore it, which
+    # is safe: they simply keep streaming exactly the sessions they used to.
+    live: bool = True
 
 
 class StreamSyncOut(Schema):
@@ -646,6 +656,14 @@ class BackfillMessageIn(Schema):
 class SessionBackfillIn(Schema):
     session_id: uuid.UUID
     messages: list[BackfillMessageIn] = []
+    # False = "more chunks follow"; the server keeps `backfill_requested` set so a
+    # ship that dies halfway is retried whole rather than leaving a partial history
+    # behind a cleared flag. A transcript has to be chunked at all because the whole
+    # payload used to go in ONE request against DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB),
+    # which Django raises as an unhandled 500 BEFORE the view runs — measured over
+    # 193 local transcripts, one already exceeds it and three more are past 1.9 MB.
+    # Defaults True so an old runner, which posts exactly once, is unaffected.
+    final: bool = True
 
 
 class BackfillWriteOut(Schema):

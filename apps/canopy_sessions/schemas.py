@@ -72,6 +72,11 @@ class MessagePageOut(Schema):
 
 
 class SessionOut(Schema):
+    # A requested full-history ship is still outstanding (the runner has not sent
+    # its final chunk). Lets "Load full session" wait on an exact signal rather
+    # than on a timer or on rows-stopped-growing, neither of which can tell "still
+    # arriving" from "there was nothing more to send".
+    backfill_pending: bool = False
     id: uuid.UUID
     agent_slug: str | None
     project: str

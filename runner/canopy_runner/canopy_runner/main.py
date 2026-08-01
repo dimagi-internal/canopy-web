@@ -653,6 +653,79 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def make_control_handler(cfg: Config, waker):
+    """The runner's control-frame dispatch, built as a factory so it is testable.
+
+    Lifted out of a closure inside `main()` because this dispatch silently LOST a
+    frame type. The server has published `runner.stream` since the viewer-stream
+    work, `wake.py` documents routing it here, and there was no branch for it —
+    so every "Load full session" waited out a full poll tick before the runner
+    even learned it had been asked. Nothing failed loudly: an unhandled frame is
+    indistinguishable from one that never arrived, which is exactly why five
+    untested branches on a live socket were the wrong shape.
+
+    Every branch must be non-raising. This runs on the wake-listener thread,
+    which also carries `wake` and `cancel`, and losing that socket would cost the
+    runner its liveness — so anything that touches CDP or a subprocess only marks
+    work due and lets the poll thread do it.
+    """
+
+    def _on_control(msg: dict) -> None:
+        if msg.get("type") == "cancel" and msg.get("turn_id"):
+            CANCELLED_TURNS.add(str(msg["turn_id"]))
+        elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
+            # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
+            # on the next tick instead of waiting out inbox_poll_seconds. Only
+            # marks it due — the read itself stays on the poll thread, because a
+            # `gog` subprocess on the wake-listener thread would block the socket
+            # that also carries cancel and wake.
+            inbox_due.ring(str(msg["mailbox"]))
+        elif msg.get("type") == "stream":
+            # The viewer/backfill doorbell — the frame that had no branch. Wakes
+            # the loop so sync_session_streams + drain_backfills run now rather
+            # than up to poll_seconds later; the cloud runner has done this since
+            # 2026-07-28 (`mtype == "stream"`), so this is the laptop catching up.
+            # Only nudges: the transcript read stays on the poll thread, for the
+            # same reason the inbox doorbell does.
+            waker.event.set()
+        elif msg.get("type") == "update_available":
+            # A deploy moved this kind's expected runner sha; kickstart the
+            # SEPARATE updater job now instead of waiting out its 30-min timer.
+            # nudge() never installs in-process, never raises, throttles itself,
+            # and skips when the frame raced an install that already happened —
+            # the updater keeps the busy/stale decision either way.
+            from . import update as update_mod
+
+            update_mod.nudge(cfg, str(msg.get("expected_sha") or ""))
+        elif msg.get("type") == "menu_answer" and msg.get("session_key"):
+            # A human answered, from the web, the dialog an agent is blocked on.
+            # Runs on the wake-listener thread and must never raise: this socket
+            # also carries cancel and wake, and losing it would cost the runner
+            # its liveness for a keystroke.
+            # `answer_menu` classifies its own failures and never raises, so the
+            # outcome is data rather than an exception — which is what lets it
+            # ride the next session report back to the phone. Reporting is forced
+            # rather than left to the change-driven tick: a blocked session writes
+            # nothing, so nothing would mark it changed, and the answer to "did my
+            # tap work?" would wait out the whole heartbeat window.
+            session_key = str(msg["session_key"])
+            outcome = hooks.answer_menu(session_key, msg.get("option"),
+                                        cdp_port=cfg.cdp_port)
+            hooks.note_answer_outcome(session_key, outcome)
+            sessions.request_report_now()
+        elif msg.get("type") == "close_session" and msg.get("session_key"):
+            # A human closed this session from the web. Runs on the wake-listener
+            # thread and must never raise: this socket also carries cancel and wake,
+            # and losing it would cost the runner its liveness for one delete.
+            try:
+                close.close_session(str(msg["session_key"]), cdp_port=cfg.cdp_port)
+            except Exception:  # noqa: BLE001
+                logger.warning("close failed for %s", msg.get("session_key"),
+                               exc_info=True)
+
+    return _on_control
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
@@ -729,52 +802,8 @@ def main() -> None:
     # fallback and still owns heartbeat/claim/execute; off if websocket-client is absent.
     from .wake import WakeListener
 
-    def _on_control(msg: dict) -> None:
-        if msg.get("type") == "cancel" and msg.get("turn_id"):
-            CANCELLED_TURNS.add(str(msg["turn_id"]))
-        elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
-            # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
-            # on the next tick instead of waiting out inbox_poll_seconds. Only
-            # marks it due — the read itself stays on the poll thread, because a
-            # `gog` subprocess on the wake-listener thread would block the socket
-            # that also carries cancel and wake.
-            inbox_due.ring(str(msg["mailbox"]))
-        elif msg.get("type") == "update_available":
-            # A deploy moved this kind's expected runner sha; kickstart the
-            # SEPARATE updater job now instead of waiting out its 30-min timer.
-            # nudge() never installs in-process, never raises, throttles itself,
-            # and skips when the frame raced an install that already happened —
-            # the updater keeps the busy/stale decision either way.
-            from . import update as update_mod
-
-            update_mod.nudge(cfg, str(msg.get("expected_sha") or ""))
-        elif msg.get("type") == "menu_answer" and msg.get("session_key"):
-            # A human answered, from the web, the dialog an agent is blocked on.
-            # Runs on the wake-listener thread and must never raise: this socket
-            # also carries cancel and wake, and losing it would cost the runner
-            # its liveness for a keystroke.
-            # `answer_menu` classifies its own failures and never raises, so the
-            # outcome is data rather than an exception — which is what lets it
-            # ride the next session report back to the phone. Reporting is forced
-            # rather than left to the change-driven tick: a blocked session writes
-            # nothing, so nothing would mark it changed, and the answer to "did my
-            # tap work?" would wait out the whole heartbeat window.
-            session_key = str(msg["session_key"])
-            outcome = hooks.answer_menu(session_key, msg.get("option"),
-                                        cdp_port=cfg.cdp_port)
-            hooks.note_answer_outcome(session_key, outcome)
-            sessions.request_report_now()
-        elif msg.get("type") == "close_session" and msg.get("session_key"):
-            # A human closed this session from the web. Runs on the wake-listener
-            # thread and must never raise: this socket also carries cancel and wake,
-            # and losing it would cost the runner its liveness for one delete.
-            try:
-                close.close_session(str(msg["session_key"]), cdp_port=cfg.cdp_port)
-            except Exception:  # noqa: BLE001
-                logger.warning("close failed for %s", msg.get("session_key"),
-                               exc_info=True)
-
-    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id, on_control=_on_control)
+    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id)
+    waker.on_control = make_control_handler(cfg, waker)
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")

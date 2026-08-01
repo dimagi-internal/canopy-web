@@ -1,8 +1,15 @@
-"""Byte-bounded batching for a turn's retained raw transcript.
+"""Byte-bounded batching for transcript payloads.
 
 The server 422s a single request whose line bytes exceed 1 MiB
 (apps/harness/api.py::TRANSCRIPT_APPEND_MAX_BYTES), so batches are bounded by
 BYTES, not line count: one tool-result line can be enormous on its own.
+
+`chunk_rows` applies the same budget to structured transcript rows (the session
+stream and backfill payloads). Those had NO bound at all and went in one request
+against Django's DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB) — which is worse than a
+422, because Django raises RequestDataTooBig before the view runs: an unhandled
+500, no partial write, and a runner that retries it forever. Measured over 193
+local transcripts (2026-07-31), one full-history payload is already 2.57 MB.
 """
 from __future__ import annotations
 
@@ -38,6 +45,32 @@ def chunk_raw_lines(
             batches.append(current)
             current, size = [], 0
         current.append(line)
+        size += n
+    if current:
+        batches.append(current)
+    return batches
+
+
+def chunk_rows(
+    rows: list[dict], max_bytes: int = TRANSCRIPT_BATCH_MAX_BYTES
+) -> list[list[dict]]:
+    """Split structured transcript rows into batches under `max_bytes`.
+
+    Unlike `chunk_raw_lines`, an oversized row is emitted ALONE rather than
+    replaced by a marker: these rows are already capped at the producer
+    (TOOL_TEXT_MAX 8 KB, TOOL_INPUT_STR_MAX 4 KB), so one cannot realistically
+    approach the budget — and where a raw line has a marker convention that keeps
+    a gap visible, a dropped transcript row would just silently lose a message.
+    """
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    size = 0
+    for row in rows:
+        n = len(json.dumps(row, default=str).encode("utf-8")) + 1
+        if current and size + n > max_bytes:
+            batches.append(current)
+            current, size = [], 0
+        current.append(row)
         size += n
     if current:
         batches.append(current)
