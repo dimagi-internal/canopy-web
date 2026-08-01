@@ -49,25 +49,31 @@ export function backfillAction(status: string): BackfillAction {
 /**
  * Whether to offer "Load full session".
  *
- * A local (origin=runner) session's history lives on the runner, not the
- * server — until a backfill lands the server may hold ZERO `Message` rows. So
- * the offer must NOT depend on messages already being on screen: an empty
- * discovered session is precisely the case that needs it (found in prod: an
- * `origin=runner` session rendered "Start the conversation" with no way to pull
- * its transcript). Gate only on:
+ * Gated on the session having a RUNNER, not on `origin === "runner"`. Where a
+ * conversation started says nothing about where its record lives: since
+ * `transcript_sourced` (spec 2026-07-24) a phone-started chat is driven by the
+ * same runner writing the same transcript, so its history is recoverable in
+ * exactly the same way — but `origin` is `"web"`, so the control was hidden on
+ * precisely the sessions started from the phone. Confirmed live on labs
+ * (2026-07-31): an `origin="web"` session bound to an online runner, holding 0
+ * of its 75 transcript rows, could not offer it.
+ *
+ * The offer must NOT depend on messages already being on screen — an empty
+ * discovered session is the case that most needs it. Gate only on:
+ *  - `runnerName` — no runner means no transcript to recover from;
  *  - `hasMoreBefore` — the server holds more than the loaded window, so
  *    "Load earlier" is the right control instead;
  *  - `historyUnavailable` — we already asked and the runner wasn't reachable.
- * Clicking when the server happens to be complete is a harmless no-op (the
- * backend answers `ready` and we just reload the same rows).
+ * Clicking when the server is already complete is a harmless no-op (the backend
+ * answers `ready` and we reload the same rows).
  */
 export function shouldShowLoadFull(args: {
-  origin: string | null | undefined;
+  runnerName: string | null | undefined;
   hasMoreBefore: boolean;
   historyUnavailable: boolean;
 }): boolean {
   return (
-    args.origin === "runner" && !args.hasMoreBefore && !args.historyUnavailable
+    Boolean(args.runnerName) && !args.hasMoreBefore && !args.historyUnavailable
   );
 }
 

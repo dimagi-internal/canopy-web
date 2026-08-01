@@ -43,9 +43,14 @@ def _summary():
     return json.dumps({"type": "summary", "summary": "meta"}) + "\n"
 
 
-def _desc(last_index=None):
+def _desc(last_index=None, first_index=...):
+    """A stream descriptor. `first_index` defaults to "the server holds a
+    contiguous history up to last_index" (0 when there is a marker, None when
+    there isn't), which is what every caller here means."""
+    if first_index is ...:
+        first_index = None if last_index is None else 0
     return {"session_id": "s1", "session_key": "echo-1", "project": "echo",
-            "last_index": last_index}
+            "last_index": last_index, "first_index": first_index, "live": True}
 
 
 def _events(client):
@@ -60,22 +65,47 @@ def _setup(tmp_path, monkeypatch, content):
     return p
 
 
-def test_first_attach_streams_forward_with_composite_ordinals(tmp_path, monkeypatch):
-    """No server marker (last_index=None) => don't replay history; new records ship
-    keyed by their position in the file, users included."""
+def test_first_attach_ships_the_whole_history(tmp_path, monkeypatch):
+    """The server holds nothing => ship EVERYTHING, then stream forward.
+
+    Deliberately replaces "don't replay history". Forward-only on first sight is
+    what left the server holding 983 of 6119 transcript rows across 12 live
+    sessions (labs, 2026-07-31), 8 of them at exactly zero — and it is why "Load
+    full session" had to go and ask the runner at read time, which measured 14.6s
+    against a client that waited 1.2s. The transcript is the durable source, so
+    first sight of a session is precisely when to capture it.
+    """
     p = _setup(tmp_path, monkeypatch, _summary() + _user("old q") + _asst("old a"))
     c = _Client([_desc()])
 
-    streams.sync_session_streams(_Cfg(), c)          # attach: history is not replayed
-    assert c.posted == []
+    streams.sync_session_streams(_Cfg(), c)          # attach: history IS captured
+    assert [(e["kind"], e["index"], e["payload"]["text"]) for e in _events(c)] == [
+        ("user", _ix(1), "old q"),                   # record 0 is the summary
+        ("assistant", _ix(2), "old a"),
+    ]
 
     with open(p, "a") as f:
         f.write(_user("live q") + _asst("live a"))   # ordinals 3, 4
     streams.sync_session_streams(_Cfg(), c)
-    assert _events(c) == [
+    assert _events(c)[-2:] == [
         {"kind": "user", "seq": _ix(3), "index": _ix(3), "payload": {"text": "live q"}},
         {"kind": "assistant", "seq": _ix(4), "index": _ix(4), "payload": {"text": "live a"}},
     ]
+
+
+def test_attach_ships_history_when_the_server_is_missing_the_head(tmp_path, monkeypatch):
+    """A marker alone is not enough to decide what to send.
+
+    Rows can only be appended above the high-water mark, so a server holding
+    448..1024 of a transcript that starts at 0 can never repair itself by
+    streaming — labs had a session pinned at 8.6% for exactly this reason.
+    `first_index` is what makes the hole visible, and the ordinal-keyed write
+    makes re-shipping the rows it already has free.
+    """
+    _setup(tmp_path, monkeypatch, _user("q1") + _asst("a1") + _user("q2"))
+    c = _Client([_desc(last_index=_ix(2), first_index=_ix(1))])   # missing record 0
+    streams.sync_session_streams(_Cfg(), c)
+    assert [e["index"] for e in _events(c)] == [_ix(0), _ix(1), _ix(2)]
 
 
 def test_attach_catches_up_from_the_server_marker(tmp_path, monkeypatch):
@@ -96,7 +126,9 @@ def test_restart_resumes_from_the_server_marker(tmp_path, monkeypatch):
     server's marker seeds the catch-up, so nothing written while away is lost and
     no ordinal is ever shipped twice."""
     p = _setup(tmp_path, monkeypatch, _user("q1") + _asst("a1"))
-    c = _Client([_desc(last_index=None)])
+    # The server already holds the history, so attach has only forward work to do
+    # — this test is about the restart, not the first-sight capture.
+    c = _Client([_desc(last_index=_ix(1))])
     streams.sync_session_streams(_Cfg(), c)          # attach
     with open(p, "a") as f:
         f.write(_asst("while watching"))        # ordinal 2
@@ -124,8 +156,11 @@ def test_failed_post_is_retried_from_the_marker_next_tick(tmp_path, monkeypatch)
     """A dropped post must not advance the local cursor past unshipped records —
     the tailer resets and the next tick re-attaches from the server marker."""
     p = _setup(tmp_path, monkeypatch, _user("q1"))
-    c = _Client([_desc(last_index=None)])
-    streams.sync_session_streams(_Cfg(), c)          # attach at end of history
+    # Server already holds record 0, so attach ships nothing and this test stays
+    # about the retry rather than the first-sight capture.
+    c = _Client([_desc(last_index=_ix(0))])
+    streams.sync_session_streams(_Cfg(), c)          # attach: nothing new to ship
+    assert c.posted == []
     with open(p, "a") as f:
         f.write(_asst("reply"))                 # ordinal 1
     c.fail_posts = True

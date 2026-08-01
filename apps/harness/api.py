@@ -645,25 +645,53 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
 
 @router.get("/runners/{runner_id}/streams", response=StreamSyncOut)
 def list_streams(request: HttpRequest, runner_id: uuid.UUID):
-    """The sessions this runner should be tailing live (a viewer is attached). The
-    observable half of attach/detach — the runner syncs this each tick and starts/
-    stops tailers; the WS runner.stream frame is only a latency optimization."""
-    from django.db.models import Max as _Max
+    """Every session this runner backs, with what the server already holds of each.
 
-    from apps.canopy_sessions.models import RunnerBinding
+    NOT just the watched ones any more, and that is the point. While this filtered
+    on `stream_desired=True`, transcript rows only ever reached the server for a
+    session someone happened to have open, and only from the moment they opened it
+    — so the durable record was a side effect of being looked at. Measured on labs
+    (2026-07-31) across 12 live sessions: the server held 983 of 6119 rows (16%),
+    with 8 sessions at exactly zero. "Load full session" existed to paper over that
+    by asking the runner at read time, which is why it was both slow and unreliable.
+
+    `live` is the old `stream_desired` — it now decides only whether rows FAN OUT
+    to watching clients, never whether they are persisted. Persisting is
+    unconditional because the transcript is the durable source (spec 2026-07-24)
+    and building the rows costs the runner ~29 ms for a 6.5 MB file; there was
+    never a cost argument for keeping it, only the accident that live-view and
+    durability shared one flag.
+
+    `first_index`/`last_index` bound what the server holds, so the runner can tell
+    "ship only what is new" from "ship the history I am missing" — a Max alone can
+    only ever append above the high-water mark and so can never fill a hole below
+    it, which is how a session ended up stuck at 8.6% with no way to self-heal."""
+    from django.db.models import Max as _Max, Min as _Min
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
 
     runner = _runner_or_404(request, runner_id)
     bindings = (
         RunnerBinding.objects.select_related("session")
-        .filter(runner=runner, stream_desired=True)
+        .filter(runner=runner, session__status=Session.ACTIVE)
         .exclude(session_key="")
-        # The catch-up marker: on attach the runner ships every transcript record
-        # AFTER the server's max persisted turn_index (None = stream-forward only).
-        .annotate(_last_index=_Max("session__messages__turn_index"))
+        # ACTIVE only. Widening this from `stream_desired` to "every session"
+        # would otherwise sweep in every session the box has ever held — labs
+        # accumulated 71 at one point — and re-ship each one's full history on
+        # every runner restart, for conversations that are retired and whose
+        # transcripts are not growing. An archived session is not abandoned,
+        # though: `drain_backfills` is a separate path this filter does not
+        # touch, so an explicit "Load full session" on one still works. Eager for
+        # live sessions, on demand for retired ones.
+        .annotate(
+            _first_index=_Min("session__messages__turn_index"),
+            _last_index=_Max("session__messages__turn_index"),
+        )
     )
     return {"streams": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.project, "last_index": b._last_index}
+         "project": b.session.project, "last_index": b._last_index,
+         "first_index": b._first_index, "live": b.stream_desired}
         for b in bindings
     ]}
 
@@ -707,6 +735,13 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
             for e in payload.events if e.index >= 0
         ])
+    if not binding.stream_desired:
+        # Persisted above, but nobody is watching, so there is nothing to push.
+        # The runner now tails EVERY session it backs so the durable record stops
+        # depending on someone having the chat open (see list_streams); this is the
+        # gate that keeps that from also broadcasting every session in the fleet to
+        # session groups no client has joined.
+        return {"count": 0}
     sgroup = groups.session_group(payload.session_id)
     n = 0
     from apps.canopy_sessions.transcript_noise import is_system_noise
@@ -776,8 +811,14 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
     written = chat_services.write_backfill(session, [m.dict() for m in payload.messages])
-    binding.backfill_requested = False
-    binding.save(update_fields=["backfill_requested", "updated_at"])
+    # Only the LAST chunk clears the ask. A transcript is shipped in byte-budgeted
+    # chunks (see SessionBackfillIn.final), and clearing on the first one would
+    # retire the request while most of the history was still in flight — a ship
+    # that then died would leave a permanently partial session with nothing left
+    # to re-trigger it.
+    if payload.final and binding.backfill_requested:
+        binding.backfill_requested = False
+        binding.save(update_fields=["backfill_requested", "updated_at"])
     return {"written": written}
 
 

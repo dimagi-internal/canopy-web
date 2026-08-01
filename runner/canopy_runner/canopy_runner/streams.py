@@ -1,11 +1,18 @@
-"""Live transcript push for sessions a viewer is actually watching.
+"""Transcript push for every session this runner backs.
 
-Active only while `stream_desired` is set server-side, and holding NO durable
-resume state: the server's `last_index` is the checkpoint (spec 2026-07-24)."""
+Runs for ALL of them, not only the watched ones: the transcript is the durable
+source (spec 2026-07-24), so persisting it must not depend on someone having the
+chat open. `stream_desired` survives server-side as the LIVE fan-out gate only.
+Holds NO durable resume state — the server's `first_index`/`last_index` are the
+checkpoint."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+
+# Both live in the library BOTH runners share, so the laptop and the cloud box
+# cannot drift on either question (what to ship, and how big a request may be).
+from canopy_transcript import chunk_rows, rows_to_ship
 
 from . import chat_bridge, hooks, transcript
 from .client import Client
@@ -16,13 +23,13 @@ from .tail import TailReader
 logger = logging.getLogger("canopy_runner")
 
 
-# Per-session live-stream tailers, keyed by session_id — active only while a viewer
-# is attached (stream_desired on the server). Distinct from _tail_readers (the idle
-# tail read-model that fills RunnerBinding.tail); this is the live push to attached
-# viewers. Each entry: {"reader": TailReader|None, "count": int (records consumed ==
-# the next record's ordinal), "session_key": str, "project": str, "last_index":
-# int|None (the server's catch-up marker)}. Deliberately holds NO durable resume
-# state — the server's last_index is the checkpoint (spec 2026-07-24).
+# Per-session transcript tailers, keyed by session_id — one for every session this
+# runner backs. Distinct from _tail_readers (the idle tail read-model that fills
+# RunnerBinding.tail); this is the durable push, which also feeds live viewers.
+# Each entry: {"reader": TailReader|None, "count": int (records consumed == the next
+# record's ordinal), "session_key": str, "project": str, "first_index"/"last_index":
+# int|None (the bounds of what the server holds)}. Deliberately holds NO durable
+# resume state — those server-side markers are the checkpoint (spec 2026-07-24).
 _stream_readers: dict[str, dict] = {}
 
 
@@ -38,7 +45,11 @@ def post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) ->
         for r in rows
     ]
     try:
-        client.post_session_stream(cfg.runner_id, sid, events)
+        # Chunked for the same reason the backfill is: a first-attach ship now
+        # carries a session's whole history, which on the longest transcripts
+        # exceeds the server's 2.5 MB request ceiling and dies as an unhandled 500.
+        for batch in chunk_rows(events) or [[]]:
+            client.post_session_stream(cfg.runner_id, sid, batch)
         note_success(f"stream:{sid}")
         return True
     except Exception:  # noqa: BLE001
@@ -47,18 +58,28 @@ def post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) ->
 
 
 def sync_session_streams(cfg: Config, client: Client) -> None:
-    """Tail each session a viewer is watching and ship every new conversational
-    record (user + assistant) with its transcript ordinal — the server persists
-    them as the session's durable Message rows and fans the assistant frames out
-    live (spec 2026-07-24).
+    """Tail EVERY session this runner backs and ship its conversational records
+    (user + assistant) with their transcript ordinals — the server persists them as
+    the session's durable Message rows, and fans them out live only for the ones a
+    viewer has open (spec 2026-07-24).
 
-    The resume point is SERVER-side: the descriptor's `last_index` (max persisted
-    turn_index). On attach we read the transcript once and ship everything after
-    it; steady state stays change-driven off TailReader (only newly-appended
-    bytes). There is deliberately NO local offset checkpoint — a failed post just
-    drops the tailer so the next tick re-attaches from the marker, and a runner
-    restart or account failover recovers identically. Best-effort — a client
-    hiccup never breaks a tick."""
+    Every session, not just the watched ones. While the server only asked about
+    attached sessions, a session's durable history was a side effect of somebody
+    having looked at it: labs held 16% of its rows, 8 of 12 sessions at zero, and
+    the gap was papered over by asking the runner at read time ("Load full
+    session"), which is what made that button slow and unreliable. Reading and
+    parsing a 6.5 MB transcript costs ~29 ms, so there was never a cost reason to
+    wait to be asked.
+
+    The resume point is SERVER-side: the descriptor's `first_index`/`last_index`
+    (the oldest and newest turn_index it holds). On attach we read the transcript
+    once and then either ship everything after `last_index` (the server has the
+    head, just catch it up) or ship the whole history (it does not, so appending
+    could never repair it). Steady state stays change-driven off TailReader (only
+    newly-appended bytes). There is deliberately NO local offset checkpoint — a
+    failed post just drops the tailer so the next tick re-attaches from the marker,
+    and a runner restart or account failover recovers identically. Best-effort — a
+    client hiccup never breaks a tick."""
     try:
         streams = client.sync_streams(cfg.runner_id)
     except Exception:  # noqa: BLE001
@@ -68,7 +89,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
     home = Path.home()
     claude_home = home / ".claude" / "projects"
 
-    for sid in list(_stream_readers):  # drop tailers for sessions no longer watched
+    for sid in list(_stream_readers):  # drop tailers for sessions this runner no longer backs
         if sid not in desired:
             _stream_readers.pop(sid, None)
 
@@ -81,15 +102,16 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
             "reader": None, "count": 0,
             "session_key": s.get("session_key") or "", "project": s.get("project") or "",
         })
-        # Refresh every tick: the marker advances as the server persists our posts.
+        # Refresh every tick: the markers advance as the server persists our posts.
         st["last_index"] = s.get("last_index")
+        st["first_index"] = s.get("first_index")
 
     for sid, st in _stream_readers.items():
         reader = st["reader"]
         if reader is None:
-            # (Re-)attach: read the whole file once, atomically w.r.t. this reader,
-            # and catch up from the server marker. No marker yet -> stream forward
-            # only (history stays the backfill's job).
+            # (Re-)attach: read the whole file once, atomically w.r.t. this
+            # reader, and ship whatever the server is missing — the whole history
+            # when it has no head, otherwise just what is past its marker.
             path = transcript.resolve_transcript(
                 st["project"], st["session_key"], home=home, claude_home=claude_home
             )
@@ -97,9 +119,10 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
                 continue  # transcript wasn't there yet — retry resolving next tick
             reader = TailReader(str(path))
             records = reader.read_new()
-            last = st["last_index"]
-            since = chat_bridge.end_index(len(records)) if last is None else int(last)
-            rows = chat_bridge.conversational_messages(records, since)
+            rows = rows_to_ship(
+                chat_bridge.conversational_messages(records, -1),
+                first_held=st.get("first_index"), last_held=st.get("last_index"),
+            )
             if rows and not post_stream_rows(cfg, client, sid, rows):
                 continue  # nothing consumed; re-attach next tick
             st["reader"], st["count"] = reader, len(records)
@@ -139,8 +162,15 @@ def drain_backfills(cfg: Config, client: Client) -> None:
         if not (sid and path):
             continue  # transcript not resolvable -> leave it; server keeps showing the tail
         messages = chat_bridge.conversational_messages(chat_bridge.read_records(path), -1)
+        # `or [[]]` so an empty transcript still posts once: the ask is only
+        # retired by a final chunk, and a session with nothing to ship must not
+        # leave the request set forever.
+        batches = chunk_rows(messages) or [[]]
         try:
-            client.post_session_backfill(cfg.runner_id, sid, messages)
+            for i, batch in enumerate(batches):
+                client.post_session_backfill(
+                    cfg.runner_id, sid, batch, final=(i == len(batches) - 1)
+                )
             note_success(f"backfill:{sid}")
         except Exception:  # noqa: BLE001
             # A backfill that keeps failing never rebuilds the session's history

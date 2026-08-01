@@ -69,17 +69,29 @@ describe("shouldShowLoadFull", () => {
   // still on the laptop has ZERO server Message rows, so it rendered "Start the
   // conversation" with no way to pull its transcript. The offer must NOT depend
   // on messages already being on screen.
-  it("offers Load full for a runner session with no messages yet", () => {
-    expect(shouldShowLoadFull({ ...base, origin: "runner" })).toBe(true);
+  it("offers Load full for a runner-backed session with no messages yet", () => {
+    expect(shouldShowLoadFull({ ...base, runnerName: "jj-mbp" })).toBe(true);
   });
 
-  it("does not offer it for a web session", () => {
-    expect(shouldShowLoadFull({ ...base, origin: "web" })).toBe(false);
+  // REGRESSION (labs, 2026-07-31): this gated on `origin === "runner"`, so a
+  // chat STARTED from the phone never got the control — even bound to an online
+  // runner holding all 75 of its transcript rows on disk. Since
+  // `transcript_sourced`, where a conversation started says nothing about where
+  // its record lives; having a runner does.
+  it("offers Load full for a web-started session that has a runner", () => {
+    expect(shouldShowLoadFull({ ...base, runnerName: "acedimagi-mbp-cdp" })).toBe(
+      true,
+    );
+  });
+
+  it("does not offer it for a session with no runner", () => {
+    expect(shouldShowLoadFull({ ...base, runnerName: null })).toBe(false);
+    expect(shouldShowLoadFull({ ...base, runnerName: "" })).toBe(false);
   });
 
   it("defers to Load earlier when the server holds more than the window", () => {
     expect(
-      shouldShowLoadFull({ ...base, origin: "runner", hasMoreBefore: true }),
+      shouldShowLoadFull({ ...base, runnerName: "jj-mbp", hasMoreBefore: true }),
     ).toBe(false);
   });
 
@@ -87,15 +99,14 @@ describe("shouldShowLoadFull", () => {
     expect(
       shouldShowLoadFull({
         ...base,
-        origin: "runner",
+        runnerName: "jj-mbp",
         historyUnavailable: true,
       }),
     ).toBe(false);
   });
 
-  it("is hidden before the session meta loads (origin null/undefined)", () => {
-    expect(shouldShowLoadFull({ ...base, origin: null })).toBe(false);
-    expect(shouldShowLoadFull({ ...base, origin: undefined })).toBe(false);
+  it("is hidden before the session meta loads", () => {
+    expect(shouldShowLoadFull({ ...base, runnerName: undefined })).toBe(false);
   });
 });
 
