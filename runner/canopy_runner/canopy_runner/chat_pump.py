@@ -19,6 +19,24 @@ from .failure_log import note_failure, note_success
 logger = logging.getLogger("canopy_runner")
 
 
+def _is_blocked(task: str) -> bool:
+    """Whether a dialog is currently up on this emdash task.
+
+    Keyed by task across projects for the same reason `note_answer_outcome` is:
+    the bridge knows the emdash task it is tailing, not the project, and the
+    answer is only ever used as a "do not call this wedged" veto.
+    """
+    from . import hooks
+
+    listener = hooks._hook_listener
+    if listener is None or not task:
+        return False
+    try:
+        return any(k[1] == task for k in listener._pending_menus)
+    except Exception:  # noqa: BLE001 — a bridge tick must never die on this
+        return False
+
+
 def finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note: str) -> None:
     """Retire one in-flight bridge: drop it from the registry FIRST (so a failing
     finish can't leave it pumping forever), interrupt the live session on a cancel,
@@ -61,7 +79,11 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
         except Exception:  # noqa: BLE001 — an unreadable transcript is a quiet tick
             logger.debug("chat turn=%s: transcript read failed", turn_id, exc_info=True)
             new_records, raw_lines = [], []
-        bridge.step(new_records, raw_lines)
+        # A dialog up on this session means "waiting on a human", not "wedged" —
+        # see LiveBridge.step. Read from the hook listener, so it costs nothing
+        # and never touches emdash.
+        blocked = _is_blocked(bridge.task)
+        bridge.step(new_records, raw_lines, blocked=blocked)
         flush_turn_transcript(client, bridge)
         if bridge.pending:
             events = [{"kind": "assistant", "payload": {"text": t}} for t in bridge.pending]

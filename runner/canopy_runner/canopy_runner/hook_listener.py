@@ -39,6 +39,10 @@ from canopy_transcript import (
     menu_from_hook,
 )
 
+# Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
+# the runner's CDP/emdash imports, which is what lets it unit-test standalone.
+ANSWERED = "answered"
+
 logger = logging.getLogger("canopy_runner.hooks")
 
 # A hook body is one tool call — the largest realistic one is a big tool result,
@@ -55,7 +59,7 @@ class HookListener:
     """
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
-                 read_menu=None, resolve_task=None):
+                 read_menu=None, resolve_task=None, menu_store=None):
         self.port = port
         self.nonce = nonce
         self._resolve_session = resolve_session
@@ -73,6 +77,18 @@ class HookListener:
         # get/set on a str key is atomic under the GIL, and a menu arriving
         # one tick late is a non-event, so no lock.
         self._pending_menus: dict[tuple[str, str], dict] = {}
+        # Where pending menus survive a restart. The hook that raised a dialog
+        # fires exactly once, so without this a restart does not merely FORGET a
+        # live menu — the next report ships `question: null` and actively RETIRES
+        # it server-side, and nothing can ever rediscover it: no hook re-fires,
+        # and the transcript will not carry the ask until it is answered. The
+        # runner auto-updates itself, so restarts are routine, not rare.
+        self._menu_store = menu_store
+        if menu_store is not None:
+            try:
+                self._pending_menus.update(menu_store.load())
+            except Exception:  # noqa: BLE001 — a bad store must not stop the listener
+                logger.debug("could not restore pending menus", exc_info=True)
         # Injected: given a cwd, return the dialog on that session's screen (or
         # None). Injected rather than imported so this module stays testable
         # without CDP, emdash, or a live terminal — and so a runner with no CDP
@@ -169,12 +185,46 @@ class HookListener:
                     self._pending_menus[key] = menu
                 else:
                     self._pending_menus.pop(key, None)
+            self._persist()
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("menu tracking failed (non-fatal)", exc_info=True)
 
     def pending_menu(self, project: str, task: str) -> dict | None:
         """The dialog this session is waiting on, or None."""
         return self._pending_menus.get((project or "", task or ""))
+
+    def note_answer(self, keys, outcome: str, note: str = "") -> None:
+        """Record what became of a human's tap, so the next report carries it.
+
+        On success the menu is dropped immediately rather than waiting for the
+        agent's `PostToolUse`: the dialog is gone the moment the key lands, and
+        leaving it up for another report cycle invites a second tap at a dialog
+        that has already moved on.
+
+        On a refusal the menu STAYS and gains `answer_error`. That pairing is the
+        point — the phone shows the same buttons plus the reason they did not
+        work, instead of the silence that made a correct refusal look like a dead
+        button.
+        """
+        for key in keys or ():
+            if outcome == ANSWERED:
+                self._pending_menus.pop(key, None)
+                continue
+            menu = self._pending_menus.get(key)
+            if menu is not None:
+                self._pending_menus[key] = {**menu, "answer_error": outcome,
+                                            "answer_note": note}
+        self._persist()
+
+    def _persist(self) -> None:
+        """Best-effort. A store that cannot be written costs a restart's menus,
+        which is exactly the status quo — never a hook's 200."""
+        if self._menu_store is None:
+            return
+        try:
+            self._menu_store.save(self._pending_menus)
+        except Exception:  # noqa: BLE001
+            logger.debug("could not persist pending menus", exc_info=True)
 
     def _safe_read_menu(self, cwd: str):
         """The dialog on this session's screen, or None.

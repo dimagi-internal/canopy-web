@@ -188,3 +188,145 @@ def test_every_spelling_of_the_task_gets_the_menu():
     hl.handle_payload({"hook_event_name": "Stop", "cwd": "/any"})
     assert hl.pending_menu("p", "task-ab12x") is None
     assert hl.pending_menu("p", "task") is None
+
+
+# --- what became of a tap -------------------------------------------------
+#
+# The original complaint, in its purest form: "clicking on a menu option doesn't
+# fire." Every cause underneath it is now fixed, but a refusal was still silent —
+# the API answers the phone `ok:true` the instant it relays the frame, so a
+# correct refusal and a successful press look identical from a thumb.
+
+# A real captured dialog (the trust gate, verbatim) — this file needs a screen to
+# answer against, and `test_menu.py` owns the captures.
+DIALOG = """\
+────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+ /private/tmp/scratchpad/menu-work
+ Quick safety check: Is this a project you created or one you trust?
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+ Enter to confirm · Esc to cancel
+"""
+
+
+def test_a_successful_answer_drops_the_menu_at_once():
+    """Not left for the agent's PostToolUse: the dialog is gone the moment the
+    key lands, and a menu that outlives it invites a second tap at a dialog that
+    has already moved on."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.note_answer([KEY], hooks.ANSWERED)
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_refused_answer_keeps_the_menu_and_says_why():
+    """The pairing is the point — the same buttons, plus the reason they did not
+    work. Dropping the menu here would leave a phone with nothing to retry."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.note_answer([KEY], hooks.WRONG_PANE, hooks.ANSWER_NOTES[hooks.WRONG_PANE])
+    menu = hl.pending_menu(*KEY)
+    assert menu is not None
+    assert menu["answer_error"] == hooks.WRONG_PANE
+    assert "Claude tab" in menu["answer_note"]
+    assert [o["number"] for o in menu["options"]] == [1, 2]
+
+
+def test_every_refusal_has_something_to_show_a_human():
+    """A reason code with no sentence behind it reaches the phone as a bare
+    enum."""
+    from canopy_runner import hooks
+
+    for outcome in (hooks.NO_DIALOG, hooks.NOT_ON_MENU, hooks.WRONG_PANE,
+                    hooks.UNREACHABLE):
+        assert hooks.ANSWER_NOTES.get(outcome), outcome
+    assert hooks.ANSWERED not in hooks.ANSWER_NOTES  # success is not an error
+
+
+def test_answering_reports_the_outcome_instead_of_raising():
+    """`answer_menu_with` returns; the CDP-bound wrapper classifies transport
+    failures. Both must be data, because the outcome has to ride the session
+    report back to the phone."""
+    from canopy_runner import hooks
+
+    class NoDialog:
+        def read_terminal(self, *a, **k): return "just output\nnothing here"
+    assert hooks.answer_menu_with(NoDialog(), "t", 1) == hooks.NO_DIALOG
+
+    class Real:
+        sent = None
+        def read_terminal(self, *a, **k): return DIALOG
+        def send_keys(self, task, keys, **k): Real.sent = keys
+    cdp = Real()
+    assert hooks.answer_menu_with(cdp, "t", 9) == hooks.NOT_ON_MENU   # not on the menu
+    assert Real.sent is None, "a rejected option must never reach the terminal"
+    assert hooks.answer_menu_with(cdp, "t", 1) == hooks.ANSWERED
+    assert Real.sent == ["1", "\r"]
+
+
+def test_a_wrong_pane_is_told_apart_from_a_dead_runner():
+    """They want opposite things from a human: switch your emdash tab, versus go
+    find out why the box is unreachable."""
+    from canopy_runner import cdp_control, hooks
+
+    class Boom:
+        def read_terminal(self, *a, **k):
+            raise cdp_control.CDPError("NOT_A_CLAUDE_PANE: a shell tab is selected")
+    class Dead:
+        def read_terminal(self, *a, **k):
+            raise cdp_control.CDPError("ECONNREFUSED")
+
+    orig = hooks.cdp_control
+    try:
+        hooks.cdp_control = Boom()
+        assert hooks.answer_menu("t", 1) == hooks.WRONG_PANE
+        hooks.cdp_control = Dead()
+        assert hooks.answer_menu("t", 1) == hooks.UNREACHABLE
+    finally:
+        hooks.cdp_control = orig
+
+
+# --- surviving a restart --------------------------------------------------
+
+def test_a_menu_survives_the_runner_restarting(tmp_path):
+    """The hook fires once. Without a store a restart does not merely forget a
+    live menu — the next report ships `question: null` and RETIRES it, and
+    nothing can rediscover it. The runner auto-updates every 30 minutes, so this
+    is routine rather than rare."""
+    from canopy_runner.menu_store import MenuStore
+
+    store = MenuStore(tmp_path / "pending-menus.json")
+    hl = listener(menu_store=store)
+    hl.handle_payload(ASK)
+
+    revived = listener(menu_store=MenuStore(tmp_path / "pending-menus.json"))
+    menu = revived.pending_menu(*KEY)
+    assert menu is not None
+    assert menu["question"] == "How far do you want to take this?"
+    assert menu["restored"] is True
+
+
+def test_an_answered_menu_does_not_come_back_from_the_store(tmp_path):
+    from canopy_runner import hooks
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "pending-menus.json"
+    hl = listener(menu_store=MenuStore(path))
+    hl.handle_payload(ASK)
+    hl.note_answer([KEY], hooks.ANSWERED)
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is None
+
+
+def test_a_corrupt_store_is_an_empty_one(tmp_path):
+    """Never a crash on a path that runs at startup and inside a hook."""
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "pending-menus.json"
+    path.write_text("{not json at all")
+    assert MenuStore(path).load() == {}
+    assert MenuStore(tmp_path / "nope.json").load() == {}

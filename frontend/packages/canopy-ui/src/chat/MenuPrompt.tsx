@@ -18,6 +18,13 @@ export interface MenuPromptProps {
  * accepts Escape, and it is the only answer that stays correct if the dialog on
  * screen is not the one rendered here.
  *
+ * A tap that was relayed and then refused BY THE RUNNER comes back as
+ * `menu.answer_note`, and it wins over the local `error` prop because it is the
+ * later, more specific half of the same story: `error` means the server would
+ * not relay the tap, `answer_note` means it did and the keystroke still did not
+ * land. Showing neither is what made this button look dead for 45 minutes — the
+ * API answers `ok:true` the instant it relays, so silence read as success.
+ *
  * The options render in one of two shapes, chosen by whether the dialog carries
  * descriptions. A permission prompt's options ("Yes" / "No") are a row of chips.
  * An AskUserQuestion's are not: its descriptions are the decision itself — on
@@ -85,7 +92,9 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
           Cancel (Esc)
         </button>
       </div>
-      {error ? <div className="mt-1.5 text-[12px] text-destructive">{error}</div> : null}
+      {menu.answer_note || error ? (
+        <div className="mt-1.5 text-[12px] text-destructive">{menu.answer_note || error}</div>
+      ) : null}
     </div>
   );
 }
