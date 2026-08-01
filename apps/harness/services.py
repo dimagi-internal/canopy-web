@@ -1585,6 +1585,27 @@ def replace_reported_sessions(
             runner_binding__session_key__in=closed,
         ).update(status=Session.ARCHIVED)
 
+    # A menu, unlike the runner FK below, MUST be cleared when its session stops
+    # being reported. `pending_question` is only written inside the loop above,
+    # which walks the sessions IN this report — so a session whose emdash task is
+    # gone keeps its last dialog forever. Observed 2026-08-01: `7891` was absent
+    # from emdash's open set entirely and the API still served a phone six
+    # buttons, every one of which could only fail. The runner cannot fix this
+    # from its side: it prunes its own copy, but it has no way to say anything
+    # about a session it can no longer see.
+    #
+    # This is the same wholesale reconciliation the report already performs for
+    # liveness — absence is a direct observation, not an inference — applied to
+    # the one other field a report owns. It is NOT the same judgement as the FK
+    # below: identity is durable and answers "which box", while a dialog is a
+    # claim about a screen that no longer exists.
+    stale_menus = RunnerBinding.objects.filter(runner=runner).exclude(
+        pending_question__isnull=True,
+    ).exclude(session_key__in=now_keys)
+    for binding in stale_menus:
+        menu_changes.append((binding.session_id, None))
+    stale_menus.update(pending_question=None)
+
     # NOTHING is cleared here. `RunnerBinding.runner` is durable IDENTITY — which box
     # this session lives on — and a session must never forget that just because its
     # task stopped being reported (emdash DELETES a closed task, so falling off the
