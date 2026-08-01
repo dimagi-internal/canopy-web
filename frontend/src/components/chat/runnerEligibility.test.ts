@@ -189,3 +189,23 @@ describe("findBoundRunner", () => {
     expect(findBoundRunner("Alpha", [])).toBeNull();
   });
 });
+
+describe("parkedSummary — the hidden ones that are waiting", () => {
+  it("names them, so a whole-list waiting count is followable", () => {
+    // The heading counts "N waiting on you" over every session while this
+    // filter hides part of the list. Reported 2026-08-01: the phone said
+    // something was pending and showed nothing pending, with no next move.
+    expect(
+      parkedSummary([
+        { runner_online: false, runner_status: "paused", waiting_on_you: true },
+        { runner_online: false, runner_status: "paused" },
+      ]),
+    ).toBe("2 hidden — runner paused · 1 waiting on you");
+  });
+
+  it("stays quiet when nothing hidden is waiting", () => {
+    expect(
+      parkedSummary([{ runner_online: false, runner_status: "offline" }]),
+    ).toBe("1 hidden — runner offline");
+  });
+});

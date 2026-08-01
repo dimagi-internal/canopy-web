@@ -137,11 +137,22 @@ class LiveBridge:
     raw_batches_sent: int = 0
     transcript_truncated: bool = False
 
-    def step(self, new_records: list[dict], raw_lines: list[str] | None = None) -> None:
+    def step(self, new_records: list[dict], raw_lines: list[str] | None = None,
+             blocked: bool = False) -> None:
         """Consume one tick's worth of newly-appended records.
 
         `raw_lines` is the verbatim JSONL for those records (TailReader.last_raw).
-        Optional so the state machine still unit-tests from records alone."""
+        Optional so the state machine still unit-tests from records alone.
+
+        `blocked` is "this session has a dialog up right now". It suppresses the
+        idle backstop ONLY — an agent waiting on a human is silent by definition,
+        so the one signal that says "this writer has stopped stamping stop_reason"
+        cannot tell it apart from a wedge. Measured cost of not knowing: a turn
+        finished `done` after 15 minutes carrying 936 characters of preamble while
+        its dialog was still on screen, so the phone showed a completed chat whose
+        answer never came (labs, 2026-08-01). MAX_TICKS still bounds it, so a
+        dialog nobody ever answers cannot hold a session open forever.
+        """
         self.ticks += 1
         if raw_lines and not self.transcript_truncated:
             self.raw_pending.extend(raw_lines)
@@ -154,7 +165,7 @@ class LiveBridge:
         self.collected.extend(texts)
         if any(hands_back_to_human(r) for r in new_records):
             self.done_reason = "end_turn"
-        elif self.idle_ticks >= IDLE_TICKS:
+        elif self.idle_ticks >= IDLE_TICKS and not blocked:
             self.done_reason = "idle"
         elif self.ticks >= MAX_TICKS:
             self.done_reason = "max_ticks"

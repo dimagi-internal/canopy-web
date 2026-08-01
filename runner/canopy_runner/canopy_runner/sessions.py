@@ -34,6 +34,19 @@ _tail_readers: dict[str, "TailReader | None"] = {}
 _PENDING_CLOSED: set[str] = set()
 
 
+# Set when something happened that the server must learn about NOW even though no
+# transcript grew — today, the outcome of a human's tap on a blocked agent's
+# dialog. A blocked session is silent by definition, so the change-driven tick
+# never fires for it and the answer would wait out the whole heartbeat window.
+_REPORT_NOW = False
+
+
+def request_report_now() -> None:
+    """Make the next tick report, whatever the change-check says."""
+    global _REPORT_NOW
+    _REPORT_NOW = True
+
+
 def request_close_report(task_name: str) -> None:
     """Queue a deleted task's name for the next report's closing signal, and make
     that report happen on the very next tick rather than at the next heartbeat.
@@ -136,7 +149,9 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except Exception:  # noqa: BLE001
         logger.debug("session list failed (non-fatal)", exc_info=True)
         return
-    changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED)
+    global _REPORT_NOW
+    changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED) or _REPORT_NOW
+    _REPORT_NOW = False
     heartbeat = now_fn() - _last_session_report >= cfg.session_report_seconds
     if not changed and not heartbeat:
         return
