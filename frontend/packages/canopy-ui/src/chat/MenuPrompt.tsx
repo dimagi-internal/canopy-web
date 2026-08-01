@@ -36,6 +36,16 @@ export interface MenuPromptProps {
  */
 export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptProps) {
   const described = menu.options.some((o) => o.description);
+  // A dialog Claude Code drew with no tool call behind it — a permission prompt,
+  // a trust gate. The `Notification` hook says a human is wanted and carries a
+  // message, but no options: reading those means driving CDP, which steals
+  // focus, so they are genuinely not available here. Saying so beats an empty
+  // box, and beats the previous behaviour of showing nothing at all.
+  //
+  // Escape is still REAL on one of these: the runner re-reads the actual screen
+  // before pressing anything, and a permission prompt parses there — so the
+  // refuse button below is an action, not a placeholder.
+  const optionless = menu.options.length === 0;
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
       <div className="flex items-center gap-1.5 font-medium text-warning">
@@ -48,7 +58,12 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
         </pre>
       ) : null}
       <div className="mt-2 text-foreground">{menu.question}</div>
-      {described ? (
+      {optionless ? (
+        <div className="mt-1.5 text-[12px] leading-snug text-muted-foreground">
+          The options can only be read at the keyboard — open this session in emdash to
+          pick one. Cancelling from here still works.
+        </div>
+      ) : described ? (
         <div className="mt-2 flex flex-col gap-1.5">
           {menu.options.map((option) => (
             <button

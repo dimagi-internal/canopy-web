@@ -242,3 +242,42 @@ def test_what_retires_a_menu():
     assert not ct.hook_retires_menu({"hook_event_name": "PostToolUse", "tool_name": "Bash"})
     assert not ct.hook_retires_menu(PRE_TOOL_USE)
     assert not ct.hook_retires_menu(None)
+
+
+# --- the dialogs that carry no menu ---------------------------------------
+#
+# A permission prompt or trust gate is drawn with no tool call behind it, so it
+# exists only on the rendered terminal — and reading that means CDP, which steals
+# focus. `Notification` is what a hook CAN see: a human is wanted, and roughly
+# why. Less than a menu, and honest about it.
+
+NOTIFY = {"hook_event_name": "Notification",
+          "message": "Claude needs your permission to use Bash"}
+
+
+def test_a_notification_becomes_an_option_less_record():
+    m = ct.marker_from_hook(NOTIFY)
+    assert m is not None
+    assert m["question"] == "Claude needs your permission to use Bash"
+    assert m["options"] == []
+    assert m["source"] == "notification"
+
+
+def test_the_message_is_passed_through_not_interpreted():
+    """Working out WHICH dialog it is by parsing the wording is how a signal
+    starts lying. The words go through as written; the human can tell."""
+    m = ct.marker_from_hook({"hook_event_name": "Notification",
+                             "message": "Claude is waiting for your input"})
+    assert m["question"] == "Claude is waiting for your input"
+
+
+def test_a_message_less_notification_still_says_something():
+    for payload in ({"hook_event_name": "Notification"},
+                    {"hook_event_name": "Notification", "message": "   "}):
+        assert ct.marker_from_hook(payload)["question"] == "This session is waiting on you."
+
+
+def test_only_a_notification_makes_a_marker():
+    assert ct.marker_from_hook(PRE_TOOL_USE) is None
+    assert ct.marker_from_hook({"hook_event_name": "Stop"}) is None
+    assert ct.marker_from_hook(None) is None

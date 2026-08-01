@@ -36,6 +36,7 @@ from canopy_transcript import (
     activity_for_hook,
     events_for_hook,
     hook_retires_menu,
+    marker_from_hook,
     menu_from_hook,
 )
 
@@ -178,13 +179,22 @@ class HookListener:
             if not keys:
                 return
             menu = menu_from_hook(payload)
-            if menu is None and not hook_retires_menu(payload):
+            retire = menu is None and hook_retires_menu(payload)
+            # A `Notification` says a human is wanted but cannot say what is being
+            # asked — no options, no command. It is recorded ONLY where nothing
+            # better is already held: a real menu is strictly more useful, and
+            # letting a notification overwrite one would replace buttons that work
+            # with words that do not.
+            marker = None if (menu is not None or retire) else marker_from_hook(payload)
+            if menu is None and marker is None and not retire:
                 return
             for key in keys:
                 if menu is not None:
                     self._pending_menus[key] = menu
-                else:
+                elif retire:
                     self._pending_menus.pop(key, None)
+                elif key not in self._pending_menus:
+                    self._pending_menus[key] = marker
             self._persist()
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("menu tracking failed (non-fatal)", exc_info=True)
