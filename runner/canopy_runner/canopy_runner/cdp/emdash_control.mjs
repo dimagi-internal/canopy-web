@@ -421,6 +421,37 @@ try {
     // the prompt of a session that is NOT showing a menu.
     const { task, keys } = args;
     await openTask(task);
+    // A task can hold several terminals — a Claude pane plus shell tabs the human
+    // opened — and only the SELECTED one is rendered at full size. With a shell
+    // tab selected, every answer to a real dialog died here (labs, 2026-08-01:
+    // 45 minutes of taps refused, correctly and invisibly). The human asked for
+    // this keystroke, so selecting the Claude tab for them is the on-demand case
+    // that is allowed to move emdash's UI — unlike a read on a signal, which is
+    // what #510 was reverted for.
+    //
+    // Two rules make this safe to do blind:
+    //   * The tab is matched by `title` starting "Claude (" — never by position
+    //     and never by an aria-label starting "Close", which is the button that
+    //     KILLS the session and sits inside this very tab.
+    //   * It is dispatched as a direct `.click()` rather than a real mouse click,
+    //     so no overlay can intercept it by sitting on top of the coordinates.
+    // The positive identification below still has the final say either way: if
+    // this fails, or selects something that is not a Claude session, we refuse
+    // exactly as before.
+    const switched = await page.evaluate(String.raw`(() => {
+      const visible = (el) => {
+        if (!el || !el.offsetParent) return false;      // other tasks' stale DOM
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const tabs = [...document.querySelectorAll('[role="button"][title]')]
+        .filter((el) => /^Claude\s*\(/.test(el.getAttribute('title') || ''))
+        .filter(visible);
+      if (tabs.length !== 1) return false;   // ambiguous is not actionable
+      tabs[0].click();
+      return true;
+    })()`);
+    if (switched) await page.waitForTimeout(400);
     // Refuse if the pane in view is not a Claude session. emdash renders only the
     // ACTIVE terminal at full size, so if the human has a SHELL tab selected in
     // this task, that shell is what "largest" resolves to — and pressing "3" then
@@ -435,7 +466,8 @@ try {
     })(); })()`);
     if (!isClaude) {
       fail(`NOT_A_CLAUDE_PANE: the visible terminal for "${task}" is not a Claude session ` +
-           `(a shell tab is probably selected) — refusing to send keys into it`);
+           `(a shell tab is probably selected${switched ? ", and selecting the Claude tab did not help" : ""}) ` +
+           `— refusing to send keys into it`);
     }
     for (const key of keys) {
       if (key === '\r') await page.keyboard.press('Enter');

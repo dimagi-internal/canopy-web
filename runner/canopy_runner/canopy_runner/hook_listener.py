@@ -32,7 +32,17 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from canopy_transcript import activity_for_hook, events_for_hook
+from canopy_transcript import (
+    activity_for_hook,
+    events_for_hook,
+    hook_retires_menu,
+    marker_from_hook,
+    menu_from_hook,
+)
+
+# Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
+# the runner's CDP/emdash imports, which is what lets it unit-test standalone.
+ANSWERED = "answered"
 
 logger = logging.getLogger("canopy_runner.hooks")
 
@@ -50,11 +60,36 @@ class HookListener:
     """
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
-                 read_menu=None):
+                 read_menu=None, resolve_task=None, menu_store=None):
         self.port = port
         self.nonce = nonce
         self._resolve_session = resolve_session
         self._forward = forward
+        # Injected: cwd -> the (project, emdash task) keys the session report is
+        # built on. Injected for the same reason `resolve_session` is — this
+        # module stays testable with no emdash and no worktree on disk.
+        #
+        # Note it is NOT `resolve_session`: that one answers with a canopy session
+        # id and can only do so for a session a viewer is attached to, which is
+        # precisely the case a blocked-agent menu does not need.
+        self._resolve_task = resolve_task
+        # The live dialog per (project, task), captured from `PreToolUse`.
+        # Written from listener threads and read from the report thread; dict
+        # get/set on a str key is atomic under the GIL, and a menu arriving
+        # one tick late is a non-event, so no lock.
+        self._pending_menus: dict[tuple[str, str], dict] = {}
+        # Where pending menus survive a restart. The hook that raised a dialog
+        # fires exactly once, so without this a restart does not merely FORGET a
+        # live menu — the next report ships `question: null` and actively RETIRES
+        # it server-side, and nothing can ever rediscover it: no hook re-fires,
+        # and the transcript will not carry the ask until it is answered. The
+        # runner auto-updates itself, so restarts are routine, not rare.
+        self._menu_store = menu_store
+        if menu_store is not None:
+            try:
+                self._pending_menus.update(menu_store.load())
+            except Exception:  # noqa: BLE001 — a bad store must not stop the listener
+                logger.debug("could not restore pending menus", exc_info=True)
         # Injected: given a cwd, return the dialog on that session's screen (or
         # None). Injected rather than imported so this module stays testable
         # without CDP, emdash, or a live terminal — and so a runner with no CDP
@@ -72,6 +107,11 @@ class HookListener:
         and tests. Never raises — the caller must answer 200 regardless."""
         self.received += 1
         try:
+            # BEFORE every gate below. A dialog is state this box holds for the
+            # session report to read, not an event to ship — so it must survive
+            # `forward_sessions` being off, and it must be recorded even for a
+            # hook kind that forwards nothing.
+            self._track_menu(payload)
             activity = activity_for_hook(payload)
             if activity is not None:
                 cwd = payload.get("cwd") or ""
@@ -120,6 +160,81 @@ class HookListener:
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("hook handling failed (non-fatal)", exc_info=True)
             return "error"
+
+    def _track_menu(self, payload: dict) -> None:
+        """Hold, or drop, the dialog this session is waiting on.
+
+        This is the ONLY producer that sees a menu while it is still up. The
+        transcript cannot: Claude Code writes the `AskUserQuestion` tool_use
+        record when the dialog is ANSWERED, so `pending_question` is structurally
+        blind to a live one (39 records across 60 transcripts on a live box, all
+        already answered, zero pending — 2026-08-01). The screen reader can, but
+        only by driving CDP, which clicks the task and steals focus, so it can
+        never run on a cadence.
+        """
+        if self._resolve_task is None:
+            return
+        try:
+            keys = self._resolve_task(payload.get("cwd") or "")
+            if not keys:
+                return
+            menu = menu_from_hook(payload)
+            retire = menu is None and hook_retires_menu(payload)
+            # A `Notification` says a human is wanted but cannot say what is being
+            # asked — no options, no command. It is recorded ONLY where nothing
+            # better is already held: a real menu is strictly more useful, and
+            # letting a notification overwrite one would replace buttons that work
+            # with words that do not.
+            marker = None if (menu is not None or retire) else marker_from_hook(payload)
+            if menu is None and marker is None and not retire:
+                return
+            for key in keys:
+                if menu is not None:
+                    self._pending_menus[key] = menu
+                elif retire:
+                    self._pending_menus.pop(key, None)
+                elif key not in self._pending_menus:
+                    self._pending_menus[key] = marker
+            self._persist()
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.debug("menu tracking failed (non-fatal)", exc_info=True)
+
+    def pending_menu(self, project: str, task: str) -> dict | None:
+        """The dialog this session is waiting on, or None."""
+        return self._pending_menus.get((project or "", task or ""))
+
+    def note_answer(self, keys, outcome: str, note: str = "") -> None:
+        """Record what became of a human's tap, so the next report carries it.
+
+        On success the menu is dropped immediately rather than waiting for the
+        agent's `PostToolUse`: the dialog is gone the moment the key lands, and
+        leaving it up for another report cycle invites a second tap at a dialog
+        that has already moved on.
+
+        On a refusal the menu STAYS and gains `answer_error`. That pairing is the
+        point — the phone shows the same buttons plus the reason they did not
+        work, instead of the silence that made a correct refusal look like a dead
+        button.
+        """
+        for key in keys or ():
+            if outcome == ANSWERED:
+                self._pending_menus.pop(key, None)
+                continue
+            menu = self._pending_menus.get(key)
+            if menu is not None:
+                self._pending_menus[key] = {**menu, "answer_error": outcome,
+                                            "answer_note": note}
+        self._persist()
+
+    def _persist(self) -> None:
+        """Best-effort. A store that cannot be written costs a restart's menus,
+        which is exactly the status quo — never a hook's 200."""
+        if self._menu_store is None:
+            return
+        try:
+            self._menu_store.save(self._pending_menus)
+        except Exception:  # noqa: BLE001
+            logger.debug("could not persist pending menus", exc_info=True)
 
     def _safe_read_menu(self, cwd: str):
         """The dialog on this session's screen, or None.

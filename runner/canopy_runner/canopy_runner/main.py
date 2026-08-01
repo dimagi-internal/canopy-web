@@ -702,12 +702,17 @@ def make_control_handler(cfg: Config, waker):
             # Runs on the wake-listener thread and must never raise: this socket
             # also carries cancel and wake, and losing it would cost the runner
             # its liveness for a keystroke.
-            try:
-                hooks.answer_menu(str(msg["session_key"]), msg.get("option"),
-                             cdp_port=cfg.cdp_port)
-            except Exception:  # noqa: BLE001
-                logger.warning("menu answer failed for %s", msg.get("session_key"),
-                               exc_info=True)
+            # `answer_menu` classifies its own failures and never raises, so the
+            # outcome is data rather than an exception — which is what lets it
+            # ride the next session report back to the phone. Reporting is forced
+            # rather than left to the change-driven tick: a blocked session writes
+            # nothing, so nothing would mark it changed, and the answer to "did my
+            # tap work?" would wait out the whole heartbeat window.
+            session_key = str(msg["session_key"])
+            outcome = hooks.answer_menu(session_key, msg.get("option"),
+                                        cdp_port=cfg.cdp_port)
+            hooks.note_answer_outcome(session_key, outcome)
+            sessions.request_report_now()
         elif msg.get("type") == "close_session" and msg.get("session_key"):
             # A human closed this session from the web. Runs on the wake-listener
             # thread and must never raise: this socket also carries cancel and wake,

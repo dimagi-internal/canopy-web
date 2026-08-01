@@ -1,6 +1,21 @@
-"""The dialog a blocked agent is waiting on, read out of its own transcript.
+"""The dialog a blocked agent is waiting on — from its hook, or its transcript.
 
-**Why this is the primary path.** The menu used to exist in exactly one place —
+**Read this first: the transcript is the WEAKER half, and the section below is
+kept only because it explains the design.** `pending_question` cannot see a live
+dialog. Claude Code writes the `AskUserQuestion` `tool_use` record when the ask
+is ANSWERED, not when it is made — measured 2026-08-01 across 60 transcripts on
+a live box: 39 such records, every one already answered, zero pending, while two
+sessions sat blocked on visible dialogs with nothing in their files. So it
+reports dialogs that are over and never one that is waiting, and it fails
+silently, because `None` also means "nothing is blocked".
+
+`menu_from_hook` is the primary path: `PreToolUse` fires when the call STARTS and
+carries the same `tool_input`, so every property argued for below holds — and it
+arrives at the only moment that is useful. `pending_question` is consulted second
+(it still wins on a session whose hooks were never installed) and would become
+correct on its own the day Claude Code flushes that record eagerly.
+
+**Why the transcript at all.** The menu used to exist in exactly one place —
 the rendered terminal — so seeing it meant driving emdash over CDP, and CDP's
 `openTask` CLICKS the task and steals focus. #495 wired that onto the
 `Notification` hook; #510 had to rip it back out (it yanked emdash to whatever
@@ -123,6 +138,95 @@ def _menu_from_input(payload) -> dict | None:
         # so an operator can tell the transcript path from the screen read.
         "source": "transcript",
     }
+
+
+def menu_from_hook(payload) -> dict | None:
+    """A `PreToolUse` hook payload for `AskUserQuestion` -> the menu, or None.
+
+    **Why this exists, when the transcript already parses the same tool input.**
+    It does not get the chance. Claude Code writes the `tool_use` record for a
+    dialog only once the dialog is ANSWERED — measured 2026-08-01 across 60
+    transcripts on a live box: 39 `AskUserQuestion` records, every one of them
+    already answered, and zero pending, while two sessions sat visibly blocked
+    with nothing in their files at all. So `pending_question` can report a
+    question that is over and never one that is waiting, which is the exact
+    inverse of the job.
+
+    A hook has no such lag: `PreToolUse` fires when the call STARTS, and its
+    `tool_input` is the same object the transcript would eventually carry. Same
+    parse, same dict, ~0 cost, no CDP and no stolen focus — it just arrives at
+    the only moment that is useful.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("hook_event_name") != "PreToolUse":
+        return None
+    if payload.get("tool_name") != ASK_TOOL:
+        return None
+    menu = _menu_from_input(payload.get("tool_input"))
+    if menu is not None:
+        menu["source"] = "hook"
+    return menu
+
+
+# What Claude Code calls the hook that means "I want a human". It carries a
+# message and nothing else — no options, no command, no way to reply.
+NOTIFY_EVENT = "Notification"
+
+
+def marker_from_hook(payload) -> dict | None:
+    """A `Notification` hook -> a menu-shaped record with NO options, or None.
+
+    **Why an option-less menu is worth having.** `AskUserQuestion` is a tool call
+    and so arrives whole. The other things that stop an agent — a permission
+    prompt, a trust gate — are drawn by Claude Code with no tool call behind
+    them, so the only place they exist is the rendered terminal, and reading that
+    means driving CDP, which CLICKS the task and steals focus (#510 was reverted
+    for exactly that). The result was that those dialogs reached a phone only if
+    somebody happened to be watching the session at the instant they appeared.
+
+    A `Notification` needs neither: it says a human is wanted, and its `message`
+    says roughly why. That is strictly more than nothing, and it is honest about
+    being less than a menu — the client renders the words with no buttons and
+    points at emdash.
+
+    It is deliberately NOT parsed to work out which kind of dialog it is. The
+    message is passed through as written, because guessing at its wording is how
+    a signal starts lying, and the human reading it can tell.
+
+    **Escape still works on it.** The runner re-reads the real screen before
+    pressing anything, and a permission prompt parses there — so refusing is a
+    genuine action even when no options could be listed here.
+    """
+    if not isinstance(payload, dict) or payload.get("hook_event_name") != NOTIFY_EVENT:
+        return None
+    message = payload.get("message")
+    message = message.strip() if isinstance(message, str) else ""
+    return {
+        "question": message or "This session is waiting on you.",
+        "title": "Waiting on you",
+        "body": "",
+        "selected": None,
+        "options": [],
+        "source": "notification",
+    }
+
+
+def hook_retires_menu(payload) -> bool:
+    """Whether this hook event means any dialog on that session is gone.
+
+    The answer arriving (`PostToolUse` for the ask) is the obvious one. The turn
+    ending and a new prompt being submitted matter just as much: a human who
+    answered at the laptop leaves no `PostToolUse` on OUR listener if the hook
+    missed it, and a stale menu is worse than no menu — its numbers get typed
+    into an ordinary prompt, where the agent reads a bare "2" as an instruction.
+    """
+    if not isinstance(payload, dict):
+        return False
+    event = payload.get("hook_event_name")
+    if event in ("Stop", "UserPromptSubmit"):
+        return True
+    return event in ("PostToolUse", "PostToolUseFailure") and payload.get("tool_name") == ASK_TOOL
 
 
 def pending_question(records) -> dict | None:

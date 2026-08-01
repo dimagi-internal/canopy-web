@@ -1,7 +1,9 @@
 # The blocked-agent dialog comes from the transcript
 
 **Date:** 2026-07-31
-**Status:** shipped
+**Status:** shipped, then **partly corrected 2026-08-01** — see the addendum at
+the foot of this file. The transcript is NOT the primary producer and cannot be;
+the hook is.
 **Supersedes:** the "read it on demand" half of `a973f40` (#510), which was never built
 
 ## The incident
@@ -124,3 +126,60 @@ Related: on this machine something unidentified periodically rewrites
 `~/.claude/settings.json`'s canopy hook to a dead ephemeral port (self-healed
 each tick since #541). The transcript path is unaffected by that class of
 failure entirely, which is a second reason not to build this on hooks.
+
+
+---
+
+## Addendum, 2026-08-01: the transcript is structurally blind to a live dialog
+
+This spec's central claim — that an `AskUserQuestion` is a tool call, so "the
+question, every option and every option's description are already sitting in the
+transcript the runner tails anyway" — is true about the *content* and wrong
+about the *timing*.
+
+**Claude Code writes the `tool_use` record only once the ask is ANSWERED.**
+
+Measured on a live box on 2026-08-01, across the 60 most recently touched
+transcripts: **39** `AskUserQuestion` `tool_use` records, **every one of them
+already answered, and not a single pending one** — while two sessions sat
+blocked on dialogs plainly visible on their terminals, with no such record in
+their files at all. Both files simply ended on a `tool_result`, minutes (in one
+case 1h20m) before.
+
+So `pending_question` can report a dialog that is over, and can never report one
+that is waiting. That is the inverse of the job, and it failed *silently*: the
+function returns `None`, which is a legitimate answer meaning "nothing is
+blocked". Nothing distinguishes it from working correctly, which is why this
+shipped, was believed, and left the same 52-minute symptom the spec was written
+to end. The incident above recurred on 2026-08-01 — twice at once, 15 minutes
+and 1h20m, on a phone showing nothing.
+
+### What actually fixes it
+
+`PreToolUse` fires when the call **starts**, and its `tool_input` is the same
+object the transcript would eventually carry. So the parse, the dict and every
+property this spec argued for survive intact — no CDP, no stolen focus,
+computable for every open session on the ordinary report cadence — while the
+signal arrives at the only moment it is useful. `canopy_transcript.menu_from_hook`
+is that path; `hook_retires_menu` drops the menu on the answer, on `Stop`, and on
+a new prompt.
+
+Ordering is now: **hook** (live), **transcript** (a session whose hooks were
+never installed), **screen** (what neither can see — permission prompts, trust
+gates). The transcript reader is kept, not deleted: it costs nothing, and it is
+correct the day Claude Code flushes the record eagerly.
+
+### A second, independent bug on the same path
+
+Even with a menu discovered, no keystroke could land on either stuck session.
+`menu.find_menu` requires a footer offering a way out — but a footer needs a row
+to be drawn on, and a tall dialog (long question, six options, a description
+under each) overflows a short emdash pane, taking the footer with it. Both live
+frames were 41 rows ending mid-dialog on `6. Chat about this`. `answer_menu_with`
+re-reads the screen before pressing anything, so it refused every tap; the API
+had already answered `ok:true`, so the phone reported success and nothing
+happened.
+
+Fixed with a second acceptance of equal strictness — the selection cursor on an
+option **and** the dialog running to the bottom of the frame. See the "screen
+parser" bullet in `CLAUDE.md`.

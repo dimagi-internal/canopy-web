@@ -18,6 +18,7 @@ from pathlib import Path
 import canopy_transcript as transcript_core
 
 from . import cdp_control, hook_install, menu
+from .menu_store import MenuStore
 from .client import Client
 from .config import Config
 
@@ -139,6 +140,97 @@ def resolve_hook_session(cwd: str) -> str:
     return ""
 
 
+def hook_project_task_keys(cwd: str, *, home: Path | None = None) -> list[tuple[str, str]]:
+    """This cwd as the (project, emdash task) keys the session report looks up by.
+
+    **Deliberately does NOT consult `_hook_sessions`.** That map is rebuilt
+    wholesale from `sync_streams`, which returns only the sessions a VIEWER is
+    attached to — so keying a menu off it would capture one exactly when somebody
+    already had the chat open, and lose it in every case that matters. You go and
+    look BECAUSE the session stopped; the menu has to be there before you arrive.
+    That is the same shape as the bug #510 left behind, one layer down.
+
+    Nothing here needs a canopy session id anyway: the report is keyed by
+    (project, emdash task), and the worktree path carries both.
+
+    Returns every candidate because the directory may carry emdash's random
+    de-dupe suffix and the cwd alone cannot say which form the report uses. They
+    are all derived from this one path, so at most one is ever queried — storing
+    under each is a spelling, not an ambiguity.
+
+    Still (project, task) and never the task alone: emdash task names are not
+    unique across projects, and a menu attached to the wrong session puts
+    somebody else's buttons on your phone.
+    """
+    if not cwd:
+        return []
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=home or Path.home())
+    if parsed is None:
+        return []
+    project, task = parsed
+    return [(project, c) for c in transcript_core.emdash_task_candidates(task) if c]
+
+
+def note_answer_outcome(session_key: str, outcome: str) -> None:
+    """Record a tap's outcome against the menu it was aimed at.
+
+    Keyed by emdash task name across every project, because a `menu_answer` frame
+    carries only the session_key — and a menu is stored per (project, task). Task
+    names are effectively unique within one box's open set; the alternative is
+    threading the project through the control frame for a note that is only ever
+    read beside the menu it is attached to.
+    """
+    listener = _hook_listener
+    if listener is None or not session_key:
+        return
+    try:
+        keys = [k for k in listener._pending_menus if k[1] == session_key]
+        listener.note_answer(keys, outcome, ANSWER_NOTES.get(outcome, ""))
+    except Exception:  # noqa: BLE001 — never cost the wake listener its socket
+        logger.debug("could not record the answer outcome for %s", session_key, exc_info=True)
+
+
+def prune_menus(open_tasks) -> None:
+    """Drop any held menu whose emdash task is no longer open.
+
+    A menu is now persisted across restarts, which is what makes it durable — and
+    also what lets it outlive the thing it describes. Observed within hours of
+    shipping the store: a session whose emdash task had been deleted still served
+    six buttons to a phone, and pressing one could only ever fail.
+
+    The session report is the right place to notice, because it is the one thing
+    that already knows the WHOLE open set — the same wholesale-reconciliation
+    property the server relies on for liveness. Absence here is a direct
+    observation, not an inference.
+    """
+    listener = _hook_listener
+    if listener is None:
+        return
+    try:
+        keep = {t for t in open_tasks if t}
+        stale = [k for k in listener._pending_menus if k[1] not in keep]
+        if not stale:
+            return
+        for key in stale:
+            listener._pending_menus.pop(key, None)
+        listener._persist()
+        logger.info("dropped %d pending menu(s) whose emdash task is gone", len(stale))
+    except Exception:  # noqa: BLE001 — never break the report
+        logger.debug("menu prune failed (non-fatal)", exc_info=True)
+
+
+def pending_hook_menu(project: str, task: str):
+    """The dialog this session is waiting on, per the hook listener, or None."""
+    listener = _hook_listener
+    if listener is None:
+        return None
+    try:
+        return listener.pending_menu(project, task)
+    except Exception:  # noqa: BLE001 — this runs inside the liveness report
+        logger.debug("pending hook menu read failed for %s/%s", project, task, exc_info=True)
+        return None
+
+
 def hook_task_name(cwd: str) -> str:
     """The emdash task backing this cwd, or "" — the handle CDP drives by."""
     if not cwd:
@@ -176,14 +268,44 @@ def read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
     }
 
 
-def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> None:
-    """Press a human's answer into `session_key`'s terminal.
+# What became of a human's tap. Every one of these is reported back rather than
+# logged and dropped: the server answers the phone `ok:true` the instant it
+# relays the frame, so a refusal that stops here is indistinguishable from a
+# press that worked — which IS the "clicking does nothing" bug, and it survived
+# every fix to the causes underneath it.
+ANSWERED = "answered"
+NO_DIALOG = "no_dialog"          # nothing on screen — already answered, or gone
+NOT_ON_MENU = "not_on_menu"      # stale numbering; the dialog changed under the tap
+WRONG_PANE = "wrong_pane"        # a shell tab is selected; keys would run in it
+UNREACHABLE = "unreachable"      # CDP/emdash could not be driven at all
+NO_SESSION = "no_session"        # the emdash task is gone — nothing to press a key in
+
+# Human-readable, and shown on the phone beside the menu that did not move. Kept
+# here rather than in the client so all three surfaces say the same thing.
+ANSWER_NOTES = {
+    NO_DIALOG: "That dialog is no longer on screen — it may already have been answered.",
+    NOT_ON_MENU: "The dialog changed before that reached it. Here is what it shows now.",
+    WRONG_PANE: "A shell tab is selected for this session in emdash. Switch it to the "
+                "Claude tab and tap again.",
+    UNREACHABLE: "Could not reach emdash on this runner to press the key.",
+    NO_SESSION: "That session is no longer open in emdash, so there is nothing left to "
+                "answer.",
+}
+
+
+def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> str:
+    """Press a human's answer into `session_key`'s terminal. Returns an outcome.
 
     Re-reads the screen FIRST and refuses an option that is not on it. A menu can
     go stale between the phone rendering it and a thumb reaching it — and a
     NUMBER typed at a session no longer showing a dialog lands in its prompt,
     where the agent reads a bare "1" as an instruction. Double-taps and two
     people answering at once both land here.
+
+    The outcome is RETURNED, never merely logged. A refusal here is correct and
+    also invisible: the API already told the phone `ok:true`, so silence reads as
+    success and the human taps again, and again. Telling them what happened is
+    the difference between a button that failed and a button that lied.
     """
     # Re-read with a settle: a single read can catch the TUI mid-render, and
     # dropping a human's tap because the footer had not painted yet is a bug
@@ -192,15 +314,16 @@ def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222) -> 
         lambda: cdp.read_terminal(session_key, port=cdp_port))
     if current is None:
         logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
-        return
+        return NO_DIALOG
     number = None if option is None else int(option)
     if not current.allows(number):
         logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
                        number, session_key, len(current.options))
-        return
+        return NOT_ON_MENU
     cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port)
     logger.info("answered the dialog on %s with %s", session_key,
                 "Esc" if number is None else f"option {number}")
+    return ANSWERED
 
 
 def read_hook_menu(cwd: str, *, cdp_port: int):
@@ -213,8 +336,35 @@ def read_hook_menu(cwd: str, *, cdp_port: int):
     return read_hook_menu_from(cdp_control, hook_task_name(cwd), cdp_port=cdp_port)
 
 
-def answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> None:
-    answer_menu_with(cdp_control, session_key, option, cdp_port=cdp_port)
+def answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> str:
+    """`answer_menu_with` bound to real CDP, with transport failures classified.
+
+    Never raises: this runs on the wake-listener thread, which also carries wake
+    and cancel, and losing that socket over one keystroke would cost the runner
+    its liveness.
+    """
+    try:
+        return answer_menu_with(cdp_control, session_key, option, cdp_port=cdp_port)
+    except Exception as exc:  # noqa: BLE001
+        # NOT_A_CLAUDE_PANE is the one refusal a human can act on themselves, and
+        # it is the one that actually bit: with a shell tab selected, every tap on
+        # a real dialog died here for 45 minutes with nothing said (labs,
+        # 2026-08-01). It is deliberately still a refusal — clicking the Claude
+        # tab for somebody would mean guessing at emdash's tab controls, and the
+        # cost of guessing wrong is a digit executed in their shell.
+        # A deleted task and an unreachable box both surface as a CDP error and
+        # want opposite things from a reader: "that session is over" versus "go
+        # find out what broke". Collapsing them told somebody their runner was
+        # down when the truth was that the session had ended.
+        text = str(exc)
+        if "NOT_A_CLAUDE_PANE" in text:
+            outcome = WRONG_PANE
+        elif "TASK_NOT_FOUND" in text:
+            outcome = NO_SESSION
+        else:
+            outcome = UNREACHABLE
+        logger.warning("menu answer for %s failed (%s)", session_key, outcome, exc_info=True)
+        return outcome
 
 
 
@@ -256,6 +406,14 @@ def start_hook_listener(cfg: Config, client: Client):
         port=cfg.hook_port, nonce=nonce,
         resolve_session=resolve_hook_session,
         forward=lambda: cfg.forward_sessions,
+        # NOT read_menu (see above) — this is the cheap half: `PreToolUse` for
+        # AskUserQuestion already carries the whole dialog, so the listener can
+        # hold it for the session report without touching emdash at all. And it
+        # resolves off the cwd alone, so it covers every session on the box
+        # rather than only the ones somebody is already watching.
+        resolve_task=hook_project_task_keys,
+        # Beside runner.json and the PAUSED sentinel — per-box state, not config.
+        menu_store=MenuStore(Path.home() / ".canopy" / "pending-menus.json"),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

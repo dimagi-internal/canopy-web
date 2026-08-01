@@ -80,6 +80,17 @@ export interface SessionMenu {
    *  thing that distinguishes two options — "Proceed to Phase 4" does not say
    *  that Phase 4 is test-gated, and its description does. */
   options: { number: number; label: string; description?: string }[];
+  /** Set when a human's tap was RELAYED to the runner and then refused there —
+   *  a stale dialog, a shell tab selected in emdash, an unreachable box. The
+   *  API answers `ok:true` the moment it relays the frame, so without this a
+   *  correct refusal is indistinguishable from a press that worked, and the
+   *  button reads as dead. `answer_note` is the sentence to show; the code is
+   *  for logs. The menu stays up alongside it, so there is something to retry. */
+  answer_error?: string;
+  answer_note?: string;
+  /** Carried across a runner restart rather than observed this process. Nothing
+   *  should branch on it — a tap verifies against the real screen either way. */
+  restored?: boolean;
 }
 
 export interface SessionState {

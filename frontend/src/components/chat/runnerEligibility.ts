@@ -49,6 +49,9 @@ export function onlineSessionCapableRunners(
 export type SessionRunnerLiveness = {
   runner_online?: boolean | null
   runner_status?: string | null
+  /** Whether an agent is blocked on a human here. Read only by `parkedSummary`,
+   *  so a caller with no such field still type-checks. */
+  waiting_on_you?: boolean | null
 }
 
 /**
@@ -80,12 +83,21 @@ export function partitionByRunnerReachability<T extends SessionRunnerLiveness>(
 }
 
 /** One line explaining what the default list is holding back — named by reason
- * when they agree, generic when a pause and a dead box are both in there. */
+ * when they agree, generic when a pause and a dead box are both in there.
+ *
+ * Names the WAITING ones specifically, because the "N waiting on you" count in
+ * the heading is deliberately taken over the whole list while this filter hides
+ * part of it. Without saying so, the panel reports somebody is waiting and then
+ * shows nothing waiting — a dead end with no next move, reported on 2026-08-01
+ * ("my phone knows something is pending but doesn't show any one session as
+ * pending"). The count stays whole-list; this is what makes it followable. */
 export function parkedSummary(parked: readonly SessionRunnerLiveness[]): string {
   if (parked.length === 0) return ''
   const reasons = new Set(parked.map(parkedReason))
   const why = reasons.size === 1 ? `runner ${[...reasons][0]}` : 'runner unavailable'
-  return `${parked.length} hidden — ${why}`
+  const waiting = parked.filter((s) => s.waiting_on_you).length
+  const tail = waiting > 0 ? ` · ${waiting} waiting on you` : ''
+  return `${parked.length} hidden — ${why}${tail}`
 }
 
 /**

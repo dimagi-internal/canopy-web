@@ -18,6 +18,13 @@ export interface MenuPromptProps {
  * accepts Escape, and it is the only answer that stays correct if the dialog on
  * screen is not the one rendered here.
  *
+ * A tap that was relayed and then refused BY THE RUNNER comes back as
+ * `menu.answer_note`, and it wins over the local `error` prop because it is the
+ * later, more specific half of the same story: `error` means the server would
+ * not relay the tap, `answer_note` means it did and the keystroke still did not
+ * land. Showing neither is what made this button look dead for 45 minutes — the
+ * API answers `ok:true` the instant it relays, so silence read as success.
+ *
  * The options render in one of two shapes, chosen by whether the dialog carries
  * descriptions. A permission prompt's options ("Yes" / "No") are a row of chips.
  * An AskUserQuestion's are not: its descriptions are the decision itself — on
@@ -29,6 +36,16 @@ export interface MenuPromptProps {
  */
 export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptProps) {
   const described = menu.options.some((o) => o.description);
+  // A dialog Claude Code drew with no tool call behind it — a permission prompt,
+  // a trust gate. The `Notification` hook says a human is wanted and carries a
+  // message, but no options: reading those means driving CDP, which steals
+  // focus, so they are genuinely not available here. Saying so beats an empty
+  // box, and beats the previous behaviour of showing nothing at all.
+  //
+  // Escape is still REAL on one of these: the runner re-reads the actual screen
+  // before pressing anything, and a permission prompt parses there — so the
+  // refuse button below is an action, not a placeholder.
+  const optionless = menu.options.length === 0;
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
       <div className="flex items-center gap-1.5 font-medium text-warning">
@@ -41,7 +58,12 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
         </pre>
       ) : null}
       <div className="mt-2 text-foreground">{menu.question}</div>
-      {described ? (
+      {optionless ? (
+        <div className="mt-1.5 text-[12px] leading-snug text-muted-foreground">
+          The options can only be read at the keyboard — open this session in emdash to
+          pick one. Cancelling from here still works.
+        </div>
+      ) : described ? (
         <div className="mt-2 flex flex-col gap-1.5">
           {menu.options.map((option) => (
             <button
@@ -85,7 +107,9 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer }: MenuPromptPr
           Cancel (Esc)
         </button>
       </div>
-      {error ? <div className="mt-1.5 text-[12px] text-destructive">{error}</div> : null}
+      {menu.answer_note || error ? (
+        <div className="mt-1.5 text-[12px] text-destructive">{menu.answer_note || error}</div>
+      ) : null}
     </div>
   );
 }
