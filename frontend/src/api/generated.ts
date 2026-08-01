@@ -2670,6 +2670,59 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/menu-answers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Menu Answers
+         * @description Answers a human has given that this runner has not pressed yet.
+         *
+         *     The WS control frame is the fast path; this is the one that makes the answer
+         *     SURVIVE. A frame published while the runner's control channel is down goes to
+         *     a Channels group with no consumer and is discarded — and because the runner
+         *     still heartbeats over REST it reads ONLINE the whole time, so the API answers
+         *     `ok:true` and nothing records the loss. Measured on labs 2026-08-01: an answer
+         *     sent at 10:50 never reached the runner, between reconnects at 10:16 and 10:58.
+         *
+         *     Drained on the poll tick the runner already runs, same as `/backfills`.
+         */
+        readonly get: operations["apps_harness_api_list_menu_answers"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/menu-answer-result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Menu Answer Result
+         * @description The runner reports what became of an answer, which retires it.
+         *
+         *     Matched on `answer_id`: applying an answer twice means a SECOND keystroke into
+         *     a session that has already moved on, so a result for an answer that has since
+         *     been replaced must NOT clear the newer one.
+         */
+        readonly post: operations["apps_harness_api_post_menu_answer_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/session-backfill": {
         readonly parameters: {
             readonly query?: never;
@@ -8375,6 +8428,45 @@ export interface components {
              */
             readonly backfills: readonly components["schemas"]["BackfillDescriptorOut"][];
         };
+        /** MenuAnswerOut */
+        readonly MenuAnswerOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Key */
+            readonly session_key: string;
+            /** Answer Id */
+            readonly answer_id: string;
+            /** Option */
+            readonly option?: number | null;
+        };
+        /** MenuAnswerSyncOut */
+        readonly MenuAnswerSyncOut: {
+            /**
+             * Answers
+             * @default []
+             */
+            readonly answers: readonly components["schemas"]["MenuAnswerOut"][];
+        };
+        /** MenuAnswerResultOut */
+        readonly MenuAnswerResultOut: {
+            /** Ok */
+            readonly ok: boolean;
+        };
+        /** MenuAnswerResultIn */
+        readonly MenuAnswerResultIn: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Answer Id */
+            readonly answer_id: string;
+            /**
+             * Outcome
+             * @default
+             */
+            readonly outcome: string;
+        };
         /** BackfillWriteOut */
         readonly BackfillWriteOut: {
             /** Written */
@@ -13111,6 +13203,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BackfillSyncOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_list_menu_answers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MenuAnswerSyncOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_post_menu_answer_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MenuAnswerResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MenuAnswerResultOut"];
                 };
             };
         };
