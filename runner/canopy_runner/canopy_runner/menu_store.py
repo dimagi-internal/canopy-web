@@ -29,6 +29,10 @@ logger = logging.getLogger("canopy_runner.hooks")
 # string that some future reader has to know to split.
 _PROJECT, _TASK, _MENU = "project", "task", "menu"
 
+# `marker_from_hook`'s source tag. Kept as a literal rather than imported so this
+# module stays free of canopy_transcript, which is what lets it unit-test alone.
+_NOTIFICATION = "notification"
+
 
 class MenuStore:
     """Load/save `{(project, task): menu}` at `path`. Never raises."""
@@ -50,6 +54,19 @@ class MenuStore:
                 continue
             project, task = row.get(_PROJECT), row.get(_TASK)
             if not isinstance(project, str) or not isinstance(task, str) or not task:
+                continue
+            # A notification marker is a claim that a turn was in flight, and
+            # turn state is deliberately NOT persisted — after a restart we do
+            # not know, and the safe answer there is silence. Restoring one
+            # therefore restores a claim nothing can still justify, and it
+            # cannot decay on its own: the `Stop` that would retire it belongs
+            # to a turn that ended while this process was not running.
+            #
+            # Observed: `spark` carried "Claude is waiting for your input" across
+            # a restart and sat on the fleet's waiting list with no way to clear
+            # it. A real menu is different and IS restored — it describes a
+            # dialog still drawn on a screen, and a tap verifies it there.
+            if row[_MENU].get("source") == _NOTIFICATION:
                 continue
             # Marked so an operator reading a report can tell a menu observed this
             # process from one carried across a restart. Nothing branches on it —
