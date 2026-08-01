@@ -213,7 +213,7 @@ export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
   return Array.from(unwrap(res, 'getAgentRunners'))
 }
 
-// Flip the agent's runtime autonomy posture (gated | auto) — the board-side
+// Flip the agent's runtime autonomy posture (manual | auto) — the board-side
 // switch the fleet turn procedure reads at preflight. A human decision; the
 // agent's own repo publish can't touch it.
 //

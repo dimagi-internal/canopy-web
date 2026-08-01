@@ -79,10 +79,10 @@ class Agent(models.Model):
     # field in the agent's repo. Flipped only by a human (the /agents/<slug>
     # toggle or PATCH /turn-mode); deliberately absent from AgentIn so a repo's
     # self-publish upsert can never change its own autonomy.
-    GATED, AUTO = "gated", "auto"
-    TURN_MODE_CHOICES = [(GATED, "gated (outbound waits for human approval)"),
+    MANUAL, AUTO = "manual", "auto"
+    TURN_MODE_CHOICES = [(MANUAL, "manual (outbound waits for human approval)"),
                          (AUTO, "auto (self-review-and-send, audit on the board)")]
-    turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, default=GATED)
+    turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, default=MANUAL)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
