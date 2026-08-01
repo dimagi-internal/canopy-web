@@ -423,8 +423,6 @@ export function ChatPage() {
     setHistoryUnavailable(false)
     setLoadingFull(true)
     try {
-      const before = await getSession(requestedId, { full: true })
-      if (requestedId !== id) return
       const res = await requestBackfill(requestedId)
       if (requestedId !== id) return
       const action = backfillAction(res.status)
@@ -432,27 +430,30 @@ export function ChatPage() {
         setHistoryUnavailable(true)
         return
       }
-      let full = before
       if (action === 'reload-after-delay') {
-        // The runner is shipping. Poll until the SERVER says it has finished
-        // (`backfill_pending` clears on the final chunk) rather than sleeping a
-        // fixed guess or watching for the row count to grow — growth cannot
-        // distinguish "still arriving" from "there was nothing more to send", so
-        // an already-complete session would spin for the whole timeout.
-        // Whatever has landed by the deadline is applied regardless: a partially
-        // rebuilt history beats discarding it and showing the tail.
+        // The runner is shipping. Poll the TAIL read for `backfill_pending` —
+        // it carries the same flag for a nineteenth of the bytes (measured on
+        // labs: 43 KB / 0.36s against 825 KB / 1.6-2.8s for ?full=true on a
+        // 940-row session). Polling the full read instead meant ~11 downloads
+        // of the entire transcript, on a phone, to answer a yes/no question;
+        // it was slow enough to time out a 90s client. The flag is the exact
+        // signal (cleared by the runner's final chunk), so waiting on it beats
+        // both a fixed sleep and watching the row count grow — growth cannot
+        // tell "still arriving" from "there was nothing more to send".
         const deadline = Date.now() + BACKFILL_TIMEOUT_MS
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, BACKFILL_POLL_MS))
           if (requestedId !== id) return
-          full = await getSession(requestedId, { full: true })
+          const probe = await getSession(requestedId)
           if (requestedId !== id) return
-          if (!full.backfill_pending) break
+          if (!probe.backfill_pending) break
         }
-      } else {
-        full = await getSession(requestedId, { full: true })
-        if (requestedId !== id) return
       }
+      // Exactly ONE full read, after the wait — not one per poll. Whatever has
+      // landed by the deadline is applied either way: a partially rebuilt
+      // history beats discarding it and showing the tail.
+      const full = await getSession(requestedId, { full: true })
+      if (requestedId !== id) return
       socket.prependMessages(full.messages.map(restToKitMessage))
       setHasMoreBefore(false)
       setOldestTurn(full.oldest_loaded_turn_index ?? null)
