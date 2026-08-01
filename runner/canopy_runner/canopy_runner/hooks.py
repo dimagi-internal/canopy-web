@@ -139,23 +139,35 @@ def resolve_hook_session(cwd: str) -> str:
     return ""
 
 
-def hook_project_task(cwd: str) -> tuple[str, str]:
-    """This cwd as (project, emdash task), or ("", "") — the session report's key.
+def hook_project_task_keys(cwd: str, *, home: Path | None = None) -> list[tuple[str, str]]:
+    """This cwd as the (project, emdash task) keys the session report looks up by.
 
-    Deliberately NOT keyed on the task alone: emdash task names are not unique
-    across projects (the server carries the same warning), and a menu attached to
-    the wrong session would put someone else's buttons on your phone.
+    **Deliberately does NOT consult `_hook_sessions`.** That map is rebuilt
+    wholesale from `sync_streams`, which returns only the sessions a VIEWER is
+    attached to — so keying a menu off it would capture one exactly when somebody
+    already had the chat open, and lose it in every case that matters. You go and
+    look BECAUSE the session stopped; the menu has to be there before you arrive.
+    That is the same shape as the bug #510 left behind, one layer down.
+
+    Nothing here needs a canopy session id anyway: the report is keyed by
+    (project, emdash task), and the worktree path carries both.
+
+    Returns every candidate because the directory may carry emdash's random
+    de-dupe suffix and the cwd alone cannot say which form the report uses. They
+    are all derived from this one path, so at most one is ever queried — storing
+    under each is a spelling, not an ambiguity.
+
+    Still (project, task) and never the task alone: emdash task names are not
+    unique across projects, and a menu attached to the wrong session puts
+    somebody else's buttons on your phone.
     """
     if not cwd:
-        return ("", "")
-    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home())
+        return []
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=home or Path.home())
     if parsed is None:
-        return ("", "")
+        return []
     project, task = parsed
-    for candidate in transcript_core.emdash_task_candidates(task):
-        if _hook_sessions.get((project, candidate)):
-            return (project, candidate)
-    return ("", "")
+    return [(project, c) for c in transcript_core.emdash_task_candidates(task) if c]
 
 
 def pending_hook_menu(project: str, task: str):
@@ -289,8 +301,10 @@ def start_hook_listener(cfg: Config, client: Client):
         forward=lambda: cfg.forward_sessions,
         # NOT read_menu (see above) — this is the cheap half: `PreToolUse` for
         # AskUserQuestion already carries the whole dialog, so the listener can
-        # hold it for the session report without touching emdash at all.
-        resolve_task=hook_project_task,
+        # hold it for the session report without touching emdash at all. And it
+        # resolves off the cwd alone, so it covers every session on the box
+        # rather than only the ones somebody is already watching.
+        resolve_task=hook_project_task_keys,
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

@@ -39,7 +39,7 @@ def listener(**kw):
         port=0, nonce="n",
         resolve_session=lambda cwd: "sess" if cwd == CWD else "",
         forward=kw.pop("forward", lambda: True),
-        resolve_task=lambda cwd: KEY if cwd == CWD else ("", ""),
+        resolve_task=lambda cwd: [KEY] if cwd == CWD else [],
         **kw,
     )
 
@@ -146,3 +146,45 @@ def test_a_session_with_no_dialog_still_reports_None():
         hook_menu_for=lambda p, t: None,
     )
     assert sessions[0]["question"] is None
+
+
+def test_the_menu_does_not_depend_on_anybody_watching():
+    """The regression that made the first cut of this fix nearly inert: the key
+    was resolved through `_hook_sessions`, which is rebuilt wholesale from
+    `sync_streams` — only the sessions a VIEWER is attached to. A menu captured
+    only while somebody already has the chat open is captured only in the case
+    that does not need it; you go and look BECAUSE the session stopped."""
+    from canopy_runner import hooks
+
+    hooks._hook_sessions.clear()          # nobody is watching anything
+    keys = hooks.hook_project_task_keys(
+        "/Users/x/emdash/worktrees/canopy-web/emdash/some-task-ab12x",
+        home=__import__("pathlib").Path("/Users/x"),
+    )
+    assert keys, "a session with no viewer must still resolve to a report key"
+    assert all(k[0] == "canopy-web" for k in keys)
+
+
+def test_a_path_that_is_not_an_emdash_worktree_resolves_to_nothing():
+    from canopy_runner import hooks
+
+    home = __import__("pathlib").Path("/Users/x")
+    assert hooks.hook_project_task_keys("/tmp/somewhere", home=home) == []
+    assert hooks.hook_project_task_keys("", home=home) == []
+
+
+def test_every_spelling_of_the_task_gets_the_menu():
+    """The worktree dir may carry emdash's de-dupe suffix and the cwd cannot say
+    which form the session report uses, so the menu is stored under each. They
+    come from one path, so at most one is ever queried."""
+    hl = HookListener(
+        port=0, nonce="n", resolve_session=lambda cwd: "",
+        forward=lambda: True,
+        resolve_task=lambda cwd: [("p", "task-ab12x"), ("p", "task")],
+    )
+    hl.handle_payload({**ASK, "cwd": "/any"})
+    assert hl.pending_menu("p", "task-ab12x") is not None
+    assert hl.pending_menu("p", "task") is not None
+    hl.handle_payload({"hook_event_name": "Stop", "cwd": "/any"})
+    assert hl.pending_menu("p", "task-ab12x") is None
+    assert hl.pending_menu("p", "task") is None
