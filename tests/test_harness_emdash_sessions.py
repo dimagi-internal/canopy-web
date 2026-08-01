@@ -308,3 +308,61 @@ def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
 # the_session_report` above: it asserts the report survives any failure in the
 # cosmetic path, which is the property that actually matters here regardless of
 # which exception is raised.
+
+
+@pytest.mark.django_db
+def test_a_menu_is_cleared_when_its_session_stops_being_reported():
+    """A dialog is a claim about a screen. When emdash no longer has the task,
+    that screen is gone and the claim has to go with it.
+
+    Observed 2026-08-01: `pending_question` is written only inside the loop over
+    the sessions IN a report, so a session whose task had been deleted kept its
+    last dialog forever — the API served a phone six buttons, every one of which
+    could only fail, and the failure came back as "could not reach emdash on this
+    runner", which was not even true. The runner cannot fix this from its side:
+    it prunes its own copy, but it has no way to say anything about a session it
+    can no longer see. Absence from the wholesale report is the observation.
+    """
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+
+    replace_reported_sessions(runner, ws, [_reported("gone-soon"), _reported("stays")])
+    for key in ("gone-soon", "stays"):
+        binding = RunnerBinding.objects.get(session_key=key)
+        binding.pending_question = {"question": "pick one", "options": [{"number": 1, "label": "a"}]}
+        binding.save()
+
+    # "stays" is still reported AND still asking. Note the report is the fresh
+    # observation for anything IN it (a reported session with no `question` is
+    # correctly cleared by the loop above) — this clear is only for the sessions
+    # the report can no longer say anything about at all.
+    still_asking = _reported("stays")
+    still_asking.question = {"question": "pick one", "options": [{"number": 1, "label": "a"}]}
+    replace_reported_sessions(runner, ws, [still_asking])
+
+    assert RunnerBinding.objects.get(session_key="gone-soon").pending_question is None
+    # The one still open keeps its dialog — this must not become "clear them all".
+    assert RunnerBinding.objects.get(session_key="stays").pending_question is not None
+
+
+@pytest.mark.django_db
+def test_clearing_a_stale_menu_does_not_touch_another_runners_sessions():
+    """The report is wholesale PER RUNNER. Scoping the clear any wider would let
+    one box's report retire dialogs on every other box."""
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    mine, theirs = _runner(jj, ws), _runner(jj, ws)
+
+    replace_reported_sessions(theirs, ws, [_reported("elsewhere")])
+    other = RunnerBinding.objects.get(session_key="elsewhere")
+    other.pending_question = {"question": "still up", "options": []}
+    other.save()
+
+    replace_reported_sessions(mine, ws, [_reported("mine")])
+
+    assert RunnerBinding.objects.get(session_key="elsewhere").pending_question is not None
