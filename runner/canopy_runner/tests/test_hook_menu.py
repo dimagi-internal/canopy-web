@@ -483,3 +483,30 @@ def test_a_notification_with_no_turn_ever_seen_fails_closed():
     hl = listener()
     hl.handle_payload(NOTIFY)
     assert hl.pending_menu(*KEY) is None
+
+
+def test_a_notification_marker_does_not_survive_a_restart(tmp_path):
+    """It is a claim that a turn was in flight, and turn state is deliberately
+    not persisted — so after a restart nothing can still justify it, and nothing
+    can retire it either: the `Stop` that would belongs to a turn that ended
+    while the process was down. Observed on `spark`, stuck on the fleet's waiting
+    list reading "Claude is waiting for your input" with no way to clear it."""
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "m.json"
+    hl = listener(menu_store=MenuStore(path))
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(NOTIFY)
+    assert hl.pending_menu(*KEY) is not None
+
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is None
+
+
+def test_a_real_menu_still_survives_a_restart(tmp_path):
+    """The distinction that makes the drop above safe: a real menu describes a
+    dialog still drawn on a screen, and a tap verifies it there."""
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "m.json"
+    listener(menu_store=MenuStore(path)).handle_payload(ASK)
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is not None
