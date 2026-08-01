@@ -375,3 +375,72 @@ def test_the_turn_ending_retires_a_notification_too():
     hl.handle_payload(NOTIFY)
     hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})
     assert hl.pending_menu(*KEY) is None
+
+
+# --- a menu must not outlive its session ----------------------------------
+#
+# Persisting a menu is what makes it durable, and also what lets it outlive the
+# thing it describes. Observed within hours of shipping the store: a session
+# whose emdash task had been deleted still served six buttons to a phone, and
+# pressing one could only ever fail.
+
+def test_a_menu_is_dropped_when_its_task_is_gone(tmp_path):
+    from canopy_runner import hooks
+    from canopy_runner.menu_store import MenuStore
+
+    hl = listener(menu_store=MenuStore(tmp_path / "m.json"))
+    hl.handle_payload(ASK)
+    orig, hooks._hook_listener = hooks._hook_listener, hl
+    try:
+        hooks.prune_menus(["some-other-task"])       # ours is not open any more
+        assert hl.pending_menu(*KEY) is None
+    finally:
+        hooks._hook_listener = orig
+
+
+def test_a_menu_survives_a_report_that_still_lists_its_task(tmp_path):
+    from canopy_runner import hooks
+    from canopy_runner.menu_store import MenuStore
+
+    hl = listener(menu_store=MenuStore(tmp_path / "m.json"))
+    hl.handle_payload(ASK)
+    orig, hooks._hook_listener = hooks._hook_listener, hl
+    try:
+        hooks.prune_menus([KEY[1], "another"])
+        assert hl.pending_menu(*KEY) is not None
+    finally:
+        hooks._hook_listener = orig
+
+
+def test_the_prune_is_persisted_not_just_forgotten(tmp_path):
+    """Otherwise the next restart reloads the menu the report just retired."""
+    from canopy_runner import hooks
+    from canopy_runner.menu_store import MenuStore
+
+    path = tmp_path / "m.json"
+    hl = listener(menu_store=MenuStore(path))
+    hl.handle_payload(ASK)
+    orig, hooks._hook_listener = hooks._hook_listener, hl
+    try:
+        hooks.prune_menus([])
+    finally:
+        hooks._hook_listener = orig
+    assert listener(menu_store=MenuStore(path)).pending_menu(*KEY) is None
+
+
+def test_a_gone_session_is_told_apart_from_a_dead_box():
+    """Both surface as a CDP error and want opposite things from a reader: "that
+    session is over" versus "go find out what broke"."""
+    from canopy_runner import cdp_control, hooks
+
+    class Gone:
+        def read_terminal(self, *a, **k):
+            raise cdp_control.CDPError('TASK_NOT_FOUND: no task "x" in this emdash')
+
+    orig = hooks.cdp_control
+    try:
+        hooks.cdp_control = Gone()
+        assert hooks.answer_menu("t", 1) == hooks.NO_SESSION
+    finally:
+        hooks.cdp_control = orig
+    assert hooks.ANSWER_NOTES[hooks.NO_SESSION]

@@ -182,6 +182,11 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         # purpose (a waiting session sinks in an activity-ordered list, so a
         # top-K bound would hide the ones that have waited longest); see
         # `transcript.attach_pending_questions`.
+        # Before attaching: a menu is persisted now, so it can outlive the emdash
+        # task it describes. This report is the only thing that sees the whole
+        # open set, which is what makes absence an observation rather than a
+        # guess — the same property the server's liveness rule rests on.
+        hooks.prune_menus(s.get("emdash_task") for s in sessions)
         transcript.attach_pending_questions(
             sessions, hook_menu_for=hooks.pending_hook_menu
         )

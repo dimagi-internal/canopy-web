@@ -190,6 +190,35 @@ def note_answer_outcome(session_key: str, outcome: str) -> None:
         logger.debug("could not record the answer outcome for %s", session_key, exc_info=True)
 
 
+def prune_menus(open_tasks) -> None:
+    """Drop any held menu whose emdash task is no longer open.
+
+    A menu is now persisted across restarts, which is what makes it durable — and
+    also what lets it outlive the thing it describes. Observed within hours of
+    shipping the store: a session whose emdash task had been deleted still served
+    six buttons to a phone, and pressing one could only ever fail.
+
+    The session report is the right place to notice, because it is the one thing
+    that already knows the WHOLE open set — the same wholesale-reconciliation
+    property the server relies on for liveness. Absence here is a direct
+    observation, not an inference.
+    """
+    listener = _hook_listener
+    if listener is None:
+        return
+    try:
+        keep = {t for t in open_tasks if t}
+        stale = [k for k in listener._pending_menus if k[1] not in keep]
+        if not stale:
+            return
+        for key in stale:
+            listener._pending_menus.pop(key, None)
+        listener._persist()
+        logger.info("dropped %d pending menu(s) whose emdash task is gone", len(stale))
+    except Exception:  # noqa: BLE001 — never break the report
+        logger.debug("menu prune failed (non-fatal)", exc_info=True)
+
+
 def pending_hook_menu(project: str, task: str):
     """The dialog this session is waiting on, per the hook listener, or None."""
     listener = _hook_listener
@@ -249,6 +278,7 @@ NO_DIALOG = "no_dialog"          # nothing on screen — already answered, or go
 NOT_ON_MENU = "not_on_menu"      # stale numbering; the dialog changed under the tap
 WRONG_PANE = "wrong_pane"        # a shell tab is selected; keys would run in it
 UNREACHABLE = "unreachable"      # CDP/emdash could not be driven at all
+NO_SESSION = "no_session"        # the emdash task is gone — nothing to press a key in
 
 # Human-readable, and shown on the phone beside the menu that did not move. Kept
 # here rather than in the client so all three surfaces say the same thing.
@@ -258,6 +288,8 @@ ANSWER_NOTES = {
     WRONG_PANE: "A shell tab is selected for this session in emdash. Switch it to the "
                 "Claude tab and tap again.",
     UNREACHABLE: "Could not reach emdash on this runner to press the key.",
+    NO_SESSION: "That session is no longer open in emdash, so there is nothing left to "
+                "answer.",
 }
 
 
@@ -320,7 +352,17 @@ def answer_menu(session_key: str, option, *, cdp_port: int = 9222) -> str:
         # 2026-08-01). It is deliberately still a refusal — clicking the Claude
         # tab for somebody would mean guessing at emdash's tab controls, and the
         # cost of guessing wrong is a digit executed in their shell.
-        outcome = WRONG_PANE if "NOT_A_CLAUDE_PANE" in str(exc) else UNREACHABLE
+        # A deleted task and an unreachable box both surface as a CDP error and
+        # want opposite things from a reader: "that session is over" versus "go
+        # find out what broke". Collapsing them told somebody their runner was
+        # down when the truth was that the session had ended.
+        text = str(exc)
+        if "NOT_A_CLAUDE_PANE" in text:
+            outcome = WRONG_PANE
+        elif "TASK_NOT_FOUND" in text:
+            outcome = NO_SESSION
+        else:
+            outcome = UNREACHABLE
         logger.warning("menu answer for %s failed (%s)", session_key, outcome, exc_info=True)
         return outcome
 
