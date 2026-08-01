@@ -27,8 +27,10 @@ Exit code is 0 only if every selected step passed.
   send_and_reply          you send a message and the agent answers
   answer_from_the_web     a dialog appears, you answer it FROM THE WEB, the
                           keystroke lands, and THE AGENT USES YOUR ANSWER
-  scroll_back             history is ordered and pages backwards
-  rebuild_from_transcript reset rebuilds the same conversation
+  load_full_history       "load full session" turns the runner's reported TAIL
+                          into durable rows on the server
+  scroll_back             durable history is ordered and pages backwards
+  rebuild_from_transcript reset drops those rows and re-derives them
   close_session           the session ends and stays ended
 
 `answer_from_the_web` is the point of the whole file. Every check run during the
@@ -58,8 +60,8 @@ DEFAULT_TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
 RUNNER_CONFIG = Path.home() / ".canopy" / "runner.json"
 
 ALL_STEPS = ("check_runner", "create_session", "send_and_reply",
-             "answer_from_the_web", "scroll_back", "rebuild_from_transcript",
-             "close_session")
+             "answer_from_the_web", "load_full_history", "scroll_back",
+             "rebuild_from_transcript", "close_session")
 
 # An agent turn is minutes, not seconds: a cold session builds a worktree and
 # starts a fresh `claude`. Generous on purpose — a timeout here is
@@ -244,39 +246,120 @@ def answer_from_the_web(ctx):
     return f"asked · answered option {number} ({colour}) from the web · agent replied PICKED={colour}"
 
 
+def is_tail_row(message: dict) -> bool:
+    """Whether this row is the runner's reported TAIL rather than a durable row.
+
+    A local session holds no `Message` rows until a backfill lands: until then
+    the server renders `RunnerBinding.tail` as `TailMessage`, with negative
+    `turn_index` (it must sort before real rows, which start at 0) and a
+    `tail:<idx>` pk. They are a VIEW, not storage — so they do not page, and a
+    reset has nothing to drop. Confusing the two makes both of the steps below
+    pass while testing nothing, which is exactly what the first live run did.
+    """
+    return str(message.get("id", "")).startswith("tail:") or message.get("turn_index", 0) < 0
+
+
+def load_full_history(ctx):
+    """"Load full session": ask the runner to ship the whole transcript, and
+    require that it becomes DURABLE rows.
+
+    This is the reload that matters. Everything before it renders out of a tail
+    the runner reports for free; this is the point where the server stops
+    borrowing history and owns a copy.
+    """
+    before = session(ctx)
+    if not all(is_tail_row(m) for m in (before.get("messages") or [])):
+        # Already backfilled (a viewer attached, or a rerun) — still assert the
+        # rows are durable, just do not claim to have caused it.
+        return "history was already durable on the server"
+
+    result = ctx["api"]("POST", f"/canopy-sessions/{ctx['session_id']}/backfill")
+    if result is not None and result.get("ok") is False:
+        raise Failure(f"backfill refused: {result.get('reason')!r}")
+
+    def durable():
+        rows = session(ctx).get("messages") or []
+        real = [m for m in rows if not is_tail_row(m)]
+        return real if real else None
+
+    rows = wait_for("the runner to ship the transcript as durable rows",
+                    durable, timeout=ctx["timeout"])
+    if not any(ctx["marker"] in (m.get("plaintext") or "") for m in rows):
+        # The marker is the one line we know is ours; a backfill that lands
+        # SOMETHING but not the conversation is not a backfill.
+        texts = [(m.get("plaintext") or "")[:40] for m in rows][:6]
+        raise Failure(f"durable rows arrived without our conversation in them: {texts}")
+    return f"{len(rows)} durable rows, including our marker"
+
+
 def scroll_back(ctx):
     """`turn_index` is both the sort order and the paging cursor, and its scheme
     changed once already. A conversation that renders shuffled is what this
     catches."""
     sess = session(ctx)
-    rows = sess.get("messages") or []
+    rows = [m for m in (sess.get("messages") or []) if not is_tail_row(m)]
     if not rows:
-        raise Failure("no messages on a session that has been talking")
+        raise Failure("no durable messages — run load_full_history first")
     indexes = [m["turn_index"] for m in rows]
     if indexes != sorted(indexes):
         raise Failure(f"transcript is not ordered by turn_index: {indexes}")
     if len(set(indexes)) != len(indexes):
         raise Failure(f"duplicate turn_index values: {indexes}")
-    oldest = sess.get("oldest_loaded_turn_index")
-    if oldest is not None:
-        page = ctx["api"]("GET", f"/canopy-sessions/{ctx['session_id']}/messages?before={oldest}")
-        earlier = [m["turn_index"] for m in (page.get("messages") or [])]
-        if any(i >= oldest for i in earlier):
-            raise Failure(f"scroll-back returned rows at/after the cursor {oldest}: {earlier}")
-    return f"{len(rows)} rows, ordered, cursor={oldest}"
+    # Page from the NEWEST row rather than only when the tail overflowed. The
+    # first live run reported `cursor=None` — fewer rows than the tail, so the
+    # paging branch never executed and the step passed while testing nothing.
+    # Asking for everything before the last index always exercises the cursor.
+    newest = indexes[-1]
+    page = ctx["api"]("GET", f"/canopy-sessions/{ctx['session_id']}/messages?before={newest}")
+    earlier = [m["turn_index"] for m in (page.get("messages") or [])]
+    if any(i >= newest for i in earlier):
+        raise Failure(f"scroll-back returned rows at/after the cursor {newest}: {earlier}")
+    if earlier != sorted(earlier):
+        raise Failure(f"scroll-back page is not ordered: {earlier}")
+    expected = [i for i in indexes if i < newest]
+    if not earlier and expected:
+        raise Failure(f"scroll-back returned nothing before {newest}, but the tail "
+                      f"shows {len(expected)} earlier row(s)")
+    return f"{len(rows)} rows ordered; paged {len(earlier)} row(s) before {newest}"
 
 
 def rebuild_from_transcript(ctx):
     """These rows are a CACHE of a file on the runner's disk, so a reload has to
-    be a pure re-derivation. If the conversation survives a reset, the cache is
-    honest about what it is."""
+    be a pure re-derivation.
+
+    The obvious version of this step — reset, then look for the marker — passes
+    without testing anything, because the marker is ALREADY there. It cannot tell
+    "dropped and rebuilt" from "the reset did nothing", and the first live run
+    completed it in 0.5s, which is the signature of exactly that.
+
+    So it checks identity, not content: the server reports how many rows it
+    deleted, and every row that comes back must be a NEW row. Same conversation,
+    different rows, is the only outcome that means re-derived.
+    """
+    before = session(ctx)
+    before_ids = {m["id"] for m in (before.get("messages") or []) if not is_tail_row(m)}
+    if not before_ids:
+        raise Failure("nothing to rebuild — no durable rows (run load_full_history first)")
+
     result = ctx["api"]("POST", f"/canopy-sessions/{ctx['session_id']}/reset")
     if not result.get("ok"):
         raise Failure(f"reset refused: {result.get('reason')!r}")
-    wait_for("the conversation to be re-derived from the transcript",
+    dropped = result.get("rows_dropped")
+    if not dropped:
+        raise Failure(f"reset reported ok but dropped {dropped!r} rows — nothing was reset")
+
+    wait_for("the conversation to come back from the transcript",
              lambda: any(ctx["marker"] in t for t in assistant_texts(session(ctx))),
              timeout=ctx["timeout"])
-    return "the conversation came back from the runner's transcript"
+
+    after = session(ctx)
+    after_ids = {m["id"] for m in (after.get("messages") or []) if not is_tail_row(m)}
+    kept = before_ids & after_ids
+    if kept:
+        raise Failure(f"{len(kept)} row(s) survived the reset, so they were never "
+                      f"re-derived — the cache is not what it claims to be")
+    return (f"dropped {dropped} rows; {len(after_ids)} came back from the runner's "
+            f"transcript, all newly derived")
 
 
 def close_session(ctx):
@@ -293,7 +376,7 @@ def close_session(ctx):
 
 STEPS = {f.__name__: f for f in (
     check_runner, create_session, send_and_reply, answer_from_the_web,
-    scroll_back, rebuild_from_transcript, close_session)}
+    load_full_history, scroll_back, rebuild_from_transcript, close_session)}
 
 
 def main() -> int:

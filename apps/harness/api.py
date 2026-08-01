@@ -690,7 +690,10 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     )
     return {"streams": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.project, "last_index": b._last_index,
+         # emdash_project, never `project`: an agent chat leaves `project` blank
+         # and its worktree lives under the agent's own repo. Sending "" here is
+         # what stopped agent sessions ever being streamed or backfilled.
+         "project": b.session.emdash_project, "last_index": b._last_index,
          "first_index": b._first_index, "live": b.stream_desired}
         for b in bindings
     ]}
@@ -793,7 +796,7 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     )
     return {"backfills": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.project}
+         "project": b.session.emdash_project}
         for b in bindings
     ]}
 
