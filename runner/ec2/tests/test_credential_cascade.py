@@ -156,3 +156,40 @@ def test_retry_drops_resume_so_a_partial_session_is_not_reused(cr, monkeypatch):
     monkeypatch.setattr(cr, "_execute_once", fake_once)
     cr.execute_prompt("p", "turn-abcdef12", lambda e: None, resume_session_id="sess-old")
     assert resumes == ["sess-old", None]
+
+
+# --- mid-run reload: rescuing a box without restarting it --------------------
+def test_exhausted_cascade_rereads_credentials_before_giving_up(cr, monkeypatch):
+    """Credentials are staged into the process at start-up, so an operator who
+    rescues a stuck box with `canopy runner credential` would otherwise have to
+    restart the service for the fix to land."""
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    cr._CLAUDE_CREDS.clear()
+    cr._CLAUDE_CREDS.append(("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "old"))
+    cr._apply_claude_credential(0)
+    cr._CLAUDE_CRED_RUNNER_ID = "r-1"
+
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"claude_token": "rescued"}))
+    calls = []
+
+    def fake_once(prompt, turn_id, emit, **kw):
+        calls.append(cr._CLAUDE_CREDS[cr._CLAUDE_CRED_I][2])
+        return (False, CAP_TEXT, "") if len(calls) == 1 else (True, "ok", "s")
+
+    monkeypatch.setattr(cr, "_execute_once", fake_once)
+    ok, text, _ = cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+    assert ok is True
+    assert calls == ["old", "rescued"]
+
+
+def test_reload_that_finds_the_same_values_does_not_loop(cr, monkeypatch):
+    """The guard against spinning forever on an unchanged bundle."""
+    cr._CLAUDE_CREDS.clear()
+    cr._CLAUDE_CREDS.append(("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "same"))
+    cr._apply_claude_credential(0)
+    cr._CLAUDE_CRED_RUNNER_ID = "r-1"
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"claude_token": "same"}))
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (False, CAP_TEXT, ""))
+    ok, text, _ = cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+    assert ok is False
+    assert "exhausted" in text

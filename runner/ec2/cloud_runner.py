@@ -858,6 +858,15 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             return ok, text, session_id
         _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
         if not _advance_claude_credential(turn_id=turn_id):
+            # Before giving up: re-read the bundle. An operator who just ran
+            # `canopy runner credential` to rescue a stuck box should not also
+            # have to restart the service — the credentials are staged into this
+            # process at start-up, so without this the fix sits on canopy-web,
+            # invisible, until something bounces the runner.
+            if _reload_claude_credentials():
+                _log(f"turn {turn_id[:8]}: picked up new credentials — retrying")
+                resume_session_id = None
+                continue
             # Nothing left to fail over to. Say so in the turn's own text: the
             # bare cap message names a reset time but never says the fleet has
             # run out of credentials entirely, which is the thing a human has to
@@ -1446,6 +1455,7 @@ def bootstrap_agent_fleet() -> None:
 # selecting a credential must CLEAR the other or the API key can never take over.
 _CLAUDE_CREDS: list[tuple[str, str, str]] = []
 _CLAUDE_CRED_I = 0
+_CLAUDE_CRED_RUNNER_ID = ""   # set at staging; lets an exhausted cascade re-read
 _CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
 #: Substrings that mean "this credential is capped", not "this turn failed".
@@ -1529,6 +1539,39 @@ def _notify_api_key_fallback(label: str, turn_id: str) -> None:
              "has started and nobody has been told")
 
 
+def _reload_claude_credentials() -> bool:
+    """Re-read the credential bundle mid-run. True when it yielded something new.
+
+    Only called once the in-memory cascade is spent, so the cost is paid exactly
+    when a box is otherwise dead. Compares VALUES, not just count: rotating a
+    capped subscription in place is the common rescue, and that leaves the length
+    unchanged.
+    """
+    if not _CLAUDE_CRED_RUNNER_ID:
+        return False
+    before = [c[2] for c in _CLAUDE_CREDS]
+    try:
+        status, cred = _api("GET", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential")
+    except Exception as exc:  # noqa: BLE001 — a failed reload must not mask the cap
+        _log(f"warn: could not re-read credentials ({exc})")
+        return False
+    if status != 200 or not cred:
+        return False
+    fresh = [(label, var, cred[key])
+             for label, var, key in (
+                 ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
+                 ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
+                 ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"))
+             if cred.get(key)]
+    if not fresh or [c[2] for c in fresh] == before:
+        return False
+    _CLAUDE_CREDS.clear()
+    _CLAUDE_CREDS.extend(fresh)
+    _apply_claude_credential(0)
+    _log("re-read credential bundle: " + ", ".join(c[0] for c in _CLAUDE_CREDS))
+    return True
+
+
 def fetch_and_stage_credential(runner_id: str) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
@@ -1539,6 +1582,8 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
         if status == 200 and cred and (cred.get("claude_token") or cred.get("claude_api_key")):
+            global _CLAUDE_CRED_RUNNER_ID
+            _CLAUDE_CRED_RUNNER_ID = runner_id
             _CLAUDE_CREDS.clear()
             for label, var, key in (
                 ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
