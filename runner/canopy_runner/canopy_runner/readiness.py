@@ -10,11 +10,31 @@ Two halves:
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from . import cdp_control
 
 _MARKER = "not-ready"
+
+# How long a failure keeps a runner out of routing.
+#
+# The marker used to latch FOREVER: `mark_ok` is only ever called after a turn
+# executes, and `claim_next_turn` will not give a not-ready runner a turn — so one
+# failure removed a box from the fleet permanently, and the only way back was a
+# human deleting a file. Nothing surfaced it either; the runner keeps heartbeating
+# and reads ONLINE the whole time.
+#
+# Observed 2026-08-01: a laptop was shut down mid-turn, the POST that was in
+# flight failed with a DNS error, and the box came back online-but-unroutable with
+# `runner execute crashed: … nodename nor servname provided`. A network blip
+# during shutdown says nothing about whether the box can run anything.
+#
+# Expiring instead of latching turns permanent exile into retry-with-backoff. A
+# genuinely broken runner (logged out — invisible to the CDP probe) simply fails
+# its next turn and marks itself again, which is the behaviour you want; a
+# transiently broken one heals on its own.
+MARKER_TTL_SECONDS = 900
 
 
 def _marker(cfg) -> Path:
@@ -45,10 +65,24 @@ def compute(cfg) -> tuple[bool, str]:
     failed and hasn't been cleared by a clean run."""
     if not cdp_control.cdp_healthy(port=getattr(cfg, "cdp_port", 9222)):
         return False, "emdash CDP unreachable"
+    marker = _marker(cfg)
     try:
-        note = _marker(cfg).read_text().strip()
-        if note:
-            return False, note
+        note = marker.read_text().strip()
     except OSError:
-        pass
-    return True, ""
+        return True, ""
+    if not note:
+        return True, ""
+    try:
+        age = time.time() - marker.stat().st_mtime
+    except OSError:
+        age = 0.0
+    if age > MARKER_TTL_SECONDS:
+        # Stop holding it against the box. Deleted rather than merely ignored, so
+        # the next real failure records a fresh reason instead of resurrecting a
+        # stale one.
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return True, ""
+    return False, note

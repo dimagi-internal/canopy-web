@@ -2670,6 +2670,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/closes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Closes
+         * @description Sessions this runner has been asked to close and has not closed yet.
+         *
+         *     The twin of `/menu-answers`: `close_session` relays a WS frame, and a frame
+         *     published while the control channel is down is discarded silently while the
+         *     API answers `ok:true`. Drained on the poll tick, so a lost frame costs a tick
+         *     rather than leaving the emdash task open and the session active forever.
+         */
+        readonly get: operations["apps_harness_api_list_closes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/menu-answers": {
         readonly parameters: {
             readonly query?: never;
@@ -8428,6 +8453,21 @@ export interface components {
              */
             readonly backfills: readonly components["schemas"]["BackfillDescriptorOut"][];
         };
+        /** CloseOut */
+        readonly CloseOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Key */
+            readonly session_key: string;
+        };
+        /** CloseSyncOut */
+        readonly CloseSyncOut: {
+            /**
+             * Closes
+             * @default []
+             */
+            readonly closes: readonly components["schemas"]["CloseOut"][];
+        };
         /** MenuAnswerOut */
         readonly MenuAnswerOut: {
             /** Session Id */
@@ -13203,6 +13243,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BackfillSyncOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_list_closes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CloseSyncOut"];
                 };
             };
         };

@@ -24,6 +24,7 @@ from .schedule_services import serialize_schedule
 from .schemas import (
     BackfillSyncOut,
     BackfillWriteOut,
+    CloseSyncOut,
     MenuAnswerResultIn,
     MenuAnswerResultOut,
     MenuAnswerSyncOut,
@@ -800,6 +801,29 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     return {"backfills": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
          "project": b.session.emdash_project}
+        for b in bindings
+    ]}
+
+
+@router.get("/runners/{runner_id}/closes", response=CloseSyncOut)
+def list_closes(request: HttpRequest, runner_id: uuid.UUID):
+    """Sessions this runner has been asked to close and has not closed yet.
+
+    The twin of `/menu-answers`: `close_session` relays a WS frame, and a frame
+    published while the control channel is down is discarded silently while the
+    API answers `ok:true`. Drained on the poll tick, so a lost frame costs a tick
+    rather than leaving the emdash task open and the session active forever.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+
+    runner = _runner_or_404(request, runner_id)
+    bindings = (
+        RunnerBinding.objects.select_related("session")
+        .filter(runner=runner, close_requested=True)
+        .exclude(session_key="")
+    )
+    return {"closes": [
+        {"session_id": str(b.session_id), "session_key": b.session_key}
         for b in bindings
     ]}
 

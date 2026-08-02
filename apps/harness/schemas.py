@@ -819,3 +819,12 @@ class MenuAnswerResultIn(Schema):
     # `canopy_runner.hooks` (answered / no_dialog / wrong_pane / …) and the server
     # only needs to know the answer is retired, not to re-litigate the outcome.
     outcome: str = ""
+
+
+class CloseOut(Schema):
+    session_id: str
+    session_key: str
+
+
+class CloseSyncOut(Schema):
+    closes: list[CloseOut] = []
