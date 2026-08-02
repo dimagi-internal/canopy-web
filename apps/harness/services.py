@@ -1870,7 +1870,8 @@ def dismiss_item(item: Item, *, by: str, decided_by_user=None, comment: str = ""
 
 
 # ---- Runner credentials (per-runner secret bundle, encrypted at rest) ----
-def set_runner_credential(runner, *, claude_token=None, github_token=None,
+def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
+                          claude_api_key=None, github_token=None,
                           op_sa_token=None, updated_by=None):
     """Upsert a runner's credential bundle. None fields are left unchanged."""
     from apps.common.encryption import encrypt_secret
@@ -1880,6 +1881,10 @@ def set_runner_credential(runner, *, claude_token=None, github_token=None,
     cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
     if claude_token is not None:
         cred.claude_token_enc = encrypt_secret(claude_token)
+    if claude_token_secondary is not None:
+        cred.claude_token_secondary_enc = encrypt_secret(claude_token_secondary)
+    if claude_api_key is not None:
+        cred.claude_api_key_enc = encrypt_secret(claude_api_key)
     if github_token is not None:
         cred.github_token_enc = encrypt_secret(github_token)
     if op_sa_token is not None:
@@ -1896,9 +1901,12 @@ def get_runner_credential(runner) -> dict:
 
     cred = getattr(runner, "credential", None)
     if cred is None:
-        return {"claude_token": "", "github_token": "", "op_sa_token": "", "updated_at": None}
+        return {"claude_token": "", "claude_token_secondary": "", "claude_api_key": "",
+                "github_token": "", "op_sa_token": "", "updated_at": None}
     return {
         "claude_token": decrypt_secret(cred.claude_token_enc),
+        "claude_token_secondary": decrypt_secret(cred.claude_token_secondary_enc),
+        "claude_api_key": decrypt_secret(cred.claude_api_key_enc),
         "github_token": decrypt_secret(cred.github_token_enc),
         "op_sa_token": decrypt_secret(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
@@ -1909,10 +1917,13 @@ def runner_credential_status(runner) -> dict:
     """Masked view — which tokens are set, never their values."""
     cred = getattr(runner, "credential", None)
     if cred is None:
-        return {"has_claude_token": False, "has_github_token": False,
+        return {"has_claude_token": False, "has_claude_token_secondary": False,
+                "has_claude_api_key": False, "has_github_token": False,
                 "has_op_sa_token": False, "updated_at": None}
     return {
         "has_claude_token": bool(cred.claude_token_enc),
+        "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
+        "has_claude_api_key": bool(cred.claude_api_key_enc),
         "has_github_token": bool(cred.github_token_enc),
         "has_op_sa_token": bool(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
