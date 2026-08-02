@@ -188,8 +188,11 @@ def _log(msg: str) -> None:
     print(f"[cloud-runner] {msg}", flush=True)
 
 
-def _api(method: str, path: str, body: dict | None = None) -> tuple[int, dict | None]:
-    url = f"{BASE_URL}/api/harness{path}"
+def _api(method: str, path: str, body: dict | None = None, *,
+         prefix: str = "/api/harness") -> tuple[int, dict | None]:
+    """Call canopy-web. `prefix` defaults to the harness router this runner lives
+    on; pass another (e.g. `/api/events`) for the few cross-router calls."""
+    url = f"{BASE_URL}{prefix}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {TOKEN}")
@@ -820,14 +823,62 @@ def _content_text_of(update: dict) -> str:
     return ""
 
 
-def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
-                   resume_session_id=None) -> tuple[bool, str, str]:
+def _execute_once(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
+                  resume_session_id=None) -> tuple[bool, str, str]:
     """The one place a turn picks an executor."""
     if RUNNER_EXECUTOR == "acp":
         return run_acp(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
                        resume_session_id=resume_session_id)
     return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
                       resume_session_id=resume_session_id)
+
+
+def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
+                   resume_session_id=None) -> tuple[bool, str, str]:
+    """Run a turn, failing over down the Claude credential cascade on a usage cap.
+
+    A subscription's weekly cap takes out EVERY agent on this box at once, and an
+    unattended agent has no one to tell — on 2026-08-01 the whole fleet sat dead
+    on one exhausted login while its drills reported a bare "You've hit your
+    weekly limit". So a capped credential is not a turn failure: it is a signal to
+    move to the next one and run the turn again.
+
+    Retries are bounded by the number of credentials configured, and only a
+    USAGE-CAP failure advances — a turn that failed on its own merits must not be
+    re-run against every credential in turn (that would triple the blast radius of
+    an ordinary bug and spend real money doing it).
+    """
+    attempted: list[str] = []
+    while True:
+        ok, text, session_id = _execute_once(
+            prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+            resume_session_id=resume_session_id)
+        attempted.append(_claude_cred_label())
+        if ok or not _is_usage_cap(text):
+            return ok, text, session_id
+        _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
+        if not _advance_claude_credential(turn_id=turn_id):
+            # Before giving up: re-read the bundle. An operator who just ran
+            # `canopy runner credential` to rescue a stuck box should not also
+            # have to restart the service — the credentials are staged into this
+            # process at start-up, so without this the fix sits on canopy-web,
+            # invisible, until something bounces the runner.
+            if _reload_claude_credentials():
+                _log(f"turn {turn_id[:8]}: picked up new credentials — retrying")
+                resume_session_id = None
+                continue
+            # Nothing left to fail over to. Say so in the turn's own text: the
+            # bare cap message names a reset time but never says the fleet has
+            # run out of credentials entirely, which is the thing a human has to
+            # act on.
+            return ok, (f"{text}\n\n[runner] every Claude credential on this box is "
+                        f"exhausted (tried: {', '.join(attempted)}). Turns will keep "
+                        f"failing until a cap resets or a new credential is set "
+                        f"(`canopy runner credential`)."), session_id
+        # `--resume` is deliberately dropped on the retry: the failed attempt may
+        # have written a partial session, and resuming it under a different
+        # credential is not a state we want to debug at 2am.
+        resume_session_id = None
 
 
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
@@ -1396,6 +1447,131 @@ def bootstrap_agent_fleet() -> None:
         _log(f"warn: bootstrap_agents.sh failed to run: {exc}")
 
 
+# ── Claude credential cascade ───────────────────────────────────────────────
+# Ordered: the subscriptions first (included in what we already pay for), the API
+# key last (metered — every token spends money, so reaching it notifies a human).
+# Each entry is (label, env_var, value). The two auth env vars are MUTUALLY
+# EXCLUSIVE: claude prefers CLAUDE_CODE_OAUTH_TOKEN when both are set, so
+# selecting a credential must CLEAR the other or the API key can never take over.
+_CLAUDE_CREDS: list[tuple[str, str, str]] = []
+_CLAUDE_CRED_I = 0
+_CLAUDE_CRED_RUNNER_ID = ""   # set at staging; lets an exhausted cascade re-read
+_CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+#: Substrings that mean "this credential is capped", not "this turn failed".
+#: Matched case-insensitively against the turn's final text.
+_USAGE_CAP_MARKERS = (
+    "hit your weekly limit",
+    "hit your usage limit",
+    "usage limit reached",
+    "out of usage",
+    "rate limit exceeded",
+    "insufficient credit",
+    "credit balance is too low",
+)
+
+
+def _is_usage_cap(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in _USAGE_CAP_MARKERS)
+
+
+def _claude_cred_label() -> str:
+    if _CLAUDE_CRED_I < len(_CLAUDE_CREDS):
+        return _CLAUDE_CREDS[_CLAUDE_CRED_I][0]
+    return "none"
+
+
+def _apply_claude_credential(index: int) -> None:
+    """Point the environment at credential `index`, clearing the other auth var."""
+    global _CLAUDE_CRED_I
+    _CLAUDE_CRED_I = index
+    label, var, value = _CLAUDE_CREDS[index]
+    for other in _CLAUDE_AUTH_VARS:
+        os.environ.pop(other, None)
+    os.environ[var] = value
+    _log(f"claude credential: using {label} ({var})")
+
+
+def _advance_claude_credential(*, turn_id: str = "") -> bool:
+    """Move to the next credential. False when the cascade is exhausted.
+
+    Notifies on the step INTO the API key, because that one bills per token —
+    the operator asked to be told before we start spending, not after.
+    """
+    nxt = _CLAUDE_CRED_I + 1
+    if nxt >= len(_CLAUDE_CREDS):
+        return False
+    label, var, _ = _CLAUDE_CREDS[nxt]
+    _apply_claude_credential(nxt)
+    if var == "ANTHROPIC_API_KEY":
+        _notify_api_key_fallback(label, turn_id)
+    return True
+
+
+def _notify_api_key_fallback(label: str, turn_id: str) -> None:
+    """Tell canopy-web we have fallen back to metered billing.
+
+    Best-effort by design (a failed notify must never take down the turn that
+    triggered it) but NOT silent: a failure to notify is logged, because the
+    whole point of this call is that a human finds out money is being spent.
+    """
+    body = {
+        "items": [{
+            "source": "runner.credential",
+            "kind": "claude_api_key_fallback",
+            "level": "warn",
+            "summary": (f"Both Claude subscriptions on {RUNNER_NAME or 'this runner'} are "
+                        f"at their usage cap — falling back to the metered API key "
+                        f"({label}). Turns now bill per token until a cap resets."),
+            # Coalescing key: one row per runner per day, not one per turn. The
+            # fallback is a STATE a human needs to know about once, not a stream.
+            "key": f"api-key-fallback:{RUNNER_NAME}",
+        }],
+    }
+    try:
+        status, _ = _api("POST", "/", body, prefix="/api/events")
+        if status not in (200, 201):
+            _log(f"warn: API-key fallback notify returned {status} — a human may not know "
+                 "that metered billing has started")
+    except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
+        _log(f"warn: could not notify about API-key fallback ({exc}) — metered billing "
+             "has started and nobody has been told")
+
+
+def _reload_claude_credentials() -> bool:
+    """Re-read the credential bundle mid-run. True when it yielded something new.
+
+    Only called once the in-memory cascade is spent, so the cost is paid exactly
+    when a box is otherwise dead. Compares VALUES, not just count: rotating a
+    capped subscription in place is the common rescue, and that leaves the length
+    unchanged.
+    """
+    if not _CLAUDE_CRED_RUNNER_ID:
+        return False
+    before = [c[2] for c in _CLAUDE_CREDS]
+    try:
+        status, cred = _api("GET", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential")
+    except Exception as exc:  # noqa: BLE001 — a failed reload must not mask the cap
+        _log(f"warn: could not re-read credentials ({exc})")
+        return False
+    if status != 200 or not cred:
+        return False
+    fresh = [(label, var, cred[key])
+             for label, var, key in (
+                 ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
+                 ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
+                 ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"))
+             if cred.get(key)]
+    if not fresh or [c[2] for c in fresh] == before:
+        return False
+    _CLAUDE_CREDS.clear()
+    _CLAUDE_CREDS.extend(fresh)
+    _apply_claude_credential(0)
+    _log("re-read credential bundle: " + ", ".join(c[0] for c in _CLAUDE_CREDS))
+    return True
+
+
 def fetch_and_stage_credential(runner_id: str) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
@@ -1405,8 +1581,23 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
     """
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
-        if status == 200 and cred and cred.get("claude_token"):
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = cred["claude_token"]
+        if status == 200 and cred and (cred.get("claude_token") or cred.get("claude_api_key")):
+            global _CLAUDE_CRED_RUNNER_ID
+            _CLAUDE_CRED_RUNNER_ID = runner_id
+            _CLAUDE_CREDS.clear()
+            for label, var, key in (
+                ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
+                ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
+                ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"),
+            ):
+                if cred.get(key):
+                    _CLAUDE_CREDS.append((label, var, cred[key]))
+            _apply_claude_credential(0)
+            _log(f"claude credential cascade: {', '.join(c[0] for c in _CLAUDE_CREDS)}")
+            if len(_CLAUDE_CREDS) == 1:
+                _log("warn: only ONE Claude credential is set — a usage cap will stop "
+                     "every agent on this box with nothing to fail over to "
+                     "(`canopy runner credential` adds a fallback)")
             if cred.get("op_sa_token"):
                 os.environ["OP_SERVICE_ACCOUNT_TOKEN"] = cred["op_sa_token"]
             if cred.get("github_token"):

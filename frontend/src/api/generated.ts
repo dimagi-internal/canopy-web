@@ -2283,7 +2283,8 @@ export interface paths {
         /**
          * Set a cloud runner's credential bundle (owner only)
          * @description Store the per-runner secrets a cloud runner fetches at startup — its Claude
-         *     login, a read-only GitHub token, the 1Password SA token. Owner-gated exactly
+         *     login (plus the secondary subscription and API key it fails over to), a
+         *     read-only GitHub token, the 1Password SA token. Owner-gated exactly
          *     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
          *     at rest; the response is masked (booleans, never values).
          */
@@ -8085,6 +8086,16 @@ export interface components {
              */
             readonly has_claude_token: boolean;
             /**
+             * Has Claude Token Secondary
+             * @default false
+             */
+            readonly has_claude_token_secondary: boolean;
+            /**
+             * Has Claude Api Key
+             * @default false
+             */
+            readonly has_claude_api_key: boolean;
+            /**
              * Has Github Token
              * @default false
              */
@@ -8105,6 +8116,10 @@ export interface components {
         readonly RunnerCredentialIn: {
             /** Claude Token */
             readonly claude_token?: string | null;
+            /** Claude Token Secondary */
+            readonly claude_token_secondary?: string | null;
+            /** Claude Api Key */
+            readonly claude_api_key?: string | null;
             /** Github Token */
             readonly github_token?: string | null;
             /** Op Sa Token */
@@ -8120,6 +8135,16 @@ export interface components {
              * @default
              */
             readonly claude_token: string;
+            /**
+             * Claude Token Secondary
+             * @default
+             */
+            readonly claude_token_secondary: string;
+            /**
+             * Claude Api Key
+             * @default
+             */
+            readonly claude_api_key: string;
             /**
              * Github Token
              * @default

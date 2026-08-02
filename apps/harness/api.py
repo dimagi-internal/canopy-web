@@ -333,13 +333,16 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
              summary="Set a cloud runner's credential bundle (owner only)")
 def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialIn):
     """Store the per-runner secrets a cloud runner fetches at startup — its Claude
-    login, a read-only GitHub token, the 1Password SA token. Owner-gated exactly
+    login (plus the secondary subscription and API key it fails over to), a
+    read-only GitHub token, the 1Password SA token. Owner-gated exactly
     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
     at rest; the response is masked (booleans, never values)."""
     runner = _runner_or_404(request, runner_id)
     services.set_runner_credential(
         runner,
         claude_token=payload.claude_token,
+        claude_token_secondary=payload.claude_token_secondary,
+        claude_api_key=payload.claude_api_key,
         github_token=payload.github_token,
         op_sa_token=payload.op_sa_token,
         updated_by=request.user,

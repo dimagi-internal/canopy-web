@@ -747,6 +747,8 @@ class RunnerCredentialIn(Schema):
     (non-clobbering) — update just the Claude token without wiping the rest."""
 
     claude_token: str | None = None
+    claude_token_secondary: str | None = None
+    claude_api_key: str | None = None
     github_token: str | None = None
     op_sa_token: str | None = None
 
@@ -755,6 +757,8 @@ class RunnerCredentialOut(Schema):
     """The runner's own fetch — actual token values (HTTPS + PAT-authed, owner-gated)."""
 
     claude_token: str = ""
+    claude_token_secondary: str = ""
+    claude_api_key: str = ""
     github_token: str = ""
     op_sa_token: str = ""
     updated_at: dt.datetime | None = None
@@ -764,6 +768,8 @@ class RunnerCredentialStatusOut(Schema):
     """Masked view — booleans, never values. The POST response + any UI."""
 
     has_claude_token: bool = False
+    has_claude_token_secondary: bool = False
+    has_claude_api_key: bool = False
     has_github_token: bool = False
     has_op_sa_token: bool = False
     updated_at: dt.datetime | None = None

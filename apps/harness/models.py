@@ -753,7 +753,15 @@ class RunnerCredential(models.Model):
     """
 
     runner = models.OneToOneField(Runner, on_delete=models.CASCADE, related_name="credential")
+    # Claude auth is an ORDERED CASCADE, not one credential. A subscription has a
+    # weekly cap; when it trips, every agent on the box stops (2026-08-01: the
+    # whole fleet went down on one exhausted login, and an unattended agent just
+    # goes silent). So the runner carries a second subscription to fail over to,
+    # and an API key as the last resort — metered, so falling back to it notifies
+    # a human rather than quietly spending money.
     claude_token_enc = models.TextField(blank=True, default="")
+    claude_token_secondary_enc = models.TextField(blank=True, default="")
+    claude_api_key_enc = models.TextField(blank=True, default="")
     github_token_enc = models.TextField(blank=True, default="")
     op_sa_token_enc = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
