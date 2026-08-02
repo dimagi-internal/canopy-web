@@ -252,6 +252,16 @@ class RunnerBinding(models.Model):
     # into a session that has moved on: the runner echoes the id back and the
     # server clears only that one.
     pending_answer = models.JSONField(null=True, blank=True, default=None)
+
+    # A close the runner has not carried out yet — same reasoning as
+    # `pending_answer`, for the other verb that only ever existed as a WS frame.
+    # Verified 2026-08-01 by sending a real close: the API answered
+    # `{"ok":true,"closing":true}` and the runner logged nothing at all — no
+    # attempt, no error — so the emdash task stayed open and the session stayed
+    # active forever. `/close`'s own fallback ("the task's plain absence from the
+    # following report retires it anyway") assumes the runner DELETED the task,
+    # which never happens if the frame is lost.
+    close_requested = models.BooleanField(default=False)
     summary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=40, blank=True, default="")
     last_interacted_at = models.DateTimeField(null=True, blank=True)

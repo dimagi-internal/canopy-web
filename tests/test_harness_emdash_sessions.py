@@ -496,3 +496,43 @@ def test_a_stale_result_never_retires_a_newer_answer():
     assert out["ok"] is False
     binding.refresh_from_db()
     assert binding.pending_answer["option"] == 2, "the newer tap was thrown away"
+
+
+@pytest.mark.django_db
+def test_a_close_survives_the_control_channel_being_down():
+    """The twin of the menu-answer case, for the other verb that only ever
+    existed as a WS frame.
+
+    Verified live 2026-08-01: a real close returned `{"ok":true,"closing":true}`
+    and the runner logged nothing at all — no attempt, no error — so the emdash
+    task stayed open and the session stayed active. `/close`'s own fallback ("the
+    task's plain absence from the following report retires it anyway") assumes
+    the runner DELETED the task, which never happens if the frame is lost.
+    """
+    from django.test import Client as DjangoClient
+
+    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.services import replace_reported_sessions
+
+    jj = _user("jj")
+    ws = _ws("dimagi", jj)
+    runner = _runner(jj, ws)
+    replace_reported_sessions(runner, ws, [_reported("chat-1")])
+    binding = RunnerBinding.objects.get(session_key="chat-1")
+    binding.reported_at = binding.live_seen_at        # a runner is holding a task
+    binding.save(update_fields=["reported_at"])
+
+    assert chat_services.close_session(session=binding.session) == "closing"
+
+    client = DjangoClient()
+    client.force_login(jj)
+    closes = client.get(f"/api/harness/runners/{runner.id}/closes").json()["closes"]
+    assert [c["session_key"] for c in closes] == ["chat-1"], (
+        "a close that only ever existed as a WS frame is one the runner can "
+        "never recover")
+
+    # The task going away IS the close being satisfied — the wholesale report
+    # already decides what is open, so nothing else needs to ack it.
+    replace_reported_sessions(runner, ws, [])
+    assert client.get(f"/api/harness/runners/{runner.id}/closes").json()["closes"] == []

@@ -1599,6 +1599,12 @@ def replace_reported_sessions(
     # the one other field a report owns. It is NOT the same judgement as the FK
     # below: identity is durable and answers "which box", while a dialog is a
     # claim about a screen that no longer exists.
+    # A close is satisfied by the task being gone, which is exactly what absence
+    # from this wholesale report means. Clearing it here (rather than on a runner
+    # ack) keeps one source of truth: the report already decides what is open.
+    RunnerBinding.objects.filter(runner=runner, close_requested=True).exclude(
+        session_key__in=now_keys).update(close_requested=False)
+
     stale_menus = RunnerBinding.objects.filter(runner=runner).exclude(
         pending_question__isnull=True,
     ).exclude(session_key__in=now_keys)

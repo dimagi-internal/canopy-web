@@ -143,6 +143,37 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         st["count"] = base + len(new_records)
 
 
+def drain_closes(cfg: Config, client: Client) -> None:
+    """Close any session we have been asked to close and have not.
+
+    The twin of `drain_menu_answers`, for the other verb that only ever existed
+    as a WS control frame. Verified 2026-08-01: a real close returned
+    `{"ok":true,"closing":true}` from the API and the runner logged nothing at
+    all, so the emdash task stayed open and the session stayed active.
+
+    Idempotent by construction — closing a task that is already gone is a no-op,
+    and the server retires the request when the task stops being reported.
+    """
+    from . import close as close_mod
+
+    try:
+        closes = client.sync_closes(cfg.runner_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("close sync failed (non-fatal)", exc_info=True)
+        return
+    for c in closes:
+        session_key = c.get("session_key") or ""
+        if not session_key:
+            continue
+        try:
+            close_mod.close_session(session_key, cdp_port=cfg.cdp_port)
+            logger.info("closed %s from the poll tick", session_key)
+        except Exception:  # noqa: BLE001
+            # Left set: the server clears it when the task stops being reported,
+            # so a failure here simply retries next tick.
+            logger.debug("close from the poll tick failed for %s", session_key, exc_info=True)
+
+
 def drain_menu_answers(cfg: Config, client: Client) -> None:
     """Press any answer a human has given that has not reached us yet.
 

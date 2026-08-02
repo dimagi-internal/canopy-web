@@ -174,6 +174,11 @@ class Client:
         self._call("POST", f"/runners/{runner_id}/session-stream",
                    {"session_id": session_id, "events": events})
 
+    def sync_closes(self, runner_id: str) -> list[dict]:
+        """Sessions we have been asked to close and have not closed yet."""
+        _, payload = self._call("GET", f"/runners/{runner_id}/closes")
+        return (payload or {}).get("closes", [])
+
     def sync_menu_answers(self, runner_id: str) -> list[dict]:
         """Answers a human has given that we have not pressed yet."""
         _, payload = self._call("GET", f"/runners/{runner_id}/menu-answers")

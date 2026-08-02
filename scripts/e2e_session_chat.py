@@ -337,9 +337,14 @@ def rebuild_from_transcript(ctx):
     different rows, is the only outcome that means re-derived.
     """
     before = session(ctx)
-    before_ids = {m["id"] for m in (before.get("messages") or []) if not is_tail_row(m)}
-    if not before_ids:
+    before_rows = [m for m in (before.get("messages") or []) if not is_tail_row(m)]
+    if not before_rows:
         raise Failure("nothing to rebuild — no durable rows (run load_full_history first)")
+    # `created_at` is auto_now_add, so a re-derived row carries a NEW one even
+    # though its content and ordinal are identical. That is the only identity a
+    # message exposes over the API (MessageOut has no id), and identity is the
+    # whole point here: content alone cannot tell "rebuilt" from "never dropped".
+    newest_before = max(m["created_at"] for m in before_rows)
 
     result = ctx["api"]("POST", f"/canopy-sessions/{ctx['session_id']}/reset")
     if not result.get("ok"):
@@ -348,18 +353,23 @@ def rebuild_from_transcript(ctx):
     if not dropped:
         raise Failure(f"reset reported ok but dropped {dropped!r} rows — nothing was reset")
 
-    wait_for("the conversation to come back from the transcript",
-             lambda: any(ctx["marker"] in t for t in assistant_texts(session(ctx))),
-             timeout=ctx["timeout"])
+    # Wait for the marker in a DURABLE row, not just anywhere. The tail reappears
+    # the moment the durable rows are gone — it is what the server falls back to —
+    # so "the marker is visible again" is satisfied by the reset having worked and
+    # nothing having been rebuilt. That passed 8-rows-dropped/0-back as green.
+    def rebuilt():
+        rows = [m for m in (session(ctx).get("messages") or []) if not is_tail_row(m)]
+        return rows if any(ctx["marker"] in (m.get("plaintext") or "") for m in rows) else None
 
-    after = session(ctx)
-    after_ids = {m["id"] for m in (after.get("messages") or []) if not is_tail_row(m)}
-    kept = before_ids & after_ids
-    if kept:
-        raise Failure(f"{len(kept)} row(s) survived the reset, so they were never "
+    after_rows = wait_for("the conversation to come back as DURABLE rows",
+                          rebuilt, timeout=ctx["timeout"])
+
+    stale = [m for m in after_rows if m["created_at"] <= newest_before]
+    if stale:
+        raise Failure(f"{len(stale)} row(s) predate the reset, so they were never "
                       f"re-derived — the cache is not what it claims to be")
-    return (f"dropped {dropped} rows; {len(after_ids)} came back from the runner's "
-            f"transcript, all newly derived")
+    return (f"dropped {dropped} rows; {len(after_rows)} came back from the runner's "
+            f"transcript, all newly inserted")
 
 
 def close_session(ctx):
@@ -431,7 +441,8 @@ def main() -> int:
     failed = None
     for name in steps:
         started = time.time()
-        print(f"  ....  {name:<24}", end="\r", flush=True)   # a step takes minutes
+        print(f"  ....  {name:<24}", end="", flush=True)      # a step takes minutes
+        print("\r" + " " * 34 + "\r", end="", flush=True)
         try:
             detail = STEPS[name](ctx)
             print(f"  PASS  {name:<24}{time.time()-started:7.1f}s  {detail}", flush=True)

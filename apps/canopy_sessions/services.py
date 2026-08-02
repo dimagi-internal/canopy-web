@@ -1096,6 +1096,15 @@ def close_session(*, session: Session) -> str:
         # one_executing_turn_per_agent. Cancelling first also means the ledger
         # records a cancellation rather than a turn that merely stops emitting.
         cancel_session_turns(session)
+        # Record BEFORE relaying, for the same reason `answer_menu` does: the frame
+        # is the doorbell and this is what survives the channel being down. Without
+        # it a lost frame leaves the emdash task open and the session active
+        # forever — and `/close`'s own fallback ("the task's plain absence from the
+        # following report retires it anyway") assumes the runner deleted the task,
+        # which never happened. Verified 2026-08-01: the API answered
+        # `{"ok":true,"closing":true}` and the runner logged nothing at all.
+        binding.close_requested = True
+        binding.save(update_fields=["close_requested"])
         from apps.realtime import groups
 
         groups.publish(groups.runner_group(binding.runner_id), {
