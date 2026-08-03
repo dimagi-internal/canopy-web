@@ -1878,6 +1878,13 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
 
     from .models import RunnerCredential
 
+    # An all-None call is a READ dressed as a write (the shape the CLI used before
+    # there was a status endpoint). Don't create a row and don't touch
+    # updated_at/updated_by for it — that timestamp is the audit trail for when a
+    # credential last actually changed.
+    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
+                               github_token, op_sa_token)):
+        return getattr(runner, "credential", None)
     cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
     if claude_token is not None:
         cred.claude_token_enc = encrypt_secret(claude_token)

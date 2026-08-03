@@ -350,6 +350,20 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     return services.runner_credential_status(runner)
 
 
+@router.get("/runners/{runner_id}/credential/status", response=RunnerCredentialStatusOut,
+            summary="Which credential slots are set (masked — booleans, never values)")
+def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
+    """The operator's read: which slots are filled, without putting a secret on a
+    screen. Separate from the GET below, which returns REAL VALUES for the runner
+    to consume.
+
+    Exists because the only way to read this used to be a no-op POST — and that
+    WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
+    says when a credential was last actually rotated."""
+    runner = _runner_or_404(request, runner_id)
+    return services.runner_credential_status(runner)
+
+
 @router.get("/runners/{runner_id}/credential", response=RunnerCredentialOut,
             summary="Fetch this runner's credential bundle (the runner, via its PAT)")
 def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialOut:

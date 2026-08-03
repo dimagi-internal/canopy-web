@@ -133,3 +133,41 @@ def test_api_key_is_encrypted_at_rest_like_the_rest(client, runner):
     cred = RunnerCredential.objects.get(runner=runner)
     assert cred.claude_api_key_enc
     assert "sk-ant-secret" not in cred.claude_api_key_enc
+
+
+# --- reading status must not be a write --------------------------------------
+def test_status_endpoint_is_masked_and_does_not_touch_the_audit_trail(client, runner):
+    """Reading which slots are set used to require a no-op POST, which WROTE —
+    bumping updated_at and destroying the only signal for when a credential was
+    last actually rotated."""
+    client.post(_cred_url(runner), data={"claude_token": "SUB1"},
+                content_type="application/json")
+    before = RunnerCredential.objects.get(runner=runner).updated_at
+
+    resp = client.get(_cred_url(runner) + "/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_claude_token"] is True
+    assert "SUB1" not in resp.content.decode()          # masked, never values
+
+    assert RunnerCredential.objects.get(runner=runner).updated_at == before
+
+
+def test_an_all_none_update_neither_creates_nor_stamps(client, runner):
+    """The old read-as-write shape, now inert."""
+    assert not RunnerCredential.objects.filter(runner=runner).exists()
+    resp = client.post(_cred_url(runner), data={}, content_type="application/json")
+    assert resp.status_code == 200
+    assert not RunnerCredential.objects.filter(runner=runner).exists()
+
+    client.post(_cred_url(runner), data={"claude_token": "C"}, content_type="application/json")
+    stamped = RunnerCredential.objects.get(runner=runner).updated_at
+    client.post(_cred_url(runner), data={}, content_type="application/json")
+    assert RunnerCredential.objects.get(runner=runner).updated_at == stamped
+
+
+def test_status_is_owner_gated_like_the_rest(runner):
+    other = User.objects.create_user("other2", "other2@dimagi.com", "pw")
+    c = Client()
+    c.force_login(other)
+    assert c.get(_cred_url(runner) + "/status").status_code == 404
