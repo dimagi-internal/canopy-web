@@ -1,5 +1,8 @@
 # Directed Runner Routing — assignments, sticky chat, readiness drills
 
+> **Status: shipped — historical record, not current-state.** RunnerAssignment + the availability cascade are live and documented in CLAUDE.md; `GET|PUT /api/agents/{slug}/runners` is served.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Date:** 2026-07-24
 **Status:** Approved design, pre-implementation
 **Supersedes:** the routing half of `2026-07-20-runner-cascade-design.md` Phase B (never shipped); `Agent.runner_preference` (kind-level) as a routing input. Phase A of the cascade spec (the `ready` heartbeat signal) is consumed, not replaced.
