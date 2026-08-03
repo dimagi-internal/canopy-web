@@ -2295,6 +2295,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/credential/status": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which credential slots are set (masked — booleans, never values)
+         * @description The operator's read: which slots are filled, without putting a secret on a
+         *     screen. Separate from the GET below, which returns REAL VALUES for the runner
+         *     to consume.
+         *
+         *     Exists because the only way to read this used to be a no-op POST — and that
+         *     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
+         *     says when a credential was last actually rotated.
+         */
+        readonly get: operations["apps_harness_api_get_runner_credential_status"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -12939,6 +12965,28 @@ export interface operations {
                 readonly "application/json": components["schemas"]["RunnerCredentialIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_get_runner_credential_status: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {
