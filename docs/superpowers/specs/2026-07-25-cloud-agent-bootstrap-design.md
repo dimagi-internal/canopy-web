@@ -1,5 +1,8 @@
 # Cloud Agent Bootstrap — an agent-ready EC2 runner, one-command lifecycle
 
+> **Status: shipped — historical record, not current-state.** `runner/ec2/bootstrap_agents.sh` exists and provisions the fleet; referenced from CLAUDE.md as current behaviour.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Date:** 2026-07-25
 **Status:** Approved design, pre-implementation
 **Builds on:** `deploy/ec2-runner/` (SP2b box), `2026-07-24-directed-runner-routing-design.md` (assignments, drills, pins)

@@ -1,5 +1,8 @@
 # Runner control channel — one real-time layer for humans and runners
 
+> **Status: shipped — historical record, not current-state.** `ws/runner/{id}/` carries wake/cancel/menu_answer/close_session in production.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Status:** Draft for review · **Date:** 2026-07-22 · **Author:** Jonathan + Claude
 
 > Replace the runner's poll-for-work loop with a **persistent WebSocket control

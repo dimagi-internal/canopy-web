@@ -1,5 +1,8 @@
 # Runner convergence and live observability
 
+> **Status: shipped — historical record, not current-state.** `packages/canopy_transcript` ships and the runner installs the hooks + loopback listener described here.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Date:** 2026-07-27
 **Status:** Draft for review
 **Supersedes in part:** the live-chat-bridge half of `2026-07-22-reusable-chat-kit-design.md`

@@ -1,5 +1,8 @@
 # Session list lifecycle: mirror emdash, derive the residue — design
 
+> **Status: shipped — historical record, not current-state.** `apps/canopy_sessions/staleness.py` implements the polled-liveness rule described here.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Date:** 2026-07-23
 **Status:** Approved (design), pending implementation plan
 **Builds on:** `2026-07-22-reusable-chat-kit-design.md` (the unified Sessions list

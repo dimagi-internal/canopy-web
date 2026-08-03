@@ -1,5 +1,8 @@
 # Supervisor inbox: items-only, actionable — design
 
+> **Status: shipped — historical record, not current-state.** `GET /api/items/` is the fleet inbox and the `needs_you` projections are gone.
+> Kept for the reasoning; check `CLAUDE.md` and the code for how it behaves today.
+
 **Date:** 2026-07-21
 **Status:** Approved (design), pending implementation plan
 **Supersedes the inbox half of:** `2026-07-15-item-and-turn-design.md` (the phased
