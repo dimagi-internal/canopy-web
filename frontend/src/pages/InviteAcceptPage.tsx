@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import { useAuth } from '@/auth/AuthProvider'
+import { loginHref } from '@/auth/loginHref'
 import { getCsrfToken } from '@/api/base'
 import { acceptInvite, previewInvite, WorkspaceApiError, type InvitePreviewOut } from '@/api/workspaces'
 
@@ -15,11 +16,6 @@ const TERMINAL_MESSAGE: Record<string, string> = {
   expired: 'This invite link has expired. Ask the workspace owner to send you a new one.',
   revoked: 'This invite has been revoked.',
   accepted: 'This invite has already been accepted.',
-}
-
-function loginHref(next: string): string {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-  return `${base}/accounts/google/login/?next=${encodeURIComponent(next)}`
 }
 
 function Centered({ children }: { children: ReactNode }): JSX.Element {

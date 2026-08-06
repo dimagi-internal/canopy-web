@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { bootstrapCsrf } from '@/api/csrf'
 import { isLoginBounceInFlight, noteAuthSucceeded } from '@/api/client.v2'
 import { getMe, type MeOut as MeResponse } from '@/api/me'
+import { currentNext, loginHref } from './loginHref'
 
 type AuthState =
   | { status: 'loading'; user: null }
@@ -102,8 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 function LoginPrompt() {
-  const next = encodeURIComponent(window.location.pathname + window.location.search)
-  const loginHref = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/accounts/google/login/?next=${next}`
+  const href = loginHref(currentNext())
   return (
     <div className="min-h-screen bg-background text-foreground-secondary flex items-center justify-center px-6">
       <div className="max-w-md w-full bg-card border border-border rounded-xl p-8 text-center">
@@ -114,7 +114,7 @@ function LoginPrompt() {
           Sign in with your Dimagi Google account to continue.
         </p>
         <a
-          href={loginHref}
+          href={href}
           className="inline-block w-full rounded-lg bg-primary text-white font-medium py-2.5 hover:bg-primary/90 transition-colors"
         >
           Sign in with Google
