@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./generated";
 import { API_BASE, getCsrfToken } from "./base";
+import { currentNext, loginHref } from "../auth/loginHref";
 
 // A lapsed session should bounce the user through OAuth exactly ONCE. The guard
 // below is what makes that a bounce and not a loop: if we land back here still
@@ -75,11 +76,10 @@ function redirectToLogin(): void {
   } catch {
     /* unavailable — a best-effort guard is better than blocking the redirect */
   }
-  const next = encodeURIComponent(window.location.pathname + window.location.search);
   loginBounceInFlight = true;
   // Prefix-aware: BASE_URL is "/" at root and "/canopy/" as a labs tenant, so
   // this stays under the deployment instead of bouncing to a sibling tenant.
-  window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/accounts/google/login/?next=${next}`;
+  window.location.href = loginHref(currentNext());
 }
 
 // Per-token public-link routes (e.g. /review/<id>?t=…) self-gate on their share

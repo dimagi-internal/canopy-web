@@ -6,16 +6,23 @@ import {
   patchWalkthrough,
   rotateWalkthroughToken,
   walkthroughContentUrl,
+  WalkthroughApiError,
   type WalkthroughDetail,
 } from '../api/walkthroughs'
+import { useAuth } from '@/auth/AuthProvider'
+import { currentNext, loginHref } from '@/auth/loginHref'
 import { withSceneHash } from '../lib/sceneHash'
 import { timeHashSeconds, withTimeFragment } from '../lib/timeHash'
+
+/** A failed load, keeping the status so the render can tell the cases apart. */
+type LoadError = { status: number | null; message: string }
 
 export function WalkthroughViewerPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const auth = useAuth()
   const [w, setW] = useState<WalkthroughDetail | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<LoadError | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const shareToken = new URLSearchParams(window.location.search).get('t')
@@ -25,7 +32,13 @@ export function WalkthroughViewerPage() {
     let cancelled = false
     getWalkthrough(id, shareToken)
       .then((d) => !cancelled && setW(d))
-      .catch((e) => !cancelled && setError(String(e.message || e)))
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setError({
+          status: e instanceof WalkthroughApiError ? e.status : null,
+          message: e instanceof Error ? e.message : String(e),
+        })
+      })
     return () => {
       cancelled = true
     }
@@ -39,7 +52,7 @@ export function WalkthroughViewerPage() {
       const updated = await patchWalkthrough(w.id, { visibility: next })
       setW(updated)
     } catch (e: any) {
-      setError(String(e?.message || e))
+      setError({ status: null, message: String(e?.message || e) })
     } finally {
       setBusy(false)
     }
@@ -56,7 +69,7 @@ export function WalkthroughViewerPage() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (e: any) {
-      setError(String(e?.message || e))
+      setError({ status: null, message: String(e?.message || e) })
     }
   }
 
@@ -68,7 +81,7 @@ export function WalkthroughViewerPage() {
       const updated = await rotateWalkthroughToken(w.id)
       setW(updated)
     } catch (e: any) {
-      setError(String(e?.message || e))
+      setError({ status: null, message: String(e?.message || e) })
     } finally {
       setBusy(false)
     }
@@ -82,14 +95,72 @@ export function WalkthroughViewerPage() {
       await deleteWalkthrough(w.id)
       navigate('/walkthroughs')
     } catch (e: any) {
-      setError(String(e?.message || e))
+      setError({ status: null, message: String(e?.message || e) })
       setBusy(false)
     }
   }
 
   if (error) {
+    // A private walkthrough 404s to a caller who can't see it — deliberate
+    // existence-hiding, and correct. But "gated" and "gone" arrive here as the
+    // same status, so the ONLY honest thing to say is what the visitor can
+    // actually do next. For someone who simply hasn't signed in yet, that's
+    // sign in; the same 404 still applies afterwards if they genuinely lack
+    // access, so this leaks nothing they couldn't already infer. Before
+    // canopy-web#516 they got a bare red "Failed to load walkthrough" and
+    // reasonably concluded the link was broken — on a real shareout.
+    const gated = error.status === 401 || error.status === 403 || error.status === 404
+
+    if (gated && auth.status !== 'authenticated') {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center px-6">
+          <div className="max-w-md w-full rounded-xl border border-border bg-card p-8 text-center">
+            <h1 className="mb-2 text-lg font-semibold text-foreground">
+              Sign in to view this walkthrough
+            </h1>
+            <p className="mb-6 text-sm text-muted-foreground">
+              {shareToken
+                ? 'This share link is no longer valid — it may have been rotated. If you have a Dimagi account, sign in to view the walkthrough directly.'
+                : 'This walkthrough is shared with Dimagi. Sign in with your Dimagi Google account to open it.'}
+            </p>
+            <a
+              href={loginHref(currentNext())}
+              className="inline-block w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+            >
+              Sign in with Google
+            </a>
+            {/* The card only renders for an anonymous visitor, so "already
+                signed in?" would be addressing nobody. The person who needs a
+                line here is the one for whom the button is a dead end: a
+                non-Dimagi recipient of a forwarded link. */}
+            <p className="mt-4 text-xs text-muted-foreground">
+              Not a Dimagi account? Ask whoever sent you the link to share it with you.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    // Signed in and still refused: they ARE the audience and it still didn't
+    // resolve, so name both live possibilities rather than a generic failure.
+    if (gated) {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center px-6">
+          <div className="max-w-md w-full rounded-xl border border-border bg-card p-8 text-center">
+            <h1 className="mb-2 text-lg font-semibold text-foreground">
+              Walkthrough not available
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              It may have been deleted, or it may not be shared with your account. Ask whoever
+              sent you the link to re-share it.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
     return (
-      <div className="max-w-4xl mx-auto p-6 text-destructive/90">Error: {error}</div>
+      <div className="max-w-4xl mx-auto p-6 text-destructive/90">Error: {error.message}</div>
     )
   }
   if (!w) {

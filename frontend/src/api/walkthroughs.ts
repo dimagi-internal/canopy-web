@@ -1,6 +1,27 @@
 import { apiV2 } from "./client.v2";
 import type { components } from "./generated";
 import { withBase } from "../lib/basePath";
+import { problemMessage } from "./problem";
+
+/**
+ * A failed walkthrough call, carrying the HTTP status.
+ *
+ * The status is the whole point: a private walkthrough 404s to an anonymous
+ * caller (deliberate existence-hiding), which is indistinguishable from a
+ * genuine network failure once it has been flattened into a bare
+ * `Error("Failed to load walkthrough")`. The viewer needs the number to offer a
+ * sign-in instead of a dead end — canopy-web#516.
+ *
+ * Same shape as `WorkspaceApiError`; see the note in `workspaces.ts` for why
+ * these branch on `res.response.ok` rather than `res.error`.
+ */
+export class WalkthroughApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
 
 export type WalkthroughKind = "html" | "video";
 export type WalkthroughVisibility = "private" | "link";
@@ -43,17 +64,22 @@ export async function getWalkthrough(
   id: string,
   token?: string | null,
 ): Promise<WalkthroughDetail> {
-  const { data, error } = await apiV2.GET("/api/walkthroughs/{wid}/", {
+  const res = await apiV2.GET("/api/walkthroughs/{wid}/", {
     params: {
       path: { wid: id },
       ...(token ? { query: { t: token } } : {}),
     },
   });
-  if (error) throw new Error("Failed to load walkthrough");
+  if (!res.response.ok) {
+    throw new WalkthroughApiError(
+      res.response.status,
+      problemMessage(res.error, "Failed to load walkthrough"),
+    );
+  }
   // openapi-fetch's immutable response type deep-freezes the `links` array
   // (method signatures become `{}`), which no longer structurally matches the
   // plain schema alias. Same cast `listWalkthroughs` uses for its array body.
-  return data as unknown as WalkthroughDetail;
+  return res.data as unknown as WalkthroughDetail;
 }
 
 export async function patchWalkthrough(
