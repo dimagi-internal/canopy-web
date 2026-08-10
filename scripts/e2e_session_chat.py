@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Live end-to-end check of session chat, against a real deployment.
 
+**In one line:** it pretends to be you using chat from your phone — against the
+real server, a real runner and a real agent — and checks each step actually
+worked, rather than that it returned a success code.
+
+It creates a chat with `hal` on this machine's runner (spawning a real Claude in
+a real worktree, which you can watch in emdash), sends a message and waits for
+the reply, gets the agent to raise a question dialog and answers it through the
+API the way a phone tap does, then checks the answer REACHED THE AGENT. After
+that it reads the stored history back, wipes the server's copy and confirms it
+rebuilds from the runner's transcript, and closes the session. ~90 seconds, and
+it spends real tokens because a real agent does real work.
+
 **Why this is a script and not a pytest.** Everything under `tests/*_e2e.py` runs
 in-process with both ends faked — a captured screen in, a keystroke list out.
 That is the right shape for seam coverage, and it is exactly what passed while
