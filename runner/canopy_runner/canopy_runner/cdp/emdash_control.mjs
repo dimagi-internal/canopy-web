@@ -235,8 +235,41 @@ try {
     }
     const before = await taskNames();
     // Initial-conversation prompt is a contenteditable in the Create Task dialog.
-    const ce = page.locator('[role=dialog] [contenteditable="true"], [class*=Dialog] [contenteditable="true"]').first();
-    await ce.click();
+    //
+    // Focused via JS, NOT `locator.click()`. Playwright's click first waits for the
+    // element to be visible, enabled and STABLE — and "stable" means its box was
+    // unchanged across two ANIMATION FRAMES. macOS renders one login session at a
+    // time, so while the display belongs to the other macOS account this window
+    // paints nothing, no frames arrive, and the click hangs for its full 30s even
+    // though CDP answers perfectly. This was the file's last actionability-gated
+    // call and so its only occlusion-sensitive one, against the promise made at the
+    // top of this file; it cost two turns and marked the box not-ready on
+    // 2026-08-10, ~6 minutes after the other account logged in. Separate CDP ports
+    // isolate the two runners, but the SCREEN is machine-wide and cannot be split.
+    // `keyboard.insertText` dispatches to the focused element with no actionability
+    // check, so it needs no equivalent.
+    const CE_SELECTOR = '[role=dialog] [contenteditable="true"], [class*=Dialog] [contenteditable="true"]';
+    // The wait still has to exist — the dialog is React-rendered and the 1s above is
+    // not a guarantee. On 2026-07-30 this call site spent its 30s because the dialog
+    // never appeared AT ALL, which must stay a legible failure rather than become an
+    // instant false negative. It polls on a TIMER because Playwright's default
+    // polling is 'raf', which would reintroduce the exact dependency this removes.
+    try {
+      await page.waitForFunction((sel) => !!document.querySelector(sel),
+                                 CE_SELECTOR, { polling: 250, timeout: 30000 });
+    } catch {
+      fail('the New Task dialog never rendered its prompt editor');
+    }
+    const focusedPrompt = await page.evaluate((sel) => {
+      const ce = document.querySelector(sel);
+      if (!ce) return false;
+      ce.focus();
+      // Confirm focus actually MOVED. insertText goes wherever focus is, so a silent
+      // no-op here would type the prompt into the task-name input (or nowhere) and
+      // still report the task as created.
+      return document.activeElement === ce || ce.contains(document.activeElement);
+    }, CE_SELECTOR);
+    if (!focusedPrompt) fail('could not focus the New Task dialog prompt editor');
     await page.keyboard.insertText(prompt);   // atomic commit, not char-by-char
     const created = await page.evaluate(() => {
       const dlg = document.querySelector('[role=dialog],[class*=Dialog],[class*=modal]');
