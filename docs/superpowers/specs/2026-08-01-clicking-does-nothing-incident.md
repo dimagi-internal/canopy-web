@@ -92,8 +92,13 @@ Two traps it walked into itself, both worth knowing:
   `rebuild_from_transcript` passed while testing nothing. A later version
   reported *"dropped 8 rows; 0 came back"* and still passed, because "no row
   predates the reset" is trivially true on an empty set.
-- **One green proves nothing.** `answer_from_the_web` passed three times before
-  failing — the control channel simply happened to be up. Run it twice.
+- **A green run is evidence about the conditions that held, not about the code.**
+  `answer_from_the_web` passed three times before failing: the control channel
+  simply happened to be up each time. The lesson is NOT "run it more" — three
+  passes would not have been fixed by a fourth. It is that a run samples one
+  configuration of hidden state, so the fix is to remove the hidden state. That
+  is what #575/#577 did: an answer and a close are durable records drained on a
+  poll tick, so whether the channel is up stops being a variable at all.
 
 ## Two bugs found alongside, unrelated to menus
 
