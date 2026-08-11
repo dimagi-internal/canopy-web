@@ -287,8 +287,16 @@ class Client:
     def start(self, turn_id: str, session_id: str = "") -> None:
         self._call("POST", f"/turns/{turn_id}/start", {"session_id": session_id})
 
-    def finish(self, turn_id: str, note: str = "", status: str = "done") -> None:
-        self._call("POST", f"/turns/{turn_id}/finish", {"status": status, "result_note": note})
+    def finish(self, turn_id: str, note: str = "", status: str = "done",
+               emdash_task_id: str = "") -> None:
+        """`emdash_task_id` is the session this turn drove. It is the key the agent's
+        own close-out is matched on later (the agent recovers the same name from its
+        cwd), so a turn that created or reused a session should always report it —
+        the note has carried it as prose for months, which is not a key."""
+        body = {"status": status, "result_note": note}
+        if emdash_task_id:
+            body["emdash_task_id"] = emdash_task_id
+        self._call("POST", f"/turns/{turn_id}/finish", body)
 
     def fail_turn(self, turn_id: str, note: str) -> None:
         self._call("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})

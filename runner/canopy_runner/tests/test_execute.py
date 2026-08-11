@@ -31,6 +31,7 @@ class FakeClient:
         self.events = []
         self.started = []
         self.finished = []
+        self.finished_tasks = []
         self.failed = []
         self.recorded = []
 
@@ -41,8 +42,10 @@ class FakeClient:
     def start(self, turn_id, session_id=""):
         self.started.append(turn_id)
 
-    def finish(self, turn_id, note=""):
+    def finish(self, turn_id, note="", emdash_task_id=""):
+        # emdash_task_id is the close-out join key the server stores on the turn.
         self.finished.append((turn_id, note))
+        self.finished_tasks.append(emdash_task_id)
 
     def fail_turn(self, turn_id, note):
         self.failed.append((turn_id, note))
@@ -209,6 +212,18 @@ def test_create_new_thread_rehydrates_from_summary(monkeypatch):
     assert result.startswith("created:t-1:fresh")
     assert "what account A did" in created["prompt"]
     assert client.recorded and client.recorded[0][0] == "hal"
+
+
+def test_finish_reports_the_emdash_session_as_the_close_out_join_key(monkeypatch):
+    """The session name is what later joins the agent's own close-out report to this
+    turn (the agent recovers it from its cwd). It travelled only as prose inside
+    result_note before, which is not a key — so the two halves of every turn lived in
+    two tables that could not be joined at all."""
+    monkeypatch.setattr(cdp_control, "create_task",
+                        lambda project, prompt, task_name="", port=9222: {"task": "hal-api-df02-0810-0805"})
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    execute.execute_turn(_cfg(), client, "r-1", _turn())
+    assert client.finished_tasks == ["hal-api-df02-0810-0805"]
 
 
 def test_create_failure_fails_the_turn(monkeypatch):

@@ -151,7 +151,8 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
                           project=turn.get("project") or "",
                           workspace=turn.get("workspace_slug") or "", emdash_task_id=task)
     readiness.mark_ok(cfg)
-    client.finish(turn_id, note=f"delivered to existing session '{task}'")
+    client.finish(turn_id, note=f"delivered to existing session '{task}'",
+                  emdash_task_id=task)
     return f"reused:{turn_id}"
 
 
@@ -362,7 +363,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     if path is None:
         logger.warning("chat turn=%s: no transcript for task=%s (agent=%s) — reply not bridged",
                        turn_id, task, target)
-        client.finish(turn_id, note="chat: transcript not found; reply not bridged")
+        client.finish(turn_id, note="chat: transcript not found; reply not bridged",
+                      emdash_task_id=task)
         return f"chat:{turn_id}:{task}"
     # Hand off to the tick pump and RETURN — the turn stays EXECUTING until the agent
     # hands the floor back. Waiting here would block the whole runner loop (heartbeat,
@@ -467,5 +469,6 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         summary=summary or None,
     )
     readiness.mark_ok(cfg)
-    client.finish(turn_id, note=f"created session '{task}'" + (" (rehydrated)" if summary else ""))
+    client.finish(turn_id, note=f"created session '{task}'" + (" (rehydrated)" if summary else ""),
+                  emdash_task_id=task)
     return f"created:{turn_id}:{task}"

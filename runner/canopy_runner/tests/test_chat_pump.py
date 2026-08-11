@@ -29,6 +29,7 @@ class _FakeClient:
     def __init__(self, post_fails=0):
         self.events = []
         self.finished = []
+        self.finished_tasks = []
         self.heartbeats = []
         self._post_fails = post_fails
 
@@ -38,8 +39,9 @@ class _FakeClient:
             raise RuntimeError("network")
         self.events.extend(evs)
 
-    def finish(self, turn_id, note="", status="done"):
+    def finish(self, turn_id, note="", status="done", emdash_task_id=""):
         self.finished.append((turn_id, status, note))
+        self.finished_tasks.append(emdash_task_id)
 
     def heartbeat(self, runner_id, active_turn_ids, **k):
         self.heartbeats.append(list(active_turn_ids))

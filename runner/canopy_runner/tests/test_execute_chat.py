@@ -13,6 +13,7 @@ class _FakeClient:
     def __init__(self):
         self.events = []
         self.finished = None
+        self.finished_task = None
         self.finished_status = None
         self.failed = None
 
@@ -28,9 +29,10 @@ class _FakeClient:
     def post_events(self, turn_id, evs):
         self.events.extend(evs)
 
-    def finish(self, turn_id, note="", status="done"):
+    def finish(self, turn_id, note="", status="done", emdash_task_id=""):
         self.finished = note
         self.finished_status = status
+        self.finished_task = emdash_task_id
 
     def fail_turn(self, turn_id, note):
         self.failed = note
