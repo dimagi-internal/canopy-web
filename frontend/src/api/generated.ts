@@ -6535,8 +6535,11 @@ export interface components {
         };
         /** AgentTurnOut */
         readonly AgentTurnOut: {
-            /** Id */
-            readonly id: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
             /** Agent Slug */
             readonly agent_slug: string;
             /** Cli Session Id */
@@ -6564,6 +6567,23 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+            /**
+             * Status
+             * @default
+             */
+            readonly status: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /**
+             * Emdash Task Id
+             * @default
+             */
+            readonly emdash_task_id: string;
+            /** Reported At */
+            readonly reported_at?: string | null;
         };
         /** Page[AgentTurnOut] */
         readonly Page_AgentTurnOut_: {
@@ -6610,6 +6630,11 @@ export interface components {
              * @default
              */
             readonly source: string;
+            /**
+             * Emdash Task Id
+             * @default
+             */
+            readonly emdash_task_id: string;
         };
         /** AgentWorkProductOut */
         readonly AgentWorkProductOut: {
@@ -8772,6 +8797,11 @@ export interface components {
              * @default
              */
             readonly result_note: string;
+            /**
+             * Emdash Task Id
+             * @default
+             */
+            readonly emdash_task_id: string;
         };
         /**
          * ScheduleFireIn

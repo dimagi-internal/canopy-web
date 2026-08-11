@@ -149,52 +149,6 @@ class AgentWorkProduct(models.Model):
         return self.agent.slug
 
 
-class AgentTurn(models.Model):
-    """A packaged unit of work: one turn the agent ran, tied to the request(s)
-    it advanced (`task_ext_ids`), what it did (`summary`), the deliverables it
-    produced (`work_product_urls`), and — optionally — a link to the reduced
-    session transcript (`session_slug` + `share_token`, rendered at
-    `/share/<token>`). The transcript is one artifact of the turn, not the point:
-    a turn can be packaged with no upload at all.
-
-    Idempotent per (agent, cli_session_id): one turn per Claude session, so
-    re-packaging the same session (e.g. after the transcript is uploaded) updates
-    the record in place rather than duplicating it. The uploaded `Session` (in the
-    sessions app) is owned by the human whose PAT uploaded it; this row only holds
-    its slug/token, so the two apps stay decoupled."""
-
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="turns")
-    cli_session_id = models.CharField(max_length=100, help_text="Claude Code session id — the dedup key.")
-    title = models.CharField(max_length=300, help_text="What the turn did, in one line.")
-    summary = models.TextField(blank=True, default="", help_text="The close-out summary.")
-    # The request(s) this turn advanced — AgentTask.ext_id values (loose refs, not FKs).
-    task_ext_ids = models.JSONField(default=list, blank=True)
-    # Deliverables produced this turn — AgentWorkProduct urls (loose refs).
-    work_product_urls = models.JSONField(default=list, blank=True)
-    # Optional transcript link (empty when the turn was packaged without upload).
-    session_slug = models.CharField(max_length=64, blank=True, default="", help_text="Uploaded Session.slug, if any.")
-    share_token = models.CharField(max_length=64, blank=True, default="", help_text="Public /share/<token>, if shared.")
-    started_at = models.DateTimeField(null=True, blank=True)
-    ended_at = models.DateTimeField(null=True, blank=True)
-    source = models.CharField(max_length=100, blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        constraints = [
-            models.UniqueConstraint(fields=["agent", "cli_session_id"], name="uniq_agent_turn_session"),
-        ]
-        indexes = [models.Index(fields=["agent", "-created_at"])]
-
-    def __str__(self):
-        return f"turn:{self.agent.slug}:{self.cli_session_id}"
-
-    @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
-
-
 class AgentSkill(models.Model):
     """An entry in the agent's skill catalog: what the skill does, a link to its
     definition (SKILL.md), and the latest improvement note. The catalog is

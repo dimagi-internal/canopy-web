@@ -1174,6 +1174,12 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
     turn = _turn_or_404(request, turn_id)
     if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
         raise HttpError(422, "finish status must be done|failed|cancelled")
+    # Record the session BEFORE the terminal check: a re-reported finish is otherwise
+    # a no-op, and this is the only moment the runner tells us which emdash session
+    # the turn drove. Never blank an existing value — the first report wins.
+    if payload.emdash_task_id and not turn.emdash_task_id:
+        turn.emdash_task_id = payload.emdash_task_id[:200]
+        turn.save(update_fields=["emdash_task_id"])
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)

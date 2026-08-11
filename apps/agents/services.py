@@ -7,13 +7,14 @@ import datetime as dt
 from django.db import transaction
 from django.utils import timezone
 
+from apps.harness.models import Turn
+
 from .models import (
     Agent,
     AgentSkill,
     AgentSync,
     AgentTask,
     AgentTaskCommand,
-    AgentTurn,
     AgentWorkProduct,
 )
 
@@ -90,8 +91,31 @@ def agent_detail(agent: Agent) -> dict:
         "task_count": agent.tasks.count(),
         "turn_count": agent.turns.count(),
         "latest_sync_at": latest.period_end if latest else None,
-        "latest_turn_at": latest_turn.created_at if (latest_turn := agent.turns.first()) else None,
+        # "When did this agent last RUN" — read off the dispatch queue, which has a
+        # row for every turn the harness sent. It used to be read off the close-out
+        # report, which only exists when an agent survived to package itself: ada
+        # rendered as never-run (0 / null) against 34 dispatched turns, and every
+        # other agent was weeks stale against its own queue.
+        #
+        # `started_at` (not created_at) is the honest answer — a queued turn nobody
+        # picked up is not a run — with created_at as the fallback for rows that
+        # predate the runner reporting a start.
+        "latest_turn_at": _latest_turn_at(agent),
     }
+
+
+def _latest_turn_at(agent: Agent):
+    """Newest start among turns that actually started, else newest enqueue.
+
+    Deliberately NOT `order_by("-started_at", "-created_at")`: Postgres sorts DESC
+    NULLS FIRST, so a single queued turn (started_at IS NULL) would win and the
+    fallback would become the answer for every agent with anything in the queue.
+    """
+    started = agent.turns.filter(started_at__isnull=False).order_by("-started_at").first()
+    if started is not None:
+        return started.started_at
+    newest = agent.turns.order_by("-created_at").first()
+    return newest.created_at if newest else None
 
 
 # ---- syncs ----
@@ -133,29 +157,87 @@ def delete_sync(agent: Agent, sync_id: int) -> bool:
 
 
 # ---- turns (a packaged unit of work + optional transcript link) ----
-def upsert_turn(agent: Agent, data) -> AgentTurn:
-    """Idempotent per (agent, cli_session_id): one turn per Claude session, so
-    re-packaging the same session (e.g. once the transcript uploads) updates it."""
-    turn, _ = AgentTurn.objects.update_or_create(
+def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
+    """The dispatch row this close-out belongs to, or None to create a fresh one.
+
+    Match order, most specific first:
+      1. cli_session_id — a turn already reported from this Claude session (re-run
+         of the close-out). Also what the unique constraint keys on.
+      2. emdash_task_id — the runner stamped the emdash session it created; the
+         closing agent recovers the same name from its cwd. Newest UNREPORTED turn
+         for that task wins, because a reused session serves many turns and the one
+         being closed is the latest.
+
+    No time window on (2): an agent turn legitimately runs for hours, and a wrong
+    window would silently split one turn into two rows — the exact failure this
+    merge exists to end. The `reported_at__isnull=True` filter is what keeps an
+    older turn from being claimed twice.
+    """
+    if data.cli_session_id:
+        existing = agent.turns.filter(cli_session_id=data.cli_session_id).first()
+        if existing is not None:
+            return existing
+    task = getattr(data, "emdash_task_id", "") or ""
+    if task:
+        return (
+            agent.turns.filter(emdash_task_id=task, reported_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+    return None
+
+
+def upsert_turn(agent: Agent, data) -> Turn:
+    """Attach an agent's close-out report to the turn it was dispatched as.
+
+    Idempotent per (agent, cli_session_id). When no dispatch row can be matched —
+    a turn a human started by hand in a terminal, or a fleet still posting without
+    `emdash_task_id` — a report-only Turn is created instead, so the record is never
+    dropped on the floor. That row carries origin=api and status=done because it is,
+    from the harness's point of view, a turn that has already finished; it has no
+    idempotency of its own to enforce, so the key is synthesized from the session.
+    """
+    fields = {
+        "report_title": data.title,
+        "report_summary": data.summary,
+        "task_ext_ids": list(data.task_ext_ids),
+        "work_product_urls": list(data.work_product_urls),
+        "session_slug": data.session_slug,
+        "share_token": data.share_token,
+        "report_source": data.source,
+        "cli_session_id": data.cli_session_id,
+        "reported_at": timezone.now(),
+    }
+    turn = _claim_dispatch_row(agent, data)
+    if turn is not None:
+        for key, value in fields.items():
+            setattr(turn, key, value)
+        # The agent's own timings are better than the runner's: `started_at` from
+        # the harness is when the SESSION was created, `ended_at` only the agent
+        # knows. Never overwrite a known dispatch time with a null.
+        if _aware(data.started_at):
+            turn.started_at = _aware(data.started_at)
+        if _aware(data.ended_at):
+            turn.finished_at = _aware(data.ended_at)
+        turn.save()
+        return turn
+
+    return Turn.objects.create(
         agent=agent,
-        cli_session_id=data.cli_session_id,
-        defaults={
-            "title": data.title,
-            "summary": data.summary,
-            "task_ext_ids": list(data.task_ext_ids),
-            "work_product_urls": list(data.work_product_urls),
-            "session_slug": data.session_slug,
-            "share_token": data.share_token,
-            "started_at": _aware(data.started_at),
-            "ended_at": _aware(data.ended_at),
-            "source": data.source,
-        },
+        origin=Turn.ORIGIN_API,
+        status=Turn.DONE,
+        idempotency_key=f"closeout:{agent.slug}:{data.cli_session_id}",
+        emdash_task_id=getattr(data, "emdash_task_id", "") or "",
+        started_at=_aware(data.started_at),
+        finished_at=_aware(data.ended_at),
+        **fields,
     )
-    return turn
 
 
-def list_turns(agent: Agent, limit: int = 100) -> list[AgentTurn]:
-    return list(agent.turns.select_related("agent")[:limit])
+def list_turns(agent: Agent, limit: int = 100) -> list[Turn]:
+    """Newest first. Turn.Meta orders ASC (the queue is drained oldest-first), which
+    is the wrong end for a workspace timeline, so this reverses it explicitly."""
+    return list(agent.turns.select_related("agent").order_by("-created_at")[:limit])
 
 
 # ---- work products ----

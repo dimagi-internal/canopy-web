@@ -351,10 +351,12 @@ class Turn(models.Model):
     # A turn targets EITHER an agent or a repo — exactly one (see the
     # target_is_agent_xor_project constraint).
     #
-    # related_name is harness_turns (not "turns"): apps.agents.AgentTurn — the
-    # packaged turn *report* — already claims agent.turns.
+    # `agent.turns` — the ONE turn relation. It was `harness_turns` while
+    # apps.agents.AgentTurn held the name for the close-out report; that model is
+    # gone (merged into the report fields below), so the obvious name is free and
+    # there is no second relation to confuse it with.
     agent = models.ForeignKey(
-        "agents.Agent", on_delete=models.CASCADE, related_name="harness_turns",
+        "agents.Agent", on_delete=models.CASCADE, related_name="turns",
         null=True, blank=True,
     )
     # The repo case. The session you want to revise from the phone is working on
@@ -425,13 +427,72 @@ class Turn(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ---- the report half (was apps.agents.AgentTurn, merged here 2026-08-11) ----
+    #
+    # A turn has two halves and they used to be two models: this one recorded the
+    # DISPATCH (queued → a session exists), and agents.AgentTurn recorded the
+    # agent's own CLOSE-OUT (what it did, what it produced). Nothing joined them,
+    # so `/api/agents/<slug>/` served turn_count/latest_turn_at off the close-out
+    # table while the queue said something else entirely — ada read `0 turns` with
+    # 34 dispatched. Both numbers were "right"; they answered different questions
+    # under one name. One model, both halves, so that cannot recur.
+    #
+    # Every report field is blank-by-default: a turn that was dispatched and never
+    # closed out (the agent died, the session was killed) is the NORMAL case, not a
+    # defect — it stays a valid row carrying only its dispatch half.
+    #
+    # `emdash_task_id` is the join. The runner has it the moment cdp_control creates
+    # the session and writes it here at finish; the closing agent recovers the same
+    # name from its cwd (emdash worktrees are `…/<task>-<suffix>`). Before this, the
+    # only trace was prose inside result_note ("created session 'hal-api-df02…'"),
+    # which is not a key. Not unique: a reused session serves many turns.
+    emdash_task_id = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="The emdash task/session this turn drove — the close-out join key.",
+    )
+    # The Claude Code session id the agent reports at close-out. Distinct from
+    # `session_id` above, which is the runner's live-session hint and is in practice
+    # only written on the reconciliation path (44/46 lost turns carried one; 13/211
+    # done turns did). Kept separate rather than overloaded: one is observed by the
+    # runner, the other is asserted by the agent, and conflating them would make a
+    # missing value ambiguous.
+    cli_session_id = models.CharField(max_length=100, blank=True, default="")
+    report_title = models.CharField(max_length=300, blank=True, default="")
+    report_summary = models.TextField(blank=True, default="")
+    # The request(s) this turn advanced — AgentTask.ext_id values (loose refs, not FKs).
+    task_ext_ids = models.JSONField(default=list, blank=True)
+    # Deliverables produced this turn — AgentWorkProduct urls (loose refs).
+    work_product_urls = models.JSONField(default=list, blank=True)
+    # Optional transcript link (empty when the turn was packaged without upload).
+    # The uploaded Session is owned by the human whose PAT uploaded it; only its
+    # slug/token live here, so the two apps stay decoupled.
+    session_slug = models.CharField(max_length=64, blank=True, default="")
+    share_token = models.CharField(max_length=64, blank=True, default="")
+    # When the agent closed out. The presence of this — not any status — is what
+    # distinguishes "reported" from "dispatched only": status goes `done` seconds
+    # after the session is created, long before the agent has done the work.
+    reported_at = models.DateTimeField(null=True, blank=True)
+    report_source = models.CharField(max_length=100, blank=True, default="")
+
     class Meta:
         ordering = ["created_at"]
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["agent", "status"]),
+            # The close-out join: newest unreported turn for (agent, emdash task).
+            models.Index(fields=["agent", "emdash_task_id"]),
         ]
         constraints = [
+            # One report per Claude session, carried over from AgentTurn's
+            # uniq_agent_turn_session: re-running the close-out (e.g. once the
+            # transcript finishes uploading) must update the turn, not add one.
+            # PARTIAL — dispatch-only turns all have cli_session_id="" and must
+            # not collide with each other.
+            models.UniqueConstraint(
+                fields=["agent", "cli_session_id"],
+                condition=~models.Q(cli_session_id=""),
+                name="uniq_turn_agent_cli_session",
+            ),
             # Serialize EXECUTION, not intake: queued turns stack freely.
             #
             # Stays AGENT-ONLY on purpose. An agent is one identity with one
@@ -483,6 +544,18 @@ class Turn(models.Model):
                 return self.chat_session.project
             return f"session:{self.chat_session_id.hex[:8]}"
         return self.project
+
+    @property
+    def agent_slug(self) -> str:
+        """The owning agent, or "" for a project/session turn.
+
+        `target` above answers the runner's question (what emdash project do I
+        drive), which is NOT the same question — it falls back to a session's agent
+        and then to a repo name. This one is strictly "whose agent turn is this",
+        and it is what the /api/agents serialization reads. harness.TurnOut keeps
+        its own resolver, which wins there; the two agree on agent turns.
+        """
+        return self.agent.slug if self.agent_id else ""
 
     def __str__(self) -> str:  # pragma: no cover
         return f"turn:{self.target}:{self.status}:{self.id.hex[:8]}"

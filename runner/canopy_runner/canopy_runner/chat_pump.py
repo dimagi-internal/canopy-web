@@ -51,7 +51,7 @@ def finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note
         except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
             logger.warning("chat turn=%s: interrupt failed: %s", bridge.turn_id, exc)
     try:
-        client.finish(bridge.turn_id, note=note, status=status)
+        client.finish(bridge.turn_id, note=note, status=status, emdash_task_id=bridge.task)
     except Exception:  # noqa: BLE001
         logger.warning("chat turn=%s: finish failed", bridge.turn_id, exc_info=True)
     logger.info("chat turn=%s %s (task=%s): %s", bridge.turn_id, status, bridge.task, note)

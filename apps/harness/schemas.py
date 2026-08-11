@@ -434,6 +434,10 @@ class TurnFinishIn(Schema):
     # finishes the turn cancelled (see the CDP-interrupt cancel flow); done and
     # failed remain the normal completion outcomes.
     result_note: str = ""
+    # The emdash session this turn drove, when it drove one. Written to the turn so
+    # the agent's later close-out can be matched to it; a failed turn that never got
+    # a session simply omits it.
+    emdash_task_id: str = ""
 
 
 class TranscriptAppendIn(Schema):

@@ -215,6 +215,12 @@ class AgentSyncOut(StrictModel):
 
 
 # ---- Turns (a packaged unit of work + optional transcript link) ----
+#
+# Backed by harness.Turn since 2026-08-11 — the dispatch record and the close-out
+# report are one row. The wire names here are the CLOSE-OUT's names (`title`,
+# `summary`, `source`), aliased onto the model's `report_*` fields so the whole
+# fleet's `canopy agent turn` keeps working unchanged; on the model they need the
+# prefix because a Turn also has dispatch-side prose (`prompt`, `result_note`).
 class AgentTurnIn(StrictModel):
     cli_session_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=300)
@@ -226,22 +232,36 @@ class AgentTurnIn(StrictModel):
     started_at: dt.datetime | None = None
     ended_at: dt.datetime | None = None
     source: str = Field(default="", max_length=100)
+    # The emdash session the turn ran in — how the server finds the dispatch row to
+    # attach this report to (the runner stamps the same name at finish). Optional:
+    # an agent that cannot determine it still gets a report-only row, just an
+    # unjoined one. Agents recover it from cwd; see canopy's agent_client.
+    emdash_task_id: str = Field(default="", max_length=200)
 
 
 class AgentTurnOut(StrictModel):
-    id: int
+    # A UUID now, not an int — Turn's pk. The agents surface never handed this id
+    # back to the server for anything, so it is a display/key value only.
+    id: uuid.UUID
     agent_slug: str
     cli_session_id: str
-    title: str
-    summary: str
+    title: str = Field(validation_alias="report_title")
+    summary: str = Field(validation_alias="report_summary")
     task_ext_ids: list[str] = Field(default_factory=list)
     work_product_urls: list[str] = Field(default_factory=list)
     session_slug: str
     share_token: str
     started_at: dt.datetime | None = None
-    ended_at: dt.datetime | None = None
-    source: str
+    ended_at: dt.datetime | None = Field(default=None, validation_alias="finished_at")
+    source: str = Field(validation_alias="report_source")
     created_at: dt.datetime
+    # The dispatch half, now that it travels on the same row: `status`/`origin` say
+    # whether the turn ran and what asked for it, and `reported_at` is how you tell
+    # a turn the agent closed out from one that only ever got dispatched.
+    status: str = ""
+    origin: str = ""
+    emdash_task_id: str = ""
+    reported_at: dt.datetime | None = None
 
 
 # ---- Work products ----

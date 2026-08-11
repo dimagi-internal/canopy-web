@@ -8,7 +8,8 @@ import pytest
 
 from apps.agent_runs.models import AgentRun
 from apps.agents import services
-from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask, AgentTurn, AgentWorkProduct
+from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask, AgentWorkProduct
+from apps.harness.models import Turn
 from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
@@ -80,7 +81,7 @@ def test_delete_sync_removes_only_the_targeted_row():
 def _turn(**kw):
     base = dict(cli_session_id="sess-1", title="Turn 1", summary="did stuff",
                 task_ext_ids=["t1"], work_product_urls=[], session_slug="", share_token="",
-                started_at=None, ended_at=None, source="turn")
+                started_at=None, ended_at=None, source="turn", emdash_task_id="")
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -92,14 +93,14 @@ def test_turn_is_idempotent_per_cli_session_id():
     services.upsert_turn(agent, _turn(title="Turn 1 (transcript added)",
                                       task_ext_ids=["t1", "t2"],
                                       session_slug="abc123", share_token="tok999"))
-    assert AgentTurn.objects.filter(agent=agent).count() == 1
-    turn = AgentTurn.objects.get(agent=agent)
-    assert turn.title == "Turn 1 (transcript added)"
+    assert Turn.objects.filter(agent=agent).count() == 1
+    turn = Turn.objects.get(agent=agent)
+    assert turn.report_title == "Turn 1 (transcript added)"
     assert turn.task_ext_ids == ["t1", "t2"]
     assert turn.share_token == "tok999"
     # a different session is a separate turn
     services.upsert_turn(agent, _turn(cli_session_id="sess-2", title="Turn 2"))
-    assert AgentTurn.objects.filter(agent=agent).count() == 2
+    assert Turn.objects.filter(agent=agent).count() == 2
 
 
 def test_turn_transcript_is_optional():
@@ -118,6 +119,77 @@ def test_agent_detail_counts_turns():
     detail = services.agent_detail(agent)
     assert detail["turn_count"] == 2
     assert detail["latest_turn_at"] is not None
+
+
+def _dispatch(agent, *, key, task="", started_at=None, status=Turn.DONE):
+    """A turn as the HARNESS creates it — dispatched, no close-out report."""
+    return Turn.objects.create(
+        agent=agent, origin=Turn.ORIGIN_API, status=status, idempotency_key=key,
+        emdash_task_id=task, started_at=started_at,
+    )
+
+
+def test_dispatched_turns_count_even_when_the_agent_never_closed_out():
+    """The regression this merge exists for.
+
+    ada rendered `turn_count 0, latest_turn_at null` on the fleet page while
+    /api/harness/turns/?agent=ada returned 29 records: the detail endpoint read the
+    close-out table, and ada — like any agent whose sessions die before packaging —
+    had never written a row to it. Dispatch is what "did this agent run" means.
+    """
+    agent = _agent()
+    ran_at = dt.datetime(2026, 8, 10, 18, 5, tzinfo=dt.UTC)
+    _dispatch(agent, key="k1", started_at=ran_at)
+    detail = services.agent_detail(agent)
+    assert detail["turn_count"] == 1
+    assert detail["latest_turn_at"] == ran_at
+
+
+def test_latest_turn_at_ignores_queued_turns_that_never_started():
+    """A queued turn has started_at=NULL. Postgres sorts DESC NULLS FIRST, so the
+    naive ordering would let one queued turn mask every real run."""
+    agent = _agent()
+    ran_at = dt.datetime(2026, 8, 10, 18, 5, tzinfo=dt.UTC)
+    _dispatch(agent, key="ran", started_at=ran_at)
+    _dispatch(agent, key="queued", started_at=None, status=Turn.QUEUED)
+    assert services.agent_detail(agent)["latest_turn_at"] == ran_at
+
+
+def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
+    agent = _agent()
+    dispatched = _dispatch(agent, key="k1", task="echo-api-1234-0810-1805")
+    services.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
+                                      emdash_task_id="echo-api-1234-0810-1805"))
+    assert Turn.objects.filter(agent=agent).count() == 1  # not two halves, one turn
+    dispatched.refresh_from_db()
+    assert dispatched.report_title == "Did the thing"
+    assert dispatched.reported_at is not None
+    assert dispatched.cli_session_id == "s1"
+
+
+def test_close_out_without_a_matching_dispatch_row_still_records():
+    """A turn a human started by hand has no queue row. The report must not vanish."""
+    agent = _agent()
+    turn = services.upsert_turn(agent, _turn(cli_session_id="s9", title="Hand-run"))
+    assert turn.report_title == "Hand-run"
+    assert turn.status == Turn.DONE
+    assert Turn.objects.filter(agent=agent).count() == 1
+
+
+def test_close_out_does_not_reclaim_an_already_reported_turn():
+    """Two turns through one reused emdash session: the second close-out must take
+    the newer turn, not overwrite the first one's report."""
+    agent = _agent()
+    task = "echo-api-1234-0810-1805"
+    first = _dispatch(agent, key="k1", task=task)
+    services.upsert_turn(agent, _turn(cli_session_id="s1", title="First", emdash_task_id=task))
+    second = _dispatch(agent, key="k2", task=task)
+    services.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", emdash_task_id=task))
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.report_title == "First"
+    assert second.report_title == "Second"
+    assert Turn.objects.filter(agent=agent).count() == 2
 
 
 def test_work_products_upsert_by_url():
