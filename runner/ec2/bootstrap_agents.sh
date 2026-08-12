@@ -129,14 +129,25 @@ for a in d.get("assets", []):
     tarball="$tmp/gog.tar.gz"
   fi
 
-  tar -xzf "$tarball" -C "$tmp" gog || { fail "could not extract 'gog' from $tarball"; return 1; }
-  if sudo -n install -m 0755 "$tmp/gog" /usr/local/bin/gog 2>/dev/null; then
+  # Extract EVERYTHING, then locate the binary — never name the member. gogcli
+  # 0.35.0 stores it as `./gog`, and `tar -xzf … gog` does not match that: a
+  # from-scratch rebuild on 2026-08-12 died here with "tar: gog: Not found in
+  # archive", taking gog with it and so silently skipping the keyring, the
+  # account->client map, and the gmail-token import for ALL FIVE agents. The box
+  # came up healthy in every other respect and could not send a single email.
+  # This is a third-party archive on a `latest` pin, so its layout is not ours to
+  # rely on; find the binary wherever the tarball happens to put it.
+  tar -xzf "$tarball" -C "$tmp" || { fail "could not unpack $tarball"; return 1; }
+  local gogbin
+  gogbin="$(find "$tmp" -type f -name gog -perm -u+x 2>/dev/null | head -1)"
+  [[ -n "$gogbin" ]] || { fail "no executable 'gog' inside $tarball (layout changed?)"; return 1; }
+  if sudo -n install -m 0755 "$gogbin" /usr/local/bin/gog 2>/dev/null; then
     return 0
   fi
   # No passwordless sudo (unexpected on the stock Ubuntu cloud-init AMI, but don't
   # brick the run over it) — fall back to the user's own bin dir.
   mkdir -p "$HOME/.local/bin"
-  install -m 0755 "$tmp/gog" "$HOME/.local/bin/gog"
+  install -m 0755 "$gogbin" "$HOME/.local/bin/gog"
 }
 
 # ── Step 2: gog keyring + account->client map ───────────────────────────────────
