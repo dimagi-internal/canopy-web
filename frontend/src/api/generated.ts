@@ -8437,6 +8437,11 @@ export interface components {
              * @default
              */
             readonly status: string;
+            /**
+             * Agent Status
+             * @default
+             */
+            readonly agent_status: string;
             /** Last Interacted At */
             readonly last_interacted_at?: string | null;
             /**

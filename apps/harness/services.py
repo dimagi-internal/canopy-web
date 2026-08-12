@@ -1545,6 +1545,13 @@ def replace_reported_sessions(
                     binding.host = runner.host
             binding.runner = runner
             binding.status = s.status or ""
+            # The engine's own liveness flag, written through EVERY report including
+            # blank — the same reasoning as `pending_question` below: this is a fresh
+            # observation, so "it stopped working" has to be able to clear "working",
+            # or a finished session keeps a live badge forever. getattr for the same
+            # reason too: lightweight session objects also reach this service, and a
+            # display flag must never be why a liveness report fails.
+            binding.agent_status = getattr(s, "agent_status", "") or ""
             binding.last_interacted_at = _aware(s.last_interacted_at)
             binding.live_seen_at = timezone.now()
             # The one write site. See RunnerBinding.reported_at — `close` branches

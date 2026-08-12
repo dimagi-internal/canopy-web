@@ -263,6 +263,12 @@ class ReportedSessionIn(Schema):
     emdash_task: str  # the emdash task NAME
     project: str = ""
     status: str = ""
+    # Emdash's own per-conversation liveness flag: "working" | "awaiting-input" | "".
+    # Defaulted because "" is a real and common answer — a runner that predates this,
+    # a cloud runner with no emdash, or an emdash whose schema drifted all send
+    # nothing, and the server falls back to its activity-recency heuristic for them
+    # (services.is_session_running). Only a runner that actually knows overrides it.
+    agent_status: str = ""
     last_interacted_at: dt.datetime | None = None
     recent_messages: list = []  # Phase B populates this; ignored/empty in Phase A
     # The dialog this session is blocked on, read from its transcript, or None
