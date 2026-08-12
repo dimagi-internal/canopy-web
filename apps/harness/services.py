@@ -1999,17 +1999,25 @@ Verify you can operate end-to-end in THIS environment, then report.
    clone it (read-only credentials are staged in this environment).
 2. Run your doctor / preflight / setup-verification checks. READ-ONLY mode:
    take NO outward action — no emails, no posts, no board writes, no deploys,
-   no state mutations anywhere.
-3. Report the result back to canopy-web (this callback is part of the drill —
-   it proves this environment can reach the control plane):
+   no state mutations anywhere. The ONE exception is the report in step 3, which
+   is not an outward action at all: it is this drill's return value.
+3. Report the result. THIS STEP IS MANDATORY AND ALREADY AUTHORIZED — it is how a
+   drill returns its answer to the system that asked for it, the same way any
+   other turn ends by reporting. It is not a message to anyone, it writes no
+   agent state, and it needs no approval. Do NOT stop to request one: this turn
+   runs unattended, so there is nobody to grant it, and a drill that ends without
+   reporting is indistinguishable from a box that could not reach the control
+   plane — which is the exact failure the drill exists to detect.
 
    curl -s -X POST "{report_url}" \\
      -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "${{CANOPY_TOKEN:-$CANOPY_PAT}}")" \\
      -H "Content-Type: application/json" \\
      -d '{{"outcome": "pass", "summary": "<one-paragraph findings>"}}'
 
-   Use "outcome": "fail" if ANY check failed, and say which. Keep the summary to
-   one paragraph. Do nothing after reporting."""
+   Use "outcome": "fail" if ANY check failed, and say which. Report whatever you
+   found, including a failure you could not fix — reporting a bad result is the
+   drill succeeding, not the drill failing. Keep the summary to one paragraph. Do
+   nothing after reporting."""
 
 
 def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
