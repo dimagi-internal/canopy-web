@@ -125,7 +125,12 @@ for a in d.get("assets", []):
     if a["name"].endswith("_linux_amd64.tar.gz"):
         print(a["browser_download_url"]); break' 2>/dev/null)
     [[ -n "$url" ]] || { fail "could not resolve the latest gogcli linux_amd64 asset"; return 1; }
-    curl -fsSL "$url" -o "$tmp/gog.tar.gz" || { fail "curl download of $url failed"; return 1; }
+    # --retry: this download is flaky in practice. Standing up a box on 2026-08-12
+    # took three attempts (a 503, then a dropped connection, then success), and a
+    # bare curl turns each blip into the same silent outcome as the layout bug —
+    # no gog, so no keyring, no client map, and no gmail token for any agent.
+    curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused "$url" -o "$tmp/gog.tar.gz" \
+      || { fail "curl download of $url failed after retries"; return 1; }
     tarball="$tmp/gog.tar.gz"
   fi
 
