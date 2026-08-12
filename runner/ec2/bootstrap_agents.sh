@@ -24,6 +24,11 @@ set -uo pipefail
 AGENT_SLUGS="${AGENT_SLUGS:-ace,ada,echo,eva,hal}"
 AGENT_ROOT="${AGENT_ROOT:-/opt/agents}"
 AGENT_REPO_ORG="${AGENT_REPO_ORG:-dimagi-internal}"
+# Where an agent's DECLARED plugin dependencies are cloned. Deliberately NOT under
+# AGENT_ROOT: everything there is an AGENT, and a turn resolves its working dir from
+# that tree — a plugin clone sitting among them would read as a sixth agent.
+PLUGIN_DEPS_ROOT="${PLUGIN_DEPS_ROOT:-/opt/agent-plugins}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/dimagi-internal/canopy.git}"
 
 log()  { printf '[bootstrap-agents] %s\n' "$*"; }
@@ -247,6 +252,67 @@ install_agent_plugin() {
   fi
 }
 
+# ── an agent's DECLARED plugin dependencies ─────────────────────────────────────
+# An agent's capabilities can come from a SIBLING plugin, and installing only its
+# own leaves it passing every structural check while missing the tools it actually
+# calls. Eva's Salesforce / Drive work is `mcp__plugin_chrome-sales_*`; her drill on
+# the freshly rebuilt box (2026-08-12) came back green on identity, rails, hooks,
+# gog auth and the board, and FAILED on `Required plugins` — chrome-sales was never
+# installed, because nothing here installed it.
+#
+# Declared per-agent in config/agent.json `required_plugins`, the same contract
+# `canopy agent doctor`'s check reads: a bare name, or an object with `marketplace`
+# ("owner/repo"), optional `marketplace_name` (defaults to the plugin name) and a
+# `note` naming any follow-up a human still has to do.
+#
+# Cloned, then added as a DIRECTORY source — the same shape as an agent's own
+# plugin, and for the same two reasons: these repos are private, so this reuses the
+# git credential store already staged for the agent clones rather than needing the
+# marketplace to authenticate; and the clone IS the marketplace, so the `git pull`
+# on a later run is also how the dependency updates. No second copy to keep in sync.
+install_required_plugins() {
+  local slug="$1" dest="$2"
+  local cfg="$dest/config/agent.json"
+  [[ -f "$cfg" ]] || return 0
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "$slug: claude CLI not on PATH — required plugins not installed"
+    return 0
+  fi
+
+  local specs
+  specs="$(python3 "$SCRIPT_DIR/required_plugins.py" "$cfg" 2>/dev/null)" || return 0
+  [[ -n "$specs" ]] || return 0
+
+  local pname market mname note pdir
+  while IFS=$'\t' read -r pname market mname note; do
+    [[ -n "$pname" ]] || continue
+    if claude plugin list 2>/dev/null | grep -q "${pname}@${mname}"; then
+      ok "$slug: required plugin ${pname}@${mname} already installed"
+      continue
+    fi
+    if [[ -z "$market" ]]; then
+      warn "$slug: required plugin '$pname' declares no marketplace — cannot install it here"
+      continue
+    fi
+    pdir="$PLUGIN_DEPS_ROOT/$pname"
+    mkdir -p "$PLUGIN_DEPS_ROOT"
+    if ! clone_or_pull "https://github.com/${market}.git" "$pdir" >/dev/null 2>&1; then
+      warn "$slug: clone/pull of $market failed (private repo — is the staged GitHub token valid?)"
+      continue
+    fi
+    if ! claude plugin marketplace list 2>/dev/null | grep -qE "(^|[[:space:]])${mname}\$"; then
+      claude plugin marketplace add "$pdir" >/dev/null 2>&1 \
+        || { warn "$slug: claude plugin marketplace add $pdir failed"; continue; }
+    fi
+    if claude plugin install "${pname}@${mname}" >/dev/null 2>&1; then
+      ok "$slug: installed required plugin ${pname}@${mname}"
+      [[ -n "$note" ]] && log "$slug: follow-up for ${pname}: ${note}"
+    else
+      warn "$slug: claude plugin install ${pname}@${mname} failed"
+    fi
+  done <<<"$specs"
+}
+
 run_agent_provisioner() {
   local slug="$1" dest="$2"
   local setup="$dest/bin/${slug}-setup"
@@ -320,6 +386,7 @@ bootstrap_one_agent() {
   fi
 
   install_agent_plugin "$slug" "$dest"
+  install_required_plugins "$slug" "$dest"
   run_agent_provisioner "$slug" "$dest"
 
   # The gog OAuth-client credential FILE (not an env var): a single 1Password
