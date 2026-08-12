@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react'
 import { decideItem, dismissItem, type ItemDecision, type ItemOut } from '@/api/items'
 import { Markdown } from '@/components/Markdown'
+import { ItemAge } from '@/components/items/ItemAge'
 
 // One actionable inbox row, shared by both surfaces that render open items: the
 // /supervisor fleet queue and the per-agent rail. Every open Item is decidable in
@@ -57,7 +58,12 @@ export function ItemCard({
       className="rounded-lg border border-border bg-card p-3"
     >
       <p className="text-[13px] font-semibold leading-snug text-foreground">{item.title}</p>
-      {meta && <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{meta}</p>}
+      {/* Age is never conditional — an undecided card with no date on it cannot be
+          triaged, which is the whole complaint this row exists to answer. */}
+      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
+        <ItemAge createdAt={item.created_at} decidedAt={item.decided_at} />
+        {meta && <span>· {meta}</span>}
+      </p>
       {item.body && (
         <Markdown className="mt-1 text-[12px] leading-snug text-foreground-secondary">
           {item.body}
