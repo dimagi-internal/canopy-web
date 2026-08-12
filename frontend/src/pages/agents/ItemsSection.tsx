@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { listItems, decideItem, type ItemOut, type ItemDecision } from '@/api/items'
 import { Markdown } from '@/components/Markdown'
+import { ItemAge } from '@/components/items/ItemAge'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 
 // A batch of Items reviewed in one sitting — Ada's fleet audit's home. It belongs
@@ -50,6 +51,12 @@ function ItemCard({
           </span>
         )}
       </div>
+
+      {/* Same reason as the inbox row: a card with no date on it can't be judged
+          stale, and this view mixes open cards with long-decided ones. */}
+      <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+        <ItemAge createdAt={item.created_at} decidedAt={item.decided_at} />
+      </p>
 
       {item.body && (
         <Markdown className="mt-2 text-[13px] leading-snug text-foreground-secondary">
