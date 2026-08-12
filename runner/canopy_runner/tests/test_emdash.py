@@ -25,6 +25,10 @@ def _emdash_schema() -> str:
           created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
           type TEXT DEFAULT 'task' NOT NULL, automation_run_id TEXT
         );
+        CREATE TABLE conversations (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT,
+          last_interacted_at TEXT
+        );
     """
 
 
@@ -186,3 +190,71 @@ def test_list_open_sessions_excludes_automation_runs_and_archived(db):
 
 def test_list_open_sessions_is_fail_soft_on_missing_db(tmp_path):
     assert list_open_sessions(str(tmp_path / "nope.db")) == []
+
+
+# --------------------------------------------------------------------------------------
+# agent_status — emdash's OWN "is this working right now", the one signal a transcript
+# cannot give: a session inside a long tool call is silent, not finished.
+# --------------------------------------------------------------------------------------
+
+def _add_conversation(db, task_id, agent_status, *, at="2026-08-12T23:00:00Z"):
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO conversations (id, task_id, agent_status, last_interacted_at) "
+        "VALUES (?, ?, ?, ?)",
+        (str(uuid.uuid4()), task_id, agent_status, at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_list_open_sessions_reports_the_agent_status(db):
+    _add_task(db, "pov-grad", task_id="t-1")
+    _add_conversation(db, "t-1", "working")
+    (row,) = list_open_sessions(db)
+    assert row["agent_status"] == "working"
+    assert "task_id" not in row  # a join key, not part of the report
+
+
+def test_a_task_with_no_conversation_reports_no_status(db):
+    """"" is "I could not answer", which the server reads as "fall back to recency" —
+    never as "idle". A task emdash has not driven yet is exactly that case."""
+    _add_task(db, "fresh", task_id="t-2")
+    (row,) = list_open_sessions(db)
+    assert row["agent_status"] == ""
+
+
+def test_working_on_any_conversation_wins(db):
+    """A task owns several conversations and only one of them is being driven; the
+    others sit at awaiting-input. The session is working."""
+    _add_task(db, "multi", task_id="t-3")
+    _add_conversation(db, "t-3", "working", at="2026-08-12T22:00:00Z")
+    _add_conversation(db, "t-3", "awaiting-input", at="2026-08-12T23:00:00Z")
+    (row,) = list_open_sessions(db)
+    assert row["agent_status"] == "working"
+
+
+def test_without_working_the_newest_conversation_answers(db):
+    _add_task(db, "quiet", task_id="t-4")
+    _add_conversation(db, "t-4", "awaiting-input", at="2026-08-12T22:00:00Z")
+    _add_conversation(db, "t-4", "compacting", at="2026-08-12T23:00:00Z")
+    (row,) = list_open_sessions(db)
+    assert row["agent_status"] == "compacting"
+
+
+def test_a_drifted_conversations_table_costs_the_status_not_the_report(db):
+    """The asymmetry that matters: this read is an ENRICHMENT. An emdash that cannot
+    answer must leave us reporting sessions without the flag — raising here would skip
+    the whole report, and an empty report clears every RunnerBinding server-side."""
+    _add_task(db, "still-listed", task_id="t-5")
+    _add_conversation(db, "t-5", "working")
+    conn = sqlite3.connect(db)
+    conn.execute("ALTER TABLE conversations RENAME COLUMN agent_status TO state")
+    conn.commit()
+    conn.close()
+
+    (row,) = list_open_sessions(db)
+    assert row["emdash_task"] == "still-listed"
+    assert row["agent_status"] == ""
+    # ...and verify-emdash is where that degradation becomes visible.
+    assert check_read_schema(db) == ["conversations.agent_status missing"]

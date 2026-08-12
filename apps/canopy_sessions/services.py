@@ -93,10 +93,18 @@ def all_messages(session: Session):
     return messages, False, messages[0].turn_index
 
 
-# A binding is "running" when its runner is live and it was interacted with very
-# recently — the same signal OpenSessions derived client-side from the transcript
-# tail's freshness, now computed once server-side.
+# FALLBACK signal only: a binding whose runner cannot say what its engine is doing
+# is called "running" when it was interacted with this recently — the transcript-tail
+# freshness OpenSessions once derived client-side. It infers work from writes, so it
+# is wrong in both directions whenever a session is quiet for a reason: a turn inside
+# a long tool call writes nothing for minutes and reads as FINISHED, and a turn that
+# just stopped keeps reading as RUNNING until the window expires. Preferred, when the
+# runner reports it, is the engine's own flag — see `is_session_running`.
 RUNNING_WINDOW = _dt.timedelta(seconds=120)
+
+# `RunnerBinding.agent_status` values that mean the engine is mid-turn. Anything else
+# non-blank means it is not (emdash says "awaiting-input"); blank means "unknown".
+WORKING_STATUSES = frozenset({"working"})
 
 # Re-exported so callers keep one import surface; DEFINED in staleness.py, which the
 # backfill migration also imports (see the module docstring there).
@@ -104,13 +112,30 @@ from .staleness import SESSION_LIVE_WINDOW, stale_cutoff, unseen_q  # noqa: E402
 
 
 def is_session_running(binding) -> bool:
-    """True when a live runner is actively working this session right now."""
+    """True when a live runner is actively working this session right now.
+
+    Asks the ENGINE first: emdash sets `agent_status` when it starts and stops driving
+    a conversation, so a reported value is an observation of the session's actual state
+    and is trusted outright — including its "not working" answer, which retires the
+    badge the moment a turn ends instead of two minutes later.
+
+    Only when the runner cannot answer (blank: an older runner, a cloud runner with no
+    emdash, a drifted schema) does this fall back to RUNNING_WINDOW, whose false
+    negative is the whole reason the engine flag exists: a session sitting in a long
+    tool call stops writing, so a list showing it as plain "12m ago" reads as finished
+    while it is mid-turn.
+
+    A runner that has gone offline is never running whatever it last reported — its
+    answer describes a box that is no longer there to be believed.
+    """
     from apps.harness.models import Runner  # framework->framework; lazy to avoid import cycle
 
     if binding is None or binding.runner_id is None:
         return False
     if binding.runner.live_status != Runner.ONLINE:
         return False
+    if binding.agent_status:
+        return binding.agent_status in WORKING_STATUSES
     ts = binding.last_interacted_at
     return bool(ts and (timezone.now() - ts) <= RUNNING_WINDOW)
 

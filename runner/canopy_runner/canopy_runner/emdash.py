@@ -38,7 +38,18 @@ READ_SCHEMA: dict[str, list[str]] = {
         "project_id",
     ],
     "projects": ["id", "name"],
+    # Emdash's OWN liveness flag, per conversation. Read fail-soft (see
+    # `_agent_statuses`) but listed here anyway: verify-emdash is where you find
+    # out a read drifted, and a degradation that nothing reports is exactly the
+    # class this file exists to prevent.
+    "conversations": ["task_id", "agent_status", "last_interacted_at"],
 }
+
+# `conversations.agent_status` when emdash is actively driving the agent. The
+# other value seen in practice is 'awaiting-input' (the agent stopped and is
+# waiting on a human) — both are reported through verbatim; only this one is
+# named here because it is the one with a meaning the server acts on.
+WORKING = "working"
 
 
 class SchemaCheckError(Exception):
@@ -132,9 +143,48 @@ def task_state(db_path: str, name: str) -> str:
     return "archived" if row["archived_at"] else "live"
 
 
+def _agent_statuses(conn: sqlite3.Connection) -> dict[str, str]:
+    """READ-ONLY: {task_id: agent_status} — emdash's own answer to "is this session
+    working right now", which nothing else on this box can give.
+
+    Every other liveness signal here is an INFERENCE from writes: the server used to
+    call a session "running" when its transcript had grown in the last 120s. That
+    misreads both directions of the same silence — a session inside a long tool call
+    writes nothing for minutes and reads as finished (the reported symptom: "it says
+    finished, but it's still working when I click in"), while one that just stopped
+    keeps reading as running until the window expires. Emdash sets this flag when it
+    starts and stops driving the agent, so it answers directly.
+
+    FAIL-SOFT to `{}` on any read error, unlike its caller: this is an ENRICHMENT of
+    the session report, not the report. An older emdash without the column must cost
+    us the flag (the server then falls back to its recency heuristic), never the whole
+    report — raising here would clear every RunnerBinding server-side.
+
+    A task can own several conversations. `working` on ANY of them wins; otherwise the
+    newest one answers (rows arrive oldest-first, so a later row overwrites).
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT task_id, COALESCE(agent_status, '') AS agent_status
+            FROM conversations
+            ORDER BY last_interacted_at
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        status = r["agent_status"]
+        if not status or out.get(r["task_id"]) == WORKING:
+            continue
+        out[r["task_id"]] = status
+    return out
+
+
 def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     """READ-ONLY: the un-archived emdash tasks, newest-first, capped. Returns
-    [{emdash_task, project, status, last_interacted_at}]. The task NAME is the identity
+    [{emdash_task, project, status, agent_status, last_interacted_at}]. The task NAME is the identity
     open_and_send targets; project is joined from `projects` for display + the continue
     turn's target.
 
@@ -147,15 +197,17 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     `type='automation-run'` rows are un-promoted automation triggers that emdash hides
     under "Automations", not sessions a human opened; including them leaked phantom rows
     into the supervisor (e.g. an 8-day-old `plain-keys-rescue`) that don't appear in the
-    emdash UI. `status` is always 'in_progress' in practice (emdash never updates it), so
-    the display leans on last_interacted_at instead."""
+    emdash UI. `status` is the TASK's status, always 'in_progress' in practice (emdash
+    never updates it); `agent_status` is the per-conversation one that does move — see
+    `_agent_statuses`, and note it is "" whenever this emdash could not answer."""
     if not Path(db_path).exists():
         return []
     try:
         with _db(db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT t.name AS emdash_task,
+                SELECT t.id AS task_id,
+                       t.name AS emdash_task,
                        COALESCE(p.name, '') AS project,
                        COALESCE(t.status, '') AS status,
                        t.last_interacted_at AS last_interacted_at
@@ -167,9 +219,17 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(r) for r in rows]
+            statuses = _agent_statuses(conn)
     except sqlite3.Error as exc:
         raise EmdashReadError(f"emdash open-session read failed: {exc}") from exc
+    out = []
+    for r in rows:
+        s = dict(r)
+        # task_id is a join key, not part of the report: the server keys sessions on
+        # the task NAME, and a field nothing reads is a field that goes stale.
+        s["agent_status"] = statuses.get(s.pop("task_id"), "")
+        out.append(s)
+    return out
 
 
 def list_projects(db_path: str) -> list[str]:

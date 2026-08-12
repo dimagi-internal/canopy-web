@@ -264,6 +264,12 @@ class RunnerBinding(models.Model):
     close_requested = models.BooleanField(default=False)
     summary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=40, blank=True, default="")
+    # The ENGINE's own answer to "is this session working right now" — emdash's
+    # per-conversation `agent_status` ("working" | "awaiting-input"), reported every
+    # tick. Blank means the runner could not answer (predates the field, no emdash,
+    # drifted schema), NOT "idle": `is_session_running` falls back to activity
+    # recency for a blank, and only trusts a non-blank value.
+    agent_status = models.CharField(max_length=40, blank=True, default="")
     last_interacted_at = models.DateTimeField(null=True, blank=True)
     live_seen_at = models.DateTimeField(null=True, blank=True)
     # Stamped ONLY by the report loop (apps/harness/services.py::

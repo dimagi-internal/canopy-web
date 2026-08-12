@@ -11,6 +11,9 @@ _SCHEMA = """
       archived_at TEXT, last_interacted_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, type TEXT DEFAULT 'task' NOT NULL
     );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT, last_interacted_at TEXT
+    );
 """
 
 
