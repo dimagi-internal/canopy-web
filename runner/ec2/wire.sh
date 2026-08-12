@@ -134,6 +134,33 @@ api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | pytho
 echo "==> credential staged"
 
 # ── Step 3: retire predecessors ──────────────────────────────────────────────────
+#
+# Resolve the agent list and SNAPSHOT every agent's assignment rows FIRST, before
+# anything is retired. Retiring a runner drops its assignment rows, so a snapshot
+# taken afterwards no longer contains the predecessor — step 4 then finds nothing
+# to swap, takes its append path, and appends the new runner with a hardcoded
+# `enabled: True`. On 2026-08-12 that silently re-enabled the cloud runner for all
+# five agents, which had been deliberately disabled. A rebuild must return the box
+# to the fleet on exactly the terms it left, so the state step 4 reasons about has
+# to be read while it still exists.
+if [[ -n "$AGENTS" ]]; then
+  IFS=',' read -ra AGENT_SLUGS <<<"$AGENTS"
+else
+  api GET "/api/agents/?limit=200" > "$TMP/agents.json"
+  # `mapfile`/`readarray` is bash4+ only — macOS ships bash 3.2 as /bin/bash and
+  # this script runs on the OPERATOR's machine, not the (bash5) EC2 box — so
+  # build the array the bash-3.2-compatible way via word-splitting (safe here:
+  # slugs are simple identifiers, never containing spaces or glob chars).
+  AGENT_SLUGS=($(python3 -c "
+import json
+print(' '.join(a['slug'] for a in json.load(open('$TMP/agents.json'))['items']))
+"))
+fi
+for slug in "${AGENT_SLUGS[@]}"; do
+  [[ -n "$slug" ]] || continue
+  api GET "/api/agents/${slug}/runners" > "$TMP/rows-${slug}.json" 2>/dev/null || true
+done
+
 echo ">> retiring other non-retired '$RUNNER_NAME' cloud runners"
 api GET /api/harness/runners/ > "$TMP/runners.json"
 python3 -c "
@@ -154,25 +181,15 @@ else
 fi
 
 # ── Step 4: swap assignments ─────────────────────────────────────────────────────
+# Works from the PRE-RETIRE snapshot taken in step 3 — see the note there. Reading
+# the list again here would see the predecessor already gone and silently reset
+# `enabled`.
 echo ">> swapping agent assignments -> $RUNNER_ID"
-if [[ -n "$AGENTS" ]]; then
-  IFS=',' read -ra AGENT_SLUGS <<<"$AGENTS"
-else
-  api GET "/api/agents/?limit=200" > "$TMP/agents.json"
-  # `mapfile`/`readarray` is bash4+ only — macOS ships bash 3.2 as /bin/bash and
-  # this script runs on the OPERATOR's machine, not the (bash5) EC2 box — so
-  # build the array the bash-3.2-compatible way via word-splitting (safe here:
-  # slugs are simple identifiers, never containing spaces or glob chars).
-  AGENT_SLUGS=($(python3 -c "
-import json
-print(' '.join(a['slug'] for a in json.load(open('$TMP/agents.json'))['items']))
-"))
-fi
 
 for slug in "${AGENT_SLUGS[@]}"; do
   [[ -n "$slug" ]] || continue
   rm -f "$TMP/put-${slug}.json"  # no stale file from a previous slug can leak into this PUT
-  if ! api GET "/api/agents/${slug}/runners" > "$TMP/rows-${slug}.json" 2>/dev/null; then
+  if [[ ! -s "$TMP/rows-${slug}.json" ]]; then
     echo "   $slug: not found — skipping"
     continue
   fi
