@@ -24,10 +24,14 @@ set -uo pipefail
 AGENT_SLUGS="${AGENT_SLUGS:-ace,ada,echo,eva,hal}"
 AGENT_ROOT="${AGENT_ROOT:-/opt/agents}"
 AGENT_REPO_ORG="${AGENT_REPO_ORG:-dimagi-internal}"
-# Where an agent's DECLARED plugin dependencies are cloned. Deliberately NOT under
-# AGENT_ROOT: everything there is an AGENT, and a turn resolves its working dir from
-# that tree — a plugin clone sitting among them would read as a sixth agent.
-PLUGIN_DEPS_ROOT="${PLUGIN_DEPS_ROOT:-/opt/agent-plugins}"
+# Where an agent's DECLARED plugin dependencies are cloned. Two constraints:
+#   - NOT under AGENT_ROOT: everything there is an AGENT, and a turn resolves its
+#     working dir from that tree, so a plugin clone would read as a sixth agent.
+#   - NOT elsewhere under /opt: that is root-owned and this script runs as the
+#     service user. `mkdir -p /opt/agent-plugins` fails with EACCES, which is how
+#     the first version of this silently installed nothing.
+# So: beside the marketplace clones the Claude CLI already keeps in $HOME.
+PLUGIN_DEPS_ROOT="${PLUGIN_DEPS_ROOT:-$HOME/.claude/plugins/agent-deps}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/dimagi-internal/canopy.git}"
 
@@ -295,9 +299,16 @@ install_required_plugins() {
       continue
     fi
     pdir="$PLUGIN_DEPS_ROOT/$pname"
-    mkdir -p "$PLUGIN_DEPS_ROOT"
-    if ! clone_or_pull "https://github.com/${market}.git" "$pdir" >/dev/null 2>&1; then
-      warn "$slug: clone/pull of $market failed (private repo — is the staged GitHub token valid?)"
+    if ! mkdir -p "$PLUGIN_DEPS_ROOT" 2>/dev/null; then
+      warn "$slug: cannot create $PLUGIN_DEPS_ROOT — required plugin '$pname' not installed"
+      continue
+    fi
+    # Keep the REAL error. The first version swallowed stderr and guessed
+    # "is the staged GitHub token valid?", which sent the diagnosis at a token that
+    # was working fine while the actual fault (an unwritable /opt) went unmentioned.
+    local clone_err
+    if ! clone_err="$(clone_or_pull "https://github.com/${market}.git" "$pdir" 2>&1 >/dev/null)"; then
+      warn "$slug: clone/pull of $market failed: ${clone_err:-(no output)}"
       continue
     fi
     if ! claude plugin marketplace list 2>/dev/null | grep -qE "(^|[[:space:]])${mname}\$"; then
