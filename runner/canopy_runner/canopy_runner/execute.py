@@ -26,9 +26,29 @@ import time
 from pathlib import Path
 
 from . import cdp_control, chat_bridge, dialog, emdash, hooks, readiness, transcript
+from .client import ClientError
 from .tail import TailReader
 
 logger = logging.getLogger("canopy_runner.execute")
+
+
+def _post_events_best_effort(client, turn_id: str, events: list[dict]) -> None:
+    """Post informational status events WITHOUT letting them fail the turn.
+
+    Only for the success tails, where the emdash session is already live and doing
+    the work. There, a status event is pure narration: if the control plane is
+    unreachable for it, the correct outcome is a quieter turn, not a turn reported
+    as `failed` while its session runs on. `Client._call` already retries transient
+    faults; this is what covers a fault that outlasts them.
+
+    Deliberately NOT applied to the pre-launch call sites — before `create_task`
+    nothing is running yet, so a control-plane failure there SHOULD fail the turn.
+    """
+    try:
+        client.post_events(turn_id, events)
+    except ClientError as exc:
+        logger.warning("post_events failed for turn=%s after retries; the session is "
+                       "live and the turn stands — %s", turn_id, exc)
 
 
 def _target(turn: dict) -> str:
@@ -145,7 +165,7 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
     # Delivered — either the empty-line fast path, or a cleared-then-sent collision.
     logger.info("REUSE  turn=%s agent=%s thread=%s -> existing session '%s' (no new claude session)",
                 turn_id, agent, thread_key, task)
-    client.post_events(turn_id, [{"kind": "status",
+    _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "reused_session", "task": task, "thread_key": thread_key}}])
     client.record_session(runner_id, turn.get("agent_slug") or "", thread_key,
                           project=turn.get("project") or "",
@@ -459,7 +479,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     task = res.get("task") or ""
     logger.info("CREATE turn=%s agent=%s thread=%s -> new session '%s' rehydrated=%s "
                 "(NEW claude session = tokens)", turn_id, agent, thread_key, task, bool(summary))
-    client.post_events(turn_id, [{"kind": "status",
+    _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "created_session", "task": task, "thread_key": thread_key,
                     "rehydrated": bool(summary)}}])
     client.record_session(

@@ -2,15 +2,38 @@
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
+import time
 import urllib.error
 import urllib.request
 
 TIMEOUT = 10
 
+# A transient fault gets a few short attempts before it's allowed to fail a turn.
+# Sized against what it guards, not tuned for its own sake: these calls run AFTER
+# an emdash session has already launched, so the whole point is to outlive a blip
+# (the labs network routinely produces `[Errno 54] Connection reset by peer` and
+# SSL-handshake timeouts). Three attempts at 0.5s/1.0s adds at most ~1.5s to a
+# failing call — cheap next to burning the turn, and bounded so a struggling
+# server is never hammered.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF = 0.5
+
+logger = logging.getLogger("canopy_runner.client")
+
 
 class ClientError(Exception):
-    pass
+    """A control-plane call failed.
+
+    ``transient`` marks the faults worth re-sending — a 5xx, or a network fault
+    (DNS, reset, handshake timeout) — as opposed to a 4xx, which will fail
+    identically however many times it is sent.
+    """
+
+    def __init__(self, message: str, *, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 class Client:
@@ -18,15 +41,46 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.token = token
 
-    def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict | None]:
-        return self._call_api(f"/harness{path}", method=method, body=body, label=path)
+    def _call(self, method: str, path: str, body: dict | None = None, *,
+              retry: bool = True) -> tuple[int, dict | None]:
+        return self._call_api(f"/harness{path}", method=method, body=body, label=path,
+                              retry=retry)
 
     def _call_api(self, path: str, *, method: str, body: dict | None = None,
-                  label: str = "") -> tuple[int, dict | None]:
+                  label: str = "", retry: bool = True) -> tuple[int, dict | None]:
         """Same transport as ``_call`` but rooted at ``/api`` rather than
         ``/api/harness`` — for the handful of runner calls that live in another
-        app's namespace (the Gmail watch report is in ``apps/inbound``)."""
+        app's namespace (the Gmail watch report is in ``apps/inbound``).
+
+        Retries transient faults by default. Pass ``retry=False`` for a call that
+        is NOT safe to re-send: today that is `claim` alone, which is not
+        idempotent — a retry after the server already claimed a turn would risk a
+        double-claim. Everything else is either a pure state transition
+        (`start`/`finish`/`fail_turn`), an upsert (`record_session`), a level
+        report (`heartbeat`), or idempotency-keyed (`enqueue_turn`,
+        `fire_schedule`).
+        """
         label = label or path
+        attempts = RETRY_ATTEMPTS if retry else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._attempt(path, method=method, body=body, label=label)
+            except ClientError as exc:
+                # The final iteration always re-raises, so this loop cannot fall
+                # through — every path either returns a response or raises.
+                if not exc.transient or attempt == attempts:
+                    raise
+                delay = RETRY_BACKOFF * (2 ** (attempt - 1))
+                logger.warning(
+                    "transient fault on %s %s (attempt %d/%d), retrying in %.1fs: %s",
+                    method, label, attempt, attempts, delay, exc,
+                )
+                time.sleep(delay)
+
+    def _attempt(self, path: str, *, method: str, body: dict | None,
+                 label: str) -> tuple[int, dict | None]:
+        """One HTTP round trip. Classifies its own failure as transient or not so
+        the retry policy above stays a policy and not a second parser of errors."""
         url = f"{self.base_url}/api{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
@@ -38,13 +92,22 @@ class Client:
                 status = resp.status
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
+            # Checked before URLError — HTTPError subclasses it. A 5xx is the
+            # server having a bad moment; a 4xx is us being wrong, and re-sending
+            # it just spends the same error again.
             try:
                 error_body = exc.read()[:200]
             except Exception:
                 error_body = b"(could not read error body)"
-            raise ClientError(f"{method} {label} -> {exc.code}: {error_body!r}") from exc
+            raise ClientError(f"{method} {label} -> {exc.code}: {error_body!r}",
+                              transient=exc.code >= 500) from exc
         except urllib.error.URLError as exc:
-            raise ClientError(f"{method} {label} -> {exc.reason}") from exc
+            raise ClientError(f"{method} {label} -> {exc.reason}", transient=True) from exc
+        except (TimeoutError, ConnectionError) as exc:
+            # Siblings of URLError under OSError, not subclasses — a read timeout
+            # on urlopen(timeout=) surfaces as a bare TimeoutError and would
+            # otherwise escape this handler entirely.
+            raise ClientError(f"{method} {label} -> {exc}", transient=True) from exc
         if status == 204 or not raw:
             return status, None
         return status, json.loads(raw)
@@ -210,7 +273,11 @@ class Client:
         if paused_agents:
             from urllib.parse import urlencode
             path += "?" + urlencode({"paused": ",".join(sorted(paused_agents))})
-        status, payload = self._call("POST", path)
+        # retry=False — THE non-idempotent call. A 5xx here may mean the server
+        # claimed a turn and then failed to tell us; re-sending would risk a
+        # second claim. Losing a claim is free (the next tick, ~5s away, claims
+        # it again); double-claiming is not.
+        status, payload = self._call("POST", path, retry=False)
         return payload if status == 200 else None
 
     def post_events(self, turn_id: str, events: list[dict]) -> None:
