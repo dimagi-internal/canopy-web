@@ -447,8 +447,7 @@ def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
     if number is None:
         entered = any(option.label.strip() == text.strip() for option in menu.options)
         return [] if entered else None
-    return ([DOWN] * max(0, number - (menu.selected or 1))
-            + [TEXT_PREFIX + text, "\r"])
+    return [DOWN] * max(0, number - (menu.selected or 1)) + [TEXT_PREFIX + text]
 
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
@@ -557,8 +556,12 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
             step = _free_text_step(menu, text)
             if step is None:
                 return None
-            if step:
-                return step
+            # [] means the text is IN the row but the row is still being edited:
+            # the dialog is on this question and swallowing Tab. Enter commits
+            # (and advances). It is a SEPARATE step so a full screen read sits
+            # between typing and committing — batched behind the text it lands
+            # mid-render and toggles the row off instead.
+            return step or ["\r"]
         # This tab is right; move on. Tab clamps at the review screen rather
         # than wrapping, so over-pressing it cannot walk us back round.
         return [TAB] if menu.needs_submit else None
@@ -570,12 +573,8 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
         step = _free_text_step(menu, text)
         if step is None:
             return None
-        if step:
-            return step
-        # Entered. A dialog with a Submit tab is finished from there; one without
-        # (a lone question) is confirmed with Enter, exactly as picking an option
-        # would have been.
-        return [TAB] if menu.needs_submit else ["\r"]
+        # Same two beats as the multi-select above: type, then commit.
+        return step or ["\r"]
 
     # Single-select: pressing the number both answers and advances.
     if not want:
