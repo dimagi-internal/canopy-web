@@ -396,3 +396,26 @@ def test_a_step_that_changes_nothing_stops_instead_of_thrashing():
 
     assert outcome == runner_hooks.UNMODELLED
     assert len(emdash.sent) <= 2, f"kept pressing: {emdash.sent}"
+
+
+def test_free_text_on_a_multi_select_is_refused_rather_than_half_pressed():
+    """Its commit keystroke could not be pinned down: on a row that has taken
+    text, Enter was seen advancing the tab ONCE and simply toggling that row's
+    checkbox on every later attempt — on/off/on/off, measured live. So the answer
+    gets typed and never submitted, leaving exactly the half-answered dialog this
+    surface exists to prevent.
+
+    Refusing costs a trip to the keyboard and SAYS so. Pressing hopefully costs a
+    dialog nobody can see the state of.
+    """
+    questions = _hook_menu(TABBED_INPUT)["questions"]
+    assert questions[0]["multi_select"] is True and questions[1]["multi_select"] is False
+
+    # Typed answer on the pick-any question -> named, and refused.
+    assert runner_hooks.menu.free_text_blocked(questions, ["Teal", None]) == ["Colors"]
+    # Typed answer on the single-select one -> fine, that path is verified.
+    assert runner_hooks.menu.free_text_blocked(questions, [None, "Extra large"]) == []
+    # No free text at all -> nothing to block.
+    assert runner_hooks.menu.free_text_blocked(questions, None) == []
+
+    assert runner_hooks.ANSWER_NOTES[runner_hooks.FREE_TEXT_UNSUPPORTED]

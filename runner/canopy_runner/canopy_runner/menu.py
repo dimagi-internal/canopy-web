@@ -487,6 +487,25 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
     return best[0] if best else None
 
 
+def free_text_blocked(questions: list[dict], texts) -> list[str]:
+    """Questions whose typed answer this driver cannot deliver, by name.
+
+    Free text on a MULTI-SELECT is the case. Its commit keystroke could not be
+    pinned down: on a row that has taken text, Enter was seen advancing the tab
+    once and simply TOGGLING that row's checkbox on every later attempt —
+    on/off/on/off, measured live. The answer therefore gets typed and never
+    submitted, which leaves exactly the half-answered dialog this surface exists
+    to prevent. Single-select free text is verified end to end and is not here.
+
+    Returned as names so the refusal can say WHICH question to go and answer.
+    """
+    if not texts:
+        return []
+    return [q.get("header") or q.get("question") or f"question {i + 1}"
+            for i, q in enumerate(questions)
+            if q.get("multi_select") and i < len(texts) and texts[i]]
+
+
 def screen_state(menu: "Menu") -> tuple:
     """What this screen IS, for spotting a step that changed nothing.
 
