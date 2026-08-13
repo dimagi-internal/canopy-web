@@ -14,6 +14,11 @@ import { ItemAge } from '@/components/items/ItemAge'
 // — we surface that inline rather than let the tap look like it worked. A second
 // decision 409s (already decided elsewhere); we refetch via onActed.
 
+// `min-h-11 sm:min-h-0` on every control below: measured on a Pixel 7 against the
+// deployed app, the decision row rendered 25-27px tall — well under the 44px both
+// Apple and Google publish as the minimum. This is the surface the whole product
+// exists for (implement / skip / defer / answer), and it was the least tappable
+// thing on the page. Desktop keeps the compact size from `sm:` up.
 const REVIEW_DECISIONS: ItemDecision[] = ['implement', 'skip', 'defer']
 
 /** Where implementing sends the work — the one place Ada's cross-agent fan-out is
@@ -79,14 +84,14 @@ export function ItemCard({
             disabled={busy}
             placeholder="Type an answer…"
             onChange={(e) => setAnswer(e.target.value)}
-            className="min-w-0 flex-1 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-foreground-subtle disabled:opacity-50"
+            className="min-w-0 flex-1 min-h-11 sm:min-h-0 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
             data-testid={`item-answer-${item.id}`}
           />
           <button
             type="button"
             disabled={busy || !answer.trim()}
             onClick={() => act(() => decideItem(item.id, '', answer.trim()))}
-            className="rounded-md border border-border px-3 py-1 text-[12px] text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="min-h-11 sm:min-h-0 rounded-md border border-border px-3 py-1 text-[12px] text-foreground transition-colors hover:bg-muted disabled:opacity-50"
           >
             {(item.dispatch ?? []).length ? 'Answer & run' : 'Answer'}
           </button>
@@ -94,7 +99,7 @@ export function ItemCard({
             type="button"
             disabled={busy}
             onClick={() => act(() => dismissItem(item.id))}
-            className="rounded-md px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            className="min-h-11 sm:min-h-0 rounded-md px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           >
             Dismiss
           </button>
@@ -107,7 +112,7 @@ export function ItemCard({
               type="button"
               disabled={busy}
               onClick={() => act(() => decideItem(item.id, d))}
-              className="rounded-md border border-border px-3 py-1 text-[12px] capitalize text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              className="min-h-11 sm:min-h-0 rounded-md border border-border px-3 py-1 text-[12px] capitalize text-foreground transition-colors hover:bg-muted disabled:opacity-50"
               data-testid={`item-${d}-${item.id}`}
             >
               {d}
@@ -117,7 +122,7 @@ export function ItemCard({
             type="button"
             disabled={busy}
             onClick={() => act(() => dismissItem(item.id))}
-            className="ml-auto rounded-md px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            className="ml-auto min-h-11 sm:min-h-0 rounded-md px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           >
             Dismiss
           </button>

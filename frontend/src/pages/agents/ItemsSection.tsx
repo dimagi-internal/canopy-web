@@ -82,7 +82,7 @@ function ItemCard({
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="Comment (optional) — what to change, or why skip…"
-            className="mt-3 w-full rounded-md border border-input bg-input p-2 text-[13px] text-foreground"
+            className="mt-3 w-full rounded-md border border-input bg-input p-2 text-[13px] text-foreground placeholder:text-muted-foreground"
             rows={2}
           />
           <div className="mt-2 flex gap-2">
