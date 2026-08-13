@@ -447,7 +447,16 @@ def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
     if number is None:
         entered = any(option.label.strip() == text.strip() for option in menu.options)
         return [] if entered else None
-    return [DOWN] * max(0, number - (menu.selected or 1)) + [TEXT_PREFIX + text]
+    walk = [DOWN] * max(0, number - (menu.selected or 1))
+    # How the row is COMMITTED differs by mode, because what sits below it does.
+    # On a multi-select the next row is the dialog's own Next/Submit action, so ↓
+    # steps off the field, banks the text (the box stays ticked) and lands the
+    # cursor somewhere the grid can plainly show — no hidden edit state left to
+    # guess at. On a single-select the row below is "Chat about this", so ↓ there
+    # would park the cursor on something that opens a chat; Enter is the verified
+    # commit for that shape (it produced `GOT=Medium` from a real agent).
+    commit = DOWN if menu.is_multi_select else "\r"
+    return walk + [TEXT_PREFIX + text, commit]
 
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
@@ -485,25 +494,6 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
             if best is None or len(want) > best[1]:
                 best = (q.get("index", questions.index(q)), len(want))
     return best[0] if best else None
-
-
-def free_text_blocked(questions: list[dict], texts) -> list[str]:
-    """Questions whose typed answer this driver cannot deliver, by name.
-
-    Free text on a MULTI-SELECT is the case. Its commit keystroke could not be
-    pinned down: on a row that has taken text, Enter was seen advancing the tab
-    once and simply TOGGLING that row's checkbox on every later attempt —
-    on/off/on/off, measured live. The answer therefore gets typed and never
-    submitted, which leaves exactly the half-answered dialog this surface exists
-    to prevent. Single-select free text is verified end to end and is not here.
-
-    Returned as names so the refusal can say WHICH question to go and answer.
-    """
-    if not texts:
-        return []
-    return [q.get("header") or q.get("question") or f"question {i + 1}"
-            for i, q in enumerate(questions)
-            if q.get("multi_select") and i < len(texts) and texts[i]]
 
 
 def screen_state(menu: "Menu") -> tuple:
@@ -575,12 +565,8 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
             step = _free_text_step(menu, text)
             if step is None:
                 return None
-            # [] means the text is IN the row but the row is still being edited:
-            # the dialog is on this question and swallowing Tab. Enter commits
-            # (and advances). It is a SEPARATE step so a full screen read sits
-            # between typing and committing — batched behind the text it lands
-            # mid-render and toggles the row off instead.
-            return step or ["\r"]
+            # [] means the text is already in and committed; this tab is done.
+            return step or ([TAB] if menu.needs_submit else None)
         # This tab is right; move on. Tab clamps at the review screen rather
         # than wrapping, so over-pressing it cannot walk us back round.
         return [TAB] if menu.needs_submit else None
@@ -592,8 +578,8 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
         step = _free_text_step(menu, text)
         if step is None:
             return None
-        # Same two beats as the multi-select above: type, then commit.
-        return step or ["\r"]
+        # Committed already; nothing left for this question.
+        return step or ([TAB] if menu.needs_submit else None)
 
     # Single-select: pressing the number both answers and advances.
     if not want:

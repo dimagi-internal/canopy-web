@@ -189,19 +189,15 @@ function AnswerForm({
                 every question ("Type something"), and it is where the real
                 answer often goes, so a phone without it can only pick from what
                 the agent happened to guess.
-
-                Not offered on a pick-any question: the runner cannot commit it
-                there (the row's Enter toggles its checkbox instead of
-                confirming), so the box would take an answer that never lands.
-                Better to not offer it than to swallow it. */}
-            {q.multi_select ? null : <input
+ */}
+            <input
               type="text"
               value={typed[q.index] ?? ""}
               disabled={busy}
               onChange={(e) => write(q, e.target.value)}
               placeholder="…or type your own answer"
               className="mt-0.5 rounded border border-input bg-card px-2.5 py-2 text-[13px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
-            />}
+            />
           </div>
         </div>
       ))}

@@ -584,8 +584,10 @@ def test_free_text_walks_the_cursor_to_the_row_then_types():
     step = plan_step(find_menu(LONE_SINGLE), lone, [[]], ["Medium, actually"])
     # Cursor on row 1, "Type something" is row 3. No trailing Enter: typing alone
     # fills the row in, and an Enter here cleared the earlier selection.
-    # Typing only. Enter is a SEPARATE step so a screen read sits between them.
-    assert step == [DOWN, DOWN, TEXT_PREFIX + "Medium, actually"]
+    # Single-select commits with Enter: the row BELOW "Type something" there is
+    # "Chat about this", so a ↓ would park the cursor on something that opens a
+    # chat. Verified live — this produced `GOT=Medium` from a real agent.
+    assert step == [DOWN, DOWN, TEXT_PREFIX + "Medium, actually", "\r"]
 
 
 def test_free_text_replaces_a_single_select_pick():
@@ -608,8 +610,8 @@ def test_text_already_entered_is_not_typed_again():
              "options": [{"number": 1, "label": "Small"}]}]
     # Entered. A lone dialog has no Submit tab, so it is confirmed with Enter —
     # exactly as picking an option would have been.
-    # Text is in the row; the next step is the Enter that commits it.
-    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Medium, actually"]) == ["\r"]
+    # Committed already (a lone dialog has no Submit tab), so nothing is left.
+    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Medium, actually"]) is None
 
 
 def test_a_multi_select_toggles_boxes_before_typing():
@@ -622,9 +624,12 @@ def test_a_multi_select_toggles_boxes_before_typing():
     # Boxes right -> walk the cursor to row 4 and type. Verified against a live
     # multi-select: the row auto-ticks and takes the text as its label.
     step = plan_step(find_menu(TABBED_MULTI_TWO_CHECKED), QUESTIONS, [[1, 3], [2]], ["Teal", None])
-    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal"]
+    # Multi-select commits with ↓: the row below is the dialog's Next/Submit
+    # action, so stepping off banks the text and leaves the cursor somewhere
+    # the grid can show — no hidden edit state to guess at.
+    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal", DOWN]
     # Text entered too -> move on to the next tab.
-    assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\r"]
+    assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\t"]
 
 
 def test_text_that_cannot_be_entered_presses_nothing():
