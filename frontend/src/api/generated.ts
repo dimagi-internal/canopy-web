@@ -8561,6 +8561,8 @@ export interface components {
             readonly option?: number | null;
             /** Selections */
             readonly selections?: readonly (readonly number[])[] | null;
+            /** Texts */
+            readonly texts?: readonly string[] | null;
         };
         /** MenuAnswerSyncOut */
         readonly MenuAnswerSyncOut: {
@@ -9115,6 +9117,8 @@ export interface components {
             readonly option?: number | null;
             /** Selections */
             readonly selections?: readonly (readonly number[])[] | null;
+            /** Texts */
+            readonly texts?: readonly string[] | null;
         };
         /**
          * StreamStateOut

@@ -530,8 +530,18 @@ try {
     // harness because that writes the raw byte and a terminal interprets it;
     // this transport does not.
     const NAMED_KEYS = { '\r': 'Enter', '\n': 'Enter', '\u001b': 'Escape', '\t': 'Tab' };
+    // "text:..." means TYPE this, not press it — the answer to a question whose
+    // real answer is not on the menu ("Type something"). keyboard.press takes one
+    // key and would reject a sentence outright, and pressing it character by
+    // character gets the shifting wrong on punctuation; keyboard.type is the
+    // primitive for a string.
+    const TEXT_PREFIX = 'text:';
     for (const key of keys) {
-      await page.keyboard.press(NAMED_KEYS[key] || key);
+      if (typeof key === 'string' && key.startsWith(TEXT_PREFIX)) {
+        await page.keyboard.type(key.slice(TEXT_PREFIX.length));
+      } else {
+        await page.keyboard.press(NAMED_KEYS[key] || key);
+      }
       await page.waitForTimeout(120);
     }
     out({ ok: true, task, sent: keys.length });

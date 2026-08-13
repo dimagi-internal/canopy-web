@@ -345,7 +345,8 @@ def held_questions(session_key: str) -> list[dict]:
     return []
 
 
-def _drive_selections(cdp, session_key, current, questions, selections, cdp_port):
+def _drive_selections(cdp, session_key, current, questions, selections, cdp_port,
+                      texts=None):
     """Walk a tabbed / multi-select dialog to a complete, submitted answer.
 
     One step per screen read (see `menu.plan_step`): press, re-read, decide
@@ -355,7 +356,7 @@ def _drive_selections(cdp, session_key, current, questions, selections, cdp_port
     already performs (control frame, then poll tick) is now harmless.
     """
     for _ in range(menu.MAX_STEPS):
-        keys = menu.plan_step(current, questions, selections)
+        keys = menu.plan_step(current, questions, selections, texts)
         if keys is None:
             # Nothing further we can justify pressing. If every question already
             # reads as answered this is success; otherwise the screen is not the
@@ -373,7 +374,7 @@ def _drive_selections(cdp, session_key, current, questions, selections, cdp_port
     return UNMODELLED, _menu_dict(current, source="screen") if current else None
 
 
-def answer_menu_with(cdp, session_key: str, option, *, selections=None,
+def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=None,
                      cdp_port: int = 9222):
     """Press a human's answer into `session_key`'s terminal.
 
@@ -417,7 +418,7 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None,
             questions = [{"index": 0, "question": current.question,
                           "multi_select": current.is_multi_select}]
         outcome, screen = _drive_selections(
-            cdp, session_key, current, questions, selections, cdp_port)
+            cdp, session_key, current, questions, selections, cdp_port, texts)
         logger.info("answered the dialog on %s with %s (%s)", session_key,
                     selections, outcome)
         return outcome, screen
@@ -469,7 +470,8 @@ def _answer_lock(session_key: str) -> threading.Lock:
         return lock
 
 
-def answer_menu(session_key: str, option, *, selections=None, cdp_port: int = 9222):
+def answer_menu(session_key: str, option, *, selections=None, texts=None,
+                cdp_port: int = 9222):
     """`answer_menu_with` bound to real CDP, with transport failures classified.
 
     Never raises: this runs on the wake-listener thread, which also carries wake
@@ -479,7 +481,8 @@ def answer_menu(session_key: str, option, *, selections=None, cdp_port: int = 92
     try:
         with _answer_lock(session_key):
             return answer_menu_with(cdp_control, session_key, option,
-                                    selections=selections, cdp_port=cdp_port)
+                                    selections=selections, texts=texts,
+                                    cdp_port=cdp_port)
     except Exception as exc:  # noqa: BLE001
         # NOT_A_CLAUDE_PANE is the one refusal a human can act on themselves, and
         # it is the one that actually bit: with a shell tab selected, every tap on

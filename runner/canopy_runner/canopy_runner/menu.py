@@ -394,6 +394,44 @@ def answer_keys(option: int | None) -> list[str]:
 TAB = "\t"
 SUBMIT_ANSWERS = "Submit answers"
 
+# An entry in a keystroke list that means TYPE this, rather than press it. The
+# transport tells the two apart by this prefix: a pressed key is one character
+# (or a control character named by the sidecar), and free text is neither.
+TEXT_PREFIX = "text:"
+
+# The option Claude Code appends to every question for an answer that is not on
+# the menu. Its NUMBER is assigned by the TUI, not by the tool input, so it can
+# only be read off the rendered screen — which is why the driver looks for it by
+# label rather than computing len(declared) + 1.
+TYPE_SOMETHING = "type something"
+
+
+def type_something_number(menu: "Menu") -> int | None:
+    """The "Type something" row's number on this screen, or None once it has
+    been filled in — the TUI replaces the label with the text you typed."""
+    for option in menu.options:
+        if option.label.rstrip(".").casefold() == TYPE_SOMETHING:
+            return option.number
+    return None
+
+
+def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
+    """Keystrokes to put `text` into this question, or [] if it is already there.
+
+    None means we cannot: the row is gone and nothing on screen carries the text,
+    so typing would land somewhere unpredictable. Refusing costs the answer and
+    says so; guessing types a sentence into whatever has focus.
+    """
+    number = type_something_number(menu)
+    if number is None:
+        entered = any(option.label.strip() == text.strip() for option in menu.options)
+        return [] if entered else None
+    # Pressing the number MOVES the cursor to that row and opens its edit field —
+    # it does NOT answer, unlike a declared option's number. Verified against a
+    # live TUI: the footer gains "ctrl+g to edit in Vim" and the label becomes
+    # whatever you type.
+    return [str(number), TEXT_PREFIX + text, "\r"]
+
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
 # responding the way we read it — a loop pressing keys into a terminal forever
@@ -432,7 +470,8 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
     return best[0] if best else None
 
 
-def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]]) -> list[str] | None:
+def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
+              texts: list[str] | None = None) -> list[str] | None:
     """The NEXT keystrokes for this screen, or None when there is nothing left.
 
     Deliberately one step at a time, re-reading between steps, rather than one
@@ -461,17 +500,45 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]]) 
     if index is None or index >= len(selections):
         return None
     want = sorted(selections[index])
+    text = (texts[index] if texts and index < len(texts) else "") or ""
+
+    # The TUI appends its own rows ("Type something", "Chat about this") AFTER
+    # the declared options, and `selections` only ever numbers the declared ones.
+    # So anything past that count is not ours to toggle — and once free text has
+    # been entered its row is CHECKED, so a diff that considered it would untick
+    # it and erase what was typed.
+    declared = len(questions[index].get("options") or []) if index < len(questions) else 0
 
     if menu.is_multi_select:
         # Toggle only the DIFFERENCES, so re-running this against a screen that
         # already matches presses nothing at all.
         have = set(menu.checked_numbers())
         differing = [n for n in menu.options
-                     if (n.number in want) != (n.number in have)]
+                     if (not declared or n.number <= declared)
+                     and (n.number in want) != (n.number in have)]
         if differing:
             return [str(o.number) for o in differing]
+        if text:
+            # After the boxes, never before: typing moves focus to the text row,
+            # and a number pressed from there edits the text instead of toggling.
+            step = _free_text_step(menu, text)
+            if step is None:
+                return None
+            if step:
+                return step
         # This tab is right; move on. Tab clamps at the review screen rather
         # than wrapping, so over-pressing it cannot walk us back round.
+        return [TAB] if menu.needs_submit else None
+
+    if text:
+        # Single-select: free text REPLACES the pick — the TUI moves the
+        # selection onto the text row, so a declared option pressed as well
+        # would simply overwrite it.
+        step = _free_text_step(menu, text)
+        if step is None:
+            return None
+        if step:
+            return step
         return [TAB] if menu.needs_submit else None
 
     # Single-select: pressing the number both answers and advances.

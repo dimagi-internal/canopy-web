@@ -871,7 +871,8 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
         {"session_id": str(b.session_id), "session_key": b.session_key,
          "answer_id": (b.pending_answer or {}).get("id") or "",
          "option": (b.pending_answer or {}).get("option"),
-         "selections": (b.pending_answer or {}).get("selections")}
+         "selections": (b.pending_answer or {}).get("selections"),
+         "texts": (b.pending_answer or {}).get("texts")}
         for b in bindings
     ]}
 

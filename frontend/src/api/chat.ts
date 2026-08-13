@@ -277,6 +277,7 @@ export function answerMenu(
   id: string,
   option: number | null,
   selections?: number[][] | null,
+  texts?: (string | null)[] | null,
 ): Promise<{ ok: boolean; reason: string }> {
   return request<{ ok: boolean; reason: string }>(
     `/api/canopy-sessions/${encodeURIComponent(id)}/answer-menu`,
@@ -287,7 +288,7 @@ export function answerMenu(
       // it is the only field a runner older than this understands, and sending
       // it the first pick keeps such a runner doing what it does today instead
       // of reading a null option as "refuse" and pressing Escape.
-      body: JSON.stringify(selections ? { option, selections } : { option }),
+      body: JSON.stringify(selections ? { option, selections, texts } : { option }),
     },
   );
 }
