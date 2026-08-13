@@ -157,6 +157,16 @@ Item.objects.create(
     body="A real person who never got an answer.",
     dispatch=[{"target_agent": "hal", "prompt": "/hal:turn --thread lily", "origin": "email"}],
 )
+# A QUESTION item — the other kind. Its card is the only thing that renders the
+# answer input, and without one seeded the placeholder-contrast guard had nothing
+# to inspect and passed while the bug was live. (Verified: reintroducing the
+# invisible-placeholder class now turns that test red.)
+Item.objects.create(
+    agent=ada_agent, kind="question", origin="api", batch_key=FLEET_AUDIT_BATCH,
+    idempotency_key="fa-question", title="hal: should the 81 be archived or deleted?",
+    body="Archiving is reversible; deleting is not.",
+    dispatch=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
+)
 # A settled card from an OLDER sitting. Items are never deleted, so this is what
 # accumulates: the unfiltered view must keep it out of the way of the open ones.
 # Deliberately in a different batch, so the batch-permalink tests don't see it.

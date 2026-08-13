@@ -90,6 +90,10 @@
     --muted: oklch(0.268 0.007 34.3);            /* ~stone-800 */
     --muted-foreground: oklch(0.553 0.013 58.07);/* ~stone-500 */
     --foreground-secondary: oklch(0.809 0.005 56.0); /* ~stone-300 — secondary text */
+    /* NOTE: identical to --input below. Faint text placed ON an input is therefore
+       INVISIBLE in dark mode (contrast 1.00) — use --muted-foreground for anything
+       sitting on an input surface, e.g. placeholders. Guarded by the
+       'no invisible placeholders' e2e test. */
     --foreground-subtle: oklch(0.374 0.01 67.56);    /* ~stone-700 — faint text */
     --accent: oklch(0.268 0.007 34.3);
     --accent-foreground: oklch(0.923 0.003 48.72);
