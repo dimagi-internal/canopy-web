@@ -461,7 +461,8 @@ def test_the_relay_forwards_every_published_field(monkeypatch):
                                  session_key="agent-task")
 
     sent, chat_services = _published_menu_answer_frame(monkeypatch)
-    chat_services.answer_menu(session=session, option=1, selections=[[1, 3], [2]])
+    chat_services.answer_menu(session=session, option=1, selections=[[1, 3], [2]],
+                              texts=["Teal", None])
 
     # What the socket actually writes, for that exact published payload.
     relayed = {}
@@ -470,9 +471,11 @@ def test_the_relay_forwards_every_published_field(monkeypatch):
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
         consumer.runner_menu_answer(sent))
 
-    for field in ("session_id", "session_key", "option", "selections", "answer_id"):
+    for field in ("session_id", "session_key", "option", "selections", "texts",
+                  "answer_id"):
         assert field in relayed, f"{field} was dropped by the relay"
     assert relayed["selections"] == [[1, 3], [2]]
+    assert relayed["texts"] == ["Teal", None]
     assert relayed["answer_id"] == sent["answer_id"]
 
 

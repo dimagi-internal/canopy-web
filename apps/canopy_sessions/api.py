@@ -394,7 +394,8 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
     """
     session = _session_or_404(request, session_id)
     outcome = services.answer_menu(session=session, option=payload.option,
-                                   selections=payload.selections)
+                                   selections=payload.selections,
+                                   texts=payload.texts)
     return {"ok": outcome == "sent", "reason": "" if outcome == "sent" else outcome}
 
 

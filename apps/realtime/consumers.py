@@ -304,6 +304,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "session_key": message.get("session_key"),
             "option": message.get("option"),
             "selections": message.get("selections"),
+            "texts": message.get("texts"),
             "answer_id": message.get("answer_id"),
         })
 

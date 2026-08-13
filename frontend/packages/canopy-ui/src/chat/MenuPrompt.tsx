@@ -7,8 +7,17 @@ export interface MenuPromptProps {
   error?: string;
   /** `selections` is the whole answer — one list of chosen option numbers per
    *  question. Omitted for the single-question single-select dialogs that a
-   *  lone `option` has always been able to answer. */
-  onAnswer: (option: number | null, selections?: number[][] | null) => void;
+   *  lone `option` has always been able to answer.
+   *
+   *  `texts` carries the answer that is NOT on the menu, per question. The TUI
+   *  appends a "Type something" row to every question, and it is frequently
+   *  where the real answer goes — the July closeout's notes were all typed, not
+   *  picked. Without it a phone can only choose from what the agent guessed. */
+  onAnswer: (
+    option: number | null,
+    selections?: number[][] | null,
+    texts?: (string | null)[] | null,
+  ) => void;
   /** Injectable for tests; defaults to the wall clock. */
   now?: number;
 }
@@ -91,6 +100,7 @@ function AnswerForm({
   onAnswer: MenuPromptProps["onAnswer"];
 }) {
   const [picks, setPicks] = useState<Record<number, number[]>>({});
+  const [typed, setTyped] = useState<Record<number, string>>({});
 
   const toggle = (q: MenuQuestion, number: number) => {
     setPicks((prev) => {
@@ -105,9 +115,24 @@ function AnswerForm({
     });
   };
 
+  // Typing your own answer to a SINGLE-select question replaces the pick,
+  // because that is what the TUI does — selecting "Type something" moves the
+  // selection onto the text row. On a multi-select the text is an extra
+  // checkbox, so both can stand.
+  const write = (q: MenuQuestion, value: string) => {
+    setTyped((prev) => ({ ...prev, [q.index]: value }));
+    if (!q.multi_select && value.trim()) {
+      setPicks((prev) => ({ ...prev, [q.index]: [] }));
+    }
+  };
+
+  const answered = (q: MenuQuestion) =>
+    isAnswered(picks[q.index]) || Boolean((typed[q.index] ?? "").trim());
+
   const remaining = useMemo(
-    () => questions.filter((q) => !isAnswered(picks[q.index])).length,
-    [questions, picks],
+    () => questions.filter((q) => !answered(q)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [questions, picks, typed],
   );
 
   const send = () => {
@@ -115,9 +140,10 @@ function AnswerForm({
     // runner walks the tabs in this order, so a missing entry would silently
     // shift every later answer onto the wrong question.
     const selections = questions.map((q) => picks[q.index] ?? []);
+    const texts = questions.map((q) => (typed[q.index] ?? "").trim() || null);
     // `option` is the first pick, for a runner too old to read `selections`.
     // Sending null there would read as "refuse" and cancel the dialog.
-    onAnswer(selections[0]?.[0] ?? null, selections);
+    onAnswer(selections[0]?.[0] ?? null, selections, texts);
   };
 
   return (
@@ -159,13 +185,30 @@ function AnswerForm({
                 </button>
               );
             })}
+            {/* The answer that is not on the menu. The terminal offers this on
+                every question ("Type something"), and it is where the real
+                answer often goes, so a phone without it can only pick from what
+                the agent happened to guess. */}
+            <input
+              type="text"
+              value={typed[q.index] ?? ""}
+              disabled={busy}
+              onChange={(e) => write(q, e.target.value)}
+              placeholder="…or type your own answer"
+              className="mt-0.5 rounded border border-input bg-card px-2.5 py-2 text-[13px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+            />
           </div>
         </div>
       ))}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          disabled={busy || remaining > 0}
+          // Sendable as soon as ANYTHING is answered, not only when everything
+          // is. The terminal submits a partly-filled ask and merely warns, and
+          // refusing here made a question you meant to skip unskippable from a
+          // phone. Still not sendable when NOTHING is answered — that is what
+          // Cancel says, and says better.
+          disabled={busy || remaining === questions.length}
           onClick={send}
           className="rounded bg-warning px-3 py-1.5 text-[13px] font-medium text-warning-foreground disabled:opacity-50"
         >
@@ -173,7 +216,9 @@ function AnswerForm({
         </button>
         {remaining > 0 ? (
           <span className="text-[12px] text-muted-foreground">
-            {remaining} question{remaining === 1 ? "" : "s"} still to answer
+            {remaining === questions.length
+              ? "answer at least one to send"
+              : `${remaining} unanswered — will send anyway`}
           </span>
         ) : null}
       </div>

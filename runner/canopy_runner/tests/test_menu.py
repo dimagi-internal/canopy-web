@@ -6,6 +6,8 @@ produces for emdash — so what the runner reads over CDP is what these strings
 contain. Verified by roundtrip on 2026-07-28: the dialog below was detected,
 answered with a keystroke, and the file it asked about was actually deleted.
 """
+import pathlib
+
 from canopy_runner.menu import TAB, answer_keys, find_menu, find_menu_settled
 
 # Verbatim, as a terminal renders it. Note the leading spaces, the box rule, and
@@ -541,3 +543,93 @@ def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
     emitted = {TAB, "\r"} | {k for k in answer_keys(None)}
     control = {k for k in emitted if len(k) == 1 and not k.isprintable()}
     assert control <= mapped, f"unmapped control keys: {control - mapped}"
+
+
+# --- free text ("Type something") -------------------------------------------
+#
+# Recipe established against a live TUI 2026-08-12: pressing this row's number
+# does NOT answer — it moves the cursor there and opens an edit field (the
+# footer gains "ctrl+g to edit in Vim") — then you type and press Enter. The
+# row's NUMBER is appended by the TUI and is absent from the tool input, so it
+# can only be read off the render. Verified end to end: typing "Medium,
+# actually" produced `⏺ GOT=Medium` from the agent.
+
+LONE_SINGLE_TYPED = LONE_SINGLE.replace("3. Type something.", "3. Medium, actually")
+
+TABBED_MULTI_TYPED = TABBED_MULTI_TWO_CHECKED.replace(
+    "4. [ ] Type something", "4. [✔] Teal")
+
+
+def test_the_type_something_row_is_found_by_label_not_by_counting():
+    from canopy_runner.menu import type_something_number
+
+    assert type_something_number(find_menu(LONE_SINGLE)) == 3
+    assert type_something_number(find_menu(TABBED_MULTI)) == 4
+    # Once filled in, the label IS the text, so the row is no longer offered.
+    assert type_something_number(find_menu(LONE_SINGLE_TYPED)) is None
+
+
+def test_free_text_presses_the_row_then_types_then_confirms():
+    from canopy_runner.menu import TEXT_PREFIX, plan_step
+
+    lone = [{"index": 0, "question": "Which size?", "multi_select": False,
+             "options": [{"number": 1, "label": "Small"}]}]
+    step = plan_step(find_menu(LONE_SINGLE), lone, [[]], ["Medium, actually"])
+    assert step == ["3", TEXT_PREFIX + "Medium, actually", "\r"]
+
+
+def test_free_text_replaces_a_single_select_pick():
+    """The TUI moves the selection onto the text row, so pressing a declared
+    option as well would just overwrite what was typed."""
+    from canopy_runner.menu import TEXT_PREFIX, plan_step
+
+    lone = [{"index": 0, "question": "Which size?", "multi_select": False,
+             "options": [{"number": 1, "label": "Small"}]}]
+    step = plan_step(find_menu(LONE_SINGLE), lone, [[1]], ["Medium"])
+    assert step[0] == "3" and step[1] == TEXT_PREFIX + "Medium"
+
+
+def test_text_already_entered_is_not_typed_again():
+    """Same idempotence story as the checkboxes: this system delivers every
+    answer twice, and re-typing would append to what is already there."""
+    from canopy_runner.menu import plan_step
+
+    lone = [{"index": 0, "question": "Which size?", "multi_select": False,
+             "options": [{"number": 1, "label": "Small"}]}]
+    # No Submit tab on a lone single-select, so "done" is None, not Tab.
+    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Medium, actually"]) is None
+
+
+def test_a_multi_select_toggles_boxes_before_typing():
+    """Typing moves focus to the text row; a number pressed from there edits the
+    text instead of toggling a box."""
+    from canopy_runner.menu import TEXT_PREFIX, plan_step
+
+    # Boxes not yet right -> toggles come first, text is not touched yet.
+    assert plan_step(find_menu(TABBED_MULTI), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["1", "3"]
+    # Boxes right -> now the text.
+    step = plan_step(find_menu(TABBED_MULTI_TWO_CHECKED), QUESTIONS, [[1, 3], [2]], ["Teal", None])
+    assert step == ["4", TEXT_PREFIX + "Teal", "\r"]
+    # Text entered too -> move on to the next tab.
+    assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\t"]
+
+
+def test_text_that_cannot_be_entered_presses_nothing():
+    """The row is gone and nothing on screen carries the text, so typing would
+    land somewhere unpredictable. Refusing costs the answer and says so."""
+    from canopy_runner.menu import plan_step
+
+    lone = [{"index": 0, "question": "Which size?", "multi_select": False,
+             "options": [{"number": 1, "label": "Small"}]}]
+    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Something else"]) is None
+
+
+def test_the_text_marker_is_distinguishable_from_a_keypress():
+    """The transport tells them apart by this prefix, so it must never collide
+    with a real key: keys are one character, or a control character."""
+    from canopy_runner.menu import TEXT_PREFIX
+
+    assert len(TEXT_PREFIX) > 1 and not TEXT_PREFIX.isdigit()
+    sidecar = (pathlib.Path(__file__).resolve().parents[1]
+               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text()
+    assert f"'{TEXT_PREFIX}'" in sidecar, "the sidecar does not know the text marker"

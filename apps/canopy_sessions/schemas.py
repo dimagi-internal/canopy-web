@@ -206,3 +206,7 @@ class MenuAnswerIn(Schema):
     """
     option: int | None = None
     selections: list[list[int]] | None = None
+    #: Free text per question, for the answer that is not on the menu — the
+    #: TUI appends a "Type something" row to every question and it is often
+    #: where the real answer goes. Empty string = no free text.
+    texts: list[str] | None = None

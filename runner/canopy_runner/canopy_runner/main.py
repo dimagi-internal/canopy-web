@@ -713,6 +713,7 @@ def make_control_handler(cfg: Config, waker, client=None):
             session_key = str(msg["session_key"])
             outcome, screen = hooks.answer_menu(session_key, msg.get("option"),
                                                 selections=msg.get("selections"),
+                                                texts=msg.get("texts"),
                                                 cdp_port=cfg.cdp_port)
             hooks.note_answer_outcome(session_key, outcome, screen)
             # RETIRE IT. The server holds the answer until a runner reports on it
