@@ -1001,8 +1001,20 @@ def project_events(turn: Turn, rows) -> int:
     return created
 
 
-def answer_menu(*, session: Session, option: int | None) -> str:
+def answer_menu(*, session: Session, option: int | None,
+                selections: list[list[int]] | None = None) -> str:
     """Answer the dialog an agent is blocked on, from the web.
+
+    `selections` is the whole answer: one list of chosen option numbers per
+    declared question, in declaration order. It is what a multi-select or a
+    multi-question ask needs, because there a number key toggles a checkbox and
+    the dialog waits on an explicit Submit — a single `option` cannot express
+    "Red and Blue", and cannot reach the tab holding the second question at all.
+
+    `option` is still sent alongside it, set to the first pick, and is the ONLY
+    field a runner older than this understands. That is deliberate: such a runner
+    keeps doing exactly what it does today rather than seeing an empty option and
+    pressing Escape, which would cancel the dialog outright.
 
     Returns "sent" | "unavailable" | "unbound", mirroring `request_backfill`'s
     refusal shape rather than raising: a menu can go stale between the phone
@@ -1029,7 +1041,8 @@ def answer_menu(*, session: Session, option: int | None) -> str:
     # runner drains on its poll tick. Publishing alone is how an answer gets lost
     # in silence when the control channel is down — see RunnerBinding.pending_answer.
     answer_id = str(uuid.uuid4())
-    binding.pending_answer = {"id": answer_id, "option": option, "at": time.time()}
+    binding.pending_answer = {"id": answer_id, "option": option,
+                              "selections": selections, "at": time.time()}
     binding.save(update_fields=["pending_answer"])
 
     from apps.realtime import groups
@@ -1038,6 +1051,7 @@ def answer_menu(*, session: Session, option: int | None) -> str:
         "session_id": str(session.id),
         "session_key": binding.session_key,
         "option": option,
+        "selections": selections,
         "answer_id": answer_id,
     })
     return "sent"

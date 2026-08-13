@@ -818,6 +818,11 @@ class MenuAnswerOut(Schema):
     session_key: str
     answer_id: str
     option: int | None = None
+    #: One list of chosen option numbers per declared question. A runner that
+    #: predates this ignores the field and presses `option`, which is what it
+    #: does today — so the poll tick never gets WORSE than the current
+    #: behaviour on an ask this shape cannot express.
+    selections: list[list[int]] | None = None
 
 
 class MenuAnswerSyncOut(Schema):

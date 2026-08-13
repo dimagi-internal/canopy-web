@@ -70,12 +70,35 @@ export interface Participant {
  *  actually blocks a fleet running `bypass permissions`), and the runner can
  *  still read it off the rendered screen for the dialogs a transcript cannot
  *  see. `source` says which, and a client is free to ignore it. */
+/** One question of an `AskUserQuestion`. The TUI draws these as TABS and will
+ *  not submit until each has an answer — so a surface that renders only the
+ *  first one cannot complete the ask no matter which button is pressed. That
+ *  was the bug: a two-question closeout showed one question, and a tap toggled
+ *  a checkbox on a dialog that then sat waiting for a Submit nobody could
+ *  reach (eva, 2026-08-12). */
+export interface MenuQuestion {
+  index: number;
+  question: string;
+  header?: string;
+  /** Whether this question takes ANY number of answers. The TUI renders it as
+   *  checkboxes and a number key TOGGLES one instead of answering, which is why
+   *  a client that cannot see this flag renders the wrong control AND the
+   *  runner presses the wrong key. */
+  multi_select?: boolean;
+  options: { number: number; label: string; description?: string }[];
+}
+
 export interface SessionMenu {
   question: string;
   title?: string;
   body?: string;
   selected?: number | null;
   source?: string;
+  /** Every question in the ask, in declaration order. Absent on a dialog with
+   *  no tool call behind it (a permission prompt, a trust gate) and on a menu
+   *  from a producer older than this — in both cases the client falls back to
+   *  the single-question fields above, which still describe question 1. */
+  questions?: MenuQuestion[];
   /** `description` is present on the transcript path and is often the only
    *  thing that distinguishes two options — "Proceed to Phase 4" does not say
    *  that Phase 4 is test-gated, and its description does. */

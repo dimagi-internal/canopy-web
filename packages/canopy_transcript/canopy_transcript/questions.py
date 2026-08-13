@@ -93,24 +93,13 @@ def _blocks(record):
     return tuple(b for b in content if isinstance(b, dict)) if isinstance(content, list) else ()
 
 
-def _menu_from_input(payload) -> dict | None:
-    """One `AskUserQuestion` tool input -> the menu dict, or None if unusable.
-
-    Fails closed exactly like `find_menu`: no options means nothing to press,
-    and a phone told an agent is blocked when it is working is a signal nobody
-    trusts twice.
-    """
-    if not isinstance(payload, dict):
-        return None
-    questions = payload.get("questions")
-    if not isinstance(questions, list) or not questions:
-        return None
-    first = questions[0]
-    if not isinstance(first, dict):
+def _one_question(raw, index: int) -> dict | None:
+    """One entry of `questions[]` -> a question dict, or None if unusable."""
+    if not isinstance(raw, dict):
         return None
 
     options = []
-    raw_options = first.get("options")
+    raw_options = raw.get("options")
     if not isinstance(raw_options, list):
         return None
     for opt in raw_options:
@@ -128,9 +117,9 @@ def _menu_from_input(payload) -> dict | None:
     if not options:
         return None
 
-    question = first.get("question")
+    question = raw.get("question")
     question = question.strip() if isinstance(question, str) else ""
-    header = first.get("header")
+    header = raw.get("header")
     header = header.strip() if isinstance(header, str) else ""
     if not question:
         # A dialog with no question still has real options; the header is what
@@ -140,21 +129,89 @@ def _menu_from_input(payload) -> dict | None:
     if not question:
         return None
 
-    # AskUserQuestion may carry several questions and the TUI shows them one at
-    # a time. Say so rather than presenting a 1-of-3 dialog as the whole ask.
+    return {
+        "index": index,
+        "question": question,
+        "header": header,
+        # The whole reason this file changed. The TUI draws a multi-select as
+        # CHECKBOXES and a number key TOGGLES one instead of answering — so a
+        # client that cannot see this flag renders "pick one" buttons for a
+        # "pick any" question, and the runner presses a key that selects
+        # nothing. Verified against a live TUI capture; see
+        # `canopy_runner/tests/test_menu.py`.
+        "multi_select": bool(raw.get("multiSelect")),
+        "options": options,
+    }
+
+
+def _menu_from_input(payload) -> dict | None:
+    """One `AskUserQuestion` tool input -> the menu dict, or None if unusable.
+
+    Fails closed exactly like `find_menu`: no options means nothing to press,
+    and a phone told an agent is blocked when it is working is a signal nobody
+    trusts twice.
+
+    Carries EVERY question, not just the first. The TUI shows them as tabs and
+    will not submit until each has an answer, so a surface that renders only
+    `questions[0]` cannot complete the ask no matter which button you press —
+    it was structurally unable to, which is the bug this shape fixes. The
+    top-level `question`/`title`/`options` stay pinned to the first question so
+    an older client renders exactly what it rendered before.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw_questions = payload.get("questions")
+    if not isinstance(raw_questions, list) or not raw_questions:
+        return None
+
+    questions = []
+    for raw in raw_questions:
+        parsed = _one_question(raw, len(questions))
+        if parsed is None:
+            # One malformed question must not cost the whole dialog its buttons,
+            # but it MUST cost the structured path: submitting a set of answers
+            # positionally against a list with a hole in it would answer the
+            # wrong tab. Fall back to first-question-only rendering.
+            return _legacy_menu(raw_questions)
+        questions.append(parsed)
+
+    first = questions[0]
     remaining = len(questions) - 1
-    body = f"{remaining} more question{'s' if remaining != 1 else ''} after this one." if remaining > 0 else ""
+    body = (f"{remaining} more question{'s' if remaining != 1 else ''} after this one."
+            if remaining > 0 else "")
 
     return {
-        "question": question,
-        "title": header,
+        "question": first["question"],
+        "title": first["header"],
         "body": body,
         # A transcript cannot see which row the cursor is on — that is a
         # property of the rendered screen, not of the tool call.
         "selected": _EMPTY_SELECTED,
-        "options": options,
+        "options": first["options"],
+        "questions": questions,
         # Which half found it. The client must be able to ignore this; it exists
         # so an operator can tell the transcript path from the screen read.
+        "source": "transcript",
+    }
+
+
+def _legacy_menu(raw_questions) -> dict | None:
+    """First-question-only menu, for an ask this module cannot fully model.
+
+    No `questions` key, deliberately: its absence is what tells a client to fall
+    back to single-question rendering rather than trust a partial list.
+    """
+    first = _one_question(raw_questions[0] if raw_questions else None, 0)
+    if first is None:
+        return None
+    remaining = len(raw_questions) - 1
+    return {
+        "question": first["question"],
+        "title": first["header"],
+        "body": (f"{remaining} more question{'s' if remaining != 1 else ''} after this one."
+                 if remaining > 0 else ""),
+        "selected": _EMPTY_SELECTED,
+        "options": first["options"],
         "source": "transcript",
     }
 

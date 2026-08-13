@@ -393,7 +393,8 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
     Same shape `reset` uses for the same reason.
     """
     session = _session_or_404(request, session_id)
-    outcome = services.answer_menu(session=session, option=payload.option)
+    outcome = services.answer_menu(session=session, option=payload.option,
+                                   selections=payload.selections)
     return {"ok": outcome == "sent", "reason": "" if outcome == "sent" else outcome}
 
 

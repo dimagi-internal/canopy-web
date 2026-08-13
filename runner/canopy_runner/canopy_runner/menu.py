@@ -52,10 +52,29 @@ _RULE = re.compile(r"^[─━-]{10,}$")
 _WRAP_SLACK = 4
 
 
+# A multi-select row: "[ ] Red" / "[✔] Red". The TUI draws these ONLY for a
+# multiSelect question, which is what makes them the reliable on-screen
+# discriminator — the tool input's `multiSelect` flag is not visible here.
+_CHECKBOX = re.compile(r"^\[([ ✔xX])\]\s*(.*)$")
+
+# The tab strip a multi-question (or any multi-select) ask draws above the
+# question: "←  ☒ Colors  ☐ Size  ✔ Submit  →". A single-question single-select
+# draws a bare "☐ Size" with no arrows and no Submit tab, and needs no submit
+# step — which is exactly why today's number+Enter works there and nowhere else.
+_TAB_MARK = re.compile(r"[☐☒✔]")
+
+# The final tab. Reached with Tab, and a plain numbered menu once there, so the
+# ordinary answer path presses its button.
+_REVIEW = "Ready to submit your answers?"
+SUBMIT_TAB = "Submit"
+
+
 @dataclass
 class Option:
     number: int
     label: str
+    #: True/False on a multi-select row, None when the row has no checkbox.
+    checked: bool | None = None
 
 
 @dataclass
@@ -65,7 +84,37 @@ class Menu:
     title: str = ""
     body: str = ""
     selected: int | None = None
+    #: Tab labels in drawn order, e.g. ["Colors", "Size", "Submit"]. Empty when
+    #: the dialog draws no tab strip (a permission prompt, a trust gate).
+    tabs: list[str] = field(default_factory=list)
     raw: str = field(default="", repr=False)
+
+    @property
+    def is_review(self) -> bool:
+        """The Submit tab, showing the answers back before they are sent."""
+        return _REVIEW in self.raw
+
+    @property
+    def is_multi_select(self) -> bool:
+        """Whether a number key TOGGLES here rather than answering.
+
+        Read off the drawn checkboxes rather than the tool input: this is the
+        screen the keystroke actually lands on, and the runner's whole safety
+        story is that it verifies against the screen before pressing.
+        """
+        return any(o.checked is not None for o in self.options)
+
+    @property
+    def needs_submit(self) -> bool:
+        """Whether answering every question still leaves a Submit to press.
+
+        A single-question single-select draws no Submit tab and completes on the
+        number alone. Everything else has to be walked to the review screen.
+        """
+        return SUBMIT_TAB in self.tabs
+
+    def checked_numbers(self) -> list[int]:
+        return [o.number for o in self.options if o.checked]
 
     def allows(self, number: int | None) -> bool:
         """Whether `number` is actually on this menu.
@@ -102,6 +151,32 @@ def _join_wrapped(lines: list[str]) -> str:
             # Mid-token wrap: the grid split a path or flag, so no separator.
             out += piece
     return out
+
+
+def _parse_tabs(lines: list[str], first_option_line: int) -> tuple[list[str], int | None]:
+    """The tab strip's labels, and the line it was drawn on.
+
+    "←  ☒ Colors  ☐ Size  ✔ Submit  →" -> (["Colors", "Size", "Submit"], i).
+    A single-question single-select draws a bare "☐ Size"; that parses to
+    ["Size"] with no "Submit", which is precisely the distinction the driver
+    needs — no Submit tab means the number key finishes the dialog by itself.
+
+    Searched only ABOVE the options: a checked multi-select row ("[✔] Red")
+    carries the same glyph and would otherwise parse as a tab strip.
+
+    Backwards from the options, so the NEAREST strip wins. A terminal holds the
+    whole scrollback, and an agent that printed a ✔ earlier in the session must
+    not be mistaken for the tab strip of the dialog now on screen.
+    """
+    for i in range(first_option_line - 1, -1, -1):
+        line = lines[i]
+        if not _TAB_MARK.search(line) or _OPTION.match(line):
+            continue
+        stripped = line.strip().strip("←→").strip()
+        labels = [p.strip() for p in _TAB_MARK.split(stripped) if p.strip()]
+        if labels:
+            return labels, i
+    return [], None
 
 
 def _dialog_runs_to_the_bottom(lines: list[str], selected: int | None) -> bool:
@@ -177,6 +252,14 @@ def find_menu(text: str) -> Menu | None:
         number, label = int(m.group(1)), m.group(2).strip()
         if _FOOTER.search(label):
             continue
+        # "[ ] Red" -> checked=False, label="Red". Kept off the label because the
+        # label is what a phone renders as a button, and "[ ] Red" reads as a
+        # broken string there while the box state belongs in its own field.
+        checked = None
+        box = _CHECKBOX.match(label)
+        if box:
+            checked = box.group(1) != " "
+            label = box.group(2).strip()
         # Options are consecutive from 1; anything else is prose that happens to
         # be numbered.
         if not options and number != 1:
@@ -185,7 +268,7 @@ def find_menu(text: str) -> Menu | None:
             continue
         if not options:
             first_option_line = i
-        options.append(Option(number, label))
+        options.append(Option(number, label, checked))
         if CURSOR in line:
             selected = number
 
@@ -243,12 +326,29 @@ def find_menu(text: str) -> Menu | None:
         if _RULE.match(lines[i].strip()):
             start = i + 1
             break
-    block = [l for l in lines[start:question_line] if l.strip()]
-    title = block[0].strip() if block else ""
+    tabs, tab_line = _parse_tabs(lines, first_option_line)
+
+    # The tab strip sits inside the subject block and is NOT subject: rendered as
+    # a title it reaches a phone as "← ☒ Close July ☒ Aug goals ✔ Submit →",
+    # which is chrome from a terminal nobody is looking at. It has its own field
+    # now, so drop it here.
+    block = [lines[i].strip() for i in range(start, question_line)
+             if lines[i].strip() and i != tab_line]
+    title = block[0] if block else ""
+    if not title:
+        # The tab strip was the whole subject block, which is the normal shape of
+        # an AskUserQuestion — it draws its header there and nothing else. With
+        # one question that header IS the dialog's label, so keep using it (minus
+        # the ☐ chrome, which meant nothing away from the terminal). With several
+        # we cannot tell which tab is current from the strip alone, and a label
+        # naming the wrong question is worse than none: the client has the real
+        # per-question headers in `questions`.
+        answerable = [t for t in tabs if t != SUBMIT_TAB]
+        title = answerable[0] if len(answerable) == 1 else ""
     body = _join_wrapped(block[1:]) if len(block) > 1 else ""
 
     return Menu(question=question, options=options, title=title, body=body,
-                selected=selected, raw=text)
+                selected=selected, tabs=tabs, raw=text)
 
 
 def find_menu_settled(read_screen, *, attempts: int = 3, delay: float = 0.8):
@@ -273,7 +373,7 @@ def find_menu_settled(read_screen, *, attempts: int = 3, delay: float = 0.8):
 
 
 def answer_keys(option: int | None) -> list[str]:
-    """The keystrokes that answer a dialog.
+    """The keystrokes that answer a SINGLE-select dialog.
 
     `None` means refuse, and sends Escape rather than a number — the one answer
     that is safe when the numbering is not what we think it is. Every dialog
@@ -281,7 +381,103 @@ def answer_keys(option: int | None) -> list[str]:
 
     Roundtrip-verified: '1' + Enter on a real Bash-permission dialog ran the
     command.
+
+    NOT sufficient for a multi-select or a multi-question ask: there the number
+    key toggles a checkbox and the trailing Enter answers nothing, so the dialog
+    stays up having silently changed state. `plan_step` drives those.
     """
     if option is None:
         return ["\x1b"]
     return [str(option), "\r"]
+
+
+TAB = "\t"
+SUBMIT_ANSWERS = "Submit answers"
+
+# Bound on the drive loop. Each question costs at most (toggles + one Tab), so
+# this is generous for any real ask while still terminating if the screen stops
+# responding the way we read it — a loop pressing keys into a terminal forever
+# is the one failure mode worse than a dropped answer.
+MAX_STEPS = 60
+
+
+def normalise(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def question_index(menu: "Menu", questions: list[dict]) -> int | None:
+    """Which declared question the screen is currently showing, or None.
+
+    Matched on the question TEXT rather than the tab strip, because the strip
+    marks which tabs are answered but not which one you are on — the current tab
+    is distinguished by colour, and colour does not survive the read.
+
+    Prefix-tolerant: a long question is word-wrapped and can be rejoined with
+    slightly different spacing than the tool input carried.
+    """
+    shown = normalise(menu.question)
+    if not shown:
+        return None
+    best = None
+    for q in questions:
+        want = normalise(q.get("question") or q.get("header") or "")
+        if not want:
+            continue
+        if want == shown:
+            return q.get("index", questions.index(q))
+        if (want.startswith(shown) or shown.startswith(want)) and len(shown) >= 12:
+            # Longest match wins: two questions can share an opening clause.
+            if best is None or len(want) > best[1]:
+                best = (q.get("index", questions.index(q)), len(want))
+    return best[0] if best else None
+
+
+def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]]) -> list[str] | None:
+    """The NEXT keystrokes for this screen, or None when there is nothing left.
+
+    Deliberately one step at a time, re-reading between steps, rather than one
+    computed key program. Three reasons, all observed on a real TUI:
+
+    * A checkbox press is a TOGGLE, so a replayed answer un-answers it. Driving
+      from the drawn state makes the whole operation idempotent — which is what
+      makes the double-delivery this system already has (WS frame plus poll
+      tick) harmless instead of destructive.
+    * A single-select question AUTO-ADVANCES to the next tab when answered, and
+      a multi-select does not, so the tab you are on after a keypress is not
+      something a blind program can know.
+    * The dialog can change under us. Every step re-verifies before pressing,
+      which is the existing safety property, kept.
+
+    Returns [] to mean "press nothing, but we are not done" — never used, but
+    the distinction from None matters to the caller's loop.
+    """
+    if menu.is_review:
+        for option in menu.options:
+            if normalise(option.label).startswith(normalise(SUBMIT_ANSWERS)):
+                return [str(option.number), "\r"]
+        return None  # a review screen we do not recognise: refuse to guess
+
+    index = question_index(menu, questions)
+    if index is None or index >= len(selections):
+        return None
+    want = sorted(selections[index])
+
+    if menu.is_multi_select:
+        # Toggle only the DIFFERENCES, so re-running this against a screen that
+        # already matches presses nothing at all.
+        have = set(menu.checked_numbers())
+        differing = [n for n in menu.options
+                     if (n.number in want) != (n.number in have)]
+        if differing:
+            return [str(o.number) for o in differing]
+        # This tab is right; move on. Tab clamps at the review screen rather
+        # than wrapping, so over-pressing it cannot walk us back round.
+        return [TAB] if menu.needs_submit else None
+
+    # Single-select: pressing the number both answers and advances.
+    if not want:
+        return [TAB] if menu.needs_submit else None
+    number = want[0]
+    if not menu.allows(number):
+        return None
+    return [str(number)] if menu.needs_submit else [str(number), "\r"]

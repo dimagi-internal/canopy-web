@@ -655,7 +655,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def make_control_handler(cfg: Config, waker):
+def make_control_handler(cfg: Config, waker, client=None):
     """The runner's control-frame dispatch, built as a factory so it is testable.
 
     Lifted out of a closure inside `main()` because this dispatch silently LOST a
@@ -712,8 +712,27 @@ def make_control_handler(cfg: Config, waker):
             # tap work?" would wait out the whole heartbeat window.
             session_key = str(msg["session_key"])
             outcome, screen = hooks.answer_menu(session_key, msg.get("option"),
+                                                selections=msg.get("selections"),
                                                 cdp_port=cfg.cdp_port)
             hooks.note_answer_outcome(session_key, outcome, screen)
+            # RETIRE IT. The server holds the answer until a runner reports on it
+            # (that is what makes it survive a dead control channel), so a fast
+            # path that pressed the key and said nothing left the answer queued —
+            # and the very next poll tick pressed it a SECOND time. Harmless on a
+            # permission prompt, destructive on a multi-select, where a number
+            # key toggles: one tap, two presses, box back to where it started.
+            # Observed 2026-08-12 16:49:48 and 16:49:54 on eva's July closeout.
+            # `client` is optional only so the dispatch stays constructible in a
+            # test with no server; in the runner it is always supplied, and
+            # without it the poll tick is still the (double-pressing) backstop.
+            if client is not None:
+                try:
+                    client.post_menu_answer_result(cfg.runner_id,
+                                                   str(msg.get("session_id") or ""),
+                                                   str(msg.get("answer_id") or ""), outcome)
+                except Exception:  # noqa: BLE001 — the poll tick is the backstop
+                    logger.debug("could not retire menu answer from the control frame",
+                                 exc_info=True)
             sessions.request_report_now()
         elif msg.get("type") == "close_session" and msg.get("session_key"):
             # A human closed this session from the web. Runs on the wake-listener
@@ -805,7 +824,7 @@ def main() -> None:
     from .wake import WakeListener
 
     waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id)
-    waker.on_control = make_control_handler(cfg, waker)
+    waker.on_control = make_control_handler(cfg, waker, client)
     wake_on = waker.start()
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")

@@ -183,10 +183,17 @@ def test_the_menu_says_where_it_came_from():
 def test_the_shape_matches_the_screen_reader_s():
     """One payload shape, whichever half produced it — the client must never
     grow two readers (the rule execute.py's _blocking_dialog_note already
-    follows)."""
+    follows).
+
+    `questions` is the one OPTIONAL member: both producers emit it when they can
+    see the whole ask, and the screen reader cannot when the terminal is showing
+    one tab of several. A client keys off its absence to fall back to the
+    single-question fields, so it must stay additive — never a replacement for
+    anything below.
+    """
     menu = ct.pending_question([_ask()])
-    assert set(menu) == {"question", "title", "body", "selected", "options", "source",
-                         "observed_at"}
+    assert set(menu) - {"questions"} == {
+        "question", "title", "body", "selected", "options", "source", "observed_at"}
     assert menu["selected"] is None      # a transcript cannot see the cursor
 
 
@@ -300,3 +307,74 @@ def test_every_producer_stamps_when_it_looked():
 def test_stamping_is_injectable_so_ages_are_testable():
     assert ct.stamp_observed({"a": 1}, now=123.0) == {"a": 1, "observed_at": 123.0}
     assert ct.stamp_observed(None) is None
+
+
+# --- every question, not just the first -------------------------------------
+#
+# The TUI draws an AskUserQuestion's questions as TABS and refuses to submit
+# until each has an answer. Carrying only questions[0] therefore did not merely
+# under-report the ask — it made it UNANSWERABLE from any surface but the
+# keyboard, because no button on question 1 can reach the Submit behind tab 3.
+# eva, 2026-08-12: a two-question July closeout took a tap, toggled a checkbox,
+# and sat there.
+
+def _multi_ask():
+    return {
+        "questions": [
+            {"question": "Which colors do you want?", "header": "Colors",
+             "multiSelect": True,
+             "options": [{"label": "Red", "description": "warm"},
+                         {"label": "Blue", "description": "cool"}]},
+            {"question": "Which size?", "header": "Size",
+             "options": [{"label": "Small", "description": "compact"},
+                         {"label": "Large", "description": "roomy"}]},
+        ]
+    }
+
+
+def _hook(tool_input):
+    return {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+            "tool_input": tool_input}
+
+
+def test_every_question_is_carried_with_its_multi_select_flag():
+    menu = ct.menu_from_hook(_hook(_multi_ask()))
+    assert [q["index"] for q in menu["questions"]] == [0, 1]
+    assert [q["header"] for q in menu["questions"]] == ["Colors", "Size"]
+    assert [q["multi_select"] for q in menu["questions"]] == [True, False]
+    assert [o["label"] for o in menu["questions"][0]["options"]] == ["Red", "Blue"]
+
+
+def test_option_numbers_restart_at_one_per_question():
+    """They are keystrokes on that question's own tab, not a running index."""
+    menu = ct.menu_from_hook(_hook(_multi_ask()))
+    assert [o["number"] for o in menu["questions"][0]["options"]] == [1, 2]
+    assert [o["number"] for o in menu["questions"][1]["options"]] == [1, 2]
+
+
+def test_the_single_question_fields_still_describe_question_one():
+    """An older client reads only these and must render exactly what it did
+    before — the new list is additive."""
+    menu = ct.menu_from_hook(_hook(_multi_ask()))
+    assert menu["question"] == "Which colors do you want?"
+    assert menu["title"] == "Colors"
+    assert [o["label"] for o in menu["options"]] == ["Red", "Blue"]
+
+
+def test_a_malformed_question_drops_the_structured_list_rather_than_shifting_it():
+    """Answers are submitted POSITIONALLY, so a list with a hole in it would
+    answer the wrong tab. Better to fall back to first-question rendering."""
+    broken = {"questions": [
+        {"question": "Which colors?", "options": [{"label": "Red"}]},
+        {"question": "Which size?", "options": []},          # no usable options
+    ]}
+    menu = ct.menu_from_hook(_hook(broken))
+    assert menu is not None
+    assert "questions" not in menu
+    assert menu["question"] == "Which colors?"
+
+
+def test_a_single_question_ask_still_reports_one_question():
+    menu = ct.menu_from_hook(_hook(SPARK_ASK))
+    assert len(menu["questions"]) == 1
+    assert menu["questions"][0]["multi_select"] is False

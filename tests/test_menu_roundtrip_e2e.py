@@ -143,3 +143,205 @@ def test_an_option_the_dialog_does_not_offer_is_never_pressed():
     emdash, _frames = _run_hook_to_frames(SCREEN)
     runner_hooks.answer_menu_with(emdash, "agent-task", 9)
     assert emdash.sent == []
+
+
+# --- the tabbed / multi-select ask, across the same seams -------------------
+#
+# Captured from a live `claude` on 2026-08-12 driving a two-question
+# AskUserQuestion with `multiSelect` on the first. The keystroke expectations
+# below were verified against that real TUI, not reasoned about: a number
+# TOGGLES a checkbox, Tab moves tab, a single-select tab auto-advances, and
+# nothing is submitted until the review tab's own button is pressed.
+#
+# Until this shape was driven properly it was UNANSWERABLE from the web. The tap
+# landed, toggled one box, and the dialog sat waiting on a Submit no phone could
+# reach — eva's July closeout, blocked exactly this way.
+
+_RULE = "─" * 120
+
+TABBED_SCREENS = {
+    "colors": f"""\
+{_RULE}
+←  ☐ Colors  ☐ Size  ✔ Submit  →
+
+Which colors do you want?
+
+❯ 1. [ ] Red
+  2. [ ] Green
+  3. [ ] Blue
+  4. [ ] Type something
+     Next
+{_RULE}
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""",
+    "colors_done": f"""\
+{_RULE}
+←  ☒ Colors  ☐ Size  ✔ Submit  →
+
+Which colors do you want?
+
+❯ 1. [✔] Red
+  2. [ ] Green
+  3. [✔] Blue
+  4. [ ] Type something
+     Next
+{_RULE}
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""",
+    "size": f"""\
+{_RULE}
+←  ☒ Colors  ☐ Size  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+  2. Large
+  3. Type something.
+{_RULE}
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+""",
+    "review": f"""\
+{_RULE}
+←  ☒ Colors  ☒ Size  ✔ Submit  →
+
+Review your answers
+
+ ● Which colors do you want?
+   → Red, Blue
+ ● Which size?
+   → Large
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+""",
+    "gone": "⏺ GOT=Red, Blue|Large\n\n❯\n  ⏵⏵ bypass permissions on\n",
+}
+
+TABBED_INPUT = {
+    "questions": [
+        {"question": "Which colors do you want?", "header": "Colors",
+         "multiSelect": True,
+         "options": [{"label": "Red", "description": "warm"},
+                     {"label": "Green", "description": "natural"},
+                     {"label": "Blue", "description": "cool"}]},
+        {"question": "Which size?", "header": "Size", "multiSelect": False,
+         "options": [{"label": "Small", "description": "compact"},
+                     {"label": "Large", "description": "roomy"}]},
+    ]
+}
+
+
+class FakeTabbedEmdash:
+    """A terminal that responds to keys the way the real TUI was observed to.
+
+    Not a mock of our own expectations: each transition below was reproduced
+    against a live `claude` before being written down.
+    """
+
+    def __init__(self):
+        self.state = "colors"
+        self.checked: set[int] = set()
+        self.sent: list = []
+
+    @property
+    def screen(self):
+        if self.state == "colors" and self.checked == {1, 3}:
+            return TABBED_SCREENS["colors_done"]
+        return TABBED_SCREENS[self.state]
+
+    def read_terminal(self, task, *, port=9222):
+        return self.screen
+
+    def send_keys(self, task, keys, *, port=9222):
+        self.sent.append((task, list(keys)))
+        for key in keys:
+            if self.state == "colors":
+                if key == "\t":
+                    self.state = "size"
+                elif key.isdigit():
+                    n = int(key)
+                    self.checked ^= {n}          # a number TOGGLES
+            elif self.state == "size":
+                if key.isdigit():
+                    self.state = "review"        # single-select auto-advances
+                elif key == "\t":
+                    self.state = "review"
+            elif self.state == "review":
+                if key == "1":
+                    self.state = "gone"
+        return {"ok": True}
+
+
+def _hook_menu(tool_input):
+    from canopy_transcript import menu_from_hook
+
+    return menu_from_hook({"hook_event_name": "PreToolUse",
+                           "tool_name": "AskUserQuestion",
+                           "tool_input": tool_input})
+
+
+def test_the_browser_receives_every_question_with_its_multi_select_flag():
+    """The client renders its form from this. Carrying only question 1 is what
+    made the ask unanswerable — no button on it can reach tab 2's Submit."""
+    menu = _hook_menu(TABBED_INPUT)
+    assert [q["header"] for q in menu["questions"]] == ["Colors", "Size"]
+    assert [q["multi_select"] for q in menu["questions"]] == [True, False]
+    # …and an older client still sees exactly what it saw before.
+    assert menu["question"] == "Which colors do you want?"
+    assert [o["label"] for o in menu["options"]] == ["Red", "Green", "Blue"]
+
+
+def test_a_tabbed_multi_select_answer_becomes_the_right_keystrokes():
+    emdash = FakeTabbedEmdash()
+    questions = _hook_menu(TABBED_INPUT)["questions"]
+    current = runner_hooks.menu.find_menu(emdash.screen)
+
+    outcome, _screen = runner_hooks._drive_selections(
+        emdash, "agent-task", current, questions, [[1, 3], [2]], 9222)
+
+    assert outcome == runner_hooks.ANSWERED
+    assert [keys for _task, keys in emdash.sent] == [["1", "3"], ["\t"], ["2"], ["1", "\r"]]
+    assert emdash.state == "gone"
+
+
+def test_replaying_the_same_answer_does_not_undo_it():
+    """The system delivers every answer TWICE by design — control frame, then
+    poll tick. On a surface whose number keys TOGGLE, a blind replay would
+    un-check what the first delivery checked. Driving from the drawn state makes
+    the second pass a no-op instead."""
+    emdash = FakeTabbedEmdash()
+    questions = _hook_menu(TABBED_INPUT)["questions"]
+
+    # First delivery gets as far as filling in the colours, then stops.
+    emdash.send_keys("agent-task", ["1", "3"])
+    assert emdash.checked == {1, 3}
+    emdash.sent.clear()
+
+    # Second delivery, same answer, from whatever is now on screen.
+    current = runner_hooks.menu.find_menu(emdash.screen)
+    runner_hooks._drive_selections(
+        emdash, "agent-task", current, questions, [[1, 3], [2]], 9222)
+
+    assert emdash.checked == {1, 3}              # not toggled back off
+    assert [keys for _t, keys in emdash.sent] == [["\t"], ["2"], ["1", "\r"]]
+
+
+def test_a_dialog_that_is_not_the_declared_ask_is_never_guessed_at():
+    emdash = FakeTabbedEmdash()
+    current = runner_hooks.menu.find_menu(emdash.screen)
+    other = [{"index": 0, "question": "Something else?", "multi_select": True,
+              "options": [{"number": 1, "label": "x"}]}]
+
+    outcome, _screen = runner_hooks._drive_selections(
+        emdash, "agent-task", current, other, [[1]], 9222)
+
+    assert outcome == runner_hooks.UNMODELLED
+    assert emdash.sent == []

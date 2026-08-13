@@ -276,13 +276,18 @@ export function attachmentUrl(attachmentId: string): string {
 export function answerMenu(
   id: string,
   option: number | null,
+  selections?: number[][] | null,
 ): Promise<{ ok: boolean; reason: string }> {
   return request<{ ok: boolean; reason: string }>(
     `/api/canopy-sessions/${encodeURIComponent(id)}/answer-menu`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ option }),
+      // `option` rides along with `selections` rather than being replaced by it:
+      // it is the only field a runner older than this understands, and sending
+      // it the first pick keeps such a runner doing what it does today instead
+      // of reading a null option as "refuse" and pressing Escape.
+      body: JSON.stringify(selections ? { option, selections } : { option }),
     },
   );
 }

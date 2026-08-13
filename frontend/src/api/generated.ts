@@ -8559,6 +8559,8 @@ export interface components {
             readonly answer_id: string;
             /** Option */
             readonly option?: number | null;
+            /** Selections */
+            readonly selections?: readonly (readonly number[])[] | null;
         };
         /** MenuAnswerSyncOut */
         readonly MenuAnswerSyncOut: {
@@ -9099,10 +9101,20 @@ export interface components {
          *     `None` means refuse — sent as Escape. Deliberately nullable rather than a
          *     magic number: every dialog offers Esc, and it is the only answer that is
          *     safe when the option numbering is not what the client thought it was.
+         *
+         *     `selections` carries the whole answer to an `AskUserQuestion`: one list of
+         *     chosen option numbers per declared question, in declaration order, empty for
+         *     a question left unanswered. A single `option` cannot express "Red and Blue",
+         *     and cannot reach the tab holding question 2 at all — so a multi-select or a
+         *     multi-question ask was unanswerable from the web until this field existed.
+         *     `option` is still sent beside it (the first pick) purely so a runner older
+         *     than this behaves exactly as it does today instead of pressing Escape.
          */
         readonly MenuAnswerIn: {
             /** Option */
             readonly option?: number | null;
+            /** Selections */
+            readonly selections?: readonly (readonly number[])[] | null;
         };
         /**
          * StreamStateOut

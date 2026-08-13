@@ -300,7 +300,11 @@ def test_a_word_wrapped_question_is_rejoined():
     assert menu is not None
     assert menu.question.startswith("Ada is blocked on")
     assert menu.question.endswith("so which answer should I press into that session?")
-    assert menu.title == "\u2610 Unstick ada"
+    # The \u2610 is the tab strip's own chrome and now parses into `tabs`. The label
+    # still reaches the phone as the title \u2014 a single-question ask has exactly
+    # one answerable tab, and its header is the dialog's name.
+    assert menu.tabs == ["Unstick ada"]
+    assert menu.title == "Unstick ada"
 
 
 def test_a_subject_line_is_never_swallowed_into_the_question():
@@ -310,3 +314,203 @@ def test_a_subject_line_is_never_swallowed_into_the_question():
     menu = find_menu(PERMISSION)
     assert menu.question == "Do you want to proceed?"
     assert "Delete target.txt and verify" not in menu.question
+
+
+# --- Tabbed / multi-select asks --------------------------------------------
+#
+# Captured the same way as everything above: `claude` driven in a real PTY with
+# an AskUserQuestion carrying two questions, the first `multiSelect: true`, and
+# the rendered grid taken verbatim at each step. The keystroke semantics these
+# assert were established by pressing the keys and watching the screen, on
+# 2026-08-12 — a number TOGGLES a checkbox, Tab moves tab, and the dialog is not
+# submitted until the review tab's own button is pressed.
+
+RULE = "─" * 150
+
+TABBED_MULTI = f"""\
+{RULE}
+←  ☐ Colors  ☐ Size  ✔ Submit  →
+
+Which colors do you want?
+
+❯ 1. [ ] Red
+  Warm and energetic
+  2. [ ] Green
+  Natural and balanced
+  3. [ ] Blue
+  Calm and trustworthy
+  4. [ ] Type something
+     Next
+{RULE}
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+"""
+
+TABBED_MULTI_TWO_CHECKED = TABBED_MULTI.replace("1. [ ] Red", "1. [✔] Red").replace(
+    "3. [ ] Blue", "3. [✔] Blue"
+).replace("☐ Colors", "☒ Colors")
+
+TABBED_SINGLE = f"""\
+{RULE}
+←  ☒ Colors  ☐ Size  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+     Compact and efficient
+  2. Large
+     Spacious and generous
+  3. Type something.
+{RULE}
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+"""
+
+REVIEW = f"""\
+{RULE}
+←  ☒ Colors  ☒ Size  ✔ Submit  →
+
+Review your answers
+
+ ● Which colors do you want?
+   → Red, Blue
+ ● Which size?
+   → Large
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+"""
+
+# One question, single-select: NO tab strip arrows and no Submit tab. This is the
+# shape a lone number key has always finished, and it must keep working.
+LONE_SINGLE = f"""\
+{RULE}
+ ☐ Size
+
+Which size?
+
+❯ 1. Small
+     Compact option with minimal footprint.
+  2. Large
+     Expanded option with full capacity.
+  3. Type something.
+{RULE}
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+"""
+
+QUESTIONS = [
+    {"index": 0, "question": "Which colors do you want?", "header": "Colors",
+     "multi_select": True,
+     "options": [{"number": 1, "label": "Red"}, {"number": 2, "label": "Green"},
+                 {"number": 3, "label": "Blue"}]},
+    {"index": 1, "question": "Which size?", "header": "Size", "multi_select": False,
+     "options": [{"number": 1, "label": "Small"}, {"number": 2, "label": "Large"}]},
+]
+
+
+def test_a_checkbox_row_parses_its_box_separately_from_its_label():
+    """"[ ] Red" reaching a phone as a button label is the string a human reads;
+    the box state belongs in a field the driver can compare against."""
+    menu = find_menu(TABBED_MULTI)
+    assert menu is not None
+    assert [o.label for o in menu.options][:3] == ["Red", "Green", "Blue"]
+    assert [o.checked for o in menu.options][:3] == [False, False, False]
+    assert menu.is_multi_select
+    assert find_menu(TABBED_MULTI_TWO_CHECKED).checked_numbers() == [1, 3]
+
+
+def test_the_tab_strip_parses_and_stays_out_of_the_title():
+    menu = find_menu(TABBED_MULTI)
+    assert menu.tabs == ["Colors", "Size", "Submit"]
+    assert menu.needs_submit
+    # Two answerable tabs: we cannot tell which is current from the strip, and a
+    # title naming the wrong question is worse than none.
+    assert menu.title == ""
+
+
+def test_a_lone_single_select_needs_no_submit_step():
+    """The one shape today's number+Enter actually finishes."""
+    menu = find_menu(LONE_SINGLE)
+    assert menu is not None
+    assert menu.tabs == ["Size"]
+    assert not menu.needs_submit
+    assert not menu.is_multi_select
+    assert menu.title == "Size"
+
+
+def test_a_single_select_question_is_not_read_as_multi_select():
+    menu = find_menu(TABBED_SINGLE)
+    assert not menu.is_multi_select
+    assert all(o.checked is None for o in menu.options)
+    assert menu.needs_submit
+
+
+def test_the_review_screen_is_recognised():
+    menu = find_menu(REVIEW)
+    assert menu is not None
+    assert menu.is_review
+    assert [o.label for o in menu.options] == ["Submit answers", "Cancel"]
+
+
+# --- Driving ----------------------------------------------------------------
+
+
+def test_it_presses_only_the_boxes_that_differ():
+    """The whole idempotence story. A number TOGGLES, so replaying an answer that
+    has already landed must press nothing rather than undo it — which is what
+    makes the control-frame/poll-tick double delivery survivable."""
+    from canopy_runner.menu import plan_step
+
+    fresh = find_menu(TABBED_MULTI)
+    assert plan_step(fresh, QUESTIONS, [[1, 3], [2]]) == ["1", "3"]
+
+    already = find_menu(TABBED_MULTI_TWO_CHECKED)
+    # Boxes already right: nothing to toggle, so move to the next tab.
+    assert plan_step(already, QUESTIONS, [[1, 3], [2]]) == ["\t"]
+
+
+def test_it_unchecks_a_box_the_answer_does_not_want():
+    from canopy_runner.menu import plan_step
+
+    menu = find_menu(TABBED_MULTI_TWO_CHECKED)
+    assert plan_step(menu, QUESTIONS, [[1], [2]]) == ["3"]
+
+
+def test_a_single_select_tab_is_answered_by_its_number_alone():
+    """It auto-advances, so no Enter here — an Enter would land on whatever the
+    next tab drew."""
+    from canopy_runner.menu import plan_step
+
+    menu = find_menu(TABBED_SINGLE)
+    assert plan_step(menu, QUESTIONS, [[1, 3], [2]]) == ["2"]
+
+
+def test_a_lone_single_select_still_gets_number_and_enter():
+    from canopy_runner.menu import plan_step
+
+    menu = find_menu(LONE_SINGLE)
+    lone = [{"index": 0, "question": "Which size?", "multi_select": False,
+             "options": [{"number": 1, "label": "Small"}]}]
+    assert plan_step(menu, lone, [[2]]) == ["2", "\r"]
+
+
+def test_the_review_screen_presses_submit():
+    from canopy_runner.menu import plan_step
+
+    assert plan_step(find_menu(REVIEW), QUESTIONS, [[1, 3], [2]]) == ["1", "\r"]
+
+
+def test_an_unrecognised_question_presses_nothing():
+    """A dialog that is not the one we were told about must cost a dropped tap,
+    never a guessed keystroke."""
+    from canopy_runner.menu import plan_step
+
+    other = [{"index": 0, "question": "Something else entirely?",
+              "multi_select": True, "options": [{"number": 1, "label": "x"}]}]
+    assert plan_step(find_menu(TABBED_MULTI), other, [[1]]) is None
