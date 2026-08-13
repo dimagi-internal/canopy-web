@@ -417,3 +417,64 @@ async def test_ws_heartbeat_survives_a_malformed_committed_at():
     assert fresh.code_sha == "abc123"
     assert fresh.code_committed_at == 0
     await comm.disconnect()
+
+
+# --- the menu_answer relay must carry EVERY field it is published with ------
+#
+# REGRESSION, 2026-08-12. `runner_menu_answer` relays field by field, and two
+# fields added to the published frame were never added here, so the socket
+# quietly delivered a frame missing both:
+#
+#   selections  -> the runner fell back to the single-key `option` path and
+#                  pressed a NUMBER at a multi-select, toggling one checkbox
+#                  and answering nothing. Watched happening on screen: the
+#                  checkmark appeared and vanished.
+#   answer_id   -> the runner's retire call carried "", the server's id match
+#                  refused it, and the poll tick pressed the answer again.
+#
+# Every unit test around this built the frame by hand and so agreed with the
+# bug. This one takes what `answer_menu` ACTUALLY publishes and asserts the
+# relay preserves it, so the next added field fails here instead of in a
+# terminal.
+
+def _published_menu_answer_frame(monkeypatch):
+    from apps.canopy_sessions import services as chat_services
+    from apps.realtime import groups
+
+    sent = {}
+    monkeypatch.setattr(groups, "publish",
+                        lambda group, payload: sent.update(payload))
+    return sent, chat_services
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_relay_forwards_every_published_field(monkeypatch):
+    import asyncio
+
+    from apps.canopy_sessions.models import RunnerBinding, Session
+    from apps.realtime.consumers import RunnerConsumer
+
+    user, ws, agent, runner = _setup()
+    session = Session.objects.create(workspace=ws, created_by=user, agent=agent,
+                                     title="t")
+    RunnerBinding.objects.create(session=session, runner=runner,
+                                 session_key="agent-task")
+
+    sent, chat_services = _published_menu_answer_frame(monkeypatch)
+    chat_services.answer_menu(session=session, option=1, selections=[[1, 3], [2]])
+
+    # What the socket actually writes, for that exact published payload.
+    relayed = {}
+    consumer = RunnerConsumer()
+    consumer.send_json = lambda payload: _noop_store(relayed, payload)
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        consumer.runner_menu_answer(sent))
+
+    for field in ("session_id", "session_key", "option", "selections", "answer_id"):
+        assert field in relayed, f"{field} was dropped by the relay"
+    assert relayed["selections"] == [[1, 3], [2]]
+    assert relayed["answer_id"] == sent["answer_id"]
+
+
+async def _noop_store(target, payload):
+    target.update(payload)

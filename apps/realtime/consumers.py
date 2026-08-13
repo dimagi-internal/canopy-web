@@ -284,11 +284,27 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # runner.{id} group_send type="runner.menu_answer" — a human answered, from
         # the web, the dialog an agent is blocked on. The runner presses the key in
         # the session's terminal; the server never touches a terminal itself.
+        # Relayed field by field, so anything added to the published frame has to
+        # be added HERE too or it is silently dropped — which is exactly what
+        # happened to both fields below on 2026-08-12:
+        #
+        #   `selections` missing -> the runner fell back to the single-key
+        #   `option` path and pressed a NUMBER at a multi-select, toggling one
+        #   checkbox and answering nothing.
+        #   `answer_id` missing  -> the runner's retire call carried an empty id,
+        #   the server's id match refused it, the answer stayed queued and the
+        #   poll tick pressed it a second time.
+        #
+        # Both were invisible to the unit tests because those built the frame by
+        # hand. `test_realtime_menu_answer.py` now asserts this relay against
+        # what `answer_menu` actually publishes.
         await self.send_json({
             "type": "menu_answer",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
             "option": message.get("option"),
+            "selections": message.get("selections"),
+            "answer_id": message.get("answer_id"),
         })
 
     async def runner_close_session(self, message):
