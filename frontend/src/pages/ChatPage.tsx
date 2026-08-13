@@ -522,7 +522,7 @@ export function ChatPage() {
   const [answerError, setAnswerError] = useState('')
   const answeredAt = useRef(0)
   const onAnswerMenu = useCallback(
-    async (option: number | null) => {
+    async (option: number | null, selections?: number[][] | null) => {
       if (!id) return
       setAnswering(true)
       setAnswerError('')
@@ -533,7 +533,7 @@ export function ChatPage() {
       // here, where we know a tap just happened.
       answeredAt.current = Date.now()
       try {
-        const res = await answerMenu(id, option)
+        const res = await answerMenu(id, option, selections)
         if (!res.ok) {
           setAnswerError(
             res.reason === 'unavailable'

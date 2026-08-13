@@ -101,3 +101,73 @@ def test_a_malformed_frame_never_reaches_a_branch_that_raises():
     on_control({"type": "check_inbox"})         # no mailbox
     on_control({"type": "menu_answer"})         # no session_key
     on_control({"type": "close_session"})       # no session_key
+
+
+# --- the control frame must RETIRE the answer it just pressed ---------------
+
+
+class _RecordingClient:
+    def __init__(self):
+        self.retired = []
+
+    def post_menu_answer_result(self, runner_id, session_id, answer_id, outcome):
+        self.retired.append((session_id, answer_id, outcome))
+
+
+def _menu_handler(monkeypatch, client):
+    from canopy_runner import hooks, sessions
+
+    pressed = []
+    monkeypatch.setattr(hooks, "answer_menu",
+                        lambda key, option, **kw: (pressed.append((key, option, kw)),
+                                                   ("answered", None))[1])
+    monkeypatch.setattr(hooks, "note_answer_outcome", lambda *a, **k: None)
+    monkeypatch.setattr(sessions, "request_report_now", lambda: None)
+
+    waker = WakeListener("http://x", "t", "r1")
+    cfg = types.SimpleNamespace(cdp_port=9222, runner_id="r1", base_url="http://x",
+                                token="t", state_path=None)
+    return make_control_handler(cfg, waker, client), pressed
+
+
+def test_the_control_frame_retires_the_answer_it_pressed(monkeypatch):
+    """REGRESSION, eva 2026-08-12. The server holds an answer until a runner
+    REPORTS on it — that is what makes it survive a dead control channel. This
+    fast path pressed the key and reported nothing, so the answer stayed queued
+    and the next poll tick (5s later) pressed it a SECOND time:
+
+        16:49:48 answered the dialog on eva-… with option 1
+        16:49:54 answered the dialog on eva-… with option 1
+        16:49:55 menu answer for eva-… applied from the poll tick (answered)
+
+    Harmless on a permission prompt, destructive on a multi-select, where a
+    number key toggles: one tap, two presses, checkbox back where it started.
+    """
+    client = _RecordingClient()
+    on_control, pressed = _menu_handler(monkeypatch, client)
+    on_control({"type": "menu_answer", "session_key": "k", "option": 1,
+                "session_id": "s-1", "answer_id": "a-1"})
+    assert len(pressed) == 1
+    assert client.retired == [("s-1", "a-1", "answered")]
+
+
+def test_selections_reach_the_runner_from_the_control_frame(monkeypatch):
+    """A multi-select answer cannot be expressed as one option, so the frame's
+    `selections` has to survive the dispatch or the whole feature is inert."""
+    on_control, pressed = _menu_handler(monkeypatch, _RecordingClient())
+    on_control({"type": "menu_answer", "session_key": "k", "option": 1,
+                "selections": [[1, 3], [2]], "session_id": "s", "answer_id": "a"})
+    assert pressed[0][2]["selections"] == [[1, 3], [2]]
+
+
+def test_a_failed_retire_does_not_cost_the_socket(monkeypatch):
+    """The poll tick is the backstop; a raise here would take down wake and
+    cancel with it."""
+    class _Boom:
+        def post_menu_answer_result(self, *a, **k):
+            raise RuntimeError("server down")
+
+    on_control, pressed = _menu_handler(monkeypatch, _Boom())
+    on_control({"type": "menu_answer", "session_key": "k", "option": 1,
+                "session_id": "s", "answer_id": "a"})
+    assert len(pressed) == 1

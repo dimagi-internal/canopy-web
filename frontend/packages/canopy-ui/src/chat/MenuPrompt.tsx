@@ -1,12 +1,32 @@
-import type { SessionMenu } from "./protocol";
+import { useMemo, useState } from "react";
+import type { MenuQuestion, SessionMenu } from "./protocol";
 
 export interface MenuPromptProps {
   menu: SessionMenu;
   busy?: boolean;
   error?: string;
-  onAnswer: (option: number | null) => void;
+  /** `selections` is the whole answer — one list of chosen option numbers per
+   *  question. Omitted for the single-question single-select dialogs that a
+   *  lone `option` has always been able to answer. */
+  onAnswer: (option: number | null, selections?: number[][] | null) => void;
   /** Injectable for tests; defaults to the wall clock. */
   now?: number;
+}
+
+/** Whether this ask needs the full form rather than a row of buttons.
+ *
+ *  One single-select question is the shape a lone keypress answers, and it is
+ *  the overwhelmingly common one — a permission prompt, a yes/no. Anything else
+ *  (several questions, or one that takes several answers) cannot be completed by
+ *  pressing a single button, so rendering buttons for it is a lie. */
+export function needsForm(menu: SessionMenu): boolean {
+  const qs = menu.questions;
+  if (!qs || qs.length === 0) return false;
+  return qs.length > 1 || qs.some((q) => q.multi_select);
+}
+
+function isAnswered(picks: number[] | undefined): boolean {
+  return Boolean(picks && picks.length > 0);
 }
 
 /** How old a dialog may be before we say so. The runner re-reports every ~10s,
@@ -50,6 +70,120 @@ export function menuAge(menu: SessionMenu, now: number): string {
  * somebody to choose blind, which is the same failure as showing no menu, only
  * quieter.
  */
+/** Every question at once, answered in one go.
+ *
+ *  Deliberately NOT a tab strip mirroring the terminal's. The terminal shows one
+ *  question at a time because it has one screen and a cursor; a phone has a
+ *  scroll, and the thing that actually went wrong was somebody answering what
+ *  looked like the whole ask and it turning out to be tab 2 of 3. Showing all of
+ *  them, with one Send at the end, makes "have I finished?" answerable by
+ *  looking — which is the only question this surface has ever got wrong.
+ */
+function AnswerForm({
+  menu,
+  questions,
+  busy,
+  onAnswer,
+}: {
+  menu: SessionMenu;
+  questions: MenuQuestion[];
+  busy: boolean;
+  onAnswer: MenuPromptProps["onAnswer"];
+}) {
+  const [picks, setPicks] = useState<Record<number, number[]>>({});
+
+  const toggle = (q: MenuQuestion, number: number) => {
+    setPicks((prev) => {
+      const current = prev[q.index] ?? [];
+      if (!q.multi_select) return { ...prev, [q.index]: [number] };
+      return {
+        ...prev,
+        [q.index]: current.includes(number)
+          ? current.filter((n) => n !== number)
+          : [...current, number].sort((a, b) => a - b),
+      };
+    });
+  };
+
+  const remaining = useMemo(
+    () => questions.filter((q) => !isAnswered(picks[q.index])).length,
+    [questions, picks],
+  );
+
+  const send = () => {
+    // Positional, and every question gets an entry even when unanswered: the
+    // runner walks the tabs in this order, so a missing entry would silently
+    // shift every later answer onto the wrong question.
+    const selections = questions.map((q) => picks[q.index] ?? []);
+    // `option` is the first pick, for a runner too old to read `selections`.
+    // Sending null there would read as "refuse" and cancel the dialog.
+    onAnswer(selections[0]?.[0] ?? null, selections);
+  };
+
+  return (
+    <div className="mt-2 flex flex-col gap-3">
+      {questions.map((q) => (
+        <div key={q.index}>
+          <div className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+            {q.header || `Question ${q.index + 1}`}
+            {q.multi_select ? " · pick any" : ""}
+          </div>
+          <div className="mt-0.5 text-[13px] text-foreground">{q.question}</div>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {q.options.map((option) => {
+              const on = (picks[q.index] ?? []).includes(option.number);
+              return (
+                <button
+                  key={option.number}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={on}
+                  onClick={() => toggle(q, option.number)}
+                  className={`flex items-start gap-2 rounded border px-2.5 py-2 text-left disabled:opacity-50 ${
+                    on ? "border-warning bg-warning/10" : "border-input bg-card hover:bg-muted"
+                  }`}
+                >
+                  <span aria-hidden className="mt-[1px] shrink-0 text-[13px]">
+                    {on ? (q.multi_select ? "☑" : "◉") : q.multi_select ? "☐" : "○"}
+                  </span>
+                  <span>
+                    <span className="block text-[13px] font-medium text-foreground">
+                      {option.label}
+                    </span>
+                    {option.description ? (
+                      <span className="mt-0.5 block text-[12px] leading-snug text-muted-foreground">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || remaining > 0}
+          onClick={send}
+          className="rounded bg-warning px-3 py-1.5 text-[13px] font-medium text-warning-foreground disabled:opacity-50"
+        >
+          {busy ? "Sending…" : "Send answers"}
+        </button>
+        {remaining > 0 ? (
+          <span className="text-[12px] text-muted-foreground">
+            {remaining} question{remaining === 1 ? "" : "s"} still to answer
+          </span>
+        ) : null}
+      </div>
+      {menu.body ? (
+        <div className="text-[12px] text-muted-foreground">{menu.body}</div>
+      ) : null}
+    </div>
+  );
+}
+
 export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now() }: MenuPromptProps) {
   const described = menu.options.some((o) => o.description);
   // A dialog Claude Code drew with no tool call behind it — a permission prompt,
@@ -63,6 +197,7 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now
   // refuse button below is an action, not a placeholder.
   const optionless = menu.options.length === 0;
   const age = menuAge(menu, now);
+  const form = needsForm(menu);
   return (
     <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
       <div className="flex items-center gap-1.5 font-medium text-warning">
@@ -72,13 +207,22 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now
           <span className="ml-auto text-[11px] font-normal text-muted-foreground">{age}</span>
         ) : null}
       </div>
-      {menu.body ? (
+      {menu.body && !form ? (
         <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-[12px] text-foreground-secondary">
           {menu.body}
         </pre>
       ) : null}
-      <div className="mt-2 text-foreground">{menu.question}</div>
-      {optionless ? (
+      {/* The form prints each question against its own options, so the single
+          top-level question would be question 1 shown twice. */}
+      {form ? null : <div className="mt-2 text-foreground">{menu.question}</div>}
+      {form ? (
+        <AnswerForm
+          menu={menu}
+          questions={menu.questions ?? []}
+          busy={busy}
+          onAnswer={onAnswer}
+        />
+      ) : optionless ? (
         <div className="mt-1.5 text-[12px] leading-snug text-muted-foreground">
           The options can only be read at the keyboard — open this session in emdash to
           pick one. Cancelling from here still works.

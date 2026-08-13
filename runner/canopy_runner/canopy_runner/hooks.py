@@ -11,6 +11,7 @@ parser, which is what keeps this dependency one-directional."""
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -270,6 +271,7 @@ def read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
 ANSWERED = "answered"
 NO_DIALOG = "no_dialog"          # nothing on screen — already answered, or gone
 NOT_ON_MENU = "not_on_menu"      # stale numbering; the dialog changed under the tap
+UNMODELLED = "unmodelled"        # a tabbed ask we could not match to its questions
 WRONG_PANE = "wrong_pane"        # a shell tab is selected; keys would run in it
 UNREACHABLE = "unreachable"      # CDP/emdash could not be driven at all
 NO_SESSION = "no_session"        # the emdash task is gone — nothing to press a key in
@@ -279,6 +281,8 @@ NO_SESSION = "no_session"        # the emdash task is gone — nothing to press 
 ANSWER_NOTES = {
     NO_DIALOG: "That dialog is no longer on screen — it may already have been answered.",
     NOT_ON_MENU: "The dialog changed before that reached it. Here is what it shows now.",
+    UNMODELLED: "This ask has several questions and they could not be matched to what is "
+                "on screen — answer it in emdash.",
     WRONG_PANE: "A shell tab is selected for this session in emdash. Switch it to the "
                 "Claude tab and tap again.",
     UNREACHABLE: "Could not reach emdash on this runner to press the key.",
@@ -289,17 +293,88 @@ ANSWER_NOTES = {
 
 def _menu_dict(found, *, source: str) -> dict:
     """A parsed screen dialog as the one shape every producer emits."""
-    return transcript_core.stamp_observed({
+    options = [{"number": o.number, "label": o.label} for o in found.options]
+    # NOT named `menu`: that shadows the module of the same name for the whole
+    # function, and the `menu.SUBMIT_TAB` read below then fails on a dict — but
+    # only for a dialog that HAS a tab strip, because the comprehension guarding
+    # it is empty otherwise. Caught by the tabbed round-trip test.
+    payload = {
         "question": found.question,
         "title": found.title,
         "body": found.body,
         "selected": found.selected,
-        "options": [{"number": o.number, "label": o.label} for o in found.options],
+        "options": options,
         "source": source,
-    })
+    }
+    # `questions` only when the screen genuinely holds the WHOLE ask — one
+    # answerable tab. The terminal draws one tab at a time, so with several the
+    # other questions are not on it and any list we built here would be a
+    # truthful-looking lie about a form the client would then let somebody
+    # submit. Its absence is what makes the client fall back and the driver
+    # refuse, which is the correct outcome for a dialog we cannot see all of.
+    answerable = [t for t in found.tabs if t != menu.SUBMIT_TAB]
+    if len(answerable) <= 1 and not found.is_review:
+        payload["questions"] = [{
+            "index": 0,
+            "question": found.question,
+            "header": found.title,
+            "multi_select": found.is_multi_select,
+            "options": options,
+        }]
+    return transcript_core.stamp_observed(payload)
 
 
-def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222):
+def held_questions(session_key: str) -> list[dict]:
+    """The declared questions of the ask this session is blocked on.
+
+    The SCREEN cannot supply these: it draws one tab at a time, so the questions
+    behind the other tabs are simply not on it. The hook payload carried the
+    whole `AskUserQuestion` input, which is what the client rendered its form
+    from, so driving the tabs means reading the same list back.
+    """
+    listener = _hook_listener
+    if listener is None or not session_key:
+        return []
+    try:
+        for (_project, task), held in listener._pending_menus.items():
+            if task == session_key and isinstance(held, dict):
+                questions = held.get("questions")
+                return questions if isinstance(questions, list) else []
+    except Exception:  # noqa: BLE001 — never cost the wake listener its socket
+        logger.debug("could not read held questions for %s", session_key, exc_info=True)
+    return []
+
+
+def _drive_selections(cdp, session_key, current, questions, selections, cdp_port):
+    """Walk a tabbed / multi-select dialog to a complete, submitted answer.
+
+    One step per screen read (see `menu.plan_step`): press, re-read, decide
+    again. That is what makes answering IDEMPOTENT on a surface whose number
+    keys toggle — pressing the same answer twice converges on the same state
+    instead of undoing it — and it is why the double delivery this system
+    already performs (control frame, then poll tick) is now harmless.
+    """
+    for _ in range(menu.MAX_STEPS):
+        keys = menu.plan_step(current, questions, selections)
+        if keys is None:
+            # Nothing further we can justify pressing. If every question already
+            # reads as answered this is success; otherwise the screen is not the
+            # dialog we were told about.
+            return (ANSWERED, None) if current.is_review else (UNMODELLED, _menu_dict(current, source="screen"))
+        if keys:
+            cdp.send_keys(session_key, keys, port=cdp_port)
+        current = menu.find_menu_settled(
+            lambda: cdp.read_terminal(session_key, port=cdp_port))
+        if current is None:
+            # The dialog is gone, which for this path means it was submitted.
+            return ANSWERED, None
+    logger.warning("gave up driving the dialog on %s after %d steps",
+                   session_key, menu.MAX_STEPS)
+    return UNMODELLED, _menu_dict(current, source="screen") if current else None
+
+
+def answer_menu_with(cdp, session_key: str, option, *, selections=None,
+                     cdp_port: int = 9222):
     """Press a human's answer into `session_key`'s terminal.
 
     Returns `(outcome, screen)` — the verdict, and what the terminal ACTUALLY
@@ -325,6 +400,28 @@ def answer_menu_with(cdp, session_key: str, option, *, cdp_port: int = 9222):
     if current is None:
         logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
         return NO_DIALOG, None
+
+    # A structured answer (one list of chosen option numbers per question) is the
+    # only thing that can complete a multi-select or a multi-question ask: there
+    # the number key toggles a checkbox and the dialog waits on an explicit
+    # Submit, so the single-key recipe below changes state and answers nothing.
+    if selections is not None:
+        questions = held_questions(session_key)
+        if not questions:
+            # Nothing declared to map onto — safe only when the screen itself is
+            # the whole ask, which is exactly the one-question case.
+            if len(selections) != 1:
+                logger.warning("structured answer for %s has %d questions but none are held",
+                               session_key, len(selections))
+                return UNMODELLED, _menu_dict(current, source="screen")
+            questions = [{"index": 0, "question": current.question,
+                          "multi_select": current.is_multi_select}]
+        outcome, screen = _drive_selections(
+            cdp, session_key, current, questions, selections, cdp_port)
+        logger.info("answered the dialog on %s with %s (%s)", session_key,
+                    selections, outcome)
+        return outcome, screen
+
     number = None if option is None else int(option)
     if not current.allows(number):
         logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
@@ -346,7 +443,33 @@ def read_hook_menu(cwd: str, *, cdp_port: int):
     return read_hook_menu_from(cdp_control, hook_task_name(cwd), cdp_port=cdp_port)
 
 
-def answer_menu(session_key: str, option, *, cdp_port: int = 9222):
+_answer_locks: dict[str, threading.Lock] = {}
+_answer_locks_guard = threading.Lock()
+
+
+def _answer_lock(session_key: str) -> threading.Lock:
+    """One lock per session, so two deliveries cannot interleave keystrokes.
+
+    Answering used to be a single `send_keys` and was atomic by being tiny.
+    Driving a tabbed dialog is a read-decide-press loop that runs for seconds,
+    and this system delivers every answer TWICE by design — once on the control
+    frame, once from the poll tick that guarantees it survives a dead channel.
+    Those run on different threads. Without this, the second delivery can press
+    Tab into a terminal the first is halfway through toggling, and the two
+    interleave into an answer neither asked for.
+
+    The waiter is not wasted: it re-reads afterwards, finds the boxes already
+    right (or the dialog gone) and presses nothing. That is the whole reason the
+    driver decides from the drawn state rather than from a key program.
+    """
+    with _answer_locks_guard:
+        lock = _answer_locks.get(session_key)
+        if lock is None:
+            lock = _answer_locks[session_key] = threading.Lock()
+        return lock
+
+
+def answer_menu(session_key: str, option, *, selections=None, cdp_port: int = 9222):
     """`answer_menu_with` bound to real CDP, with transport failures classified.
 
     Never raises: this runs on the wake-listener thread, which also carries wake
@@ -354,7 +477,9 @@ def answer_menu(session_key: str, option, *, cdp_port: int = 9222):
     its liveness.
     """
     try:
-        return answer_menu_with(cdp_control, session_key, option, cdp_port=cdp_port)
+        with _answer_lock(session_key):
+            return answer_menu_with(cdp_control, session_key, option,
+                                    selections=selections, cdp_port=cdp_port)
     except Exception as exc:  # noqa: BLE001
         # NOT_A_CLAUDE_PANE is the one refusal a human can act on themselves, and
         # it is the one that actually bit: with a shell tab selected, every tap on

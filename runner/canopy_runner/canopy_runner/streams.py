@@ -199,6 +199,7 @@ def drain_menu_answers(cfg: Config, client: Client) -> None:
         if not (session_key and answer_id):
             continue
         outcome, screen = hooks.answer_menu(session_key, a.get("option"),
+                                            selections=a.get("selections"),
                                             cdp_port=cfg.cdp_port)
         hooks.note_answer_outcome(session_key, outcome, screen)
         try:
