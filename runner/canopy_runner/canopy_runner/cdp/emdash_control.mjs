@@ -540,11 +540,22 @@ try {
     const TEXT_PREFIX = 'text:';
     for (const key of keys) {
       if (typeof key === 'string' && key.startsWith(TEXT_PREFIX)) {
-        await page.keyboard.type(key.slice(TEXT_PREFIX.length));
+        // `delay` matters: at zero the characters arrive faster than the TUI
+        // processes them and the row takes the text WITHOUT ticking itself,
+        // after which Enter neither commits nor advances and the dialog is
+        // stuck. Discrete, paced keys are what a person produces and what the
+        // row's own handler is written for (matches a PTY capture exactly).
+        await page.keyboard.type(key.slice(TEXT_PREFIX.length), { delay: 60 });
+        // Longer than a keypress needs. The TUI re-renders the row it just took
+        // text into, and the Enter that COMMITS that text has to arrive after
+        // that settles — at 120ms it landed mid-render and toggled the row off
+        // instead, leaving the answer typed but unticked and the dialog stuck on
+        // the same tab (observed live 2026-08-13).
+        await page.waitForTimeout(700);
       } else {
         await page.keyboard.press(NAMED_KEYS[key] || key);
+        await page.waitForTimeout(120);
       }
-      await page.waitForTimeout(120);
     }
     out({ ok: true, task, sent: keys.length });
 
