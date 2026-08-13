@@ -529,7 +529,9 @@ try {
     // right after its first tab (observed live 2026-08-12). It survived a PTY
     // harness because that writes the raw byte and a terminal interprets it;
     // this transport does not.
-    const NAMED_KEYS = { '\r': 'Enter', '\n': 'Enter', '\u001b': 'Escape', '\t': 'Tab' };
+    const NAMED_KEYS = { '\r': 'Enter', '\n': 'Enter', '\u001b': 'Escape', '\t': 'Tab',
+                         '\u001b[A': 'ArrowUp', '\u001b[B': 'ArrowDown',
+                         '\u001b[C': 'ArrowRight', '\u001b[D': 'ArrowLeft' };
     // "text:..." means TYPE this, not press it — the answer to a question whose
     // real answer is not on the menu ("Type something"). keyboard.press takes one
     // key and would reject a sentence outright, and pressing it character by

@@ -540,8 +540,10 @@ def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
     mapped = set(re.findall(r"'((?:\\u[0-9a-fA-F]{4}|\\.|[^'\\])+)'\s*:", named.group(1)))
     mapped = {k.encode().decode("unicode_escape") for k in mapped}
 
-    emitted = {TAB, "\r"} | {k for k in answer_keys(None)}
-    control = {k for k in emitted if len(k) == 1 and not k.isprintable()}
+    from canopy_runner.menu import DOWN
+
+    emitted = {TAB, "\r", DOWN} | {k for k in answer_keys(None)}
+    control = {k for k in emitted if not k.isprintable() or k.startswith('\x1b')}
     assert control <= mapped, f"unmapped control keys: {control - mapped}"
 
 
@@ -569,13 +571,20 @@ def test_the_type_something_row_is_found_by_label_not_by_counting():
     assert type_something_number(find_menu(LONE_SINGLE_TYPED)) is None
 
 
-def test_free_text_presses_the_row_then_types_then_confirms():
-    from canopy_runner.menu import TEXT_PREFIX, plan_step
+def test_free_text_walks_the_cursor_to_the_row_then_types():
+    """The cursor is what receives typing, so it has to be WALKED there. A number
+    key will not do it on a multi-select — there a number toggles a checkbox and
+    leaves the cursor put, so the text lands on the wrong row (observed live: the
+    label stayed "Type something", the previous tick was cleared, and the driver
+    oscillated to its step cap)."""
+    from canopy_runner.menu import DOWN, TEXT_PREFIX, plan_step
 
     lone = [{"index": 0, "question": "Which size?", "multi_select": False,
              "options": [{"number": 1, "label": "Small"}]}]
     step = plan_step(find_menu(LONE_SINGLE), lone, [[]], ["Medium, actually"])
-    assert step == ["3", TEXT_PREFIX + "Medium, actually", "\r"]
+    # Cursor on row 1, "Type something" is row 3. No trailing Enter: typing alone
+    # fills the row in, and an Enter here cleared the earlier selection.
+    assert step == [DOWN, DOWN, TEXT_PREFIX + "Medium, actually"]
 
 
 def test_free_text_replaces_a_single_select_pick():
@@ -586,7 +595,7 @@ def test_free_text_replaces_a_single_select_pick():
     lone = [{"index": 0, "question": "Which size?", "multi_select": False,
              "options": [{"number": 1, "label": "Small"}]}]
     step = plan_step(find_menu(LONE_SINGLE), lone, [[1]], ["Medium"])
-    assert step[0] == "3" and step[1] == TEXT_PREFIX + "Medium"
+    assert step[-1] == TEXT_PREFIX + "Medium" and "1" not in step
 
 
 def test_text_already_entered_is_not_typed_again():
@@ -596,20 +605,22 @@ def test_text_already_entered_is_not_typed_again():
 
     lone = [{"index": 0, "question": "Which size?", "multi_select": False,
              "options": [{"number": 1, "label": "Small"}]}]
-    # No Submit tab on a lone single-select, so "done" is None, not Tab.
-    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Medium, actually"]) is None
+    # Entered. A lone dialog has no Submit tab, so it is confirmed with Enter —
+    # exactly as picking an option would have been.
+    assert plan_step(find_menu(LONE_SINGLE_TYPED), lone, [[]], ["Medium, actually"]) == ["\r"]
 
 
 def test_a_multi_select_toggles_boxes_before_typing():
     """Typing moves focus to the text row; a number pressed from there edits the
     text instead of toggling a box."""
-    from canopy_runner.menu import TEXT_PREFIX, plan_step
+    from canopy_runner.menu import DOWN, TEXT_PREFIX, plan_step
 
     # Boxes not yet right -> toggles come first, text is not touched yet.
     assert plan_step(find_menu(TABBED_MULTI), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["1", "3"]
-    # Boxes right -> now the text.
+    # Boxes right -> walk the cursor to row 4 and type. Verified against a live
+    # multi-select: the row auto-ticks and takes the text as its label.
     step = plan_step(find_menu(TABBED_MULTI_TWO_CHECKED), QUESTIONS, [[1, 3], [2]], ["Teal", None])
-    assert step == ["4", TEXT_PREFIX + "Teal", "\r"]
+    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal"]
     # Text entered too -> move on to the next tab.
     assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\t"]
 

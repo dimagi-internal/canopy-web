@@ -362,3 +362,37 @@ def test_the_schema_accepts_the_exact_body_the_browser_sends():
                               "texts": ["Teal", None]})
     assert payload.texts == ["Teal", None]
     assert payload.selections == [[1], []]
+
+
+def test_a_step_that_changes_nothing_stops_instead_of_thrashing():
+    """REGRESSION, 2026-08-13. A free-text step that silently missed its row left
+    the driver toggling a checkbox on and off until its step cap — 60 presses
+    into somebody's terminal to accomplish nothing, and the answer lost anyway.
+
+    A screen the driver has already seen means its model is wrong, and pressing
+    again cannot help. One wasted press and an honest refusal beats sixty.
+    """
+    screens = iter([TABBED_SCREENS["colors"]] * 40)
+
+    class _Stuck:
+        """A terminal that accepts keys and never changes."""
+
+        def __init__(self):
+            self.sent = []
+
+        def read_terminal(self, task, *, port=9222):
+            return next(screens)
+
+        def send_keys(self, task, keys, *, port=9222):
+            self.sent.append(list(keys))
+            return {"ok": True}
+
+    emdash = _Stuck()
+    questions = _hook_menu(TABBED_INPUT)["questions"]
+    current = runner_hooks.menu.find_menu(TABBED_SCREENS["colors"])
+
+    outcome, _screen = runner_hooks._drive_selections(
+        emdash, "agent-task", current, questions, [[1, 3], [2]], 9222)
+
+    assert outcome == runner_hooks.UNMODELLED
+    assert len(emdash.sent) <= 2, f"kept pressing: {emdash.sent}"
