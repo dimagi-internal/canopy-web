@@ -6,7 +6,7 @@ produces for emdash — so what the runner reads over CDP is what these strings
 contain. Verified by roundtrip on 2026-07-28: the dialog below was detected,
 answered with a keystroke, and the file it asked about was actually deleted.
 """
-from canopy_runner.menu import answer_keys, find_menu, find_menu_settled
+from canopy_runner.menu import TAB, answer_keys, find_menu, find_menu_settled
 
 # Verbatim, as a terminal renders it. Note the leading spaces, the box rule, and
 # that option 2's text wraps concerns beyond the tool itself.
@@ -514,3 +514,30 @@ def test_an_unrecognised_question_presses_nothing():
     other = [{"index": 0, "question": "Something else entirely?",
               "multi_select": True, "options": [{"number": 1, "label": "x"}]}]
     assert plan_step(find_menu(TABBED_MULTI), other, [[1]]) is None
+
+
+def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
+    """REGRESSION, 2026-08-12. The answer path is delivered over CDP, where
+    Playwright NAMES its keys and rejects a raw control character outright
+    ("Unknown key: \\t"). The sidecar mapped Enter and Escape but not Tab, so
+    answering a TABBED dialog died after its first tab — having already toggled
+    checkboxes, leaving the ask half-filled and unsubmitted.
+
+    It survived every test because the PTY harness writes the raw byte and a
+    terminal interprets it. Only the real transport cares, so this asserts the
+    two agree: every control character this module can emit must be named in the
+    sidecar's map.
+    """
+    import re
+    from pathlib import Path
+
+    sidecar = (Path(__file__).resolve().parents[1]
+               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text()
+    named = re.search(r"const NAMED_KEYS = \{([^}]*)\}", sidecar)
+    assert named, "the sidecar's key map moved — this test cannot see it any more"
+    mapped = set(re.findall(r"'((?:\\u[0-9a-fA-F]{4}|\\.|[^'\\])+)'\s*:", named.group(1)))
+    mapped = {k.encode().decode("unicode_escape") for k in mapped}
+
+    emitted = {TAB, "\r"} | {k for k in answer_keys(None)}
+    control = {k for k in emitted if len(k) == 1 and not k.isprintable()}
+    assert control <= mapped, f"unmapped control keys: {control - mapped}"

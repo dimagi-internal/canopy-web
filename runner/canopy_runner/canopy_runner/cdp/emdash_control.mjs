@@ -495,17 +495,43 @@ try {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
       const text = rows ? rows.textContent || '' : '';
-      return /[⏺✻⎿]/.test(text) || /esc to interrupt|shift\\+tab to cycle|bypass permissions/i.test(text);
+      // Claude's own chrome: transcript glyphs, or the composer's status line.
+      if (/[⏺✻⎿]/.test(text)) return true;
+      if (/esc to interrupt|shift\\+tab to cycle|bypass permissions/i.test(text)) return true;
+      // A DIALOG's footer. Needed because both tests above look for chrome that a
+      // tall dialog PUSHES OFF THE FRAME: Claude Code draws a dialog where the
+      // composer would be, so a fresh session whose first act is a six-option
+      // AskUserQuestion shows the dialog and nothing else — no glyphs, no status
+      // line. The pane was then unidentifiable exactly when a menu was up, which
+      // is the only time this command is ever called, and every web answer to one
+      // was refused as NOT_A_CLAUDE_PANE (observed live 2026-08-12). These
+      // footers are drawn by Claude Code alone; a shell renders none of them.
+      if (/Enter to select|Enter to confirm|Tab to amend|ctrl\\+e to explain|to navigate · Esc to cancel/i.test(text)) return true;
+      // The dialog's STRUCTURE, for the states that draw no footer at all.
+      // The review tab is one: it shows the tab strip, the answers so far and
+      // "1. Submit answers", and nothing else — so footer matching alone still
+      // could not identify the pane at the exact moment the final Submit had to
+      // be pressed, leaving a fully-filled-in dialog stranded one keypress from
+      // done (observed live 2026-08-12). Ballot-box glyphs and this phrasing are
+      // Claude Code's; a shell draws neither.
+      return /[☐☒]|✔ Submit|Ready to submit your answers/.test(text);
     })(); })()`);
     if (!isClaude) {
       fail(`NOT_A_CLAUDE_PANE: the visible terminal for "${task}" is not a Claude session ` +
            `(a shell tab is probably selected${switched ? ", and selecting the Claude tab did not help" : ""}) ` +
            `— refusing to send keys into it`);
     }
+    // Playwright NAMES its keys; a raw control character is rejected outright
+    // ("Unknown key: \t"). Every control character the answer path can emit has
+    // to be mapped here or the sequence dies part-way — having already pressed
+    // the keys before it, which on a multi-select leaves checkboxes toggled and
+    // nothing submitted. Tab was missing, so answering a TABBED dialog failed
+    // right after its first tab (observed live 2026-08-12). It survived a PTY
+    // harness because that writes the raw byte and a terminal interprets it;
+    // this transport does not.
+    const NAMED_KEYS = { '\r': 'Enter', '\n': 'Enter', '\u001b': 'Escape', '\t': 'Tab' };
     for (const key of keys) {
-      if (key === '\r') await page.keyboard.press('Enter');
-      else if (key === '\u001b') await page.keyboard.press('Escape');
-      else await page.keyboard.press(key);
+      await page.keyboard.press(NAMED_KEYS[key] || key);
       await page.waitForTimeout(120);
     }
     out({ ok: true, task, sent: keys.length });
