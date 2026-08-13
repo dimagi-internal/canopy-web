@@ -209,4 +209,7 @@ class MenuAnswerIn(Schema):
     #: Free text per question, for the answer that is not on the menu — the
     #: TUI appends a "Type something" row to every question and it is often
     #: where the real answer goes. Empty string = no free text.
-    texts: list[str] | None = None
+    #: `None` for a question left unanswered — the list is POSITIONAL against
+    #: the declared questions, so a hole has to be expressible or every later
+    #: answer shifts onto the wrong question.
+    texts: list[str | None] | None = None

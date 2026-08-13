@@ -8562,7 +8562,7 @@ export interface components {
             /** Selections */
             readonly selections?: readonly (readonly number[])[] | null;
             /** Texts */
-            readonly texts?: readonly string[] | null;
+            readonly texts?: readonly (string | null)[] | null;
         };
         /** MenuAnswerSyncOut */
         readonly MenuAnswerSyncOut: {
@@ -9118,7 +9118,7 @@ export interface components {
             /** Selections */
             readonly selections?: readonly (readonly number[])[] | null;
             /** Texts */
-            readonly texts?: readonly string[] | null;
+            readonly texts?: readonly (string | null)[] | null;
         };
         /**
          * StreamStateOut

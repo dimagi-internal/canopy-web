@@ -345,3 +345,20 @@ def test_a_dialog_that_is_not_the_declared_ask_is_never_guessed_at():
 
     assert outcome == runner_hooks.UNMODELLED
     assert emdash.sent == []
+
+
+def test_the_schema_accepts_the_exact_body_the_browser_sends():
+    """REGRESSION, 2026-08-13. `texts` was typed `list[str]`, so a PARTIAL answer
+    — the whole point of the partial-submit change — was rejected 422 by the API
+    the moment it reached the live site. The list is POSITIONAL against the
+    declared questions, so a hole has to be expressible: without None the runner
+    would have to guess which question a shorter list belonged to.
+
+    Captured verbatim from a browser POST.
+    """
+    from apps.canopy_sessions.schemas import MenuAnswerIn
+
+    payload = MenuAnswerIn(**{"option": 1, "selections": [[1], []],
+                              "texts": ["Teal", None]})
+    assert payload.texts == ["Teal", None]
+    assert payload.selections == [[1], []]

@@ -823,7 +823,7 @@ class MenuAnswerOut(Schema):
     #: does today — so the poll tick never gets WORSE than the current
     #: behaviour on an ask this shape cannot express.
     selections: list[list[int]] | None = None
-    texts: list[str] | None = None
+    texts: list[str | None] | None = None
 
 
 class MenuAnswerSyncOut(Schema):
