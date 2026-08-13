@@ -355,7 +355,21 @@ def _drive_selections(cdp, session_key, current, questions, selections, cdp_port
     instead of undoing it — and it is why the double delivery this system
     already performs (control frame, then poll tick) is now harmless.
     """
+    seen: set = set()
     for _ in range(menu.MAX_STEPS):
+        # A step that pressed keys and changed NOTHING means our model of this
+        # screen is wrong, and repeating it just thrashes. Observed live: a
+        # free-text step that silently missed its row left the driver toggling a
+        # checkbox on and off until the step cap — 60 presses into somebody's
+        # terminal to accomplish nothing. Stopping on a repeat state turns that
+        # into one wasted press and an honest refusal.
+        state = menu.screen_state(current)
+        if state in seen:
+            logger.warning("the dialog on %s stopped responding to the answer "
+                           "(state repeated) — refusing to press further", session_key)
+            return UNMODELLED, _menu_dict(current, source="screen")
+        seen.add(state)
+
         keys = menu.plan_step(current, questions, selections, texts)
         if keys is None:
             # Nothing further we can justify pressing. If every question already
