@@ -410,7 +410,7 @@ def test_free_text_commits_differently_on_each_kind_of_question():
     multi = find_menu(TABBED_SCREENS["colors"])
     assert multi.is_multi_select
     step = plan_step(multi, _hook_menu(TABBED_INPUT)["questions"], [[], []], ["Teal", None])
-    assert step[-1] == DOWN and TEXT_PREFIX + "Teal" in step
+    assert step[-2:] == [DOWN, "\r"] and TEXT_PREFIX + "Teal" in step
 
     single = find_menu(TABBED_SCREENS["size"])
     assert not single.is_multi_select
