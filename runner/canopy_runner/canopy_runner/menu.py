@@ -433,14 +433,22 @@ def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
     something", un-ticked the box the previous step had ticked, and the driver
     oscillated until it hit its step cap.
 
-    No trailing Enter: typing alone fills the row in (it auto-ticks and takes the
-    text as its label). Enter here was what cleared the earlier selection.
+    Enter COMMITS the text, and on a tabbed ask also advances to the next tab.
+    It is not optional: while the row is being edited the dialog swallows Tab
+    entirely, so without it the driver pressed Tab at a screen that could not
+    respond and stopped (correctly) on its no-progress guard, answer unsent.
+    Measured live — Tab alone left the screen byte-identical, Enter moved it on.
+
+    Removed once, for the right reason and the wrong case: an Enter that follows
+    a NUMBER press cleared the earlier pick, because the number had toggled the
+    wrong row. Following a cursor-walk it is correct and required.
     """
     number = type_something_number(menu)
     if number is None:
         entered = any(option.label.strip() == text.strip() for option in menu.options)
         return [] if entered else None
-    return [DOWN] * max(0, number - (menu.selected or 1)) + [TEXT_PREFIX + text]
+    return ([DOWN] * max(0, number - (menu.selected or 1))
+            + [TEXT_PREFIX + text, "\r"])
 
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
