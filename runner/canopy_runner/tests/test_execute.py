@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from canopy_runner import cdp_control, dialog, emdash, execute
+from canopy_runner.client import ClientError
 
 
 def _cfg():
@@ -224,6 +225,42 @@ def test_finish_reports_the_emdash_session_as_the_close_out_join_key(monkeypatch
     client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
     execute.execute_turn(_cfg(), client, "r-1", _turn())
     assert client.finished_tasks == ["hal-api-df02-0810-0805"]
+
+
+def test_launched_turn_survives_a_dead_post_events(monkeypatch):
+    """issue #281 — the session is already live, so a control-plane blip on a purely
+    informational status event must not turn a working turn into a `failed` one.
+    Before this, the ClientError propagated to main._claim_and_execute's
+    `except Exception` and the turn was reported failed while its work ran on."""
+    monkeypatch.setattr(cdp_control, "create_task",
+                        lambda project, prompt, task_name="", port=9222: {"task": "fresh"})
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+
+    def dead(turn_id, events):
+        raise ClientError("POST /turns/t-1/events -> 503", transient=True)
+    client.post_events = dead
+
+    result = execute.execute_turn(_cfg(), client, "r-1", _turn())
+    assert result == "created:t-1:fresh"
+    assert client.failed == []                  # never marked failed
+    assert client.finished                      # and it still closed out normally
+
+
+def test_reused_turn_survives_a_dead_post_events(monkeypatch):
+    """Same guarantee on the reuse tail — the prompt has already been delivered
+    into a live session by the time this event is posted."""
+    monkeypatch.setattr(cdp_control, "open_and_send",
+                        lambda task, text, port=9222: {"ok": True})
+    client = FakeClient({"reuse": True, "emdash_task_id": "etask-A", "summary": ""})
+
+    def dead(turn_id, events):
+        raise ClientError("POST /turns/t-1/events -> 503", transient=True)
+    client.post_events = dead
+
+    result = execute.execute_turn(_cfg(), client, "r-1", _turn())
+    assert result == "reused:t-1"
+    assert client.failed == []
+    assert client.finished
 
 
 def test_create_failure_fails_the_turn(monkeypatch):
