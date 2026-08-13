@@ -584,7 +584,8 @@ def test_free_text_walks_the_cursor_to_the_row_then_types():
     step = plan_step(find_menu(LONE_SINGLE), lone, [[]], ["Medium, actually"])
     # Cursor on row 1, "Type something" is row 3. No trailing Enter: typing alone
     # fills the row in, and an Enter here cleared the earlier selection.
-    assert step == [DOWN, DOWN, TEXT_PREFIX + "Medium, actually"]
+    # Enter commits: while the row is being edited the dialog swallows Tab.
+    assert step == [DOWN, DOWN, TEXT_PREFIX + "Medium, actually", "\r"]
 
 
 def test_free_text_replaces_a_single_select_pick():
@@ -595,7 +596,7 @@ def test_free_text_replaces_a_single_select_pick():
     lone = [{"index": 0, "question": "Which size?", "multi_select": False,
              "options": [{"number": 1, "label": "Small"}]}]
     step = plan_step(find_menu(LONE_SINGLE), lone, [[1]], ["Medium"])
-    assert step[-1] == TEXT_PREFIX + "Medium" and "1" not in step
+    assert TEXT_PREFIX + "Medium" in step and "1" not in step
 
 
 def test_text_already_entered_is_not_typed_again():
@@ -620,7 +621,7 @@ def test_a_multi_select_toggles_boxes_before_typing():
     # Boxes right -> walk the cursor to row 4 and type. Verified against a live
     # multi-select: the row auto-ticks and takes the text as its label.
     step = plan_step(find_menu(TABBED_MULTI_TWO_CHECKED), QUESTIONS, [[1, 3], [2]], ["Teal", None])
-    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal"]
+    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal", "\r"]
     # Text entered too -> move on to the next tab.
     assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\t"]
 
