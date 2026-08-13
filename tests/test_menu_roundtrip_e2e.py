@@ -398,24 +398,24 @@ def test_a_step_that_changes_nothing_stops_instead_of_thrashing():
     assert len(emdash.sent) <= 2, f"kept pressing: {emdash.sent}"
 
 
-def test_free_text_on_a_multi_select_is_refused_rather_than_half_pressed():
-    """Its commit keystroke could not be pinned down: on a row that has taken
-    text, Enter was seen advancing the tab ONCE and simply toggling that row's
-    checkbox on every later attempt — on/off/on/off, measured live. So the answer
-    gets typed and never submitted, leaving exactly the half-answered dialog this
-    surface exists to prevent.
-
-    Refusing costs a trip to the keyboard and SAYS so. Pressing hopefully costs a
-    dialog nobody can see the state of.
+def test_free_text_commits_differently_on_each_kind_of_question():
+    """Established against a live TUI. What sits BELOW the "Type something" row
+    differs by mode, and that is what decides the commit key: on a multi-select
+    it is the dialog's own Next/Submit action (so ↓ steps off and banks the
+    text), on a single-select it is "Chat about this" (so ↓ would park the
+    cursor on something that opens a chat, and Enter is the commit).
     """
-    questions = _hook_menu(TABBED_INPUT)["questions"]
-    assert questions[0]["multi_select"] is True and questions[1]["multi_select"] is False
+    from canopy_runner.menu import DOWN, TEXT_PREFIX, find_menu, plan_step
 
-    # Typed answer on the pick-any question -> named, and refused.
-    assert runner_hooks.menu.free_text_blocked(questions, ["Teal", None]) == ["Colors"]
-    # Typed answer on the single-select one -> fine, that path is verified.
-    assert runner_hooks.menu.free_text_blocked(questions, [None, "Extra large"]) == []
-    # No free text at all -> nothing to block.
-    assert runner_hooks.menu.free_text_blocked(questions, None) == []
+    multi = find_menu(TABBED_SCREENS["colors"])
+    assert multi.is_multi_select
+    step = plan_step(multi, _hook_menu(TABBED_INPUT)["questions"], [[], []], ["Teal", None])
+    assert step[-1] == DOWN and TEXT_PREFIX + "Teal" in step
 
-    assert runner_hooks.ANSWER_NOTES[runner_hooks.FREE_TEXT_UNSUPPORTED]
+    single = find_menu(TABBED_SCREENS["size"])
+    assert not single.is_multi_select
+    step = plan_step(single, [{"index": 0, "question": "Which size?",
+                               "multi_select": False,
+                               "options": [{"number": 1, "label": "Small"}]}],
+                     [[]], ["Extra large"])
+    assert step[-1] == "\r"

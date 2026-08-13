@@ -272,7 +272,6 @@ ANSWERED = "answered"
 NO_DIALOG = "no_dialog"          # nothing on screen — already answered, or gone
 NOT_ON_MENU = "not_on_menu"      # stale numbering; the dialog changed under the tap
 UNMODELLED = "unmodelled"        # a tabbed ask we could not match to its questions
-FREE_TEXT_UNSUPPORTED = "free_text_unsupported"   # typed answer on a multi-select
 WRONG_PANE = "wrong_pane"        # a shell tab is selected; keys would run in it
 UNREACHABLE = "unreachable"      # CDP/emdash could not be driven at all
 NO_SESSION = "no_session"        # the emdash task is gone — nothing to press a key in
@@ -284,8 +283,6 @@ ANSWER_NOTES = {
     NOT_ON_MENU: "The dialog changed before that reached it. Here is what it shows now.",
     UNMODELLED: "This ask has several questions and they could not be matched to what is "
                 "on screen — answer it in emdash.",
-    FREE_TEXT_UNSUPPORTED: "Typing your own answer to a pick-any question does not work from "
-                           "here yet — pick from the options, or answer it in emdash.",
     WRONG_PANE: "A shell tab is selected for this session in emdash. Switch it to the "
                 "Claude tab and tap again.",
     UNREACHABLE: "Could not reach emdash on this runner to press the key.",
@@ -434,22 +431,6 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
                 return UNMODELLED, _menu_dict(current, source="screen")
             questions = [{"index": 0, "question": current.question,
                           "multi_select": current.is_multi_select}]
-        # Free text on a MULTI-SELECT question is refused before anything is
-        # pressed. Its commit keystroke could not be pinned down: on the row that
-        # has taken text, Enter was observed advancing the tab once and simply
-        # TOGGLING the row's checkbox on every later attempt, on/off/on/off. The
-        # answer therefore gets typed and never submitted, which leaves exactly
-        # the half-answered dialog this whole surface exists to prevent.
-        #
-        # Single-select free text is verified end to end and stays. Refusing here
-        # costs a trip to the keyboard and says so; pressing hopefully costs a
-        # dialog nobody can see the state of.
-        blocked = menu.free_text_blocked(questions, texts)
-        if blocked:
-            logger.info("refusing free text on multi-select question(s) %s for %s",
-                        blocked, session_key)
-            return FREE_TEXT_UNSUPPORTED, _menu_dict(current, source="screen")
-
         outcome, screen = _drive_selections(
             cdp, session_key, current, questions, selections, cdp_port, texts)
         logger.info("answered the dialog on %s with %s (%s)", session_key,
