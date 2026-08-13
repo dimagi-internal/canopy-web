@@ -21,37 +21,52 @@ test('workspace rail exposes the sections', async ({ page }) => {
   await expect(page.locator('a[href$="/agents/echo/skills"]')).toBeVisible()
 })
 
-test('needs-you is the default landing with typed, ranked actionable items', async ({ page }) => {
-  await page.goto('/w/dimagi/agents/echo')
-  await expect(page).toHaveURL(/\/agents\/echo\/needs-you$/)
-  await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
-  // review band: a suggested task awaiting validate/decline
-  await expect(page.getByTestId('needsyou-band-review')).toContainText('ZEGCAWIS polio AFP story')
-  // question band: the in-progress task blocked on a human
-  await expect(page.getByTestId('needsyou-band-question')).toContainText('PRIDE cholera story')
-  // needs-you is action-only (#273 dropped the FYI 'notify' band — syncs like
-  // "Manager sync 1" no longer surface here). Only review + question bands remain.
-  await expect(page.getByTestId('needsyou-band-notify')).toHaveCount(0)
-  // nothing Echo is actively working appears in the inbox
-  await expect(page.getByText('Ideas backlog upkeep')).toHaveCount(0)
-  // the badge counts the gated items only (t1 + t2 suggested, t3 waiting = 3)
-  await expect(page.getByText(/3 waiting on you/)).toBeVisible()
+test('the inbox is the default landing, banded by kind, with actionable items', async ({
+  page,
+}) => {
+  // Rewritten for the post-#304 inbox. It used to assert echo's TASK-derived bands
+  // (`needsyou-band-*` at /needs-you, with Accept/Decline on suggested tasks). That
+  // aggregation was deleted deliberately: the inbox is a pure Item query now, the
+  // route is /inbox, and the testids are `inbox-band-*`. So the assertions move to
+  // ada, who has Items — echo's five tasks correctly no longer surface here.
+  await page.goto('/w/dimagi/agents/ada')
+  await expect(page).toHaveURL(/\/agents\/ada\/inbox$/)
+  await expect(page.getByRole('heading', { name: 'Inbox' }).first()).toBeVisible()
+
+  // review band: a decision awaiting implement/skip/defer
+  await expect(page.getByTestId('inbox-band-review')).toContainText(
+    'hal: discard 81 junk/stale unread emails',
+  )
+  // The FYI 'notify' band stays gone (#273) — the inbox is action-only.
+  await expect(page.getByTestId('inbox-band-notify')).toHaveCount(0)
+  await expect(page.getByText(/waiting on you/)).toBeVisible()
 })
 
-test('needs-you cards are the actionable board card, not a bounce link', async ({ page }) => {
-  await page.goto('/w/dimagi/agents/echo/needs-you')
-  const review = page.getByTestId('needsyou-band-review')
-  // The real board card (rationale + inline Accept/Decline), so you act here...
-  await expect(review.getByText(/Why:/).first()).toBeVisible()
-  await expect(review.getByRole('button', { name: /^Accept$/ }).first()).toBeVisible()
-  await expect(review.getByRole('button', { name: /^Decline$/ }).first()).toBeVisible()
+test('an agent with nothing open says so instead of showing its task list', async ({ page }) => {
+  // The other half of the #304 change, and the reason the old test could not simply
+  // be renamed: echo has five seeded tasks and zero Items, and the inbox is now
+  // Items-only — so the correct rendering is the empty state, not those tasks.
+  await page.goto('/w/dimagi/agents/echo/inbox')
+  await expect(page.getByText(/Nothing needs you right now/)).toBeVisible()
+  await expect(page.getByText('Ideas backlog upkeep')).toHaveCount(0)
+})
+
+test('inbox cards are the actionable board card, not a bounce link', async ({ page }) => {
+  await page.goto('/w/dimagi/agents/ada/inbox')
+  const review = page.getByTestId('inbox-band-review')
+  // The real card — you decide here, in place. Matched on testid, not button text:
+  // the labels render lowercase and are capitalised in CSS, so an accessible-name
+  // match on /^Implement$/ silently finds nothing.
+  await expect(review.locator('[data-testid^="item-implement-"]').first()).toBeVisible()
+  await expect(review.locator('[data-testid^="item-skip-"]').first()).toBeVisible()
+  await expect(review.locator('[data-testid^="item-defer-"]').first()).toBeVisible()
   // ...and NOT a bare link that dumps you to the generic board.
   await expect(review.locator('a[href$="/tasks"]')).toHaveCount(0)
 })
 
-test('the rail exposes the Needs you inbox', async ({ page }) => {
+test('the rail exposes the inbox', async ({ page }) => {
   await page.goto('/w/dimagi/agents/echo/tasks')
-  await expect(page.locator('a[href$="/agents/echo/needs-you"]')).toBeVisible()
+  await expect(page.locator('a[href$="/agents/echo/inbox"]')).toBeVisible()
 })
 
 test('overview shows the latest sync', async ({ page }) => {

@@ -1,7 +1,10 @@
 import { test, expect } from '@playwright/test'
 
 // Reach a tab's content. Inbox is the default landing; Sessions/Agents need a click.
-async function openTab(page: import('@playwright/test').Page, tab: 'inbox' | 'sessions' | 'agents') {
+async function openTab(
+  page: import('@playwright/test').Page,
+  tab: 'inbox' | 'sessions' | 'agents' | 'runners',
+) {
   if (tab !== 'inbox') await page.getByTestId(`tab-${tab}`).click()
 }
 
@@ -9,7 +12,7 @@ test.describe('/supervisor', () => {
   test('renders without horizontal scroll on every tab', async ({ page }) => {
     await page.goto('/supervisor')
     await expect(page.getByTestId('supervisor-page')).toBeVisible()
-    for (const tab of ['inbox', 'sessions', 'agents'] as const) {
+    for (const tab of ['inbox', 'sessions', 'agents', 'runners'] as const) {
       await openTab(page, tab)
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -22,30 +25,52 @@ test.describe('/supervisor', () => {
     // Default landing (what push drops you into) is Inbox: the waiting queue is
     // visible and the other tabs' content is not.
     await page.goto('/supervisor')
-    await expect(page.getByTestId('waiting-on-you').or(page.getByTestId('waiting-empty'))).toBeVisible()
-    await expect(page.getByTestId('open-sessions').or(page.getByTestId('sessions-empty'))).toBeHidden()
+    // `item-inbox`/`inbox-empty` (were `waiting-on-you`/`waiting-empty`) — renamed when
+    // the needs_you aggregation was deleted and the queue became a plain Item list.
+    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeVisible()
+    // The Sessions tab is now ChatSessionsPanel; the composer's `open-sessions` is gone.
+    await expect(page.getByTestId('sessions-panel')).toBeHidden()
 
     // Deep-link straight to Agents.
+    // Runners split out of the Agents tab into their own.
     await page.goto('/supervisor?tab=agents')
-    await expect(page.getByTestId('runner-status').or(page.getByText('No runner paired'))).toBeVisible()
+    await expect(page.locator('[data-testid^="agent-card-"]').first()).toBeVisible()
   })
 
-  test('waiting-on-you is above the fold', async ({ page }) => {
+  test('the inbox is above the fold', async ({ page }) => {
     await page.goto('/supervisor')
-    const inbox = page.getByTestId('waiting-on-you').or(page.getByTestId('waiting-empty'))
+    const inbox = page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))
     await expect(inbox).toBeInViewport()
   })
 
   test('one failed call does not blank the page', async ({ page }) => {
-    await page.route('**/api/agents/needs-you', (r) => r.abort())
+    // Abort the call the Inbox ACTUALLY makes. This used to abort
+    // `/api/agents/needs-you`, deleted with the aggregation — so the route never
+    // matched, nothing failed, and the test proved nothing while passing for it.
+    await page.route('**/api/items/**', (r) => r.abort())
     await page.goto('/supervisor')
     await expect(page.getByTestId('supervisor-page')).toBeVisible()
-    // Runners (Agents tab) still render despite the Inbox fetch failing.
-    await openTab(page, 'agents')
+    // Runners still render despite the Inbox fetch failing.
+    await openTab(page, 'runners')
     await expect(page.getByTestId('runner-status').or(page.getByText('No runner paired'))).toBeVisible()
   })
 
-  test('the composer dispatches a launchable command', async ({ page }) => {
+  // ---------------------------------------------------------------------------
+  // The three tests below drive the supervisor COMPOSER (`composer`,
+  // `composer-agent`, `composer-skill`, `composer-mode-repo`, `composer-workspace`)
+  // and the composer-era session list (`open-sessions`, `session-cloud-runner`).
+  // None of those testids exist in the source any more: the Sessions tab was
+  // rewritten around ChatSessionsPanel, whose creation entry point is "New chat
+  // with <agent> or project".
+  //
+  // They are marked fixme rather than deleted because the BEHAVIOUR they pin is
+  // still worth pinning — dispatching a launchable skill, a repo dispatch pinning
+  // its workspace to the tenant endpoint, and continuing into an existing session.
+  // Porting them needs the new panel's UX contract, which is not mine to invent.
+  // Deleting them would quietly drop that coverage, which is how this file rotted
+  // to 8/8 red without anyone noticing.
+  // ---------------------------------------------------------------------------
+  test.fixme('the composer dispatches a launchable command', async ({ page }) => {
     await page.goto('/supervisor')
     await openTab(page, 'sessions')
     const composer = page.getByTestId('composer')
@@ -84,7 +109,7 @@ test.describe('/supervisor', () => {
     expect(posted).toMatchObject({ agent_slug: 'echo', prompt: '/echo:story-ideation bednets' })
   })
 
-  test('a repo dispatch pins its workspace and routes to the tenant endpoint', async ({ page }) => {
+  test.fixme('a repo dispatch pins its workspace and routes to the tenant endpoint', async ({ page }) => {
     await page.goto('/supervisor')
     await openTab(page, 'sessions')
     await page.getByTestId('composer-mode-repo').click()
@@ -128,7 +153,7 @@ test.describe('/supervisor', () => {
     expect(headers['x-canopy-workspace']).toBeUndefined()
   })
 
-  test('open sessions list and continue dispatches into that exact task', async ({ page }) => {
+  test.fixme('open sessions list and continue dispatches into that exact task', async ({ page }) => {
     await page.goto('/supervisor')
     await openTab(page, 'sessions')
     await expect(page.getByTestId('open-sessions')).toBeVisible()
@@ -155,7 +180,7 @@ test.describe('/supervisor', () => {
   })
 
   test('a runner shows not-ready and opens a detail view with the reason', async ({ page }) => {
-    await page.goto('/supervisor?tab=agents')
+    await page.goto('/supervisor?tab=runners')
     // the seeded runner is not-ready → the list shows the marker
     const notReady = page.locator('[data-testid^="runner-notready-"]').first()
     await expect(notReady).toBeVisible()

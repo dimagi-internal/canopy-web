@@ -255,7 +255,10 @@ export function ChatSessionsPanel({
   const waitingCount = sessions.filter((s) => s.waiting_on_you).length
 
   return (
-    <div className="flex min-h-0 flex-col">
+    // Named so a test can assert this tab is (or is not) showing. The supervisor
+    // spec used to reach for `open-sessions`, which belonged to the composer UI
+    // this panel replaced.
+    <div className="flex min-h-0 flex-col" data-testid="sessions-panel">
       <div className="flex items-center justify-between gap-2 pb-2">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           {heading}

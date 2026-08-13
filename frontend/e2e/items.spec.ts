@@ -39,12 +39,15 @@ test('an open item shows in the agent inbox and the fleet supervisor', async ({ 
   await expect(page.getByText('hal: discard 81 junk/stale unread emails')).toBeVisible()
 
   await page.goto('/supervisor')
-  await expect(page.getByTestId('waiting-on-you')).toContainText(
+  // `item-inbox` (was `waiting-on-you`): the supervisor's queue became a plain
+  // Item list when the needs_you aggregation was deleted, and the testid moved
+  // with it. The spec kept asserting the old name and had been red ever since.
+  await expect(page.getByTestId('item-inbox')).toContainText(
     'hal: discard 81 junk/stale unread emails',
   )
   // The inbox row names where implementing sends the work — Ada's fan-out,
   // visible without opening the item.
-  await expect(page.getByTestId('waiting-on-you')).toContainText('dispatches to hal')
+  await expect(page.getByTestId('item-inbox')).toContainText('dispatches to hal')
 })
 
 test('the unfiltered queue shows only what is still waiting; settled cards collapse', async ({
