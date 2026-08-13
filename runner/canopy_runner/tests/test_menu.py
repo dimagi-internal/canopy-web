@@ -627,7 +627,9 @@ def test_a_multi_select_toggles_boxes_before_typing():
     # Multi-select commits with ↓: the row below is the dialog's Next/Submit
     # action, so stepping off banks the text and leaves the cursor somewhere
     # the grid can show — no hidden edit state to guess at.
-    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal", DOWN]
+    # ↓ steps off the field onto the dialog's Next/Submit row; Enter activates
+    # it. Tab from there does nothing at all (measured live).
+    assert step == [DOWN, DOWN, DOWN, TEXT_PREFIX + "Teal", DOWN, "\r"]
     # Text entered too -> move on to the next tab.
     assert plan_step(find_menu(TABBED_MULTI_TYPED), QUESTIONS, [[1, 3], [2]], ["Teal", None]) == ["\t"]
 

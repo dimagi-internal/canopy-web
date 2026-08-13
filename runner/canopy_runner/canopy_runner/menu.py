@@ -455,8 +455,12 @@ def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
     # guess at. On a single-select the row below is "Chat about this", so ↓ there
     # would park the cursor on something that opens a chat; Enter is the verified
     # commit for that shape (it produced `GOT=Medium` from a real agent).
-    commit = DOWN if menu.is_multi_select else "\r"
-    return walk + [TEXT_PREFIX + text, commit]
+    # ↓ then Enter, because ↓ lands the cursor ON that action row and Enter is
+    # what activates it. Tab is NOT the way off: measured live, Tab from there
+    # left the screen identical and the driver stopped on its no-progress guard
+    # with the text committed but the tab never advanced.
+    commit = [DOWN, "\r"] if menu.is_multi_select else ["\r"]
+    return walk + [TEXT_PREFIX + text] + commit
 
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
