@@ -415,22 +415,32 @@ def type_something_number(menu: "Menu") -> int | None:
     return None
 
 
+DOWN = "\x1b[B"
+
+
 def _free_text_step(menu: "Menu", text: str) -> list[str] | None:
     """Keystrokes to put `text` into this question, or [] if it is already there.
 
     None means we cannot: the row is gone and nothing on screen carries the text,
     so typing would land somewhere unpredictable. Refusing costs the answer and
     says so; guessing types a sentence into whatever has focus.
+
+    Typing goes to whatever row the CURSOR is on, so the cursor has to be walked
+    there with arrow keys. A number key will not do it on a multi-select: there a
+    number TOGGLES a checkbox and leaves the cursor where it was, so the text
+    lands on the wrong row and the tick is spurious. Observed live — pressing the
+    row's number, typing and pressing Enter left the label reading "Type
+    something", un-ticked the box the previous step had ticked, and the driver
+    oscillated until it hit its step cap.
+
+    No trailing Enter: typing alone fills the row in (it auto-ticks and takes the
+    text as its label). Enter here was what cleared the earlier selection.
     """
     number = type_something_number(menu)
     if number is None:
         entered = any(option.label.strip() == text.strip() for option in menu.options)
         return [] if entered else None
-    # Pressing the number MOVES the cursor to that row and opens its edit field —
-    # it does NOT answer, unlike a declared option's number. Verified against a
-    # live TUI: the footer gains "ctrl+g to edit in Vim" and the label becomes
-    # whatever you type.
-    return [str(number), TEXT_PREFIX + text, "\r"]
+    return [DOWN] * max(0, number - (menu.selected or 1)) + [TEXT_PREFIX + text]
 
 # Bound on the drive loop. Each question costs at most (toggles + one Tab), so
 # this is generous for any real ask while still terminating if the screen stops
@@ -468,6 +478,21 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
             if best is None or len(want) > best[1]:
                 best = (q.get("index", questions.index(q)), len(want))
     return best[0] if best else None
+
+
+def screen_state(menu: "Menu") -> tuple:
+    """What this screen IS, for spotting a step that changed nothing.
+
+    Question plus every row's number, label and tick — the only things the driver
+    reacts to, so two screens equal under this are two screens it would treat
+    identically and therefore answer identically. Comparing raw text instead
+    would make a spinner or a clock look like progress.
+    """
+    return (
+        menu.question,
+        menu.is_review,
+        tuple((o.number, o.label, o.checked) for o in menu.options),
+    )
 
 
 def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
@@ -519,8 +544,8 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
         if differing:
             return [str(o.number) for o in differing]
         if text:
-            # After the boxes, never before: typing moves focus to the text row,
-            # and a number pressed from there edits the text instead of toggling.
+            # After the boxes, never before: the cursor ends up on the text row,
+            # and a number pressed from there would toggle the wrong thing.
             step = _free_text_step(menu, text)
             if step is None:
                 return None
@@ -539,7 +564,10 @@ def plan_step(menu: "Menu", questions: list[dict], selections: list[list[int]],
             return None
         if step:
             return step
-        return [TAB] if menu.needs_submit else None
+        # Entered. A dialog with a Submit tab is finished from there; one without
+        # (a lone question) is confirmed with Enter, exactly as picking an option
+        # would have been.
+        return [TAB] if menu.needs_submit else ["\r"]
 
     # Single-select: pressing the number both answers and advances.
     if not want:
