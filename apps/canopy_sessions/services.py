@@ -1003,7 +1003,7 @@ def project_events(turn: Turn, rows) -> int:
 
 def answer_menu(*, session: Session, option: int | None,
                 selections: list[list[int]] | None = None,
-                texts: list[str] | None = None) -> str:
+                texts: list[str | None] | None = None) -> str:
     """Answer the dialog an agent is blocked on, from the web.
 
     `selections` is the whole answer: one list of chosen option numbers per
