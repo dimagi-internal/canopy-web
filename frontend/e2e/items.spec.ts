@@ -46,3 +46,38 @@ test('an open item shows in the agent inbox and the fleet supervisor', async ({ 
   // visible without opening the item.
   await expect(page.getByTestId('waiting-on-you')).toContainText('dispatches to hal')
 })
+
+test('the unfiltered queue shows only what is still waiting; settled cards collapse', async ({
+  page,
+}) => {
+  // The rot this guards against: Items are never deleted, only settled, so the
+  // page grew to 32 cards — 30 of them decided or dismissed — and the 2 that
+  // actually wanted an answer were buried in weeks of history.
+  //
+  // Asserted on the two items whose state is fixed regardless of what ran before:
+  // fa-hal-inbox is never decided by another test, fa-old-settled is seeded
+  // dismissed. Counting cards here would couple this to test order.
+  await page.goto('/w/dimagi/agents/ada/items')
+
+  await expect(page.getByText('hal: discard 81 junk/stale unread emails')).toBeVisible()
+  await expect(page.getByText('waiting on you')).toBeVisible()
+
+  // The settled card is present but tucked away, not competing for attention.
+  const settled = page.getByTestId('items-settled')
+  await expect(settled).toContainText('settled')
+  await expect(
+    page.getByText('hal: an old finding nobody needs to see again'),
+  ).not.toBeVisible()
+
+  await settled.getByText(/\d+ settled/).click()
+  await expect(page.getByText('hal: an old finding nobody needs to see again')).toBeVisible()
+})
+
+test('a batch permalink still shows everything it decided', async ({ page }) => {
+  // The deliberate exception: ?batch= names one sitting and is usually opened to
+  // read back what was decided, so it must NOT hide settled cards.
+  await page.goto('/w/dimagi/agents/ada/items?batch=fleet-audit-2026-06-30')
+
+  await expect(page.getByText('hal: an old finding nobody needs to see again')).toBeVisible()
+  await expect(page.getByTestId('items-settled')).toHaveCount(0)
+})

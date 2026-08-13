@@ -140,30 +140,52 @@ export function ItemsSection(): JSX.Element {
   if (error) return <p className="p-4 text-[13px] text-destructive">{error}</p>
   if (!items) return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>
 
-  const open = items.filter((i) => i.state === 'open').length
+  // This surface exists to ask a human for a decision, so what is still UNDECIDED is
+  // the whole content and everything else is archive. Items are never deleted — only
+  // moved to `decided`/`dismissed` — so rendering every state made the page grow
+  // without bound: it reached 32 cards, 30 of them settled, and the 2 that actually
+  // wanted an answer were buried in weeks of history. Settled cards now collapse
+  // behind a disclosure. A `?batch=` permalink is the deliberate exception: it names
+  // one sitting and is usually opened precisely to read back what was decided.
+  const open = items.filter((i) => i.state === 'open')
+  const settled = items.filter((i) => i.state !== 'open')
+  const showAll = Boolean(batch)
+  const primary = showAll ? items : open
+
+  const renderCard = (i: ItemOut): JSX.Element => (
+    <ItemCard
+      key={i.id}
+      item={i}
+      onDecided={(updated) =>
+        setItems((prev) => (prev ?? []).map((p) => (p.id === updated.id ? updated : p)))
+      }
+    />
+  )
 
   return (
     <div className="flex flex-col gap-3 p-4" data-testid="items-batch">
       <header>
         <h2 className="text-base font-semibold text-foreground">{batch || 'Items'}</h2>
         <p className="text-[11px] text-muted-foreground">
-          {items.length} item{items.length === 1 ? '' : 's'} · {open} open
+          {showAll
+            ? `${items.length} item${items.length === 1 ? '' : 's'} · ${open.length} open`
+            : `${open.length} waiting on you`}
         </p>
       </header>
-      {items.length === 0 ? (
+      {primary.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-[13px] text-muted-foreground">
-          Nothing here.
+          {showAll || settled.length === 0 ? 'Nothing here.' : 'Nothing waiting on you.'}
         </p>
       ) : (
-        items.map((i) => (
-          <ItemCard
-            key={i.id}
-            item={i}
-            onDecided={(updated) =>
-              setItems((prev) => (prev ?? []).map((p) => (p.id === updated.id ? updated : p)))
-            }
-          />
-        ))
+        primary.map(renderCard)
+      )}
+      {!showAll && settled.length > 0 && (
+        <details data-testid="items-settled">
+          <summary className="cursor-pointer text-[11px] text-muted-foreground">
+            {settled.length} settled
+          </summary>
+          <div className="mt-3 flex flex-col gap-3">{settled.map(renderCard)}</div>
+        </details>
       )}
     </div>
   )
