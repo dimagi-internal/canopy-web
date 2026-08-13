@@ -301,10 +301,24 @@ function AppShell() {
           )}
           <div className="flex min-w-0 items-center gap-2 xl:gap-3">
             {/* Full inline nav only once all items fit (~xl); below that it
-                overflows the viewport, so we collapse it into the menu below. */}
-            <nav className="hidden min-w-0 xl:flex gap-0.5">
+                collapses into the menu below.
+
+                `overflow-x-auto` because "all items fit at xl" stopped being true:
+                the nav grew to 15 items and at exactly 1280px (Tailwind's xl, and
+                Desktop Chrome's default) it ran 6px past the viewport, giving EVERY
+                page a horizontal scrollbar. Scrolling within the nav keeps that
+                contained instead of pushing the document wide, and it does not
+                regress as the next item is added — raising the breakpoint instead
+                would have hidden the whole nav on 1280–1440px laptops, which is most
+                of them. `min-w-0` is what lets this flex child shrink far enough for
+                the overflow to apply. */}
+            <nav className="hidden min-w-0 overflow-x-auto xl:flex gap-0.5">
               {navItems.map((item) => (
-                <Link key={item.path} to={item.path} className={navLinkClass(item.path, false)}>
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`${navLinkClass(item.path, false)} shrink-0`}
+                >
                   {item.label}
                 </Link>
               ))}
