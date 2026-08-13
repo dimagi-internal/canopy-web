@@ -9,6 +9,9 @@ import {
   NAVIGATE_FALLBACK_DENYLIST,
 } from './src/pwa/navigation-fallback'
 
+// Same override as playwright.config/backend.sh — see E2E_API_PORT there.
+const API_ORIGIN = `http://localhost:${process.env.E2E_API_PORT ?? '8000'}`
+
 export default defineConfig({
   // Path prefix when deployed as a labs tenant (labs.connect.dimagi.com/canopy).
   // Drives import.meta.env.BASE_URL, which the router basename + API client
@@ -87,15 +90,15 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': API_ORIGIN,
       // WebSocket control channels (realtime supervisor/turn tails, chat). Without
       // this, NO ws feature works under `vite dev` — the socket would hit :3000,
       // which has no /ws handler. ws:true upgrades the proxied connection.
-      '/ws': { target: 'ws://localhost:8000', ws: true },
-      '/health': 'http://localhost:8000',
-      '/accounts': 'http://localhost:8000',
-      '/admin': 'http://localhost:8000',
-      '/static': 'http://localhost:8000',
+      '/ws': { target: API_ORIGIN.replace('http', 'ws'), ws: true },
+      '/health': API_ORIGIN,
+      '/accounts': API_ORIGIN,
+      '/admin': API_ORIGIN,
+      '/static': API_ORIGIN,
     },
   },
 })

@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Overridable so the suite can run on a machine where :8000 is already taken
+// (a shared Mac with a second account's dev server on it).
+const API_PORT = process.env.E2E_API_PORT ?? '8000'
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
@@ -21,7 +25,7 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 7'] }, testMatch: /supervisor\.spec\.ts/ },
   ],
   webServer: [
-    { command: 'bash e2e/backend.sh', url: 'http://127.0.0.1:8000/health/', timeout: 120_000, reuseExistingServer: false },
+    { command: 'bash e2e/backend.sh', url: `http://127.0.0.1:${API_PORT}/health/`, timeout: 120_000, reuseExistingServer: false },
     { command: 'npm run dev', url: 'http://localhost:3000', timeout: 60_000, reuseExistingServer: false },
   ],
 })

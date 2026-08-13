@@ -85,15 +85,25 @@ AgentSkill.objects.create(
 
 # An open emdash session the runner reported — drives /supervisor's Open sessions
 # section. status ONLINE + a fresh heartbeat so GET /api/harness/sessions includes it.
-from apps.harness.models import Runner, EmdashSession
+from apps.harness.models import Runner
+from apps.canopy_sessions.models import Session as CanopySession, RunnerBinding
 from django.utils import timezone as _tz
 _runner = Runner.objects.create(
     name="e2e-mbp", kind=Runner.EMDASH, host="e2e-host", paired_by=user, workspace=ws,
     status=Runner.ONLINE, last_heartbeat_at=_tz.now(), capabilities={"projects": ["canopy-web"]},
     ready=False, ready_note="emdash CDP unreachable",
 )
-EmdashSession.objects.create(
-    runner=_runner, workspace=ws, emdash_task="cloud-runner", project="canopy-web",
+# harness.EmdashSession was absorbed into canopy_sessions: the session itself, plus a
+# RunnerBinding holding the live runner pointer (`emdash_task` → `session_key`). This
+# seed still imported the deleted model, which raised at import time and took the WHOLE
+# e2e suite down — every spec, not just the supervisor one. That is why nothing caught
+# the items view growing to 32 cards.
+_session = CanopySession.objects.create(
+    workspace=ws, project="canopy-web",
+    status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_RUNNER,
+)
+RunnerBinding.objects.create(
+    session=_session, runner=_runner, session_key="cloud-runner",
     status="in_progress", last_interacted_at=_tz.now(),
 )
 
@@ -146,6 +156,14 @@ Item.objects.create(
     idempotency_key="fa-lily", title="hal: ONE buried HUMAN email — Lily Olson",
     body="A real person who never got an answer.",
     dispatch=[{"target_agent": "hal", "prompt": "/hal:turn --thread lily", "origin": "email"}],
+)
+# A settled card from an OLDER sitting. Items are never deleted, so this is what
+# accumulates: the unfiltered view must keep it out of the way of the open ones.
+# Deliberately in a different batch, so the batch-permalink tests don't see it.
+Item.objects.create(
+    agent=ada_agent, kind="review", origin="api", batch_key="fleet-audit-2026-06-30",
+    idempotency_key="fa-old-settled", title="hal: an old finding nobody needs to see again",
+    body="Long since dismissed.", state=Item.DISMISSED,
 )
 
 session = SessionStore()
