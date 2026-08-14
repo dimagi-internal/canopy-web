@@ -1261,7 +1261,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List my shared sessions */
+        /** List shared sessions */
         readonly get: operations["apps_session_sharing_api_list_sessions"];
         readonly put?: never;
         readonly post?: never;
@@ -1278,7 +1278,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List my arcs */
+        /** List arcs */
         readonly get: operations["apps_session_sharing_api_list_arcs"];
         readonly put?: never;
         /** Create an arc from owned sessions (ordered) */
