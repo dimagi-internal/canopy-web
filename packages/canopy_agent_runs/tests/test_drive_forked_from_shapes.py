@@ -14,7 +14,6 @@ tolerantly. Every sibling header field is already coerced (``str(...)``,
 ``_coerce_dt(...)``); ``forked_from`` was the one read raw.
 """
 
-import pytest
 import yaml
 
 from canopy_agent_runs.drive.store import DriveRunStore, SkillMeta
