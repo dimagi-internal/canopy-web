@@ -46,12 +46,20 @@ class SharedSessionOut(StrictModel):
 
 
 class SessionUploadOut(StrictModel):
-    """Result of POST /api/sessions/upload."""
+    """Result of POST /api/sessions/upload.
+
+    ``owner_email`` is here because a PRIVATE upload has no share token and no
+    public page, so the only true statement a client can make about it is *who
+    can read it* — and the client cannot know that on its own. Agents upload
+    under their own accounts (the canopy uploader resolves its PAT from the repo
+    it runs in), so the uploader's identity is frequently not the human's.
+    """
 
     slug: str
     message_count: int = Field(ge=0)
     redaction_count: int = Field(ge=0)
     visibility: SessionVisibility
+    owner_email: EmailStr
     share_token: str | None = None
     duplicate: bool = False
 
@@ -122,6 +130,7 @@ class ArcCreateOut(StrictModel):
     slug: str
     visibility: SessionVisibility
     item_count: int = Field(ge=0)
+    owner_email: EmailStr
     share_token: str | None = None
 
 

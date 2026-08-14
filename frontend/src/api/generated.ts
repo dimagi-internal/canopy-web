@@ -5792,6 +5792,12 @@ export interface components {
         /**
          * SessionUploadOut
          * @description Result of POST /api/sessions/upload.
+         *
+         *     ``owner_email`` is here because a PRIVATE upload has no share token and no
+         *     public page, so the only true statement a client can make about it is *who
+         *     can read it* — and the client cannot know that on its own. Agents upload
+         *     under their own accounts (the canopy uploader resolves its PAT from the repo
+         *     it runs in), so the uploader's identity is frequently not the human's.
          */
         readonly SessionUploadOut: {
             /** Slug */
@@ -5805,6 +5811,11 @@ export interface components {
              * @enum {string}
              */
             readonly visibility: "private" | "link";
+            /**
+             * Owner Email
+             * Format: email
+             */
+            readonly owner_email: string;
             /** Share Token */
             readonly share_token?: string | null;
             /**
@@ -5864,6 +5875,11 @@ export interface components {
             readonly visibility: "private" | "link";
             /** Item Count */
             readonly item_count: number;
+            /**
+             * Owner Email
+             * Format: email
+             */
+            readonly owner_email: string;
             /** Share Token */
             readonly share_token?: string | null;
         };

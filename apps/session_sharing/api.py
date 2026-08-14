@@ -178,6 +178,7 @@ def upload_session(
                     message_count=existing.messages.count(),
                     redaction_count=existing.redaction_count,
                     visibility=existing.visibility,
+                    owner_email=existing.owner.email,
                     share_token=token.token if token else None,
                     duplicate=True,
                 ),
@@ -231,6 +232,7 @@ def upload_session(
             message_count=len(rows),
             redaction_count=total_redactions,
             visibility=session.visibility,
+            owner_email=session.owner.email,
             share_token=token.token if token else None,
             duplicate=False,
         ),
@@ -378,6 +380,7 @@ def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
             slug=arc.slug,
             visibility=arc.visibility,
             item_count=len(items),
+            owner_email=arc.owner.email,
             share_token=token.token if token else None,
         ),
     )

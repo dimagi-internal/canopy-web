@@ -113,6 +113,36 @@ def test_reupload_is_idempotent(auth_client):
 
 
 @pytest.mark.django_db
+def test_upload_reports_the_owning_account(auth_client):
+    """A PRIVATE upload has no share token and no public page, so the only true
+    thing a client can say about it is who can read it — and only the server
+    knows that. Agents upload under their OWN accounts, so the uploader is
+    frequently not the human who asked for the share; a client that guesses
+    prints a false promise (dimagi-internal/canopy#484)."""
+    private = _upload(auth_client, _transcript("own-1"), visibility="private").json()
+    assert private["share_token"] is None
+    assert private["owner_email"] == "owner@dimagi.com"
+
+    linked = _upload(auth_client, _transcript("own-2")).json()
+    assert linked["owner_email"] == "owner@dimagi.com"
+
+    # The idempotent re-upload path returns a second, separately-built payload.
+    again = _upload(auth_client, _transcript("own-1"), visibility="private").json()
+    assert again["duplicate"] is True
+    assert again["owner_email"] == "owner@dimagi.com"
+
+
+@pytest.mark.django_db
+def test_arc_create_reports_the_owning_account(auth_client):
+    slug = _upload(auth_client, _transcript("arc-own")).json()["slug"]
+    body = _create_arc(
+        auth_client, [{"session_slug": slug, "heading": "One"}], visibility="private"
+    ).json()
+    assert body["share_token"] is None
+    assert body["owner_email"] == "owner@dimagi.com"
+
+
+@pytest.mark.django_db
 def test_list_includes_link_shared_sessions_from_others(auth_client, other):
     """A session an agent (or teammate) shared must be findable by everyone —
     the list is "shared with the team", not "uploaded by me". Their PRIVATE
