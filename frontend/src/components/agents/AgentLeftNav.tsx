@@ -70,10 +70,15 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
 
   return (
     <WorkbenchRail header={header}>
+      {/* Phone: a horizontal, scrollable strip — the same shape /supervisor already
+          uses for its tabs. Stacked vertically it ran to nine rows, and with the
+          identity header above it that pushed the actual content to 55% down the
+          first screen: you scrolled past the navigation to reach what you opened.
+          Desktop is unchanged from md up. */}
       <nav className="px-2 py-3">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex gap-0.5 overflow-x-auto md:flex-col md:overflow-x-visible">
           {items.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === 'overview'}>
+            <NavLink key={item.to} to={item.to} end={item.to === 'overview'} className="shrink-0 md:shrink">
               {({ isActive }) => (
                 <WorkbenchNavItem active={isActive} count={item.count}>
                   {item.label}

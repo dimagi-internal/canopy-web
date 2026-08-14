@@ -174,7 +174,7 @@ export function NoteComposer({
             ? 'Change the words to what they should say…'
             : 'What’s wrong, missing, or worth saying differently?'
         }
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary"
+        className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary focus-visible:outline-2 focus-visible:outline-primary"
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -186,7 +186,7 @@ export function NoteComposer({
             rememberReviewerName(e.target.value)
           }}
           placeholder="Your name (optional)"
-          className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-[12px] text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary"
+          className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-[12px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary focus-visible:outline-2 focus-visible:outline-primary"
         />
         <div className="flex items-center gap-2">
           <button

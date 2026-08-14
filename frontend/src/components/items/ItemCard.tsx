@@ -84,7 +84,7 @@ export function ItemCard({
             disabled={busy}
             placeholder="Type an answer…"
             onChange={(e) => setAnswer(e.target.value)}
-            className="min-w-0 flex-1 min-h-11 sm:min-h-0 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+            className="min-w-0 flex-1 min-h-11 sm:min-h-0 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary disabled:opacity-50"
             data-testid={`item-answer-${item.id}`}
           />
           <button
