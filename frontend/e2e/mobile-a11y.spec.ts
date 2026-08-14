@@ -9,20 +9,17 @@ import { test, expect } from '@playwright/test'
 const SURFACES = ['/supervisor', '/w/dimagi/agents/ada/items', '/w/dimagi/agents/ada/inbox']
 
 test.describe('mobile', () => {
-  // The gate is 2.0, and that is deliberately BELOW the 3:1 this should reach.
+  // Gate is the real 3:1 bar.
   //
-  // What was shipped: four inputs used `bg-input placeholder:text-foreground-subtle`,
-  // and those two tokens are the SAME oklch value in dark mode — contrast 1.00, the
-  // hint literally unreadable. A fifth set no placeholder colour at all and inherited
-  // the browser default: 1.08. Those are the bug this catches, and they are fixed.
+  // What shipped before this: four inputs used `bg-input placeholder:text-foreground-subtle`,
+  // and those two tokens are the SAME oklch value in dark mode — contrast 1.00, the hint
+  // literally unreadable. A fifth set no placeholder colour and inherited the browser
+  // default: 1.08.
   //
-  // Moving to `--muted-foreground` gets dark mode to 2.15 (light mode is already 3.21,
-  // same token on a light `--input`). Clearing 3:1 in dark needs a placeholder colour
-  // around oklch(0.64) — which means a new per-theme token, because no single value
-  // clears 3:1 against BOTH a dark `--input` (0.374) and a light one (0.869). That is a
-  // palette decision, not a test decision, so it is raised rather than smuggled in here.
-  // Raise this constant to 3 when that token lands.
-  const MIN_CONTRAST = 2.0
+  // `--muted-foreground` alone only reached 2.15 in dark, because no single value clears
+  // 3:1 against BOTH a dark `--input` (0.374) and a light one (0.869). Dark now uses
+  // `--foreground-secondary` via the `dark:` variant: 5.68 dark, 3.21 light.
+  const MIN_CONTRAST = 3.0
 
   test('no invisible placeholders', async ({ page }) => {
     // `--foreground-subtle` and `--input` are the SAME oklch value in dark mode, so

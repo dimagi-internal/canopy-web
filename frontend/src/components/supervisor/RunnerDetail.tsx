@@ -170,7 +170,7 @@ export function RunnerDetail({
               placeholder="Why? (e.g. token limit on this account)"
               maxLength={200}
               data-testid="runner-pause-note"
-              className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground"
+              className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
             />
           )}
           {pauseErr && <p className="text-[12px] text-destructive" data-testid="runner-pause-error">{pauseErr}</p>}
