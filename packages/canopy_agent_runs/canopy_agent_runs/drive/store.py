@@ -358,6 +358,30 @@ _CANONICAL_TO_SCHEMA_STATUS: dict[str, str] = {
 }
 
 
+def _coerce_forked_from(value: Any) -> str | None:
+    """Coerce a run_state ``forked_from`` to the source run id.
+
+    The read model declares ``forked_from: str | None``, but Drive carries
+    two shapes in the wild: the bare run-id string this store writes, and a
+    lineage BLOCK (``{run_id, phase, forked_at}``) that ace-web's opp_forker
+    wrote for months on the reasoning that nothing read the field. A dict
+    reaching pydantic raises ValidationError inside ``list_runs`` — which
+    fails the whole opp's listing, not just the one forked run, and so 500s
+    every uncached read of that opp.
+
+    Anything we cannot reduce to an id degrades to ``None``: lineage is
+    informational, and losing it must never cost the caller the run list.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        run_id = value.get("run_id")
+        return str(run_id).strip() or None if run_id else None
+    return None
+
+
 def _coerce_dt(value: Any) -> dt.datetime | None:
     """Coerce a YAML scalar to a datetime. PyYAML auto-parses many ISO-8601
     timestamps to ``datetime`` already; strings (incl. trailing ``Z``) are
@@ -762,7 +786,7 @@ class DriveRunStore:
             "current_step": str(
                 state_data.get("current_step") or state_data.get("step") or ""
             ),
-            "forked_from": state_data.get("forked_from"),
+            "forked_from": _coerce_forked_from(state_data.get("forked_from")),
             "session_link": str(state_data.get("session_link") or ""),
             "created_at": _coerce_dt(
                 state_data.get("started_at") or state_data.get("created")
