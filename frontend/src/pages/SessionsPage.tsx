@@ -54,7 +54,7 @@ export function SessionsPage() {
     <div className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="text-2xl font-semibold text-foreground">Shared sessions</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Claude Code transcripts you've shared. Run{" "}
+        Claude Code transcripts shared by you, your agents, and teammates. Run{" "}
         <code className="rounded bg-muted px-1">/canopy:share-session</code> to
         add one.
       </p>
@@ -89,6 +89,7 @@ export function SessionsPage() {
                   {s.message_count} messages ·{" "}
                   {new Date(s.created_at).toLocaleString()}
                   {s.project_slug ? ` · ${s.project_slug}` : ""}
+                  {!s.is_owner ? ` · ${s.owner_email}` : ""}
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -108,27 +109,33 @@ export function SessionsPage() {
                     >
                       {copied === s.share_token ? "Copied!" : "Copy link"}
                     </button>
+                    {s.is_owner && (
+                      <button
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => onRotate(s.slug)}
+                        title="Invalidate the current link and mint a new one"
+                      >
+                        Rotate
+                      </button>
+                    )}
+                  </>
+                )}
+                {s.is_owner && (
+                  <>
                     <button
                       className="text-muted-foreground hover:text-foreground"
-                      onClick={() => onRotate(s.slug)}
-                      title="Invalidate the current link and mint a new one"
+                      onClick={() => onToggle(s)}
                     >
-                      Rotate
+                      {s.visibility === "link" ? "Make private" : "Make link"}
+                    </button>
+                    <button
+                      className="text-destructive hover:text-destructive/80"
+                      onClick={() => onDelete(s.slug)}
+                    >
+                      Delete
                     </button>
                   </>
                 )}
-                <button
-                  className="text-muted-foreground hover:text-foreground"
-                  onClick={() => onToggle(s)}
-                >
-                  {s.visibility === "link" ? "Make private" : "Make link"}
-                </button>
-                <button
-                  className="text-destructive hover:text-destructive/80"
-                  onClick={() => onDelete(s.slug)}
-                >
-                  Delete
-                </button>
               </div>
             </li>
           ))}

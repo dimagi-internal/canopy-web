@@ -13,7 +13,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from django.db import transaction
+from django.db import models, transaction
 from django.http import HttpRequest
 from django.utils.dateparse import parse_datetime
 from ninja import File, Form, Router, Status
@@ -73,7 +73,13 @@ def _message_payloads(session: Session) -> list[dict]:
 
 
 def _list_payload(session: Session, *, is_owner: bool) -> dict:
-    token = session.active_token() if is_owner else None
+    # A non-owner can only be seeing this row because it's link-visible, and
+    # the link IS the read path — so the token ships to them too.
+    token = (
+        session.active_token()
+        if is_owner or session.visibility == Session.VISIBILITY_LINK
+        else None
+    )
     return {
         "slug": session.slug,
         "title": session.title,
@@ -232,23 +238,33 @@ def upload_session(
 
 
 # ---------------------------------------------------------------------------
-# List (owner's sessions)
+# List — mine (any visibility) + everyone's link-shared.
+# Agents upload under their OWN accounts (the canopy uploader resolves the PAT
+# from the repo it runs in), so an owner-only list hides exactly the shares a
+# human asked their agent to make. Link visibility already means "anyone with
+# the URL"; surfacing those rows to authed teammates grants nothing new.
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response=list[SessionListItemOut], summary="List my shared sessions")
+@router.get("/", response=list[SessionListItemOut], summary="List shared sessions")
 def list_sessions(
     request: HttpRequest, project: str = ""
 ) -> list[SessionListItemOut]:
     qs = (
         Session.objects.select_related("owner")
-        .filter(owner=request.user)
+        .filter(
+            models.Q(owner=request.user)
+            | models.Q(visibility=Session.VISIBILITY_LINK)
+        )
         .prefetch_related("share_tokens")
     )
     if project:
         qs = qs.filter(project_slug=project)
     return [
-        SessionListItemOut.model_validate(_list_payload(s, is_owner=True)) for s in qs
+        SessionListItemOut.model_validate(
+            _list_payload(s, is_owner=s.owner_id == request.user.id)
+        )
+        for s in qs
     ]
 
 
@@ -260,7 +276,11 @@ def list_sessions(
 
 
 def _arc_list_payload(arc: SessionArc, *, is_owner: bool) -> dict:
-    token = arc.active_token() if is_owner else None
+    token = (
+        arc.active_token()
+        if is_owner or arc.visibility == SessionArc.VISIBILITY_LINK
+        else None
+    )
     return {
         "slug": arc.slug,
         "title": arc.title,
@@ -363,17 +383,24 @@ def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
     )
 
 
-@router.get("/arcs", response=list[ArcListItemOut], summary="List my arcs")
+@router.get("/arcs", response=list[ArcListItemOut], summary="List arcs")
 def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
+    # Same rule as list_sessions: mine + everyone's link-shared.
     qs = (
         SessionArc.objects.select_related("owner")
-        .filter(owner=request.user)
+        .filter(
+            models.Q(owner=request.user)
+            | models.Q(visibility=SessionArc.VISIBILITY_LINK)
+        )
         .prefetch_related("share_tokens", "items")
     )
     if project:
         qs = qs.filter(project_slug=project)
     return [
-        ArcListItemOut.model_validate(_arc_list_payload(a, is_owner=True)) for a in qs
+        ArcListItemOut.model_validate(
+            _arc_list_payload(a, is_owner=a.owner_id == request.user.id)
+        )
+        for a in qs
     ]
 
 

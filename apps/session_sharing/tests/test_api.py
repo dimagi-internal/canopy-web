@@ -113,15 +113,33 @@ def test_reupload_is_idempotent(auth_client):
 
 
 @pytest.mark.django_db
-def test_list_only_returns_my_sessions(auth_client, other):
+def test_list_includes_link_shared_sessions_from_others(auth_client, other):
+    """A session an agent (or teammate) shared must be findable by everyone —
+    the list is "shared with the team", not "uploaded by me". Their PRIVATE
+    sessions stay invisible."""
     _upload(auth_client, _transcript("mine"))
     other_client = Client()
     other_client.force_login(other)
-    _upload(other_client, _transcript("theirs"))
+    _upload(other_client, _transcript("theirs-link"), title="Agent share")
+    _upload(other_client, _transcript("theirs-private"), visibility="private")
 
     rows = auth_client.get("/api/sessions/").json()
-    assert len(rows) == 1
-    assert rows[0]["is_owner"] is True
+    by_title = {r["title"]: r for r in rows}
+    assert len(rows) == 2
+    theirs = by_title["Agent share"]
+    assert theirs["is_owner"] is False
+    assert theirs["owner_email"] == "other@dimagi.com"
+    # A non-owner still needs the link to open it.
+    assert theirs["share_token"]
+    assert Client().get(f"/api/share/{theirs['share_token']}").status_code == 200
+
+
+@pytest.mark.django_db
+def test_list_never_exposes_others_private_sessions(auth_client, other):
+    other_client = Client()
+    other_client.force_login(other)
+    _upload(other_client, _transcript("theirs"), visibility="private")
+    assert auth_client.get("/api/sessions/").json() == []
 
 
 @pytest.mark.django_db
@@ -224,6 +242,20 @@ def test_arc_list_and_detail_owner_only(auth_client, other):
     other_client = Client()
     other_client.force_login(other)
     assert other_client.get(f"/api/sessions/arcs/{slug}").status_code == 403
+
+
+@pytest.mark.django_db
+def test_arc_list_includes_link_shared_arcs_from_others(auth_client, other):
+    s1 = _upload(auth_client, _transcript("v1")).json()["slug"]
+    _create_arc(auth_client, [{"session_slug": s1}], title="Their arc")
+
+    other_client = Client()
+    other_client.force_login(other)
+    rows = other_client.get("/api/sessions/arcs").json()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Their arc"
+    assert rows[0]["is_owner"] is False
+    assert rows[0]["share_token"]
 
 
 @pytest.mark.django_db
