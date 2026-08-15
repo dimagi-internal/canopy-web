@@ -210,6 +210,26 @@ class RunnerBinding(models.Model):
     host = models.CharField(max_length=200, blank=True, default="")
     # Durable board-task context carried for rehydration (was SessionLink.agent_task_ext_id).
     agent_task_ext_id = models.CharField(max_length=255, blank=True, default="")
+    # WHICH transcript this session's Message rows were derived from — the Claude
+    # session uuid (the .jsonl stem), reported by the runner on every ship.
+    #
+    # `session_key` is the emdash task NAME, and names are reused: close a task
+    # called "bednet" and start another, and this binding is re-pointed at the new
+    # conversation while the old one's rows stay attached. That alone renders one
+    # session as another; worse, `turn_index` is a PER-FILE ordinal, so the
+    # first_index/last_index markers computed off the old file are meaningless
+    # against the new one. Measured on prod 2026-08-14 (issue #615): a 593-record
+    # predecessor left last_index=37,696 against a live 384-record transcript whose
+    # highest possible ordinal was 24,575, so every record of the live session sat
+    # BELOW the marker and the runner shipped nothing — the panel was pinned to a
+    # day-old conversation with no way to self-heal.
+    #
+    # Recording the identity makes the mismatch detectable, which is the whole
+    # point: on a change the derived rows are dropped and re-derived (see
+    # services.ensure_transcript_identity), exactly as `Session.ordinal_scheme`
+    # already does for a change of ordinal SCHEME. Blank = never reported (an old
+    # runner, or a session whose runner has not shipped since this landed).
+    transcript_id = models.CharField(max_length=100, blank=True, default="")
     # Liveness: a viewer is attached, so the bound runner should stream this
     # session's events up live. Toggled by the attach registry on the 0<->1 edge.
     stream_desired = models.BooleanField(default=False)

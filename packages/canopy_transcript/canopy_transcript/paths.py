@@ -71,18 +71,34 @@ def resolve_emdash_transcript(
     the newest .jsonl across all matches. A wrong guess returns None, never a
     wrong transcript from an unrelated task — the prefix is anchored at the
     parent segment, so `mobile` can't match `alt-mobile`.
+
+    Project dirs OUTLIVE their worktrees, and a task name gets reused, so the
+    de-dupe suffix means one name can accumulate several — four `bednet*` dirs
+    existed locally on 2026-08-14, three of them orphans of deleted worktrees.
+    Newest-mtime alone would happily return one of those (touch an old session and
+    it wins), so a dir whose worktree still exists is preferred; mtime only breaks
+    ties among the live ones. Orphans remain the fallback rather than an error —
+    an unrecognised layout must degrade to the old behaviour, not to no transcript.
     """
     if not repo or not task or not claude_home.is_dir():
         return None
-    candidates: list[Path] = []
+    live: list[Path] = []
+    orphaned: list[Path] = []
     for base in _worktree_bases(repo, task, home):
         prefix = encode_project_dir(base)
         for proj_dir in claude_home.glob(prefix + "*"):
             if not proj_dir.is_dir():
                 continue
             rest = proj_dir.name[len(prefix):]
-            if rest == "" or _SUFFIX_RE.fullmatch(rest):
-                candidates.extend(proj_dir.glob("*.jsonl"))
+            if rest != "" and not _SUFFIX_RE.fullmatch(rest):
+                continue
+            # `rest` is the de-dupe suffix verbatim, and the lossy part of the
+            # encoding is confined to `base` — which we hold as a real path — so
+            # the worktree this dir was encoded from reconstructs exactly.
+            worktree = base if rest == "" else base.with_name(base.name + rest)
+            bucket = live if worktree.is_dir() else orphaned
+            bucket.extend(proj_dir.glob("*.jsonl"))
+    candidates = live or orphaned
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)

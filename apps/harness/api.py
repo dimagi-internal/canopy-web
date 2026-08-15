@@ -715,7 +715,11 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
          # and its worktree lives under the agent's own repo. Sending "" here is
          # what stopped agent sessions ever being streamed or backfilled.
          "project": b.session.emdash_project, "last_index": b._last_index,
-         "first_index": b._first_index, "live": b.stream_desired}
+         "first_index": b._first_index, "live": b.stream_desired,
+         # What the markers above are markers INTO. They are per-file ordinals, so
+         # a runner reading a different transcript must discard them rather than
+         # resume against them (issue #615).
+         "transcript_id": b.transcript_id}
         for b in bindings
     ]}
 
@@ -741,6 +745,11 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     if chat_services.transcript_sourced(binding.session):
+        # BEFORE any write: if these ordinals index a different transcript than the
+        # rows already held, those rows are a different conversation's and would
+        # interleave with (or silently swallow) this one. Dropping them is safe
+        # because a mismatch is exactly when the runner ships the full history.
+        chat_services.ensure_transcript_identity(binding.session, payload.transcript_id)
         # Not "was this session discovered in emdash?" — where a conversation
         # started says nothing about where its record belongs. A phone-created chat
         # is driven by the same runner, in the same emdash session, writing the same
@@ -913,6 +922,10 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
+    # Same guard as the live path: history from a different transcript replaces
+    # what is held rather than merging into it. Idempotent across chunks — the
+    # first one records the id, so the rest of the ship matches and writes through.
+    chat_services.ensure_transcript_identity(session, payload.transcript_id)
     written = chat_services.write_backfill(session, [m.dict() for m in payload.messages])
     # Only the LAST chunk clears the ask. A transcript is shipped in byte-budgeted
     # chunks (see SessionBackfillIn.final), and clearing on the first one would

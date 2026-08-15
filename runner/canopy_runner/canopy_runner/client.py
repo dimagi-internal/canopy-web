@@ -232,10 +232,16 @@ class Client:
         _, payload = self._call("GET", f"/runners/{runner_id}/streams")
         return (payload or {}).get("streams", [])
 
-    def post_session_stream(self, runner_id: str, session_id: str, events: list[dict]) -> None:
-        """Ship live assistant events for a session this runner backs."""
+    def post_session_stream(self, runner_id: str, session_id: str, events: list[dict],
+                            transcript_id: str = "") -> None:
+        """Ship live assistant events for a session this runner backs.
+
+        `transcript_id` names the transcript these ordinals index into, so the
+        server can tell a continuation from a different conversation that merely
+        reuses the emdash task name (issue #615)."""
         self._call("POST", f"/runners/{runner_id}/session-stream",
-                   {"session_id": session_id, "events": events})
+                   {"session_id": session_id, "events": events,
+                    "transcript_id": transcript_id})
 
     def sync_closes(self, runner_id: str) -> list[dict]:
         """Sessions we have been asked to close and have not closed yet."""
@@ -260,12 +266,14 @@ class Client:
         return (payload or {}).get("backfills", [])
 
     def post_session_backfill(self, runner_id: str, session_id: str, messages: list[dict],
-                              final: bool = True) -> None:
+                              final: bool = True, transcript_id: str = "") -> None:
         """Ship a chunk of a session's transcript for the server to write as Message
         rows. `final=False` means more chunks follow, so the server keeps the ask
-        set — see streams.chunk_rows for why one request is not enough."""
+        set — see streams.chunk_rows for why one request is not enough.
+        `transcript_id` names which conversation the history is (issue #615)."""
         self._call("POST", f"/runners/{runner_id}/session-backfill",
-                   {"session_id": session_id, "messages": messages, "final": final})
+                   {"session_id": session_id, "messages": messages, "final": final,
+                    "transcript_id": transcript_id})
 
     def claim(self, runner_id: str, paused_agents: list[str] | None = None) -> dict | None:
         # paused_agents (per-agent pause) → server skips those agents' queued turns.

@@ -611,6 +611,12 @@ class StreamDescriptorOut(Schema):
     # for every session either way (see list_streams). Old runners ignore it, which
     # is safe: they simply keep streaming exactly the sessions they used to.
     live: bool = True
+    # WHICH transcript the first_index/last_index markers above were computed from
+    # (the Claude session uuid). The markers are per-file ordinals, so they mean
+    # nothing against a different file — a runner that resolves a transcript whose
+    # id disagrees with this must ignore them and ship the whole history. "" = the
+    # server has no provenance for its rows, which is treated the same way.
+    transcript_id: str = ""
 
 
 class StreamSyncOut(Schema):
@@ -630,6 +636,12 @@ class LiveEventIn(Schema):
 class SessionStreamIn(Schema):
     session_id: uuid.UUID
     events: list[LiveEventIn] = []
+    # The transcript these ordinals index into (the Claude session uuid). When it
+    # differs from what the binding recorded, the session's derived rows belong to
+    # a DIFFERENT conversation and are dropped before this batch is written — see
+    # canopy_sessions.services.ensure_transcript_identity. "" = an old runner,
+    # which makes no provenance claim and is left alone.
+    transcript_id: str = ""
 
 
 class StreamPostOut(Schema):
@@ -674,6 +686,11 @@ class SessionBackfillIn(Schema):
     # 193 local transcripts, one already exceeds it and three more are past 1.9 MB.
     # Defaults True so an old runner, which posts exactly once, is unaffected.
     final: bool = True
+    # The transcript this history came from — same contract as SessionStreamIn's.
+    # Only the FIRST chunk can drop anything: once it records the id, the rest of
+    # the ship matches and writes straight through, so a chunked backfill can
+    # never delete the chunks that preceded it.
+    transcript_id: str = ""
 
 
 class BackfillWriteOut(Schema):
