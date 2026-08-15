@@ -210,6 +210,25 @@ def read_recent_messages(path: Path, limit: int = 8) -> list[dict]:
     return msgs[-limit:]
 
 
+# Timestamped record kinds that are NOT the agent doing something. Both were
+# measured writing to a live transcript while its session sat parked at
+# "awaiting-input" (spark, 2026-08-15: last `assistant` record 04:22:40, a
+# `pr-link` at 04:46:16 and `queue-operation`s past 04:46:56). Counting them made
+# `newest_record_time` — and so the chat list's "2m ago" and its running-first
+# sort — say a session parked for 27 minutes had just acted.
+#
+#   queue-operation  a background task's notification entering/leaving the queue,
+#                    which happens while the main loop is parked
+#   pr-link          a PR discovered for the worktree, written long after the turn
+#
+# A DENYLIST rather than an allowlist, deliberately: the failure it leaves is
+# cosmetic (an unknown future bookkeeping kind reads as fresh), where an allowlist
+# would drop an unknown future ACTIVITY kind and freeze the clock mid-turn — which
+# reads as "not running" on a runner with no emdash `agent_status` to fall back on.
+# Fail toward alive.
+_NON_TURN_KINDS = frozenset({"queue-operation", "pr-link"})
+
+
 def newest_record_time(path: Path) -> str | None:
     """ISO-8601 UTC of the newest record IN the transcript, or None.
 
@@ -220,10 +239,10 @@ def newest_record_time(path: Path) -> str | None:
     ahead of their newest record). What the transcript SAYS happened is the only
     signal that can't drift that way.
 
-    Counts every record type, not just conversational ones: a tool call or a
-    subagent turn mid-run is the session working, and a run that is mid-tool-loop
-    is exactly when "is this alive?" is being asked. Reads only the last
-    TAIL_BYTES like the tail reader; a partial first line just fails to parse.
+    Counts every record type EXCEPT the bookkeeping ones (`_NON_TURN_KINDS`): a
+    tool call or a subagent turn mid-run is the session working, and a run that is
+    mid-tool-loop is exactly when "is this alive?" is being asked. Reads only the
+    last TAIL_BYTES like the tail reader; a partial first line just fails to parse.
     Never raises — an unreadable/timestamp-less file yields None, meaning "no
     opinion", and the caller keeps whatever it had.
     """
@@ -244,6 +263,8 @@ def newest_record_time(path: Path) -> str | None:
         except json.JSONDecodeError:
             continue
         if not isinstance(payload, dict):
+            continue
+        if payload.get("type") in _NON_TURN_KINDS:
             continue
         ts = _parse_utc(payload.get("timestamp"))
         if ts and (newest is None or ts > newest):
