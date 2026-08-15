@@ -102,6 +102,20 @@ describe('watch state copy', () => {
     expect(watchTone('expired')).toBe('destructive')
   })
 
+  it('shows a watch the runner cannot arm as an error, not as "not armed yet"', () => {
+    // `failed` used to fall through to the default and render muted grey — the
+    // one state that means someone has to act, styled as the one that means
+    // nobody does.
+    expect(watchTone('failed')).toBe('destructive')
+    expect(watchLabel('failed', '')).toMatch(/cannot arm/i)
+  })
+
+  it('surfaces the reason the arm failed', () => {
+    expect(watchLabel('failed', '', '401: unauthorized_client')).toContain(
+      '401: unauthorized_client',
+    )
+  })
+
   it('says plainly that expired means push is not being delivered', () => {
     expect(watchLabel('expired', '2026-07-30T00:00:00Z')).toContain('not being delivered')
   })

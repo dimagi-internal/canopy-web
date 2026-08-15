@@ -151,17 +151,64 @@ def handle_push(address: str, workspace, history_id: str = "") -> dict:
     return {"ok": True, "rang": [r.name for r in runners]}
 
 
-def note_watch_state(mailbox: InboundMailbox, expires_at: dt.datetime | None) -> None:
+def note_watch_state(mailbox: InboundMailbox, expires_at: dt.datetime | None,
+                     error: str = "") -> None:
     """Record what the runner says about this mailbox's Gmail watch.
 
     A watch Google will not renew is the silent failure this whole design is
     guarding against: it lapses, push stops, and the only symptom is that email
     feels slow again.
+
+    Three reports arrive here, and `error` is what tells them apart:
+
+    * an expiry — armed, and here is the cliff.
+    * an `error` — a runner that is SUPPOSED to be watching this mailbox cannot.
+      This used to have nowhere to go (a null expiry returned early), so a dead
+      OAuth client stayed invisible until the last good watch lapsed days later
+      and surfaced as ``gmail.watch.expired`` — which names the clock, not the
+      credential, and sends you looking in the wrong place.
+    * neither — a retraction: no watch, and nothing to complain about. That is a
+      paused runner parking itself, which must not read as an outage.
     """
-    InboundMailbox.objects.filter(pk=mailbox.pk).update(watch_expires_at=expires_at)
+    workspace = mailbox.agent.workspace
+    was_failing = bool(mailbox.watch_error)
+    fields = {"watch_error": error}
+    if expires_at is not None:
+        fields["watch_expires_at"] = expires_at
+    InboundMailbox.objects.filter(pk=mailbox.pk).update(**fields)
+    mailbox.watch_error = error
+    if expires_at is not None:
+        mailbox.watch_expires_at = expires_at
+
+    if error:
+        _record(
+            workspace,
+            kind="gmail.watch.failed",
+            level="error",
+            key=mailbox.address,
+            summary=f"Runner cannot arm the Gmail watch for {mailbox.address}: {error}",
+            payload={"address": mailbox.address, "error": error},
+        )
+        return
+
+    if was_failing:
+        # Same `key`, so this flips the existing error row in place instead of
+        # leaving it behind next to a contradicting one (events.record coalesces
+        # on (workspace, source, key) and overwrites level/kind/summary).
+        _record(
+            workspace,
+            kind="gmail.watch.armed",
+            level="info",
+            key=mailbox.address,
+            summary=(f"Gmail watch for {mailbox.address} recovered"
+                     if expires_at else
+                     f"Gmail watch for {mailbox.address} no longer reported as failing"),
+            payload={"address": mailbox.address,
+                     "expires_at": expires_at.isoformat() if expires_at else ""},
+        )
+
     if expires_at is None:
         return
-    workspace = mailbox.agent.workspace
     now = timezone.now()
     if expires_at <= now:
         _record(
@@ -239,8 +286,13 @@ def push_url(request, workspace_slug: str) -> str:
 
 
 def watch_state(mailbox) -> str:
-    """armed | expiring | expired | none. One definition, shared by the API and
-    the UI, so a green badge can never disagree with a `watch.expired` row."""
+    """failed | armed | expiring | expired | none. One definition, shared by the
+    API and the UI, so a green badge can never disagree with a `watch.expired`
+    (or `watch.failed`) row."""
+    if mailbox.watch_error:
+        # Outranks the expiry on purpose: a mailbox whose watch cannot be re-armed
+        # is broken NOW, even while the last good registration is still ticking.
+        return "failed"
     if not mailbox.watch_expires_at:
         return "none"
     now = timezone.now()

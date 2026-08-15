@@ -344,18 +344,29 @@ class Client:
         _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
         return (payload or {}).get("items", []) if isinstance(payload, dict) else []
 
-    def report_watch(self, address: str, expires_at) -> dict:
-        """Tell canopy-web when this mailbox's Gmail watch lapses.
+    def report_watch(self, address: str, expires_at, error: str = "") -> dict:
+        """Tell canopy-web the state of this mailbox's Gmail watch.
 
         Lives under /api/inbound, not /api/harness — hence _call_api. Reporting
         is what turns the 7-day expiry from a silent cliff into a warn/error row
         (apps/inbound.services.note_watch_state).
+
+        Two things get reported here, and the difference is `error`:
+
+        * ``expires_at`` set — armed, and here is when it lapses.
+        * ``error`` set (with a null expiry) — this runner is SUPPOSED to be
+          watching this mailbox and cannot. Without it the failure is invisible
+          until the last good watch expires days later, and the row that finally
+          appears says "expired", which names the wrong cause.
+
+        Both null is the retraction: no watch, no complaint (a parked runner).
         """
         _status, payload = self._call_api(
             "/inbound/watch/",
             method="POST",
             body={"address": address,
-                  "expires_at": expires_at.isoformat() if expires_at else None},
+                  "expires_at": expires_at.isoformat() if expires_at else None,
+                  "error": error},
         )
         return payload or {}
 

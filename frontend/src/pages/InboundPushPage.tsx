@@ -269,7 +269,7 @@ export function InboundPushPage(): JSX.Element | null {
                 <TableCell className="font-mono text-xs">{mb.address}</TableCell>
                 <TableCell>{mb.agent_slug}</TableCell>
                 <TableCell className={TONE_CLASS[watchTone(mb.watch_state)]}>
-                  {watchLabel(mb.watch_state, mb.watch_expires_at)}
+                  {watchLabel(mb.watch_state, mb.watch_expires_at, mb.watch_error)}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {mb.last_push_at ? new Date(mb.last_push_at).toLocaleString() : 'never'}

@@ -108,6 +108,15 @@ class InboundMailbox(models.Model):
     watch there is nothing to have missed, and every poll-discovered message
     would otherwise be logged as a failure."""
 
+    watch_error = models.TextField(blank=True, default="")
+    """Why the runner cannot arm this mailbox's watch, blank when it can.
+
+    Distinct from a lapsed ``watch_expires_at``, and the distinction is the whole
+    point: an expiry says the clock ran out, this says the *credential* is broken
+    and the clock running out is merely what happens next. Set while a runner is
+    actively failing to arm; cleared by a successful arm, or retracted when the
+    runner parks (a paused box is not a broken one)."""
+
     class Meta:
         ordering = ["address"]
 
