@@ -363,9 +363,16 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
     if not transcript_id:
         return 0
     with transaction.atomic():
-        locked = Session.objects.select_for_update().get(pk=session.pk)
+        # The BINDING is the only row that needs locking — it holds the flag that
+        # makes this idempotent, so serializing on it is what stops two concurrent
+        # ships both dropping. Deliberately NOT also locking the Session:
+        # `harness.replace_reported_sessions` takes its locks binding-first and
+        # then writes the session row, so grabbing them in the other order here
+        # would make the two a deadlock pair — every ~10s report against every
+        # ship. `persist_transcript_rows` still takes its own Session lock
+        # afterwards, in its own transaction, exactly as before.
         binding = (
-            RunnerBinding.objects.select_for_update().filter(session=locked).first()
+            RunnerBinding.objects.select_for_update().filter(session=session).first()
         )
         if binding is None or binding.transcript_id == transcript_id:
             return 0
@@ -373,7 +380,7 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         # is exactly the state issue #615 describes — rows of unknown provenance,
         # possibly a previous task's — and the shipper is sending the full history
         # for precisely that reason. Rebuilding once is cheap and self-healing.
-        deleted, _ = Message.objects.filter(session=locked).delete()
+        deleted, _ = Message.objects.filter(session=session).delete()
         binding.transcript_id = transcript_id
         binding.save(update_fields=["transcript_id", "updated_at"])
         return deleted
