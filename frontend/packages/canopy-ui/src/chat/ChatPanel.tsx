@@ -6,7 +6,7 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { SendBox, type PendingAttachment } from "./SendBox";
-import { isDraftIdle, msUntilDraftIdle } from "./drafts";
+import { isDraftIdle, msUntilDraftIdle, type DraftStorage } from "./drafts";
 import { useStickyBottom } from "./useStickyBottom";
 
 export interface ChatPanelProps {
@@ -34,6 +34,11 @@ export interface ChatPanelProps {
   disabledReason?: string;
   /** Rendered at the top of the scroll container (e.g. a "Load earlier" button / offline banner). */
   historySlot?: ReactNode;
+  /** Persist the half-typed composer body under this key (the session id) so
+   *  it survives routing away and back. Omit for in-memory-only drafts. */
+  draftPersistKey?: string;
+  /** Storage backing `draftPersistKey`; defaults to localStorage. */
+  draftStorage?: DraftStorage | null;
 }
 
 /**
@@ -60,6 +65,8 @@ export function ChatPanel({
   emptyState,
   disabledReason,
   historySlot,
+  draftPersistKey,
+  draftStorage,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -175,6 +182,8 @@ export function ChatPanel({
         attachments={attachments}
         onAttach={onAttach}
         onRemoveAttachment={onRemoveAttachment}
+        persistKey={draftPersistKey}
+        storage={draftStorage}
       />
     </div>
   );

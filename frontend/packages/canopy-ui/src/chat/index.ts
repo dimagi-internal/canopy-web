@@ -32,6 +32,17 @@ export { useStickyBottom } from "./useStickyBottom";
 // Draft idle helpers
 export { IDLE_THRESHOLD_MS, isDraftIdle, msUntilDraftIdle } from "./drafts";
 
+// Composer persistence (survives unmount / tab close)
+export {
+  DRAFT_STORAGE_TTL_MS,
+  clearStoredDraft,
+  defaultDraftStorage,
+  draftStorageKey,
+  readStoredDraft,
+  writeStoredDraft,
+  type DraftStorage,
+} from "./drafts";
+
 // Tool-message pairing helpers
 export {
   pairToolMessages,
