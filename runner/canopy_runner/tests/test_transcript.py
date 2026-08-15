@@ -371,5 +371,32 @@ def test_newest_record_time_takes_the_max_not_the_last_line(tmp_path):
     assert transcript.newest_record_time(f) == "2026-07-25T12:00:00+00:00"
 
 
+def test_newest_record_time_ignores_bookkeeping_records(tmp_path):
+    # The parked-session shape measured on the fleet (spark, 2026-08-15): the agent
+    # stopped at 12:00 and the transcript kept growing with a PR link and background
+    # task-queue churn. Counting those made a 27-minute-parked session read as
+    # "just acted" in the chat list, and float to the top of its running-first sort.
+    f = tmp_path / "s.jsonl"
+    f.write_text("\n".join(json.dumps(x) for x in [
+        {"type": "assistant", "timestamp": "2026-08-15T12:00:00.000Z"},
+        {"type": "pr-link", "timestamp": "2026-08-15T12:24:00.000Z"},
+        {"type": "queue-operation", "timestamp": "2026-08-15T12:27:00.000Z"},
+    ]), "utf-8")
+    assert transcript.newest_record_time(f) == "2026-08-15T12:00:00+00:00"
+
+
+def test_newest_record_time_still_counts_non_conversational_turn_records(tmp_path):
+    # The opposite guard: an `attachment` or `system` row mid-tool-loop IS the
+    # session working, and is exactly what keeps a long tool call from reading as
+    # dead. Only the bookkeeping kinds were meant to be dropped.
+    f = tmp_path / "s.jsonl"
+    f.write_text("\n".join(json.dumps(x) for x in [
+        {"type": "assistant", "timestamp": "2026-08-15T12:00:00.000Z"},
+        {"type": "attachment", "timestamp": "2026-08-15T12:05:00.000Z"},
+        {"type": "system", "timestamp": "2026-08-15T12:06:00.000Z"},
+    ]), "utf-8")
+    assert transcript.newest_record_time(f) == "2026-08-15T12:06:00+00:00"
+
+
 def test_newest_record_time_of_an_unreadable_file_is_none(tmp_path):
     assert transcript.newest_record_time(tmp_path / "missing.jsonl") is None
