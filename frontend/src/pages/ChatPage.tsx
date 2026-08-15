@@ -685,6 +685,10 @@ export function ChatPage() {
           onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}
           renderMarkdown={renderMarkdown}
+          // Keep a half-typed message across a route change or a closed tab.
+          // Nothing else holds it: alone in a session the body is never
+          // mirrored to the server until the moment you send.
+          draftPersistKey={id}
           emptyState={emptyState}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that

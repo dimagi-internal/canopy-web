@@ -8,7 +8,15 @@ import {
 import type React from "react";
 
 import type { Draft } from "./protocol";
-import { isDraftIdle, msUntilDraftIdle } from "./drafts";
+import {
+  clearStoredDraft,
+  defaultDraftStorage,
+  isDraftIdle,
+  msUntilDraftIdle,
+  readStoredDraft,
+  writeStoredDraft,
+  type DraftStorage,
+} from "./drafts";
 import { Button } from "../ui/button";
 
 /** An attachment the composer is holding, uploaded but not yet sent. */
@@ -49,6 +57,13 @@ interface Props {
    *  paths); it re-renders `attachments` as they progress. */
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
+  /** Persist what is typed under this key (the session id) so it survives
+   *  unmounting — routing away and back, or closing the tab. Omit to keep the
+   *  purely in-memory behaviour. */
+  persistKey?: string;
+  /** Storage backing `persistKey`. Defaults to localStorage; inject a fake in
+   *  tests, or sessionStorage for per-tab drafts. */
+  storage?: DraftStorage | null;
 }
 
 export function SendBox({
@@ -67,6 +82,8 @@ export function SendBox({
   attachments,
   onAttach,
   onRemoveAttachment,
+  persistKey,
+  storage,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Force a re-render when the lock transitions from live to idle.
@@ -94,7 +111,42 @@ export function SendBox({
   // wholesale), would rewind the composer to a body from 150ms ago. In
   // single-player that reconciliation protects against nothing at all, since
   // there is no co-editor whose edits could be lost.
-  const [localBody, setLocalBody] = useState(draft?.body ?? "");
+  //
+  // Seeded from persisted storage when there is one, because a body typed
+  // before an unmount exists NOWHERE else: single-player never mirrors it to
+  // the server (see drafts.shouldSyncDraftLive), and the adopt rule below
+  // deliberately ignores our own server draft. A stored body wins over
+  // `draft.body` — it is strictly newer, being what was in the box when we
+  // last left it.
+  const store = storage === undefined ? defaultDraftStorage() : storage;
+  const [localBody, setLocalBody] = useState(
+    () => readStoredDraft(store, persistKey ?? "") ?? draft?.body ?? "",
+  );
+
+  // Persistence is a synchronous localStorage write per keystroke — no
+  // debounce on purpose. The payload is a chat message, the write is
+  // microseconds, and every timer-based alternative has to solve flush-on-
+  // unmount and flush-on-tab-close to be correct at exactly the moments this
+  // feature exists for.
+  const persist = (body: string) => {
+    if (persistKey) writeStoredDraft(store, persistKey, body);
+  };
+  // Nothing persists a CO-EDITOR's text, deliberately: a draft someone else is
+  // editing is by definition being live-synced to the server, so the existing
+  // adopt rule below restores it from `session.state` on the way back in. The
+  // gap this whole mechanism closes is the single-player one, where the server
+  // is never told at all.
+
+  // The panel can swap sessions without remounting (same route, new :id), so
+  // the box must follow the key rather than carry one session's text into the
+  // next. Adjusted during render rather than in an effect — React's documented
+  // shape for "reset state when a prop changes", and the one that avoids a
+  // paint showing the previous session's text.
+  const [keyOnScreen, setKeyOnScreen] = useState(persistKey);
+  if (keyOnScreen !== persistKey) {
+    setKeyOnScreen(persistKey);
+    setLocalBody(readStoredDraft(store, persistKey ?? "") ?? "");
+  }
 
   // The ONE case where the server genuinely knows better than this client:
   // somebody ELSE edited the shared draft. Our own echo is ignored, which is
@@ -136,6 +188,7 @@ export function SendBox({
 
   const handleChange = (value: string) => {
     setLocalBody(value);
+    persist(value);
     onUpdate(value);
   };
 
@@ -163,6 +216,7 @@ export function SendBox({
     // echo back: that echo carries last_editor === us, which the adopt rule
     // above (correctly) ignores, so nothing else would empty the box.
     setLocalBody("");
+    if (persistKey) clearStoredDraft(store, persistKey);
     onSend();
   };
 

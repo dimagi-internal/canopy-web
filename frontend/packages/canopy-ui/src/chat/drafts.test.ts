@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { Draft } from "./protocol"
 import {
+  DRAFT_STORAGE_TTL_MS,
   IDLE_THRESHOLD_MS,
+  clearStoredDraft,
+  draftStorageKey,
   isDraftIdle,
   msUntilDraftIdle,
+  readStoredDraft,
   shouldSyncDraftLive,
+  writeStoredDraft,
 } from "./drafts"
 
 const NOW = 1_700_000_000_000
@@ -86,5 +91,120 @@ describe("shouldSyncDraftLive", () => {
 
   it("mirrors keystrokes once somebody else is present", () => {
     expect(shouldSyncDraftLive([1, 2])).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Composer persistence
+// ---------------------------------------------------------------------------
+
+function fakeStorage(seed: Record<string, string> = {}) {
+  const map = new Map(Object.entries(seed))
+  return {
+    map,
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+    removeItem: (k: string) => void map.delete(k),
+  }
+}
+
+const KEY = "sess-1"
+
+describe("readStoredDraft", () => {
+  it("returns null when there is nothing stored", () => {
+    expect(readStoredDraft(fakeStorage(), KEY)).toBeNull()
+  })
+
+  it("round-trips a written body", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, KEY, "half a thought", NOW)
+    expect(readStoredDraft(s, KEY, NOW + 1000)).toBe("half a thought")
+  })
+
+  it("drops and prunes an entry past the TTL", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, KEY, "stale", NOW)
+    expect(readStoredDraft(s, KEY, NOW + DRAFT_STORAGE_TTL_MS + 1)).toBeNull()
+    expect(s.map.has(draftStorageKey(KEY))).toBe(false)
+  })
+
+  it("keeps an entry right up to the TTL boundary", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, KEY, "fresh enough", NOW)
+    expect(readStoredDraft(s, KEY, NOW + DRAFT_STORAGE_TTL_MS)).toBe("fresh enough")
+  })
+
+  it("drops and prunes malformed JSON", () => {
+    const s = fakeStorage({ [draftStorageKey(KEY)]: "{not json" })
+    expect(readStoredDraft(s, KEY, NOW)).toBeNull()
+    expect(s.map.has(draftStorageKey(KEY))).toBe(false)
+  })
+
+  it("drops an entry of the wrong shape", () => {
+    const s = fakeStorage({ [draftStorageKey(KEY)]: JSON.stringify({ body: 42 }) })
+    expect(readStoredDraft(s, KEY, NOW)).toBeNull()
+  })
+
+  it("reports an empty stored body as nothing to restore", () => {
+    // "" must not shadow a server draft the host does want rendered.
+    const s = fakeStorage({
+      [draftStorageKey(KEY)]: JSON.stringify({ body: "", at: NOW }),
+    })
+    expect(readStoredDraft(s, KEY, NOW)).toBeNull()
+  })
+
+  it("is inert without a storage or without a key", () => {
+    expect(readStoredDraft(null, KEY)).toBeNull()
+    expect(readStoredDraft(fakeStorage(), "")).toBeNull()
+  })
+
+  it("survives a storage that throws on read", () => {
+    // Safari private mode / blocked third-party storage.
+    const s = {
+      getItem: () => {
+        throw new Error("SecurityError")
+      },
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    expect(() => readStoredDraft(s, KEY)).not.toThrow()
+    expect(readStoredDraft(s, KEY)).toBeNull()
+  })
+})
+
+describe("writeStoredDraft", () => {
+  it("clears the entry instead of storing an empty body", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, KEY, "typed", NOW)
+    writeStoredDraft(s, KEY, "", NOW)
+    expect(s.map.has(draftStorageKey(KEY))).toBe(false)
+  })
+
+  it("keeps one entry per session", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, "a", "for a", NOW)
+    writeStoredDraft(s, "b", "for b", NOW)
+    expect(readStoredDraft(s, "a", NOW)).toBe("for a")
+    expect(readStoredDraft(s, "b", NOW)).toBe("for b")
+  })
+
+  it("swallows a quota error rather than breaking a keystroke", () => {
+    const s = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError")
+      },
+      removeItem: () => {},
+    }
+    expect(() => writeStoredDraft(s, KEY, "x")).not.toThrow()
+  })
+})
+
+describe("clearStoredDraft", () => {
+  it("removes a stored draft", () => {
+    const s = fakeStorage()
+    writeStoredDraft(s, KEY, "sent now", NOW)
+    clearStoredDraft(s, KEY)
+    expect(readStoredDraft(s, KEY, NOW)).toBeNull()
   })
 })

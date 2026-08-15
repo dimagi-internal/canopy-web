@@ -357,3 +357,154 @@ describe("SendBox — attaching files", () => {
     expect(screen.queryByRole("button", { name: /attach/i })).toBeNull();
   });
 });
+
+/**
+ * A half-typed message must survive leaving the page.
+ *
+ * It lives nowhere but this component's state: single-player never mirrors the
+ * body to the server (drafts.shouldSyncDraftLive), and the adopt rule above
+ * deliberately ignores our OWN server draft — so an unmount used to destroy the
+ * only copy. `persistKey` gives it somewhere to land.
+ */
+describe("SendBox — draft persistence across unmount", () => {
+  function fakeStorage(seed: Record<string, string> = {}) {
+    const map = new Map(Object.entries(seed));
+    return {
+      map,
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    };
+  }
+
+  function mount(
+    storage: ReturnType<typeof fakeStorage>,
+    props: Partial<Parameters<typeof SendBox>[0]> = {},
+  ) {
+    return render(
+      <SendBox
+        draft={draft()}
+        connected
+        currentUserId={ME}
+        holderIsPresent={false}
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onTakeOver={vi.fn()}
+        persistKey="sess-1"
+        storage={storage}
+        {...props}
+      />,
+    );
+  }
+
+  const box = () => screen.getByRole("textbox") as HTMLTextAreaElement;
+
+  it("restores what was typed after unmounting and mounting again", () => {
+    const storage = fakeStorage();
+    const first = mount(storage);
+    fireEvent.change(box(), { target: { value: "the thing I was saying" } });
+    first.unmount();
+
+    mount(storage);
+    expect(box().value).toBe("the thing I was saying");
+  });
+
+  it("comes back empty once the message has been sent", () => {
+    const storage = fakeStorage();
+    const onSend = vi.fn();
+    const first = mount(storage, { onSend });
+    fireEvent.change(box(), { target: { value: "shipping it" } });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(onSend).toHaveBeenCalled();
+    first.unmount();
+
+    mount(storage);
+    expect(box().value).toBe("");
+  });
+
+  it("does not carry one session's text into another", () => {
+    const storage = fakeStorage();
+    const first = mount(storage, { persistKey: "sess-1" });
+    fireEvent.change(box(), { target: { value: "for session one" } });
+    first.unmount();
+
+    mount(storage, { persistKey: "sess-2" });
+    expect(box().value).toBe("");
+  });
+
+  it("follows the key when the panel swaps sessions without remounting", () => {
+    const storage = fakeStorage();
+    const view = mount(storage, { persistKey: "sess-1" });
+    fireEvent.change(box(), { target: { value: "for session one" } });
+
+    view.rerender(
+      <SendBox
+        draft={draft()}
+        connected
+        currentUserId={ME}
+        holderIsPresent={false}
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onTakeOver={vi.fn()}
+        persistKey="sess-2"
+        storage={storage}
+      />,
+    );
+    expect(box().value).toBe("");
+
+    // ...and session one is still waiting where we left it.
+    view.unmount();
+    mount(storage, { persistKey: "sess-1" });
+    expect(box().value).toBe("for session one");
+  });
+
+  it("prefers the stored body over the server draft", () => {
+    // The stored one is strictly newer: it is what was in the box when we left.
+    const storage = fakeStorage();
+    const first = mount(storage, { draft: draft({ body: "from the server" }) });
+    fireEvent.change(box(), { target: { value: "what I actually typed" } });
+    first.unmount();
+
+    mount(storage, { draft: draft({ body: "from the server" }) });
+    expect(box().value).toBe("what I actually typed");
+  });
+
+  it("still shows the server draft when nothing was stored", () => {
+    mount(fakeStorage(), { draft: draft({ body: "from the server" }) });
+    expect(box().value).toBe("from the server");
+  });
+
+  it("without a persistKey, behaves exactly as it did before", () => {
+    const storage = fakeStorage();
+    const first = mount(storage, { persistKey: undefined });
+    fireEvent.change(box(), { target: { value: "nowhere to land" } });
+    first.unmount();
+    expect(storage.map.size).toBe(0);
+
+    mount(storage, { persistKey: undefined });
+    expect(box().value).toBe("");
+  });
+
+  it("keeps typing working when storage throws", () => {
+    const hostile = {
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+      setItem: () => {
+        throw new Error("SecurityError");
+      },
+      removeItem: () => {
+        throw new Error("SecurityError");
+      },
+    };
+    mount(hostile as unknown as ReturnType<typeof fakeStorage>);
+    fireEvent.change(box(), { target: { value: "still typeable" } });
+    expect(box().value).toBe("still typeable");
+  });
+});
