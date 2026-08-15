@@ -7,6 +7,7 @@ against (see the PR2 report for what this suite does and does not cover).
 from __future__ import annotations
 
 import json
+import pathlib
 import threading
 import time
 
@@ -1383,7 +1384,9 @@ def test_install_transcript_core_finds_canopy_acp_beside_the_runners(
 class _FakeCore:
     """Stands in for canopy_transcript. Only the surface the runner uses."""
 
-    TRANSCRIPT = "/fake/transcript.jsonl"
+    # A Path, like the real `resolve_cli_transcript` returns — the runner reads
+    # `.stem` off it to name the conversation these ordinals belong to (#615).
+    TRANSCRIPT = pathlib.Path("/fake/transcript.jsonl")
 
     def __init__(self, records=None, resolvable=True):
         self.records = records if records is not None else ["r0", "r1"]
@@ -1465,13 +1468,20 @@ def test_stream_sync_attaches_and_ships_rows(cloud_runner, monkeypatch):
 
 
 def _ship(cloud_runner, monkeypatch, core, descriptor):
-    """Run one stream sync against `descriptor` and return the ordinals shipped."""
+    """Run one stream sync against `descriptor` and return the ordinals shipped.
+
+    `transcript_id` defaults to the fake transcript's stem — "the markers in this
+    descriptor are markers into the file the runner is about to read". Overriding
+    it is how a caller says the server's rows came from a DIFFERENT conversation
+    (issue #615)."""
     posted = []
 
     def api(method, path, body=None):
         if method == "GET" and path.endswith("/streams"):
             return 200, {"streams": [{"session_id": "s", "session_key": "k",
-                                      "project": "", **descriptor}]}
+                                      "project": "",
+                                      "transcript_id": core.TRANSCRIPT.stem,
+                                      **descriptor}]}
         if method == "POST" and path.endswith("/session-stream"):
             posted.append(body)
             return 200, {"count": len(body["events"])}
@@ -1506,6 +1516,16 @@ def test_stream_sync_ships_history_when_the_server_is_missing_the_head(cloud_run
     whose head was never captured could never repair itself."""
     shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
                     {"first_index": 11, "last_index": 11})
+    assert shipped == [10, 11]
+
+
+def test_stream_sync_discards_markers_from_another_transcript(cloud_runner, monkeypatch):
+    """The laptop's issue-#615 case, on the cloud box: a marker only licenses
+    skipping when it names the file being read. A predecessor's high-water mark
+    against a shorter successor suppresses the whole conversation, permanently."""
+    shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
+                    {"first_index": 0, "last_index": 9999,
+                     "transcript_id": "a-previous-session"})
     assert shipped == [10, 11]
 
 

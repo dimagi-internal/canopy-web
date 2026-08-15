@@ -16,13 +16,16 @@ class _Client:
         self._backfills = backfills
         self.shipped = []  # (session_id, messages)
         self.finals = []   # the `final` flag per POST
+        self.transcript_ids = []  # which transcript each POST named (issue #615)
 
     def sync_backfills(self, runner_id):
         return self._backfills
 
-    def post_session_backfill(self, runner_id, session_id, messages, final=True):
+    def post_session_backfill(self, runner_id, session_id, messages, final=True,
+                              transcript_id=""):
         self.shipped.append((session_id, messages))
         self.finals.append(final)
+        self.transcript_ids.append(transcript_id)
 
 
 def _asst(t):

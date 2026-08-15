@@ -8487,6 +8487,11 @@ export interface components {
              * @default true
              */
             readonly live: boolean;
+            /**
+             * Transcript Id
+             * @default
+             */
+            readonly transcript_id: string;
         };
         /** StreamSyncOut */
         readonly StreamSyncOut: {
@@ -8532,6 +8537,11 @@ export interface components {
              * @default []
              */
             readonly events: readonly components["schemas"]["LiveEventIn"][];
+            /**
+             * Transcript Id
+             * @default
+             */
+            readonly transcript_id: string;
         };
         /** BackfillDescriptorOut */
         readonly BackfillDescriptorOut: {
@@ -8652,6 +8662,11 @@ export interface components {
              * @default true
              */
             readonly final: boolean;
+            /**
+             * Transcript Id
+             * @default
+             */
+            readonly transcript_id: string;
         };
         /**
          * UnclaimableTurnOut

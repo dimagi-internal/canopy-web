@@ -1864,7 +1864,8 @@ def _session_transcript_path(session_id: str, session_key: str):
     return ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
 
 
-def _post_stream_rows(runner_id: str, session_id: str, rows: list) -> bool:
+def _post_stream_rows(runner_id: str, session_id: str, rows: list,
+                      transcript_id: str = "") -> bool:
     """Ship conversational rows as live events. `seq == index` (the composite
     transcript ordinal): monotonic per session forever, so WS-derived `seq:<n>`
     message ids cannot collide across detaches, restarts or failovers."""
@@ -1881,7 +1882,9 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list) -> bool:
     # dies as an unhandled 500 (RequestDataTooBig, raised before the view runs).
     for batch in ct.chunk_rows(events) or [[]]:
         status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
-                         {"session_id": session_id, "events": batch})
+                         {"session_id": session_id, "events": batch,
+                          # Which conversation these ordinals belong to (issue #615).
+                          "transcript_id": transcript_id})
         if status != 200:
             return False
     return True
@@ -1919,18 +1922,29 @@ def _sync_session_streams(runner_id: str) -> None:
         st["session_key"] = descriptor.get("session_key") or ""
         st["last_index"] = descriptor.get("last_index")
         st["first_index"] = descriptor.get("first_index")
+        st["server_transcript_id"] = descriptor.get("transcript_id") or ""
         try:
+            path = _session_transcript_path(sid, st["session_key"])
+            if path is None:
+                continue  # not spawned yet, or a different box owns it
+            transcript_id = path.stem  # the CLI session uuid — the conversation's identity
+            if st["reader"] is not None and st.get("transcript_id") != transcript_id:
+                st["reader"], st["count"] = None, 0  # session replaced under us
+            st["transcript_id"] = transcript_id
             if st["reader"] is None:
-                path = _session_transcript_path(sid, st["session_key"])
-                if path is None:
-                    continue  # not spawned yet, or a different box owns it
                 reader = ct.TailReader(str(path))
                 records = reader.read_new()
+                # The server's markers are ordinals into the transcript it named;
+                # against any other file they license nothing (issue #615).
+                same = bool(st["server_transcript_id"]) and (
+                    st["server_transcript_id"] == transcript_id
+                )
                 rows = ct.rows_to_ship(
                     ct.conversational_messages(records, -1),
-                    first_held=st.get("first_index"), last_held=st.get("last_index"),
+                    first_held=st.get("first_index") if same else None,
+                    last_held=st.get("last_index") if same else None,
                 )
-                if rows and not _post_stream_rows(runner_id, sid, rows):
+                if rows and not _post_stream_rows(runner_id, sid, rows, transcript_id):
                     continue  # nothing consumed — re-attach next tick
                 st["reader"], st["count"] = reader, len(records)
                 _log(f"stream {sid[:8]}: attached ({len(rows)} rows caught up)")
@@ -1943,7 +1957,7 @@ def _sync_session_streams(runner_id: str) -> None:
             # to the composite index — adding it there would shift a row into
             # another record's slots.
             rows = ct.conversational_messages(new_records, -1, record_offset=base)
-            if rows and not _post_stream_rows(runner_id, sid, rows):
+            if rows and not _post_stream_rows(runner_id, sid, rows, st["transcript_id"]):
                 st["reader"], st["count"] = None, 0  # don't advance past unshipped records
                 continue
             st["count"] = base + len(new_records)
@@ -1977,7 +1991,10 @@ def _drain_backfills(runner_id: str) -> None:
             for i, batch in enumerate(batches):
                 st, _ = _api("POST", f"/runners/{runner_id}/session-backfill",
                              {"session_id": sid, "messages": batch,
-                              "final": i == len(batches) - 1})
+                              "final": i == len(batches) - 1,
+                              # Names the conversation, so a rebuild REPLACES a
+                              # predecessor's rows rather than merging (issue #615).
+                              "transcript_id": path.stem})
             _log(f"backfill {sid[:8]}: shipped {len(messages)} rows "
                  f"in {len(batches)} chunk(s) -> {st}")
         except Exception as exc:  # noqa: BLE001

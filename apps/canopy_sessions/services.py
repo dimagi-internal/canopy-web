@@ -22,7 +22,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
 from . import attach
-from .models import Message, Session
+from .models import Message, RunnerBinding, Session
 from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
 
 from .transcript_noise import is_system_noise, scrub_nul
@@ -335,6 +335,55 @@ def _ensure_current_ordinal_scheme(locked_session) -> int:
     locked_session.ordinal_scheme = ORDINAL_SCHEME
     locked_session.save(update_fields=["ordinal_scheme", "updated_at"])
     return deleted
+
+
+def ensure_transcript_identity(session, transcript_id: str) -> int:
+    """Drop derived rows that came from a DIFFERENT transcript than the one now
+    being shipped, so two conversations can't share one session's ordinals.
+
+    The sibling of `_ensure_current_ordinal_scheme`, for the other way a session's
+    `turn_index` space can be invalidated. A binding is keyed on the emdash task
+    NAME, and names get reused — close "bednet", open another "bednet", and the
+    binding is re-pointed at a new conversation with the old one's rows still
+    attached. Because `turn_index` is a PER-FILE ordinal, that is not merely
+    untidy: the first_index/last_index markers derived from the old file are
+    nonsense against the new one, and a shorter successor sits entirely below the
+    old high-water mark and is suppressed forever (issue #615).
+
+    A change of transcript is therefore treated exactly like a change of ordinal
+    scheme — drop and re-derive. That is safe because the runner ships the WHOLE
+    history whenever its transcript id disagrees with the descriptor's (see
+    `canopy_runner.streams`), so the rows are replaced, not lost, and the
+    transcript on disk remains the source either way.
+
+    Blank `transcript_id` (an old runner) is a no-op: it carries no claim about
+    provenance, and dropping rows on no evidence would wipe a healthy session.
+    Returns rows deleted.
+    """
+    if not transcript_id:
+        return 0
+    with transaction.atomic():
+        # The BINDING is the only row that needs locking — it holds the flag that
+        # makes this idempotent, so serializing on it is what stops two concurrent
+        # ships both dropping. Deliberately NOT also locking the Session:
+        # `harness.replace_reported_sessions` takes its locks binding-first and
+        # then writes the session row, so grabbing them in the other order here
+        # would make the two a deadlock pair — every ~10s report against every
+        # ship. `persist_transcript_rows` still takes its own Session lock
+        # afterwards, in its own transaction, exactly as before.
+        binding = (
+            RunnerBinding.objects.select_for_update().filter(session=session).first()
+        )
+        if binding is None or binding.transcript_id == transcript_id:
+            return 0
+        # First sighting (blank) still drops: a session that predates this field
+        # is exactly the state issue #615 describes — rows of unknown provenance,
+        # possibly a previous task's — and the shipper is sending the full history
+        # for precisely that reason. Rebuilding once is cheap and self-healing.
+        deleted, _ = Message.objects.filter(session=session).delete()
+        binding.transcript_id = transcript_id
+        binding.save(update_fields=["transcript_id", "updated_at"])
+        return deleted
 
 
 def persist_transcript_rows(session, rows) -> int:

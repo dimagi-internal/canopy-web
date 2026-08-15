@@ -34,7 +34,9 @@ _stream_readers: dict[str, dict] = {}
 
 
 
-def post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) -> bool:
+def post_stream_rows(
+    cfg: Config, client: Client, sid: str, rows: list[dict], transcript_id: str = ""
+) -> bool:
     """Ship conversational rows as live events. seq == index (the composite
     transcript ordinal): monotonic per session forever, so the WS-derived
     `seq:<n>` message ids can never collide across detaches, restarts, or
@@ -49,7 +51,7 @@ def post_stream_rows(cfg: Config, client: Client, sid: str, rows: list[dict]) ->
         # carries a session's whole history, which on the longest transcripts
         # exceeds the server's 2.5 MB request ceiling and dies as an unhandled 500.
         for batch in chunk_rows(events) or [[]]:
-            client.post_session_stream(cfg.runner_id, sid, batch)
+            client.post_session_stream(cfg.runner_id, sid, batch, transcript_id)
         note_success(f"stream:{sid}")
         return True
     except Exception:  # noqa: BLE001
@@ -105,25 +107,48 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         # Refresh every tick: the markers advance as the server persists our posts.
         st["last_index"] = s.get("last_index")
         st["first_index"] = s.get("first_index")
+        # ...and WHICH transcript they are markers into. See below.
+        st["server_transcript_id"] = s.get("transcript_id") or ""
 
     for sid, st in _stream_readers.items():
+        # Resolve EVERY tick, not just on attach. A binding is keyed on the emdash
+        # task NAME and names are reused, so the session under a live reader can be
+        # swapped for a different conversation without anything here changing —
+        # after which the reader tails a file nobody is writing to, forever. Costs
+        # a scandir per session per tick against a warm dentry cache.
+        path = transcript.resolve_transcript(
+            st["project"], st["session_key"], home=home, claude_home=claude_home
+        )
+        if not path:
+            continue  # transcript wasn't there yet — retry resolving next tick
+        transcript_id = path.stem  # the Claude session uuid — the conversation's identity
+        if st["reader"] is not None and st.get("transcript_id") != transcript_id:
+            # The task behind this session was replaced. Start over on the new file:
+            # its ordinals are a fresh space, and the server drops what it holds the
+            # moment it sees the new id (issue #615).
+            st["reader"], st["count"] = None, 0
+        st["transcript_id"] = transcript_id
         reader = st["reader"]
         if reader is None:
             # (Re-)attach: read the whole file once, atomically w.r.t. this
             # reader, and ship whatever the server is missing — the whole history
             # when it has no head, otherwise just what is past its marker.
-            path = transcript.resolve_transcript(
-                st["project"], st["session_key"], home=home, claude_home=claude_home
-            )
-            if not path:
-                continue  # transcript wasn't there yet — retry resolving next tick
             reader = TailReader(str(path))
             records = reader.read_new()
+            # The server's markers are ordinals into the transcript it named. If
+            # that is not this file, they license nothing — a shorter successor
+            # sits entirely below the predecessor's high-water mark and would be
+            # suppressed in full. Discard them and ship everything; the server
+            # replaces its rows rather than merging into them.
+            same = bool(st.get("server_transcript_id")) and (
+                st["server_transcript_id"] == transcript_id
+            )
             rows = rows_to_ship(
                 chat_bridge.conversational_messages(records, -1),
-                first_held=st.get("first_index"), last_held=st.get("last_index"),
+                first_held=st.get("first_index") if same else None,
+                last_held=st.get("last_index") if same else None,
             )
-            if rows and not post_stream_rows(cfg, client, sid, rows):
+            if rows and not post_stream_rows(cfg, client, sid, rows, transcript_id):
                 continue  # nothing consumed; re-attach next tick
             st["reader"], st["count"] = reader, len(records)
             continue
@@ -135,7 +160,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         # to the RECORD ordinal inside compose_index, never to the composite
         # index (adding it there would shift a row into another record's slots).
         rows = chat_bridge.conversational_messages(new_records, -1, record_offset=base)
-        if rows and not post_stream_rows(cfg, client, sid, rows):
+        if rows and not post_stream_rows(cfg, client, sid, rows, transcript_id):
             # Don't advance past unshipped records: reset so the next tick
             # re-attaches and catches up from the server marker.
             st["reader"], st["count"] = None, 0
@@ -242,7 +267,11 @@ def drain_backfills(cfg: Config, client: Client) -> None:
         try:
             for i, batch in enumerate(batches):
                 client.post_session_backfill(
-                    cfg.runner_id, sid, batch, final=(i == len(batches) - 1)
+                    cfg.runner_id, sid, batch, final=(i == len(batches) - 1),
+                    # Names the conversation this history belongs to, so a rebuild
+                    # REPLACES a predecessor's rows instead of upsert-filling into
+                    # them under a shared ordinal space (issue #615).
+                    transcript_id=path.stem,
                 )
             note_success(f"backfill:{sid}")
         except Exception:  # noqa: BLE001
