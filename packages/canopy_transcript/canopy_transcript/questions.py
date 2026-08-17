@@ -54,6 +54,8 @@ from __future__ import annotations
 
 import time
 
+from .records import read_tail_records
+
 ASK_TOOL = "AskUserQuestion"
 
 
@@ -286,6 +288,51 @@ def marker_from_hook(payload) -> dict | None:
         "options": [],
         "source": "notification",
     })
+
+
+# Record types that are bookkeeping around a turn rather than a part of one:
+# `system` carries the turn_duration/meta rows Claude Code appends AFTER the last
+# message, and `queue-operation` records a queued prompt that has not been sent.
+# Skipping them is what lets "how did the last turn end?" look at the last thing
+# the conversation actually said.
+_NON_CONVERSATIONAL = {"system", "queue-operation", "summary"}
+
+
+def turn_ended_in_api_error(payload) -> bool:
+    """Whether this session's turn already ended in an API error.
+
+    **Why this is needed at all.** The runner tells a real "an agent is asking
+    you something" `Notification` apart from a merely-idle one by turn STATE: a
+    real one arrives between `UserPromptSubmit` and `Stop`. That discriminator
+    assumes every turn ends with `Stop` — and one kind does not. When the API
+    answers 500, Claude Code writes the error as an assistant message, appends
+    its `turn_duration` row and returns to the prompt **without firing `Stop`**,
+    so the session stays marked in-turn forever. Sixty seconds later the ordinary
+    idle notification arrives, is read as a mid-turn block, and the chat surface
+    locks itself behind a dialog that does not exist.
+
+    Measured 2026-08-17 on `ace`'s `spark`: a 500 at 23:08:15Z, an idle
+    `Notification` at 23:09:15Z, and a "Waiting on you" nobody could answer or
+    type past — because there was nothing on the screen to answer.
+
+    So the transcript is consulted for the one fact no hook reports: did the last
+    thing the conversation said turn out to be an API error? `isApiErrorMessage`
+    is written by Claude Code on exactly that record.
+
+    **Fails closed** — an unreadable, absent or lagging transcript answers False,
+    which is today's behaviour: a false "blocked" is the cost, and it is the one
+    this whole path was built to accept in exchange for never missing a real ask.
+    """
+    if not isinstance(payload, dict):
+        return False
+    path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return False
+    for record in reversed(read_tail_records(path)):
+        if record.get("type") in _NON_CONVERSATIONAL or record.get("isSidechain"):
+            continue
+        return bool(record.get("isApiErrorMessage"))
+    return False
 
 
 def hook_retires_menu(payload) -> bool:

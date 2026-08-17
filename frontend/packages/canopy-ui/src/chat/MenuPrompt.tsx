@@ -240,7 +240,13 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now
   //
   // Escape is still REAL on one of these: the runner re-reads the actual screen
   // before pressing anything, and a permission prompt parses there — so the
-  // refuse button below is an action, not a placeholder.
+  // refuse button below is an action, not a placeholder. When the screen turns
+  // out to be an ordinary prompt, that same re-read answers NO_DIALOG and the
+  // marker is dropped, which is the way out of a marker that was never a dialog.
+  //
+  // It may also not be a dialog at all — nothing was parsed to produce this, so
+  // the copy no longer promises one is there. The composer stays live behind it
+  // for the same reason (`menuBlocksComposer`).
   const optionless = menu.options.length === 0;
   const age = menuAge(menu, now);
   const form = needsForm(menu);
@@ -270,8 +276,8 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now
         />
       ) : optionless ? (
         <div className="mt-1.5 text-[12px] leading-snug text-muted-foreground">
-          The options can only be read at the keyboard — open this session in emdash to
-          pick one. Cancelling from here still works.
+          No options came with this one — open the session in emdash to see what is on
+          screen. Cancelling clears it if nothing is, and the composer below still sends.
         </div>
       ) : described ? (
         <div className="mt-2 flex flex-col gap-1.5">

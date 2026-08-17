@@ -378,3 +378,75 @@ def test_a_single_question_ask_still_reports_one_question():
     menu = ct.menu_from_hook(_hook(SPARK_ASK))
     assert len(menu["questions"]) == 1
     assert menu["questions"][0]["multi_select"] is False
+
+
+# --- an API error ends the turn, and fires no `Stop` -------------------------
+#
+# Verbatim shape from `ace`'s `spark` on 2026-08-17: a 500 at 23:08:15Z, its
+# `turn_duration` row 4ms later, and no `Stop` hook at all. Sixty seconds after
+# that the ordinary idle `Notification` arrived and was read as an agent asking
+# a question, which locked the chat behind a dialog that did not exist.
+
+API_ERROR_ROW = {
+    "type": "assistant", "isApiErrorMessage": True, "error": "server_error",
+    "apiErrorStatus": 500,
+    "message": {"role": "assistant", "content": [
+        {"type": "text", "text": "API Error: 500 Internal server error."}]},
+}
+TURN_DURATION_ROW = {"type": "system", "subtype": "turn_duration", "durationMs": 3645927}
+ASSISTANT_ROW = {"type": "assistant",
+                 "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+USER_ROW = {"type": "user", "message": {"role": "user", "content": "go"}}
+
+
+def _transcript(tmp_path, records):
+    import json
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return str(path)
+
+
+def test_api_error_is_a_turn_end(tmp_path):
+    path = _transcript(tmp_path, [USER_ROW, ASSISTANT_ROW, API_ERROR_ROW, TURN_DURATION_ROW])
+    assert ct.turn_ended_in_api_error(
+        {"hook_event_name": "Notification", "transcript_path": path}) is True
+
+
+def test_a_turn_still_running_is_not_a_turn_end(tmp_path):
+    """The error is only a turn end while it is the LAST thing said. A retry
+    that produced real output afterwards is an ordinary turn again."""
+    path = _transcript(tmp_path, [API_ERROR_ROW, TURN_DURATION_ROW, USER_ROW, ASSISTANT_ROW])
+    assert ct.turn_ended_in_api_error(
+        {"hook_event_name": "Notification", "transcript_path": path}) is False
+
+
+def test_a_subagent_error_is_not_this_turn(tmp_path):
+    """A Task agent's own API error says nothing about the session's turn."""
+    path = _transcript(tmp_path, [USER_ROW, {**API_ERROR_ROW, "isSidechain": True}, ASSISTANT_ROW])
+    assert ct.turn_ended_in_api_error(
+        {"hook_event_name": "Notification", "transcript_path": path}) is False
+
+
+def test_it_fails_closed(tmp_path):
+    """No path, an unreadable path, and an empty file all answer False — which
+    is the previous behaviour: a false block, never a missed one."""
+    assert ct.turn_ended_in_api_error({"hook_event_name": "Notification"}) is False
+    assert ct.turn_ended_in_api_error(
+        {"hook_event_name": "Notification", "transcript_path": "/nope/nothing.jsonl"}) is False
+    assert ct.turn_ended_in_api_error(
+        {"hook_event_name": "Notification", "transcript_path": _transcript(tmp_path, [])}) is False
+    assert ct.turn_ended_in_api_error(None) is False
+
+
+def test_the_tail_reader_drops_the_partial_first_line(tmp_path):
+    """A byte offset lands mid-record, and half a JSON line is not a record."""
+    path = tmp_path / "big.jsonl"
+    import json
+    filler = json.dumps({"type": "user", "pad": "x" * 500}) + "\n"
+    path.write_text(filler * 400 + json.dumps(API_ERROR_ROW) + "\n")
+    records = ct.read_tail_records(str(path), max_bytes=2_000)
+    assert records and records[-1]["isApiErrorMessage"] is True
+    assert all(isinstance(r, dict) for r in records)
+    # The window is honoured — this is the whole point of not reading a
+    # multi-megabyte run transcript on every idle notification.
+    assert len(records) < 20
