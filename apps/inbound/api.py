@@ -103,6 +103,7 @@ def _mailbox_out(mb: InboundMailbox) -> dict:
         "enabled": mb.enabled,
         "last_push_at": mb.last_push_at.isoformat() if mb.last_push_at else "",
         "watch_expires_at": mb.watch_expires_at.isoformat() if mb.watch_expires_at else "",
+        "watch_error": mb.watch_error,
         "watch_state": services.watch_state(mb),
     }
 
@@ -314,7 +315,7 @@ def report_watch(request: HttpRequest, payload: WatchReportIn) -> dict:
         # non-member gets to learn.
         raise HttpError(404, "no such mailbox")
 
-    services.note_watch_state(mailbox, payload.expires_at)
+    services.note_watch_state(mailbox, payload.expires_at, payload.error)
     return {
         "ok": True,
         "expires_at": payload.expires_at.isoformat() if payload.expires_at else "",

@@ -34,10 +34,15 @@ class WatchReportIn(StrictModel):
     ``expires_at`` may be null — that is how you say "this mailbox has no watch",
     which is different from never having reported. Both are honest states and the
     log distinguishes them.
+
+    ``error`` is the third state: the runner is supposed to be watching this
+    mailbox and cannot (a revoked grant, a dead OAuth client). Null expiry plus a
+    blank error is the retraction a paused runner sends.
     """
 
     address: str
     expires_at: dt.datetime | None = None
+    error: str = ""
 
 
 class WatchReportOut(StrictModel):
@@ -88,9 +93,13 @@ class MailboxOut(StrictModel):
     enabled: bool
     last_push_at: str = ""
     watch_expires_at: str = ""
+    watch_error: str = ""
+    """Why the runner cannot arm this mailbox's watch; blank when it can."""
+
     watch_state: str
-    """``armed`` | ``expiring`` | ``expired`` | ``none`` — computed server-side so
-    the UI and the event log cannot disagree about what counts as healthy."""
+    """``failed`` | ``armed`` | ``expiring`` | ``expired`` | ``none`` — computed
+    server-side so the UI and the event log cannot disagree about what counts as
+    healthy."""
 
 
 class MailboxListOut(StrictModel):

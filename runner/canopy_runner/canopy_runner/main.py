@@ -236,7 +236,48 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
         pass
 
 
-def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
+#: Failure records live under one reserved key inside gmail-watch.json, beside the
+#: ``{address: expiry}`` entries. An address is always an email, so the namespace
+#: cannot collide, and an older state file simply has no failures in it.
+_FAILURES_KEY = "_failures"
+
+
+def _watch_state_path(cfg: Config) -> Path:
+    return (Path(cfg.state_path).with_name("gmail-watch.json")
+            if cfg.state_path else Path("gmail-watch.json"))
+
+
+def _load_watch_state(path: Path) -> dict:
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _save_watch_state(path: Path, state: dict, failures: dict) -> None:
+    if failures:
+        state[_FAILURES_KEY] = failures
+    else:
+        state.pop(_FAILURES_KEY, None)
+    try:
+        path.write_text(json.dumps(state))
+    except OSError:
+        pass
+
+
+def _before(now: dt.datetime, stamp: str | None) -> bool:
+    """True when `now` is still earlier than an ISO stamp we wrote earlier."""
+    if not stamp:
+        return False
+    try:
+        return now < dt.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return False
+
+
+def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
+                         now: dt.datetime | None = None) -> None:
     """Keep each mailbox's Gmail watch armed, and report the expiry.
 
     Rides the inbox tick because it needs nothing else, and re-arms 24h early
@@ -246,8 +287,14 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
 
     Off unless `gmail_watch_topic` is set, so a box with no Pub/Sub topic
     provisioned behaves exactly as before. Best-effort per mailbox: one failing
-    mailbox (revoked grant, missing gog client) is logged and skipped, never
-    raised — the server's watch.expired row is what makes it loud.
+    mailbox (revoked grant, dead OAuth client) never raises into the tick.
+
+    A failure does two things beyond logging, both of which it used to skip:
+    it BACKS OFF (state was left untouched, so the 24h window stayed open and the
+    next tick retried ~5s later — forever), and past the second attempt it TELLS
+    the server the mailbox is unwatched. Waiting for `watch.expired` to make it
+    loud was a 7-day lie: push is dead the moment the arm starts failing, and the
+    row that eventually appeared blamed the clock rather than the credential.
     """
     if not getattr(cfg, "mailboxes", None):
         return
@@ -267,26 +314,32 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
     if not served and not local_topic:
         return
 
-    state_path = (Path(cfg.state_path).with_name("gmail-watch.json")
-                  if cfg.state_path else Path("gmail-watch.json"))
-    try:
-        state = json.loads(state_path.read_text())
-        if not isinstance(state, dict):
-            state = {}
-    except (OSError, ValueError):
-        state = {}
+    state_path = _watch_state_path(cfg)
+    state = _load_watch_state(state_path)
+    failures = state.get(_FAILURES_KEY)
+    if not isinstance(failures, dict):
+        failures = {}
 
-    now = dt.datetime.now(dt.UTC)
+    now = now or dt.datetime.now(dt.UTC)
     changed = False
     for agent, box in cfg.mailboxes.items():
         address = box.get("account") or ""
         if not address:
             continue
+        fail = failures.get(address) or {}
+        # A failing arm waits out its backoff. Without this the 24h re-arm window
+        # stays open and every tick retries — which is how one dead OAuth client
+        # became 18,680 token requests and a 20MB log over 35 hours.
+        if _before(now, fail.get("next_attempt")):
+            continue
         try:
             prev = dt.datetime.fromisoformat(state[address]) if state.get(address) else None
         except (TypeError, ValueError):
             prev = None
-        if not gmail_watch.due(prev, now=now):
+        # A mailbox already in failure re-attempts on the backoff clock, not the
+        # expiry clock: its last good expiry can still be days out while the watch
+        # it needs NEXT is the one that cannot be armed.
+        if not fail and not gmail_watch.due(prev, now=now):
             continue
         topic = served.get(address.lower(), "") or local_topic
         if not topic:
@@ -294,20 +347,87 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time) -> None:
         try:
             expires = gmail_watch.arm(address, box.get("client") or "canopy", topic)
         except Exception as exc:  # noqa: BLE001 — one mailbox never breaks the tick
-            logger.warning("gmail watch re-arm failed for %s: %s", address, exc)
+            failures[address] = _note_failure(client, address, exc, fail, now=now)
+            changed = True
             continue
         state[address] = expires.isoformat()
+        was_failing = failures.pop(address, None)
         changed = True
         logger.info("gmail watch armed for %s -> expires %s", address, expires.isoformat())
+        if was_failing:
+            logger.info("gmail watch recovered for %s after %s failed attempt(s)",
+                        address, was_failing.get("consecutive"))
         try:
             client.report_watch(address, expires)
         except Exception as exc:  # noqa: BLE001 — reporting is not the arming
             logger.warning("gmail watch report failed for %s: %s", address, exc)
     if changed:
+        _save_watch_state(state_path, state, failures)
+
+
+def _note_failure(client: Client, address: str, exc: Exception, fail: dict, *,
+                  now: dt.datetime) -> dict:
+    """Record a failed arm, back off, and tell the server once it looks real.
+
+    Reporting is deliberately not on the first failure: a blip costs nothing (six
+    days of slack remain before push lapses) and an error someone has to clear is
+    not free. It is also not on every retry — the server coalesces by mailbox, but
+    a report that says the same thing twice is still noise on the wire.
+    """
+    from . import gmail_watch
+
+    consecutive = int(fail.get("consecutive") or 0) + 1
+    error = str(exc)[:500]
+    # "Already said this" is error-sensitive: a mailbox whose failure CHANGES
+    # (dead client -> revoked grant) is telling you something new.
+    already = bool(fail.get("reported")) and error == (fail.get("error") or "")
+    report = consecutive >= gmail_watch.REPORT_AFTER_FAILURES and not already
+    nxt = gmail_watch.backoff_until(consecutive, now=now)
+    logger.warning("gmail watch re-arm failed for %s (attempt %d): %s — next try %s",
+                   address, consecutive, error, nxt.isoformat())
+    noted = {"consecutive": consecutive, "next_attempt": nxt.isoformat(),
+             "error": error, "reported": already or report}
+    if report:
         try:
-            state_path.write_text(json.dumps(state))
-        except OSError:
-            pass
+            # A null expiry is the wire's way of saying "this mailbox has no
+            # watch" — the server already accepts it; it just used to drop it.
+            client.report_watch(address, None, error=error)
+            logger.warning("reported to canopy-web: %s is NOT being watched", address)
+        except Exception as rexc:  # noqa: BLE001 — reporting is not the arming
+            logger.warning("gmail watch failure report failed for %s: %s", address, rexc)
+            noted["reported"] = False
+    return noted
+
+
+def _clear_watch_failures(cfg: Config, client: Client) -> None:
+    """Resolve any outstanding "cannot arm" reports. Called when the runner parks.
+
+    A paused runner is not a broken one, and the whole point of pausing is that
+    nobody gets paged for it. The global pause returns from ``run_once`` ABOVE the
+    re-arm, so a parked box already raises no NEW failures; this retracts the ones
+    it raised before it was parked.
+
+    Local state is dropped along with the report, so resuming re-discovers the
+    failure and reports it again rather than staying quiet about a mailbox that is
+    still broken.
+    """
+    if not getattr(cfg, "mailboxes", None):
+        return
+    state_path = _watch_state_path(cfg)
+    state = _load_watch_state(state_path)
+    failures = state.get(_FAILURES_KEY)
+    if not isinstance(failures, dict) or not failures:
+        return
+    for address, fail in list(failures.items()):
+        if fail.get("reported"):
+            try:
+                client.report_watch(address, None, error="")
+            except Exception as exc:  # noqa: BLE001 — never break the pause path
+                logger.warning("gmail watch clear failed for %s: %s", address, exc)
+                continue
+        failures.pop(address, None)
+        logger.info("gmail watch failure for %s cleared — runner is paused", address)
+    _save_watch_state(state_path, state, failures)
 
 
 def _fire_due_schedules(cfg: Config, client: Client, paused: set[str] | None = None) -> None:
@@ -474,6 +594,11 @@ def run_once(cfg: Config, client: Client) -> str:
     # It sits AFTER the in-flight reporting above, deliberately: a pause stops
     # STARTING work, it never abandons work already running.
     if reconcile_pause(cfg, client, bool((me or {}).get("paused"))):
+        # Parked on purpose is not broken. The re-arm below never runs while
+        # paused, so no NEW watch failure can be raised; retract any this box
+        # raised before it was parked so canopy-web shows a quiet runner rather
+        # than a red one nobody is going to act on.
+        _clear_watch_failures(cfg, client)
         return "paused"
 
     paused = _paused_agents(cfg)

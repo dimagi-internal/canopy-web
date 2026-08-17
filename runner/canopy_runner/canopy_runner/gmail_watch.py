@@ -46,6 +46,33 @@ GOG_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "gogcli"
 #: happened and didn't.
 REARM_WINDOW = dt.timedelta(hours=24)
 
+#: How long to wait after N consecutive FAILED arms before attempting again.
+#: A failure used to leave the state file untouched, so the 24h `REARM_WINDOW`
+#: stayed open and the loop retried every tick (~5s) for as long as the failure
+#: lasted — 18,680 token requests and a 20MB log over one 35-hour outage. The
+#: schedule is per consecutive failure and CAPS, because the failures worth
+#: guarding against (a revoked grant, a dead OAuth client) are permanent until a
+#: human acts: retrying a dead client faster does not make it less dead.
+BACKOFF = (
+    dt.timedelta(minutes=1),
+    dt.timedelta(minutes=5),
+    dt.timedelta(minutes=15),
+    dt.timedelta(minutes=30),
+)
+
+#: Tell the server "this mailbox is not being watched" once a failure has
+#: repeated this many times. Not the first: a single failed arm is usually a
+#: blip, and there are still ~6 days of slack before push actually lapses. With
+#: BACKOFF that is roughly a minute in — fast enough to be actionable, slow
+#: enough that a transient 401 never raises an error someone has to clear.
+REPORT_AFTER_FAILURES = 2
+
+
+def backoff_until(consecutive: int, *, now: dt.datetime) -> dt.datetime:
+    """When the next arm attempt is allowed, after `consecutive` failures."""
+    idx = min(max(consecutive, 1), len(BACKOFF)) - 1
+    return now + BACKOFF[idx]
+
 
 class WatchError(Exception):
     pass

@@ -4758,6 +4758,11 @@ export interface components {
              * @default
              */
             readonly watch_expires_at: string;
+            /**
+             * Watch Error
+             * @default
+             */
+            readonly watch_error: string;
             /** Watch State */
             readonly watch_state: string;
         };
@@ -4817,12 +4822,21 @@ export interface components {
          *     ``expires_at`` may be null — that is how you say "this mailbox has no watch",
          *     which is different from never having reported. Both are honest states and the
          *     log distinguishes them.
+         *
+         *     ``error`` is the third state: the runner is supposed to be watching this
+         *     mailbox and cannot (a revoked grant, a dead OAuth client). Null expiry plus a
+         *     blank error is the retraction a paused runner sends.
          */
         readonly WatchReportIn: {
             /** Address */
             readonly address: string;
             /** Expires At */
             readonly expires_at?: string | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {

@@ -105,9 +105,15 @@ export function consoleLinks(project: string): { label: string; url: string }[] 
 }
 
 /** Human copy for a mailbox's watch state. `none` is not an error — it means
- *  nothing has armed it yet, which is the expected state before provisioning. */
-export function watchLabel(state: string, expiresAt: string): string {
+ *  nothing has armed it yet, which is the expected state before provisioning.
+ *  `failed` is the opposite: a runner is supposed to be watching this mailbox
+ *  and cannot, which is the one state that always needs a human. */
+export function watchLabel(state: string, expiresAt: string, error = ''): string {
   switch (state) {
+    case 'failed':
+      return error
+        ? `Runner cannot arm this watch — ${error}`
+        : 'Runner cannot arm this watch — push is not being delivered'
     case 'armed':
       return `Armed until ${new Date(expiresAt).toLocaleString()}`
     case 'expiring':
@@ -120,6 +126,7 @@ export function watchLabel(state: string, expiresAt: string): string {
 }
 
 export function watchTone(state: string): 'success' | 'warning' | 'destructive' | 'muted' {
+  if (state === 'failed') return 'destructive'
   if (state === 'armed') return 'success'
   if (state === 'expiring') return 'warning'
   if (state === 'expired') return 'destructive'

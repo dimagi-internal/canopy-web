@@ -175,3 +175,31 @@ def test_the_window_leaves_six_days_of_retries():
     """Google's ceiling is 7 days; re-arming 24h early means six further ticks
     can still succeed before push actually lapses."""
     assert gmail_watch.REARM_WINDOW == dt.timedelta(hours=24)
+
+
+# ── backing off a failing arm ────────────────────────────────────────────────
+#
+# A failed arm used to leave the state file untouched, so `due()` was true again
+# on the very next tick and the loop retried every ~5s forever. That is the same
+# subprocess storm `_maybe_check_inboxes` already guards against by stamping on
+# failure; these pin the equivalent guard here.
+
+
+def test_backoff_grows_with_consecutive_failures():
+    now = dt.datetime(2026, 8, 15, 12, 0, tzinfo=dt.UTC)
+    assert gmail_watch.backoff_until(1, now=now) == now + dt.timedelta(minutes=1)
+    assert gmail_watch.backoff_until(2, now=now) == now + dt.timedelta(minutes=5)
+    assert gmail_watch.backoff_until(3, now=now) == now + dt.timedelta(minutes=15)
+    assert gmail_watch.backoff_until(4, now=now) == now + dt.timedelta(minutes=30)
+
+
+def test_backoff_caps_so_a_dead_client_never_hammers():
+    now = dt.datetime(2026, 8, 15, 12, 0, tzinfo=dt.UTC)
+    # 35 hours of the real outage was ~9,300 attempts per mailbox. Capped, the
+    # same outage costs ~70.
+    assert gmail_watch.backoff_until(500, now=now) == now + dt.timedelta(minutes=30)
+
+
+def test_backoff_treats_a_zero_count_as_the_first_failure():
+    now = dt.datetime(2026, 8, 15, 12, 0, tzinfo=dt.UTC)
+    assert gmail_watch.backoff_until(0, now=now) == now + dt.timedelta(minutes=1)
