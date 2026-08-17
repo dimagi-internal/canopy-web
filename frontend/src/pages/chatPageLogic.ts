@@ -93,6 +93,35 @@ export function shouldShowLoadFull(args: {
  * unknown never locks the composer — the failure mode of over-blocking is a
  * chat you cannot use, which is worse than the queue this prevents.
  */
+/**
+ * Whether this menu is a DIALOG the composer is drawn behind, rather than a
+ * bare "somebody is wanted here" marker.
+ *
+ * The composer lock below rests entirely on the TUI drawing a dialog where the
+ * input line would be. That is true of a parsed dialog — it has options,
+ * because parsing one is what produced them. It is NOT true of an option-less
+ * `Notification` marker: nothing was parsed there, nobody looked at the screen,
+ * and the message may just be Claude Code's ordinary sixty-second idle nudge.
+ *
+ * Locking on those is how a chat becomes unusable with no way out. Measured
+ * 2026-08-17: an API 500 ended a turn without firing `Stop`, the next idle
+ * notification was recorded as a block, and the session showed a "Waiting on
+ * you" with no options to pick, over a composer that refused to send — so the
+ * only control left was a button labelled Cancel. The runner half of that bug
+ * is fixed too, but this is the half that decides whether the next unforeseen
+ * false marker is an inconvenience or a trap.
+ *
+ * Letting the send through costs nothing when the marker IS real: the runner
+ * re-reads the screen, refuses with `COMPOSER_NOT_VISIBLE`, and ships back the
+ * dialog it actually found. A loud bounce beats a silent lock.
+ */
+export function menuBlocksComposer(
+  menu: { options?: unknown[] | null; questions?: unknown[] | null } | null | undefined,
+): boolean {
+  if (!menu) return false;
+  return (menu.options?.length ?? 0) > 0 || (menu.questions?.length ?? 0) > 0;
+}
+
 export function sendBlockReason(args: {
   runnerName: string | null | undefined;
   boundOffline: boolean;
@@ -105,6 +134,9 @@ export function sendBlockReason(args: {
   // would bounce, and the answer the agent is actually waiting for is one tap
   // away in the banner above. Checked before liveness because it is the more
   // specific fact — a dialog is up whether or not the box is also parked.
+  //
+  // Only a dialog, though — see `menuBlocksComposer`, which is what the caller
+  // passes. An option-less marker leaves the composer alone.
   if (args.blockedOnMenu) return "answer the question above to continue";
   if (!args.boundOffline || !args.runnerName) return undefined;
   return args.paused

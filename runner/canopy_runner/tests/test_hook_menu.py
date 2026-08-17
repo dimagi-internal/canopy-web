@@ -481,6 +481,72 @@ def test_the_discriminator_is_turn_state_not_the_wording():
     assert hl.pending_menu(*KEY) is not None
 
 
+def test_a_turn_that_died_on_an_api_error_is_not_in_flight(tmp_path):
+    """The turn ending that fires no `Stop`.
+
+    Claude Code writes a 500 as an assistant message, appends its `turn_duration`
+    row and returns to the prompt — no `Stop` hook, ever. So turn state said
+    in-flight forever, and the ordinary idle notification a minute later was read
+    as an agent asking a question. Measured on `ace`'s `spark`, 2026-08-17: a
+    "Waiting on you" with no options, over a composer that refused to send,
+    against a session that was sitting at an empty prompt.
+    """
+    import json
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}) + "\n"
+        + json.dumps({"type": "assistant", "isApiErrorMessage": True,
+                      "apiErrorStatus": 500}) + "\n"
+        + json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n")
+
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "transcript_path": str(transcript),
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_the_api_error_clears_the_turn_rather_than_one_notification(tmp_path):
+    """Every LATER notification on that session was wrong too, so the fix is to
+    correct the turn state once — not to suppress the marker that exposed it."""
+    import json
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "assistant", "isApiErrorMessage": True}) + "\n")
+
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "transcript_path": str(transcript),
+                       "message": "Claude is waiting for your input"})
+    # A second one, this time with no transcript to consult at all: the turn is
+    # already known to be over, so it stays quiet on turn state alone.
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_live_turn_with_an_older_api_error_still_raises_a_marker(tmp_path):
+    """The error only ends a turn while it is the last thing said. A session that
+    retried and is working again must still be able to stop and ask."""
+    import json
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "assistant", "isApiErrorMessage": True}) + "\n"
+        + json.dumps({"type": "user", "message": {"role": "user", "content": "retry"}}) + "\n")
+
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "transcript_path": str(transcript),
+                       "message": "Claude needs your permission to use Bash"})
+    assert hl.pending_menu(*KEY) is not None
+
+
 def test_a_notification_with_no_turn_ever_seen_fails_closed():
     """A runner that restarted mid-turn has no idea. Missing a real dialog costs
     a menu; raising a false one costs the signal."""

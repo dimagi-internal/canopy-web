@@ -38,6 +38,7 @@ from canopy_transcript import (
     hook_retires_menu,
     marker_from_hook,
     menu_from_hook,
+    turn_ended_in_api_error,
 )
 
 # Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
@@ -196,6 +197,19 @@ class HookListener:
             if event == "UserPromptSubmit":
                 self._in_turn.update(keys)
             elif event == "Stop":
+                self._in_turn.difference_update(keys)
+            elif (event == "Notification"
+                    and any(k in self._in_turn for k in keys)
+                    and turn_ended_in_api_error(payload)):
+                # The one turn ending that fires no `Stop`. Claude Code writes
+                # the 500 as an assistant message and returns to the prompt, so
+                # without this the session stays marked in-turn forever and the
+                # NEXT idle notification — the ordinary one, sixty seconds later
+                # — is read as an agent asking a question. It is not: there is no
+                # dialog on the screen, so the "Waiting on you" it raises can be
+                # neither answered nor typed past. Correcting the turn STATE
+                # rather than suppressing this one marker is deliberate: every
+                # later notification on the same session was wrong too.
                 self._in_turn.difference_update(keys)
 
             # A `Notification` fires for two different things: an agent stopping

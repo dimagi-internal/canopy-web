@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   backfillAction,
+  menuBlocksComposer,
   restToKitMessage,
   sendBlockReason,
   shouldShowLoadFull,
@@ -166,5 +167,28 @@ describe("sendBlockReason", () => {
     for (const runnerName of [null, undefined, ""]) {
       expect(sendBlockReason({ runnerName, boundOffline: true, paused: false })).toBeUndefined();
     }
+  });
+});
+
+describe("menuBlocksComposer", () => {
+  it("blocks on a parsed dialog, which is the case the lock was built for", () => {
+    expect(menuBlocksComposer({ options: [{ number: 1, label: "Yes" }] })).toBe(true);
+    expect(menuBlocksComposer({ options: [], questions: [{ index: 0 }] })).toBe(true);
+  });
+
+  it("leaves the composer alone for an option-less marker", () => {
+    // A `Notification` marker is not a parsed dialog — nothing looked at the
+    // screen to produce it, and it may be nothing more than Claude Code's
+    // sixty-second idle nudge. Measured 2026-08-17: an API 500 ended a turn
+    // without firing `Stop`, the next idle notification was recorded as a
+    // block, and the chat locked itself behind a dialog that did not exist,
+    // leaving a button labelled "Cancel" as the only control on the page.
+    //
+    // If the marker IS real the send bounces as COMPOSER_NOT_VISIBLE and the
+    // runner ships back the dialog it actually found. Loud beats locked.
+    expect(menuBlocksComposer({ options: [] })).toBe(false);
+    expect(menuBlocksComposer({ options: [], questions: [] })).toBe(false);
+    expect(menuBlocksComposer(null)).toBe(false);
+    expect(menuBlocksComposer(undefined)).toBe(false);
   });
 });
