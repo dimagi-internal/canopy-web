@@ -133,14 +133,20 @@ def test_an_implement_comment_rides_along_too(ada):
 
 
 def test_a_dispatch_free_decision_leaves_the_prompt_alone(ada):
-    """No answer, no preamble — an unadorned brief must stay byte-for-byte itself."""
+    """No answer, no preamble — the brief must reach the agent unamended.
+
+    It carries the dispatch stamp (a provenance footer; every brief this path enqueues does),
+    but nothing must be spliced into or ahead of the ask itself. The point of this test is the
+    absence of an `ANSWERED BY` preamble when nobody answered, not the absence of the footer.
+    """
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
     _item_, turns = services.decide_item(
         item, decision=Item.IMPLEMENT, comment="", by="jj@dimagi.com",
         actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
-    assert turns[0].prompt == "/ada:conduct"
+    assert turns[0].prompt.startswith("/ada:conduct")
+    assert "ANSWERED BY" not in turns[0].prompt
 
 
 def test_a_failing_dispatch_rolls_an_ANSWER_back_too(ada):
