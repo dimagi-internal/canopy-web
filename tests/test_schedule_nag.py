@@ -102,7 +102,8 @@ def test_implementing_the_nag_re_runs_the_schedule(agent, schedule):
 
     assert item.state == Item.DECIDED
     assert len(turns) == 1
-    assert turns[0].prompt == "/eva:goal-review"
+    # Stamped: a nag item's brief is machine-authored like any other card prompt.
+    assert turns[0].prompt.startswith("/eva:goal-review")
     assert _open_nags(agent) == []  # decided -> out of the inbox
 
 

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from apps.agents.models import Agent
 
 from . import services
+from .dispatch_marker import stamp_dispatched, wrap_human_reply
 from .models import Item, Turn
 
 
@@ -54,9 +55,16 @@ def _with_reply(prompt: str, item: Item) -> str:
     reply = (item.comment or "").strip()
     if not reply:
         return prompt
+    # The reply is DELIMITED, not just concatenated. `agent_review` drops a user turn carrying
+    # the dispatch marker WHOLE, so gluing the human's words onto a stamped brief threw them
+    # away with it — and the reply is the highest-value human signal on the board: it is the
+    # human overruling, narrowing, or redirecting an agent's proposal, which is precisely what
+    # a corrections lens exists to find. Delimiters let the stripper keep the human's words and
+    # discard everything around them, including the boilerplate below (which says OVERRIDES and
+    # "instead of", and scores as a forceful correction entirely on its own).
     return (
         f"{prompt}\n\n---\n"
-        f"ANSWERED BY {item.decided_by or 'a human'}: {reply}\n\n"
+        f"ANSWERED BY {item.decided_by or 'a human'}: {wrap_human_reply(reply)}\n\n"
         f"That reply is the authority on this card and OVERRIDES the brief above wherever "
         f"the two disagree. If it redirects the work, narrows it, declines it, or asks a "
         f"question back, do THAT — and report on the item instead of executing the "
@@ -101,11 +109,22 @@ def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
                 )
         else:
             target = item.agent
+        # STAMP HERE, and only here. This is the one enqueue path where the server KNOWS the
+        # prompt was written by an agent — it came off the agent's own card. `enqueue_turn`
+        # itself must NOT stamp: its other callers include `canopy_sessions`, where the prompt
+        # is a human typing in the web chat. Blanket-stamping would mark the human's own
+        # messages as machine-dispatched and suppress them from the corrections lens, which is
+        # a strictly worse bug than the one being fixed — it blinds the lens to the human's
+        # primary channel.
+        #
+        # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
+        # through untouched and is not double-marked.
+        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=item.agent.slug)
         turn, _created = services.enqueue_turn(
             agent=target,
             origin=spec.origin,
             idempotency_key=f"item-{item.id}-{i}",
-            prompt=_with_reply(spec.prompt or f"/{target.slug}:turn", item),
+            prompt=_with_reply(brief, item),
             origin_ref=spec.origin_ref,
             routing=spec.routing,
         )
