@@ -11,6 +11,7 @@ the source and this command stays safe to re-run in CI.
     title: What the money bought
     lede: From the first purchase order to the child who recovered.
     capability: comment          # read | comment | suggest
+    layout: review               # review (prose + scene links + notes) | reel (videos only)
     acts:
       - title: Six weeks to a supply base
         key: supply-base        # optional; keeps act notes attached through a retitle
@@ -19,6 +20,8 @@ the source and this command stays safe to re-run in CI.
       - title: Where the RUTF is, and who is short
         entries:
           - narrative_slug: command-centre
+            title: Command centre       # optional; overrides the derived heading
+            blurb: One flat sentence.   # optional; overrides the derived one-liner
             pinned_run_id: ""    # normally omitted — the entry FOLLOWS current
 """
 from __future__ import annotations
@@ -58,6 +61,7 @@ class Command(BaseCommand):
                     "title": raw.get("title") or slug,
                     "lede": raw.get("lede") or "",
                     "capability": raw.get("capability") or Storyboard.CAP_READ,
+                    "layout": raw.get("layout") or Storyboard.LAYOUT_REVIEW,
                 },
             )
             # Wholesale replace: reordering is a rewrite, not a diff, and the
@@ -78,9 +82,12 @@ class Command(BaseCommand):
                     # rare pinned entry.
                     if isinstance(entry_raw, str):
                         narrative_slug, pinned = entry_raw, ""
+                        entry_title, blurb = "", ""
                     else:
                         narrative_slug = entry_raw.get("narrative_slug") or ""
                         pinned = entry_raw.get("pinned_run_id") or ""
+                        entry_title = entry_raw.get("title") or ""
+                        blurb = entry_raw.get("blurb") or ""
                     if not narrative_slug:
                         raise CommandError(
                             f"act {a_pos + 1} entry {e_pos + 1} has no narrative_slug"
@@ -89,6 +96,8 @@ class Command(BaseCommand):
                         act=act,
                         narrative_slug=narrative_slug,
                         pinned_run_id=pinned,
+                        title=entry_title,
+                        blurb=blurb,
                         position=e_pos,
                     )
 

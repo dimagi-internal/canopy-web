@@ -6,6 +6,7 @@ from typing import Literal
 from apps.common.schemas import StrictModel
 
 Capability = Literal["read", "comment", "suggest"]
+Layout = Literal["review", "reel"]
 
 
 class EntryOut(StrictModel):
@@ -32,6 +33,7 @@ class StoryboardOut(StrictModel):
     title: str
     lede: str
     capability: str
+    layout: str
     is_member: bool = False
     """True when the caller belongs to the owning workspace — i.e. is one of the
     people who SENT this link, not one of the people it was sent to. The only
@@ -67,6 +69,7 @@ class StoryboardListItemOut(StrictModel):
     title: str
     lede: str
     capability: str
+    layout: str
     act_count: int
     share_url: str | None
     """Absolute, token-bearing link. Members only — this is the thing you send."""
@@ -79,6 +82,10 @@ class StoryboardListOut(StrictModel):
 class EntryIn(StrictModel):
     narrative_slug: str
     pinned_run_id: str = ""
+    title: str = ""
+    """Blank = derive the card heading from the narrative."""
+    blurb: str = ""
+    """Blank = derive the one-liner from the narrative's opening sentence."""
 
 
 class ActIn(StrictModel):
@@ -95,6 +102,7 @@ class StoryboardIn(StrictModel):
     title: str
     lede: str = ""
     capability: Capability = "read"
+    layout: Layout = "review"
     acts: list[ActIn] = []
 
 
@@ -104,6 +112,7 @@ class StoryboardPatchIn(StrictModel):
     title: str | None = None
     lede: str | None = None
     capability: Capability | None = None
+    layout: Layout | None = None
     acts: list[ActIn] | None = None
 
 

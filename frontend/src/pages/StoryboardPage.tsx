@@ -118,14 +118,23 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
   const grouped = groupNotes(notes)
   const narrativeCount = board.acts.reduce((n, a) => n + a.entries.length, 0)
 
+  // A reel is the finished product, sent to someone with nothing to do but
+  // watch. Everything that asks something of the reader — the count of
+  // "narratives" (our word, not theirs), the invitation to comment, the notes
+  // other people left, the link into each narrative's scenes — is review
+  // furniture, and on a reel it is in the way.
+  const reel = board.layout === 'reel'
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <PublicHeader />
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
         <header className="mb-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-            {narrativeCount === 1 ? 'One narrative' : `${narrativeCount} narratives`}
-          </p>
+          {!reel && (
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+              {narrativeCount === 1 ? 'One narrative' : `${narrativeCount} narratives`}
+            </p>
+          )}
           <h1 className="text-4xl font-semibold leading-tight tracking-tight text-foreground md:text-5xl">
             {board.title}
           </h1>
@@ -137,7 +146,7 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
               are wanted, or who reads them. The composers are further down the
               page and their buttons only say what they do, not that doing it is
               the point of sending this. Members already know. */}
-          {!board.is_member && board.capability !== 'read' && (
+          {!reel && !board.is_member && board.capability !== 'read' && (
             <p className="mt-4 text-[13.5px] leading-relaxed text-muted-foreground">
               Watch each demo and read the scenes.{' '}
               <span className="text-foreground-secondary">
@@ -155,21 +164,27 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
 
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">
-            <div className="border-b border-border pb-3">
-              <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
-                {act.title}
-              </h2>
-              {act.prose && (
-                <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
-                  {act.prose}
-                </p>
-              )}
-            </div>
+            {/* A reel whose entries carry their own authored titles has nothing
+                left to put here, and an empty heading still draws its rule. */}
+            {(act.title || act.prose) && (
+              <div className="border-b border-border pb-3">
+                {act.title && (
+                  <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
+                    {act.title}
+                  </h2>
+                )}
+                {act.prose && (
+                  <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
+                    {act.prose}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Notes left before this page stopped naming a separate act layer.
                 They still belong to this section, so they still render in it —
                 nothing anchors to `act:*` any more, but nothing is dropped. */}
-            <NotesReturned notes={grouped.byAnchor.get(act.anchor_id) ?? []} />
+            {!reel && <NotesReturned notes={grouped.byAnchor.get(act.anchor_id) ?? []} />}
 
             {act.entries.map((entry) => (
               <EntryCard
@@ -177,13 +192,14 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
                 entry={entry}
                 board={board}
                 token={token}
+                reel={reel}
                 notes={grouped.byNarrative.get(entry.narrative_slug) ?? []}
               />
             ))}
           </section>
         ))}
 
-        {grouped.loose.length > 0 && (
+        {!reel && grouped.loose.length > 0 && (
           <section className="mt-11 flex flex-col gap-4">
             <div className="border-b border-border pb-3">
               <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
@@ -204,27 +220,63 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
   )
 }
 
+/** Click the picture, get the picture — full screen. A shared demo is watched
+ *  once, often on a laptop next to something else, and the browser's own
+ *  fullscreen control is a 16px target in the corner of a 168px thumbnail. */
+function goFullscreen(video: HTMLVideoElement) {
+  if (document.fullscreenElement) return
+  // Safari names both of these differently and types neither.
+  const el = video as HTMLVideoElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void
+    webkitEnterFullscreen?: () => void
+  }
+  const req = el.requestFullscreen ?? el.webkitRequestFullscreen
+  if (req) {
+    // A rejected request (user gesture lost, iframe policy) is not worth an
+    // error to a viewer who can still watch the video inline.
+    Promise.resolve(req.call(el)).catch(() => undefined)
+    return
+  }
+  el.webkitEnterFullscreen?.() // iOS Safari: no element fullscreen, only this.
+}
+
 function EntryCard({
   entry,
   board,
   token,
+  reel,
   notes,
 }: {
   entry: Storyboard['acts'][number]['entries'][number]
   board: Storyboard
   token: string | null
+  reel: boolean
   notes: Note[]
 }) {
   return (
-    <article className="grid grid-cols-1 gap-4 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-[168px_1fr]">
-      <div className="relative aspect-[16/10] overflow-hidden rounded-md border border-border bg-muted">
+    <article
+      className={
+        reel
+          ? 'flex flex-col gap-3 rounded-lg border border-border bg-card p-3.5'
+          : 'grid grid-cols-1 gap-4 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-[168px_1fr]'
+      }
+    >
+      <div
+        className={`relative overflow-hidden rounded-md border border-border bg-muted ${
+          reel ? 'aspect-video w-full' : 'aspect-[16/10]'
+        }`}
+      >
         {entry.published && entry.video_url ? (
           <video
             controls
+            playsInline
             preload="metadata"
             aria-label={`Demo video: ${entry.title}`}
-            className="h-full w-full object-cover"
+            className={`h-full w-full ${reel ? 'object-contain' : 'object-cover'} ${
+              reel ? 'cursor-zoom-in' : ''
+            }`}
             src={withBase(entry.video_url)}
+            onClick={reel ? (e) => goFullscreen(e.currentTarget) : undefined}
           />
         ) : (
           <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-foreground-subtle">
@@ -239,39 +291,43 @@ function EntryCard({
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-[15px] font-semibold text-foreground">{entry.title}</h3>
-          {entry.published ? (
-            <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] tabular-nums text-info">
-              v{entry.version}
-            </span>
-          ) : (
-            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
-              Being built
-            </span>
-          )}
+          {/* Which draft this is answers a question only we are asking. */}
+          {!reel &&
+            (entry.published ? (
+              <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] tabular-nums text-info">
+                v{entry.version}
+              </span>
+            ) : (
+              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
+                Being built
+              </span>
+            ))}
         </div>
 
         {entry.lede && (
           <p className="text-[13.5px] leading-relaxed text-foreground-secondary">{entry.lede}</p>
         )}
 
-        <div className="mt-0.5 flex flex-wrap items-center gap-3.5">
-          {entry.published ? (
-            <Link
-              to={`/narrative/${entry.narrative_slug}?b=${encodeURIComponent(board.slug)}${token ? `&t=${encodeURIComponent(token)}` : ''}`}
-              className="text-[12.5px] font-medium text-primary hover:underline"
-            >
-              Read the scenes →
-            </Link>
-          ) : (
-            <span className="text-[12px] text-foreground-subtle">
-              Nothing to watch until this one is built.
-            </span>
-          )}
-        </div>
+        {!reel && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-3.5">
+            {entry.published ? (
+              <Link
+                to={`/narrative/${entry.narrative_slug}?b=${encodeURIComponent(board.slug)}${token ? `&t=${encodeURIComponent(token)}` : ''}`}
+                className="text-[12.5px] font-medium text-primary hover:underline"
+              >
+                Read the scenes →
+              </Link>
+            ) : (
+              <span className="text-[12px] text-foreground-subtle">
+                Nothing to watch until this one is built.
+              </span>
+            )}
+          </div>
+        )}
 
-        <NotesReturned notes={notes} />
+        {!reel && <NotesReturned notes={notes} />}
 
-        {entry.published && (
+        {!reel && entry.published && (
           <NoteComposer
             capability={board.capability}
             anchorLabel={`On “${entry.title}” · v${entry.version}`}

@@ -137,3 +137,37 @@ def test_a_declared_key_survives_a_retitle_in_the_file(tmp_path, ws):
 
     act = Act.objects.get()
     assert (act.key, act.title) == ("supply-base", "What six weeks bought")
+
+
+def test_layout_and_entry_overrides_come_through_the_file(tmp_path, ws):
+    """A reel is authored, not configured in a UI — the file has to carry both
+    the layout and the flat per-video statement it exists to show."""
+    raw = {
+        **BOARD,
+        "layout": "reel",
+        "acts": [
+            {
+                "title": "Watch in order",
+                "entries": [
+                    {
+                        "narrative_slug": "verified-monitoring",
+                        "title": "Survey quality review",
+                        "blurb": "Six rounds of survey data; one surveyor flagged.",
+                    }
+                ],
+            }
+        ],
+    }
+    call_command("import_storyboard", _write(tmp_path, raw), workspace="dimagi")
+
+    board = Storyboard.objects.get(slug="ecf-supply")
+    assert board.layout == Storyboard.LAYOUT_REEL
+    entry = Entry.objects.get(act__storyboard=board)
+    assert entry.title == "Survey quality review"
+    assert entry.blurb == "Six rounds of survey data; one surveyor flagged."
+
+
+def test_a_board_that_says_nothing_about_layout_stays_a_review_board(tmp_path, ws):
+    call_command("import_storyboard", _write(tmp_path, BOARD), workspace="dimagi")
+    assert Storyboard.objects.get(slug="ecf-supply").layout == Storyboard.LAYOUT_REVIEW
+    assert Entry.objects.filter(title="", blurb="").count() == 3

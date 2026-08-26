@@ -38,6 +38,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
     title: 'What the money bought',
     lede: 'From the first purchase order to the child who recovered.',
     capability: 'read',
+    layout: 'review',
     is_member: false,
     acts: [
       {
@@ -288,6 +289,84 @@ describe('StoryboardPage', () => {
       renderAt()
       await screen.findByText('What the money bought')
       expect(screen.queryByText(/notes? back/)).toBeNull()
+    })
+  })
+
+  describe('a reel — the finished product, sent to someone who only watches', () => {
+    const reel = () => board({ layout: 'reel', capability: 'read', is_member: true })
+
+    it('offers no way off the page', async () => {
+      // The whole point of the layout: a link into the scenes, or a note
+      // composer, is somewhere else to go before three minutes of video have
+      // been watched.
+      getStoryboard.mockResolvedValue(reel())
+      const { container } = renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText('Read the scenes →')).toBeNull()
+      expect(screen.queryByText(/Leave a note/)).toBeNull()
+      expect(container.querySelectorAll('a')).toHaveLength(0)
+    })
+
+    it('shows no notes, even to the people who sent it', async () => {
+      getStoryboardNotes.mockResolvedValue({ items: [note({ body: 'Act one runs long.' })] })
+      getStoryboard.mockResolvedValue(reel())
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText('Act one runs long.')).toBeNull()
+      expect(screen.queryByText(/notes? back/)).toBeNull()
+    })
+
+    it('drops the version pill and the count of narratives', async () => {
+      // Which draft this is, and how many "narratives" there are, are our
+      // words for our question.
+      getStoryboard.mockResolvedValue(reel())
+      renderAt()
+      await screen.findByText('What the money bought')
+      expect(screen.queryByText('v4')).toBeNull()
+      expect(screen.queryByText('One narrative')).toBeNull()
+    })
+
+    it('still says what each video is', async () => {
+      getStoryboard.mockResolvedValue(reel())
+      renderAt()
+      expect(await screen.findByText('Amina bids, Tomas qualifies her in')).toBeTruthy()
+      expect(screen.getByText('An EOI round opens.')).toBeTruthy()
+    })
+
+    it('draws no heading rule for an act that says nothing', async () => {
+      // A reel groups every video under one untitled act; an empty <h2> still
+      // draws its border and reads as a missing title.
+      getStoryboard.mockResolvedValue(
+        board({
+          layout: 'reel',
+          acts: [{ anchor_id: 'act:1', title: '', prose: '', entries: board().acts[0].entries }],
+        }),
+      )
+      const { container } = renderAt()
+      await screen.findByText('What the money bought')
+      expect(container.querySelectorAll('h2')).toHaveLength(0)
+    })
+
+    it('goes full screen when the video is clicked', async () => {
+      getStoryboard.mockResolvedValue(reel())
+      const { container } = renderAt()
+      await screen.findByText('What the money bought')
+      const video = container.querySelector('video')!
+      const request = vi.fn().mockResolvedValue(undefined)
+      video.requestFullscreen = request
+      fireEvent.click(video)
+      expect(request).toHaveBeenCalled()
+    })
+
+    it('leaves the click alone on a review board', async () => {
+      getStoryboard.mockResolvedValue(board())
+      const { container } = renderAt()
+      await screen.findByText('What the money bought')
+      const video = container.querySelector('video')!
+      const request = vi.fn()
+      video.requestFullscreen = request
+      fireEvent.click(video)
+      expect(request).not.toHaveBeenCalled()
     })
   })
 
