@@ -347,26 +347,58 @@ describe('StoryboardPage', () => {
       expect(container.querySelectorAll('h2')).toHaveLength(0)
     })
 
-    it('goes full screen when the video is clicked', async () => {
+    it('opens the video big, in the page — not over the whole display', async () => {
+      // Element fullscreen was the first answer and the wrong one: it blanks
+      // the display and hides the browser, and a demo is watched next to the
+      // email that sent it.
       getStoryboard.mockResolvedValue(reel())
       const { container } = renderAt()
       await screen.findByText('What the money bought')
-      const video = container.querySelector('video')!
-      const request = vi.fn().mockResolvedValue(undefined)
-      video.requestFullscreen = request
-      fireEvent.click(video)
-      expect(request).toHaveBeenCalled()
+      const request = vi.fn()
+      Object.defineProperty(HTMLVideoElement.prototype, 'requestFullscreen', {
+        value: request,
+        configurable: true,
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /^Play / }))
+
+      expect(screen.getByRole('dialog')).toBeTruthy()
+      expect(request).not.toHaveBeenCalled()
+      expect(container.querySelectorAll('video')).toHaveLength(2) // poster + player
     })
 
-    it('leaves the click alone on a review board', async () => {
+    it('closes on Escape and on a click outside the video', async () => {
+      getStoryboard.mockResolvedValue(reel())
+      renderAt()
+      await screen.findByText('What the money bought')
+
+      fireEvent.click(screen.getByRole('button', { name: /^Play / }))
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: /^Play / }))
+      fireEvent.click(screen.getByRole('dialog'))
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('does not close when the player itself is clicked', async () => {
+      // Every play/pause click would otherwise shut the thing just opened.
+      getStoryboard.mockResolvedValue(reel())
+      renderAt()
+      await screen.findByText('What the money bought')
+      fireEvent.click(screen.getByRole('button', { name: /^Play / }))
+
+      const player = screen.getByRole('dialog').querySelector('video')!
+      fireEvent.click(player)
+      expect(screen.queryByRole('dialog')).toBeTruthy()
+    })
+
+    it('leaves a review board playing inline, with its own controls', async () => {
       getStoryboard.mockResolvedValue(board())
       const { container } = renderAt()
       await screen.findByText('What the money bought')
-      const video = container.querySelector('video')!
-      const request = vi.fn()
-      video.requestFullscreen = request
-      fireEvent.click(video)
-      expect(request).not.toHaveBeenCalled()
+      expect(screen.queryByRole('button', { name: /^Play / })).toBeNull()
+      expect(container.querySelector('video')!.hasAttribute('controls')).toBe(true)
     })
   })
 
