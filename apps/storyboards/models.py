@@ -49,6 +49,25 @@ class Storyboard(models.Model):
     later need "Ellyn comments, Sophie suggests", that is a second token model
     and should be built then, not anticipated now."""
 
+    LAYOUT_REVIEW = "review"
+    LAYOUT_REEL = "reel"
+    LAYOUT_CHOICES = [
+        (LAYOUT_REVIEW, "Review — prose, scene links, notes"),
+        (LAYOUT_REEL, "Reel — the videos and nothing else"),
+    ]
+    layout = models.CharField(max_length=16, choices=LAYOUT_CHOICES, default=LAYOUT_REVIEW)
+    """How the page presents itself, which is a different question from what the
+    share link GRANTS (``capability``).
+
+    ``review`` is the board you send someone whose job is to react: connective
+    prose, a link into each narrative's scenes, and the notes that came back.
+
+    ``reel`` is the board you send someone the work is FINISHED for. It renders
+    the videos, each under one authored statement, and nothing else — no links
+    off the page, no notes, no invitation to comment. The distinction is not
+    cosmetic: on a reel every affordance that leads somewhere else is a way to
+    lose the reader before they have watched three minutes of video."""
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -176,6 +195,20 @@ class Entry(models.Model):
     narrative's CURRENT release so a shared link never goes stale. This exists
     for the one case that needs it — holding an entry on a known-good run while
     that narrative is mid-redraft."""
+
+    title = models.CharField(max_length=300, blank=True, default="")
+    """Overrides the card heading. Blank falls back to the derived one, which is
+    a humanised slug (``Verified Monitoring``) whenever the narrative's own title
+    is too long to be a heading — internal-sounding, because a slug is."""
+
+    blurb = models.TextField(blank=True, default="")
+    """Overrides the card's one-line description. Blank falls back to the first
+    sentence of the narrative's story.
+
+    That fallback is fine for a review board and wrong for a reel. The story's
+    opening sentence is written to carry a reader INTO a narrative, so it names
+    a persona and argues; a viewer picking which of three videos to watch wants
+    a flat statement of what the video shows."""
 
     class Meta:
         ordering = ["position", "id"]

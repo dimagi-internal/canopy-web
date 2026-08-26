@@ -572,3 +572,66 @@ def test_a_wordless_row_is_not_shown_as_a_note(member, board):
 
     items = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]
     assert [i["body"] for i in items] == ["Real words."]
+
+
+# ---------------------------------------------------------------------- layout
+
+
+def test_a_board_is_a_review_board_unless_it_says_otherwise(member, board):
+    r = member.get("/api/storyboards/ecf-supply")
+    assert r.status_code == 200
+    assert r.json()["layout"] == "review"
+
+
+def test_the_layout_can_be_switched_without_touching_the_arc(member, board):
+    """Turning a review board into a reel must not be a re-import: the acts and
+    entries are the same work, and re-sending them risks losing an override."""
+    r = member.patch(
+        "/api/storyboards/ecf-supply",
+        json.dumps({"layout": "reel"}),
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    assert r.json()["layout"] == "reel"
+    assert Entry.objects.filter(act__storyboard=board).count() == 1
+
+
+def test_entry_overrides_round_trip_through_the_api(member, board):
+    r = member.patch(
+        "/api/storyboards/ecf-supply",
+        json.dumps(
+            {
+                "acts": [
+                    {
+                        "title": "Watch in order",
+                        "entries": [
+                            {
+                                "narrative_slug": "verified-monitoring",
+                                "title": "Survey quality review",
+                                "blurb": "Six rounds; one surveyor flagged.",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    entry = Entry.objects.get(act__storyboard=board)
+    assert (entry.title, entry.blurb) == (
+        "Survey quality review",
+        "Six rounds; one surveyor flagged.",
+    )
+    card = r.json()["acts"][0]["entries"][0]
+    assert card["title"] == "Survey quality review"
+    assert card["lede"] == "Six rounds; one surveyor flagged."
+
+
+def test_an_anonymous_reader_is_told_which_layout_to_render(board):
+    board.layout = Storyboard.LAYOUT_REEL
+    board.save()
+    token = board.ensure_share_token()
+    r = Client().get(f"/api/storyboards/ecf-supply?t={token}")
+    assert r.status_code == 200
+    assert r.json()["layout"] == "reel"

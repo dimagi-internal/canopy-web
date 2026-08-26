@@ -128,6 +128,8 @@ def _replace_acts(board: Storyboard, acts) -> None:
                 act=act,
                 narrative_slug=entry_in.narrative_slug,
                 pinned_run_id=entry_in.pinned_run_id,
+                title=entry_in.title,
+                blurb=entry_in.blurb,
                 position=e_pos,
             )
 
@@ -145,6 +147,7 @@ def list_storyboards(request: HttpRequest) -> dict:
                 "title": b.title,
                 "lede": b.lede,
                 "capability": b.capability,
+                "layout": b.layout,
                 "act_count": b.acts.count(),
                 "share_url": _share_url(request, b),
             }
@@ -167,6 +170,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
             title=payload.title,
             lede=payload.lede,
             capability=payload.capability,
+            layout=payload.layout,
             workspace_id=workspace_slug,
         )
         _replace_acts(board, payload.acts)
@@ -190,7 +194,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
     board = _owned_or_404(request, slug)
     with transaction.atomic():
         fields = []
-        for name in ("title", "lede", "capability"):
+        for name in ("title", "lede", "capability", "layout"):
             value = getattr(payload, name)
             if value is not None:
                 setattr(board, name, value)

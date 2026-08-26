@@ -4848,6 +4848,8 @@ export interface components {
             readonly lede: string;
             /** Capability */
             readonly capability: string;
+            /** Layout */
+            readonly layout: string;
             /** Act Count */
             readonly act_count: number;
             /** Share Url */
@@ -4896,6 +4898,8 @@ export interface components {
             readonly lede: string;
             /** Capability */
             readonly capability: string;
+            /** Layout */
+            readonly layout: string;
             /**
              * Is Member
              * @default false
@@ -4933,6 +4937,16 @@ export interface components {
              * @default
              */
             readonly pinned_run_id: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Blurb
+             * @default
+             */
+            readonly blurb: string;
         };
         /** StoryboardIn */
         readonly StoryboardIn: {
@@ -4952,6 +4966,12 @@ export interface components {
              */
             readonly capability: "read" | "comment" | "suggest";
             /**
+             * Layout
+             * @default review
+             * @enum {string}
+             */
+            readonly layout: "review" | "reel";
+            /**
              * Acts
              * @default []
              */
@@ -4968,6 +4988,8 @@ export interface components {
             readonly lede?: string | null;
             /** Capability */
             readonly capability?: ("read" | "comment" | "suggest") | null;
+            /** Layout */
+            readonly layout?: ("review" | "reel") | null;
             /** Acts */
             readonly acts?: readonly components["schemas"]["ActIn"][] | null;
         };

@@ -55,8 +55,8 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
     if narrative is None:
         return {
             "narrative_slug": entry.narrative_slug,
-            "title": entry.narrative_slug,
-            "lede": "",
+            "title": entry.title or entry.narrative_slug,
+            "lede": entry.blurb,
             "version": None,
             "video_url": None,
             "video_viewer_url": None,
@@ -75,8 +75,11 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
 
     return {
         "narrative_slug": entry.narrative_slug,
-        "title": _card_title(entry.narrative_slug, current.get("title") or narrative.get("title")),
-        "lede": aggregate._lede_from_story(story, None) or story,
+        # An authored title/blurb wins over the derived one. The derivations
+        # stay the default because most boards never need to say it twice.
+        "title": entry.title
+        or _card_title(entry.narrative_slug, current.get("title") or narrative.get("title")),
+        "lede": entry.blurb or aggregate._lede_from_story(story, None) or story,
         "version": current.get("version"),
         "video_url": video_url if shared else None,
         "video_viewer_url": current.get("video_viewer_url") if shared else None,
@@ -143,6 +146,7 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
         "title": board.title,
         "lede": board.lede,
         "capability": board.capability,
+        "layout": board.layout,
         # The page shows returning notes only to the people who sent the link.
         "is_member": is_member,
         "acts": acts,

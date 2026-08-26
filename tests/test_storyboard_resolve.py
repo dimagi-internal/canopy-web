@@ -181,3 +181,39 @@ def test_a_public_film_still_reaches_the_reader(board, ws, owner):
 
     entry = resolve_board(board, is_member=False)["acts"][0]["entries"][0]
     assert "t=" in entry["video_url"], "an anonymous stream needs the artifact's own token"
+
+
+def test_layout_is_carried_so_the_page_knows_how_much_to_show(board):
+    assert resolve_board(board)["layout"] == Storyboard.LAYOUT_REVIEW
+    board.layout = Storyboard.LAYOUT_REEL
+    board.save()
+    assert resolve_board(board)["layout"] == Storyboard.LAYOUT_REEL
+
+
+def test_an_authored_title_and_blurb_beat_the_derived_ones(board, ws):
+    """A derived heading is a humanised slug and a derived one-liner is the
+    story's opening sentence — written to carry a reader INTO a narrative, not
+    to state flatly what a video shows. A reel needs the latter."""
+    _publish(ws, "verified-monitoring", 1, "Cut one", "Maya opens the dashboard and wonders.")
+    entry = board.acts.first().entries.first()
+    entry.title = "Survey quality review"
+    entry.blurb = "Six rounds of independent survey data, with one surveyor flagged."
+    entry.save()
+
+    out = resolve_board(board)["acts"][0]["entries"][0]
+    assert out["title"] == "Survey quality review"
+    assert out["lede"] == "Six rounds of independent survey data, with one surveyor flagged."
+
+
+def test_an_authored_title_survives_the_narrative_being_unbuilt(board):
+    """The placeholder branch is the one an author looks at while writing the
+    board, so it must show what they wrote rather than the slug."""
+    entry = board.acts.first().entries.first()
+    entry.title = "Survey quality review"
+    entry.blurb = "Not filmed yet, but this is what it will show."
+    entry.save()
+
+    out = resolve_board(board)["acts"][0]["entries"][0]
+    assert out["published"] is False
+    assert out["title"] == "Survey quality review"
+    assert out["lede"] == "Not filmed yet, but this is what it will show."

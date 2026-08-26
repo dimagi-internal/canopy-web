@@ -9,6 +9,7 @@
 import { apiUrl, getCsrfToken } from './base'
 
 export type Capability = 'read' | 'comment' | 'suggest'
+export type Layout = 'review' | 'reel'
 export type FeedbackKind = 'comment' | 'suggestion'
 
 export interface StoryboardEntry {
@@ -34,6 +35,8 @@ export interface Storyboard {
   title: string
   lede: string
   capability: Capability
+  /** `reel` = the finished product: videos, one line each, nothing else. */
+  layout: Layout
   /** True for the people who SENT the link — the only ones shown the notes. */
   is_member: boolean
   acts: StoryboardAct[]
