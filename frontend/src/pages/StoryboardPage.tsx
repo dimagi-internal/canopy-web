@@ -164,16 +164,22 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
 
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">
-            <div className="border-b border-border pb-3">
-              <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
-                {act.title}
-              </h2>
-              {act.prose && (
-                <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
-                  {act.prose}
-                </p>
-              )}
-            </div>
+            {/* A reel whose entries carry their own authored titles has nothing
+                left to put here, and an empty heading still draws its rule. */}
+            {(act.title || act.prose) && (
+              <div className="border-b border-border pb-3">
+                {act.title && (
+                  <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground">
+                    {act.title}
+                  </h2>
+                )}
+                {act.prose && (
+                  <p className="mt-1.5 text-sm leading-relaxed text-foreground-secondary">
+                    {act.prose}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Notes left before this page stopped naming a separate act layer.
                 They still belong to this section, so they still render in it —

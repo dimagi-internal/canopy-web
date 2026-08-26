@@ -333,6 +333,20 @@ describe('StoryboardPage', () => {
       expect(screen.getByText('An EOI round opens.')).toBeTruthy()
     })
 
+    it('draws no heading rule for an act that says nothing', async () => {
+      // A reel groups every video under one untitled act; an empty <h2> still
+      // draws its border and reads as a missing title.
+      getStoryboard.mockResolvedValue(
+        board({
+          layout: 'reel',
+          acts: [{ anchor_id: 'act:1', title: '', prose: '', entries: board().acts[0].entries }],
+        }),
+      )
+      const { container } = renderAt()
+      await screen.findByText('What the money bought')
+      expect(container.querySelectorAll('h2')).toHaveLength(0)
+    })
+
     it('goes full screen when the video is clicked', async () => {
       getStoryboard.mockResolvedValue(reel())
       const { container } = renderAt()
