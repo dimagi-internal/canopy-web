@@ -8494,6 +8494,11 @@ export interface components {
              * @default
              */
             readonly agent_status: string;
+            /**
+             * Agent Status Stale
+             * @default false
+             */
+            readonly agent_status_stale: boolean;
             /** Last Interacted At */
             readonly last_interacted_at?: string | null;
             /**
