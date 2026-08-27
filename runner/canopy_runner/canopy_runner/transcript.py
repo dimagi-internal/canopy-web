@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -270,6 +271,48 @@ def newest_record_time(path: Path) -> str | None:
         if ts and (newest is None or ts > newest):
             newest = ts
     return newest.isoformat() if newest else None
+
+
+SUBAGENT_DIRNAME = "subagents"
+
+
+def activity_mtime(path: Path | None) -> float:
+    """Newest mtime across a session's transcript AND its subagents' transcripts.
+
+    A subagent does not write to the session transcript. Its turns go to
+    `<transcript-stem>/subagents/agent-*.jsonl`, so the parent file can sit
+    completely untouched for the whole of a long delegated run — a 22-minute hole
+    in one measured session. Anything that asks "is this session still doing
+    something" from the parent file alone is blind for exactly that window, which
+    is the window we care about.
+
+    mtime rather than record timestamps, because every comparison this feeds is
+    against an EARLIER READING OF ITSELF on this same box — never against another
+    clock — so the cheap stat is both sufficient and immune to a transcript whose
+    newest record is unparseable. 0.0 means "nothing to see" (no path, unreadable
+    dir) and sorts as oldest, so an unreadable session simply never claims to be
+    writing.
+    """
+    if path is None:
+        return 0.0
+    newest = 0.0
+    try:
+        newest = path.stat().st_mtime
+    except OSError:
+        pass
+    try:
+        entries = os.scandir(path.with_suffix("") / SUBAGENT_DIRNAME)
+    except OSError:
+        return newest  # no subagents dir is the common case, not a problem
+    with entries:
+        for entry in entries:
+            if not entry.name.endswith(".jsonl"):
+                continue
+            try:
+                newest = max(newest, entry.stat().st_mtime)
+            except OSError:
+                continue
+    return newest
 
 
 def session_tail(

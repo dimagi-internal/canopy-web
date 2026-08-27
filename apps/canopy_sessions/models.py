@@ -316,6 +316,12 @@ class RunnerBinding(models.Model):
     # drifted schema), NOT "idle": `is_session_running` falls back to activity
     # recency for a blank, and only trusts a non-blank value.
     agent_status = models.CharField(max_length=40, blank=True, default="")
+    # The runner's dissent from `agent_status`: it says "not working", but the session
+    # is still writing. emdash's flag has no way back to "working" without a human
+    # prompt, so a turn that ended only to hand off to a background subagent leaves it
+    # pinned at "completed" for the rest of the session — see
+    # `is_session_running` and canopy_runner.sessions.annotate_engine_staleness.
+    agent_status_stale = models.BooleanField(default=False)
     last_interacted_at = models.DateTimeField(null=True, blank=True)
     live_seen_at = models.DateTimeField(null=True, blank=True)
     # Stamped ONLY by the report loop (apps/harness/services.py::

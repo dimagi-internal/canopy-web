@@ -116,8 +116,14 @@ def is_session_running(binding) -> bool:
 
     Asks the ENGINE first: emdash sets `agent_status` when it starts and stops driving
     a conversation, so a reported value is an observation of the session's actual state
-    and is trusted outright — including its "not working" answer, which retires the
-    badge the moment a turn ends instead of two minutes later.
+    rather than an inference from writes. Its "not working" answer counts too — that is
+    what retires the badge the moment a turn ends instead of two minutes later — EXCEPT
+    where the runner has explicitly dissented (`agent_status_stale`). emdash reaches
+    "working" only via Claude Code's UserPromptSubmit hook, so nothing short of a human
+    typing can ever move the flag back: a turn that ended only to hand off to a
+    background subagent leaves it pinned at "completed" while the session churns on.
+    The dissent is the runner reporting that the session kept WRITING after the flag
+    said it had stopped, which no genuinely finished turn does.
 
     Only when the runner cannot answer (blank: an older runner, a cloud runner with no
     emdash, a drifted schema) does this fall back to RUNNING_WINDOW, whose false
@@ -135,7 +141,14 @@ def is_session_running(binding) -> bool:
     if binding.runner.live_status != Runner.ONLINE:
         return False
     if binding.agent_status:
-        return binding.agent_status in WORKING_STATUSES
+        if binding.agent_status in WORKING_STATUSES:
+            return True
+        # The flag says stopped and the runner disagrees, having watched the session
+        # keep writing AFTER it said so. Believe the writes: emdash's flag has no path
+        # back to "working" that does not go through a human typing, so a turn that
+        # ended only to hand off to a background subagent stays "completed" for the
+        # rest of the session. See RunnerBinding.agent_status_stale.
+        return bool(binding.agent_status_stale)
     ts = binding.last_interacted_at
     return bool(ts and (timezone.now() - ts) <= RUNNING_WINDOW)
 

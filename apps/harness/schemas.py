@@ -269,6 +269,13 @@ class ReportedSessionIn(Schema):
     # nothing, and the server falls back to its activity-recency heuristic for them
     # (services.is_session_running). Only a runner that actually knows overrides it.
     agent_status: str = ""
+    # The runner's dissent from its OWN `agent_status` above: emdash says this session
+    # is not working, but it is still writing to its transcript (or to a subagent's).
+    # Set only after the runner has watched writes land AFTER the flag went non-working
+    # — see canopy_runner.sessions.annotate_engine_staleness for why that, and not
+    # recency, is the discriminator. Defaulted False so an older runner, which cannot
+    # dissent, keeps the pre-existing "trust the flag outright" behaviour exactly.
+    agent_status_stale: bool = False
     last_interacted_at: dt.datetime | None = None
     recent_messages: list = []  # Phase B populates this; ignored/empty in Phase A
     # The dialog this session is blocked on, read from its transcript, or None

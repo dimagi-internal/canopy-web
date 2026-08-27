@@ -1624,6 +1624,10 @@ def replace_reported_sessions(
             # reason too: lightweight session objects also reach this service, and a
             # display flag must never be why a liveness report fails.
             binding.agent_status = getattr(s, "agent_status", "") or ""
+            # Written through on EVERY report including False, for the same reason
+            # as the flag it qualifies: it is a fresh observation, so "it has gone
+            # quiet" has to be able to clear "it is still writing".
+            binding.agent_status_stale = bool(getattr(s, "agent_status_stale", False))
             binding.last_interacted_at = _aware(s.last_interacted_at)
             binding.live_seen_at = timezone.now()
             # The one write site. See RunnerBinding.reported_at — `close` branches

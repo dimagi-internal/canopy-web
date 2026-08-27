@@ -91,6 +91,92 @@ def session_changed(cfg: Config, sessions: list[dict]) -> bool:
     return changed
 
 
+# Per-task engine-flag watch: {emdash_task: (flag_value, baseline_mtime | None)}.
+# `None` for the baseline means "settling" — see `annotate_engine_staleness`.
+_ENGINE_FLAG: dict[str, "tuple[str, float | None]"] = {}
+
+# How long after its last write a session that has ALREADY proved its engine flag
+# wrong keeps claiming to be running.
+#
+# This is a de-latch, not a liveness heuristic: without it, a session that woke up
+# from a background hand-off, worked, and then genuinely finished would stay marked
+# running forever, because the second `Stop` writes the SAME flag value ("completed")
+# that is already there and so never re-settles the baseline.
+#
+# Deliberately longer than the server's own 120s fallback window: the only sessions
+# that reach this line have been observed writing after their flag said they were
+# done, so the expensive mistake here is calling a working session finished — the very
+# bug this exists to fix — not leaving a badge up three minutes too long on one that
+# has stopped. A subagent appends to its transcript on every tool call, so real
+# delegated work clears this bar continuously.
+STILL_WRITING_SECONDS = 180
+
+
+def annotate_engine_staleness(
+    cfg: Config, sessions: list[dict], *, now_fn=time.time
+) -> None:
+    """Mark, in place, the sessions whose emdash flag says "not working" while the
+    session is demonstrably STILL WRITING.
+
+    emdash derives `agent_status` from three Claude Code hooks: UserPromptSubmit ->
+    working, Stop -> completed, Notification -> awaiting-input. Claude Code fires
+    `Stop` whenever the MAIN LOOP's turn ends — and a turn that ends only to hand off
+    to a background subagent ends exactly the same way. What wakes the loop back up is
+    a task-notification, not a UserPromptSubmit, so no `start` hook ever fires again:
+    from the first background dispatch onward the flag is pinned at "completed" for
+    the rest of the session. The server trusts a non-blank flag outright (it is
+    normally the BETTER signal — see is_session_running), so a churning session reads
+    as finished.
+
+    Measured 2026-08-27 on `hh4`: background Agent dispatched 12:59:34, wake-ups at
+    13:06 and 13:22, transcript still growing at 13:23:33 — emdash saying "completed"
+    and the API saying running=False the whole time. The control case is fine and must
+    stay fine: through a 200-second SILENT foreground tool call the flag correctly held
+    "working", so this only ever looks at flags that already claim the session stopped.
+
+    The discriminator is not recency — a real turn end is recent too — but writes that
+    land AFTER the flag went non-working. The baseline is snapshotted one tick LATER
+    than the flag change, so the turn's own closing write is inside the baseline rather
+    than mistaken for new work.
+
+    One-directional by construction: this can only ever say "still running", never
+    "not running". A blank flag is left alone (the server has its own fallback for
+    those) and a `working` flag needs no help.
+    """
+    home = Path.home()
+    claude_home = home / ".claude" / "projects"
+    live: set[str] = set()
+    for s in sessions[: cfg.session_tail_count]:
+        task = s.get("emdash_task")
+        if not task:
+            continue
+        live.add(task)
+        status = str(s.get("agent_status") or "").strip()
+        if not status or status == emdash.WORKING:
+            _ENGINE_FLAG.pop(task, None)  # nothing to second-guess
+            continue
+        try:
+            path = transcript.resolve_transcript(
+                s.get("project") or "", task, home=home, claude_home=claude_home
+            )
+        except Exception:  # noqa: BLE001 — a fragile half must not cost us the report
+            path = None
+        wrote_at = transcript.activity_mtime(path)
+        watched = _ENGINE_FLAG.get(task)
+        if watched is None or watched[0] != status:
+            _ENGINE_FLAG[task] = (status, None)  # new flag value: settle one tick
+            continue
+        baseline = watched[1]
+        if baseline is None:
+            _ENGINE_FLAG[task] = (status, wrote_at)  # settled — this is the mark
+            continue
+        if wrote_at > baseline and now_fn() - wrote_at <= STILL_WRITING_SECONDS:
+            s["agent_status_stale"] = True
+    for task in list(_ENGINE_FLAG):  # forget sessions that are gone
+        if task not in live:
+            _ENGINE_FLAG.pop(task, None)
+
+
 def reported_projects(cfg: Config) -> list[str] | None:
     """The repos this box can drive, for the heartbeat to report — or None if we
     could not tell this tick.
@@ -149,6 +235,12 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except Exception:  # noqa: BLE001
         logger.debug("session list failed (non-fatal)", exc_info=True)
         return
+    # Every tick, not just reporting ones: the baseline this keeps is a
+    # tick-over-tick comparison, so skipping ticks would coarsen it.
+    try:
+        annotate_engine_staleness(cfg, sessions)
+    except Exception:  # noqa: BLE001
+        logger.debug("engine-staleness annotation failed (non-fatal)", exc_info=True)
     global _REPORT_NOW
     changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED) or _REPORT_NOW
     _REPORT_NOW = False
