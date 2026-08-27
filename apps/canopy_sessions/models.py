@@ -200,6 +200,29 @@ class RunnerBinding(models.Model):
     )
     # Engine-agnostic handle the runner uses to resume/inject (was emdash_task).
     session_key = models.CharField(max_length=255, blank=True, default="")
+    # The other half of that handle: the emdash PROJECT the task lives under, i.e.
+    # a cache of `session.emdash_project` (`project`, or the agent's slug for an
+    # agent chat). It is here because `session_key` alone is NOT an identity —
+    # emdash task names are scoped to a project, and the same name in two projects
+    # is two different conversations.
+    #
+    # Every OTHER part of the system already keys on the pair: the runner resolves a
+    # transcript by (project, task), which is why `get_session_streams` ships
+    # `session.emdash_project` alongside `session_key`. Only the report loop's own
+    # upsert keyed on the bare name, so the two collapsed into one row — and because
+    # the report deduplicates before it upserts, the loser was not merely mislabelled
+    # but dropped from the report entirely, invisible on the web with no error
+    # anywhere. Measured on labs 2026-08-27: a session titled "issues" reported
+    # `project: "ace"` while serving a connect-labs transcript (its live tail was
+    # `gh issue close 1195 -R dimagi-internal/connect-labs`), because an `issues`
+    # task under `ace` on 2026-08-14 had claimed the name first.
+    #
+    # Denormalised rather than joined because it is half of a UNIQUE constraint, and
+    # a constraint cannot span tables. Backfilled from `session.emdash_project` in
+    # 0021; written by the report loop and by `record_session` thereafter. Blank is a
+    # real value (a runner that sends no project), and blanks match each other, so a
+    # deployment that never reports a project degrades to exactly today's behaviour.
+    emdash_project = models.CharField(max_length=100, blank=True, default="")
     # Durable thread identity (absorbed from SessionLink). For a chat session this
     # is str(session.id); for a phone/agent/project thread it's the topic key
     # (e.g. "phone:jj:canopy-web" or "<target>:<turn_id>"). The reuse lookup keys on
@@ -213,10 +236,13 @@ class RunnerBinding(models.Model):
     # WHICH transcript this session's Message rows were derived from — the Claude
     # session uuid (the .jsonl stem), reported by the runner on every ship.
     #
-    # `session_key` is the emdash task NAME, and names are reused: close a task
-    # called "bednet" and start another, and this binding is re-pointed at the new
-    # conversation while the old one's rows stay attached. That alone renders one
-    # session as another; worse, `turn_index` is a PER-FILE ordinal, so the
+    # `session_key` is the emdash task NAME, and names are reused. `emdash_project`
+    # above settles the CROSS-project half of that (two live `issues` tasks in two
+    # repos are now two rows); this field owns the half no key can settle — reuse
+    # within one project OVER TIME. Close a task called "bednet" and start another
+    # under the same name in the same repo and this binding is legitimately
+    # re-pointed at the new conversation, while the old one's rows stay attached.
+    # That alone renders one session as another; worse, `turn_index` is a PER-FILE ordinal, so the
     # first_index/last_index markers computed off the old file are meaningless
     # against the new one. Measured on prod 2026-08-14 (issue #615): a 593-record
     # predecessor left last_index=37,696 against a live 384-record transcript whose
@@ -308,10 +334,14 @@ class RunnerBinding(models.Model):
     class Meta:
         ordering = ["-last_interacted_at"]
         constraints = [
+            # (runner, emdash_project, session_key) — NOT (runner, session_key).
+            # See `emdash_project` above: the bare name is not an identity, and a
+            # constraint on it forces two projects' same-named tasks to share one
+            # binding. Widening the key can never break an existing row.
             models.UniqueConstraint(
-                fields=["runner", "session_key"],
+                fields=["runner", "emdash_project", "session_key"],
                 condition=models.Q(runner__isnull=False) & ~models.Q(session_key=""),
-                name="one_binding_per_runner_session_key",
+                name="one_binding_per_runner_project_session_key",
             ),
         ]
 

@@ -1352,6 +1352,11 @@ def record_session(
         binding.runner = runner
         binding.host = runner.host
         binding.session_key = emdash_task_id
+        # The other half of the runner-side key (see RunnerBinding.emdash_project).
+        # Mirrors what `Session.emdash_project` derives, from the arguments this
+        # path already has: a project thread carries its repo, an agent thread its
+        # agent's slug — which is the repo emdash actually runs it under.
+        binding.emdash_project = project or (agent.slug if agent else "")
         # Name the row after the emdash task the human actually sees.
         # _thread_session titles a BRAND-NEW session with the raw thread_key,
         # which for an agent turn is an opaque hash (a real one leaked into the
@@ -1407,6 +1412,21 @@ def _title_is_derived(session, thread_key: str) -> bool:
     return title == " ".join(first.split())[:TITLE_MAX]
 
 
+def _reported_project(s) -> str:
+    """The emdash PROJECT of a reported session, normalised to a string.
+
+    getattr rather than attribute access for the same reason `agent_status` and
+    `question` use it below: lightweight session objects also reach this service,
+    and half of an identity must never be the reason a liveness report 500s.
+
+    This is the value `Session.emdash_project` answers with on the way back out
+    (`get_session_streams` ships it next to `session_key`), so a laptop-reported
+    agent chat lines up: emdash runs it under the agent's own repo, which is the
+    same string `emdash_project` derives from `agent.slug`.
+    """
+    return getattr(s, "project", "") or ""
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None
 ) -> int:
@@ -1451,14 +1471,27 @@ def replace_reported_sessions(
     # duplicates before upserting; the runner sends newest-first, so the first
     # occurrence is the live session and an older namesake is stale and correctly
     # dropped (observed 2026-07-20 with two "mobile" tasks).
+    #
+    # Keyed on (PROJECT, name), not the bare name. A name is only reused-and-stale
+    # within ONE project; the same name in two projects is two live conversations,
+    # and collapsing those dropped the second from the report ENTIRELY — no row, no
+    # error, invisible on the web. That is the more expensive half of the collision
+    # this key fixes, because a mislabelled session is at least visible.
     deduped, seen = [], set()
     for s in sessions:
-        if s.emdash_task in seen:
+        ident = (_reported_project(s), s.emdash_task)
+        if ident in seen:
             continue
-        seen.add(s.emdash_task)
+        seen.add(ident)
         deduped.append(s)
 
     now_keys = {s.emdash_task for s in deduped}
+    # The bindings this report actually touched. Identity by ROW, not by name: the
+    # reconciliation below (un-archive, stale menus, unsatisfied closes) has to say
+    # "this exact session was in the report", and `session_key__in=now_keys` cannot
+    # — it would revive a project's archived namesake because a DIFFERENT project's
+    # task of the same name is alive.
+    touched_ids: list = []
     # (session_id, menu|None) for every session whose dialog appeared or went
     # away in THIS report — pushed after commit so an open chat updates without
     # a reload. Only the edges: the report repeats every ~10s and republishing
@@ -1490,20 +1523,35 @@ def replace_reported_sessions(
             # un-heartbeated runners would fuse). `runner=runner` still covers a
             # host="" binding this runner currently owns, so that case is unaffected.
             host_match = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
-            binding = (
+            project = _reported_project(s)
+            by_key = (
                 RunnerBinding.objects.select_for_update()
                 .filter(session_key=s.emdash_task)
                 .filter(Q(runner=runner) | host_match)
-                .first()
             )
+            # The project is HALF THE KEY, not a detail carried alongside it (see
+            # RunnerBinding.emdash_project). Matching on the name alone fused two
+            # repos' same-named tasks into one row.
+            #
+            # The second lookup is the legacy branch, and it is what makes this
+            # deploy a no-op for every row that already exists: a binding written
+            # before 0021 backfilled the column — or by a runner that reports no
+            # project at all — carries a blank, and must still be recognised and
+            # then FILLED, exactly as `host` and `thread_key` are below. It cannot
+            # re-open the hole it closes: a blank is adopted once and is no longer
+            # blank, and a binding carrying a DIFFERENT project is never matched.
+            binding = by_key.filter(emdash_project=project).first()
+            if binding is None and project:
+                binding = by_key.filter(emdash_project="").first()
             if binding is None:
                 session = Session.objects.create(
                     workspace=workspace,
                     origin=Session.ORIGIN_RUNNER,
-                    project=s.project or "",
+                    project=project,
                     title=s.emdash_task,
                 )
                 binding = RunnerBinding(session=session, session_key=s.emdash_task)
+                binding.emdash_project = project
                 binding.thread_key = f"emdash:{s.emdash_task}"
                 binding.host = runner.host
             else:
@@ -1543,6 +1591,30 @@ def replace_reported_sessions(
                     binding.thread_key = f"emdash:{s.emdash_task}"
                 if not binding.host:
                     binding.host = runner.host
+                # Fill the legacy blank matched above, so the row is keyed properly
+                # from here on. Same fill-if-empty shape, and same reason.
+                if not binding.emdash_project:
+                    binding.emdash_project = project
+                # And repair the LABEL on the session itself. `project` was only
+                # ever written at creation, so a row that got the wrong one — from
+                # the name-only fusion this change removes, or from a blank adopted
+                # just above — displayed it forever with nothing to correct it.
+                # Guarded on `agent`: an agent chat identifies by its agent and
+                # carries a deliberately blank `project` (the model's own
+                # chat_session_not_agent_and_project constraint forbids both), so
+                # writing one here would violate it.
+                #
+                # Cosmetic, so isolated like the retitle above: a label must never
+                # cost liveness.
+                try:
+                    sess = binding.session
+                    if project and sess.agent_id is None and sess.project != project:
+                        with transaction.atomic():
+                            sess.project = project
+                            sess.save(update_fields=["project"])
+                except Exception:  # noqa: BLE001 — a label must never cost liveness
+                    logger.warning("could not repair project on session %s to %r",
+                                   binding.session_id, project, exc_info=True)
             binding.runner = runner
             binding.status = s.status or ""
             # The engine's own liveness flag, written through EVERY report including
@@ -1572,19 +1644,26 @@ def replace_reported_sessions(
             if was_asking != binding.pending_question:
                 menu_changes.append((binding.session_id, binding.pending_question))
             binding.save()
+            touched_ids.append(binding.pk)
 
     # Un-archive anything re-reported as open. The DERIVED staleness half of
     # `state=active` recomputes on every read, but this WRITTEN half does not heal
     # itself — without this, a task you reopened in emdash stays archived forever.
-    if now_keys:
+    if touched_ids:
         Session.objects.filter(
-            runner_binding__runner=runner,
-            runner_binding__session_key__in=now_keys,
+            runner_binding__id__in=touched_ids,
             status=Session.ARCHIVED,
         ).update(status=Session.ACTIVE)
 
     # Apply the closing signal. `now_keys` wins over `archived`: emdash task names are
     # not unique, so an open task must never be retired by an archived namesake.
+    #
+    # Still keyed on the NAME, unlike everything above, because that is all the wire
+    # carries — `ReportSessionsIn.archived` is a list of strings with no project. So
+    # the name-level guard stays: an archived `issues` under one repo cannot retire a
+    # live `issues` under another, at the cost of not retiring it either. Erring
+    # towards leaving a row open is the safe direction (staleness retires it on its
+    # own clock); erring the other way deletes a live session from the web.
     closed = [k for k in (archived or []) if k and k not in now_keys]
     if closed:
         Session.objects.filter(
@@ -1610,11 +1689,11 @@ def replace_reported_sessions(
     # from this wholesale report means. Clearing it here (rather than on a runner
     # ack) keeps one source of truth: the report already decides what is open.
     RunnerBinding.objects.filter(runner=runner, close_requested=True).exclude(
-        session_key__in=now_keys).update(close_requested=False)
+        id__in=touched_ids).update(close_requested=False)
 
     stale_menus = RunnerBinding.objects.filter(runner=runner).exclude(
         pending_question__isnull=True,
-    ).exclude(session_key__in=now_keys)
+    ).exclude(id__in=touched_ids)
     for binding in stale_menus:
         menu_changes.append((binding.session_id, None))
     stale_menus.update(pending_question=None)

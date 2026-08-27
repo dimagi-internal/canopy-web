@@ -17,9 +17,9 @@ from apps.workspaces.models import Workspace
 pytestmark = pytest.mark.django_db
 
 
-def _reported(task, msgs):
+def _reported(task, msgs, project="canopy-web"):
     return SimpleNamespace(
-        emdash_task=task, project="canopy-web", status="running",
+        emdash_task=task, project=project, status="running",
         last_interacted_at=None, recent_messages=msgs,
     )
 
@@ -158,3 +158,161 @@ def test_list_visible_sessions_maps_to_wire_shape():
     assert r.emdash_task == "feat-x"
     assert r.recent_messages == [{"role": "assistant", "text": "hi"}]
     assert r.runner_name == "laptop"
+
+
+# --- the project is half the key -------------------------------------------
+#
+# An emdash task name is scoped to a project, so `issues` under `ace` and `issues`
+# under `connect-labs` are two conversations. Keying the binding on the bare name
+# fused them; see RunnerBinding.emdash_project.
+
+
+def _ws_runner():
+    jj = _user()
+    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
+    runner = Runner.objects.create(
+        name="laptop", workspace=ws, location=Runner.LOCAL, host="jj@air"
+    )
+    return ws, runner
+
+
+def test_same_name_in_two_projects_is_two_sessions():
+    """The expensive half: the report DEDUPLICATES before it upserts, so a
+    concurrently-open namesake in another repo was not merely mislabelled — it was
+    dropped from the report entirely, with no row and no error."""
+    ws, runner = _ws_runner()
+
+    replace_reported_sessions(runner, ws, [
+        _reported("issues", [{"role": "user", "text": "ace"}], project="ace"),
+        _reported("issues", [{"role": "user", "text": "labs"}], project="connect-labs"),
+    ])
+
+    bindings = {b.emdash_project: b for b in RunnerBinding.objects.all()}
+    assert set(bindings) == {"ace", "connect-labs"}
+    assert bindings["ace"].session_id != bindings["connect-labs"].session_id
+    assert bindings["ace"].session.project == "ace"
+    assert bindings["connect-labs"].session.project == "connect-labs"
+    assert bindings["connect-labs"].tail == [{"role": "user", "text": "labs"}]
+
+
+def test_a_name_reused_in_another_project_does_not_inherit_the_first_session():
+    """Labs 2026-08-27: an `ace` task called `issues` claimed the name on 08-14; a
+    connect-labs task of the same name three weeks later was served under it, so the
+    session reported `project: "ace"` while running `gh ... -R .../connect-labs`."""
+    ws, runner = _ws_runner()
+
+    replace_reported_sessions(runner, ws, [_reported("issues", [], project="ace")])
+    ace_session = RunnerBinding.objects.get(emdash_project="ace").session_id
+
+    replace_reported_sessions(runner, ws, [])  # the ace task is closed and deleted
+    replace_reported_sessions(runner, ws, [_reported("issues", [], project="connect-labs")])
+
+    labs = RunnerBinding.objects.get(emdash_project="connect-labs")
+    assert labs.session_id != ace_session
+    assert labs.session.project == "connect-labs"
+    assert Session.objects.get(pk=ace_session).project == "ace", "the old row is not relabelled"
+
+
+def test_a_legacy_binding_with_no_project_is_adopted_and_filled():
+    """Rows written before the column existed carry a blank. They must still be
+    recognised on the first report after deploy — a miss would fork a duplicate
+    session for every live conversation at once — and then filled, so the hole
+    closes behind them."""
+    ws, runner = _ws_runner()
+    replace_reported_sessions(runner, ws, [_reported("feat-x", [], project="canopy-web")])
+    RunnerBinding.objects.update(emdash_project="")
+    Session.objects.update(project="")
+    before = RunnerBinding.objects.get().pk
+
+    replace_reported_sessions(runner, ws, [_reported("feat-x", [], project="canopy-web")])
+
+    binding = RunnerBinding.objects.get()
+    assert binding.pk == before, "adopted, not forked"
+    assert binding.emdash_project == "canopy-web"
+    assert binding.session.project == "canopy-web", "and the stale label is repaired"
+
+
+def test_an_agent_chat_keeps_its_blank_project():
+    """`Session.project` is blank for an agent chat by constraint (you chat WITH an
+    agent or IN a project, never both). The label repair must not violate that even
+    though emdash runs the task under the agent's own repo."""
+    from apps.agents.models import Agent
+
+    ws, runner = _ws_runner()
+    agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+    session = Session.objects.create(
+        workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER, title="chat"
+    )
+    RunnerBinding.objects.create(
+        session=session, runner=runner, host=runner.host,
+        session_key="chat", emdash_project="hal",
+    )
+
+    replace_reported_sessions(runner, ws, [_reported("chat", [], project="hal")])
+
+    session.refresh_from_db()
+    assert session.project == ""
+    assert session.agent_id == agent.id
+    assert RunnerBinding.objects.count() == 1
+
+
+def test_reporting_one_project_does_not_revive_anothers_archived_namesake():
+    """The un-archive step keyed on `session_key__in=now_keys`, which a namesake in
+    a different project satisfies."""
+    ws, runner = _ws_runner()
+    replace_reported_sessions(runner, ws, [_reported("issues", [], project="ace")])
+    ace = RunnerBinding.objects.get(emdash_project="ace").session
+    Session.objects.filter(pk=ace.pk).update(status=Session.ARCHIVED)
+
+    replace_reported_sessions(runner, ws, [_reported("issues", [], project="connect-labs")])
+
+    ace.refresh_from_db()
+    assert ace.status == Session.ARCHIVED
+
+
+
+def test_the_0021_backfill_copies_the_project_off_the_session():
+    """The backfill is what makes the deploy a no-op: without it every live binding
+    carries a blank on the first report, the exact-match lookup misses, and every
+    conversation on the box forks a duplicate session at once.
+
+    Driven through the real models (the migration module is imported by path — its
+    name starts with a digit, so it is not importable as an identifier). The pass
+    reads only fields a historical model also has.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from apps.agents.models import Agent
+
+    import apps.canopy_sessions as pkg
+
+    path = Path(pkg.__file__).parent / "migrations" / "0021_runnerbinding_emdash_project.py"
+    spec = importlib.util.spec_from_file_location("m0021", path)
+    m0021 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m0021)
+
+    ws, runner = _ws_runner()
+    agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+    repo_session = Session.objects.create(
+        workspace=ws, project="connect-labs", origin=Session.ORIGIN_RUNNER, title="issues"
+    )
+    agent_session = Session.objects.create(
+        workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER, title="chat"
+    )
+    bare_session = Session.objects.create(workspace=ws, origin=Session.ORIGIN_WEB, title="web")
+    for session, key in ((repo_session, "issues"), (agent_session, "chat"), (bare_session, "web")):
+        RunnerBinding.objects.create(
+            session=session, runner=runner, host=runner.host, session_key=key
+        )
+
+    class _Apps:
+        def get_model(self, app_label, model_name):
+            return {"RunnerBinding": RunnerBinding}[model_name]
+
+    m0021.backfill_emdash_project(_Apps(), None)
+
+    by_key = {b.session_key: b.emdash_project for b in RunnerBinding.objects.all()}
+    assert by_key["issues"] == "connect-labs"
+    assert by_key["chat"] == "hal", "an agent chat's worktree lives under the agent's own repo"
+    assert by_key["web"] == "", "neither agent nor project — the legacy branch still finds it"
