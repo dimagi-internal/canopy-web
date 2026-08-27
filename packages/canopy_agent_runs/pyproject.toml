@@ -1,6 +1,6 @@
 [project]
 name = "canopy-agent-runs"
-version = "0.1.1"
+version = "0.1.2"
 description = "Django-free run-lifecycle core: storage-agnostic read model, RunStore Protocol, in-memory + Drive adapters. Pip-installable into canopy-web / ace-web."
 readme = "README.md"
 requires-python = ">=3.11"
