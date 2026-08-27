@@ -824,18 +824,81 @@ class DriveRunStore:
         )
         return run.with_derived_status()
 
+    def _state_files_by_parent(self, run_folders: list[DriveFile]) -> dict[str, DriveFile]:
+        """{run_folder_id: run_state.yaml DriveFile} for every run that has one.
+
+        Uses the client's `find_in_folders` when offered — one query instead of
+        one list_folder per run. Falls back to the per-folder listing so a
+        client without it behaves exactly as before.
+        """
+        finder = getattr(self.client, "find_in_folders", None)
+        if callable(finder):
+            found = finder([f.id for f in run_folders], "run_state.yaml")
+            return {parent: file for parent, file in found.items() if file is not None}
+        out: dict[str, DriveFile] = {}
+        for child in run_folders:
+            state_file = _find_state_file(self.client.list_folder(child.id))
+            if state_file is not None:
+                out[child.id] = state_file
+        return out
+
+    def _read_states_bulk(self, files: list[DriveFile]) -> dict[str, dict]:
+        """{file_id: parsed run_state} — concurrently when the client can."""
+        bulk = getattr(self.client, "get_contents", None)
+        if callable(bulk) and files:
+            raw = bulk([(f.id, f.mime_type) for f in files])
+        else:
+            raw = {}
+            for f in files:
+                try:
+                    raw[f.id] = _read_text(self.client, f)
+                except Exception:  # noqa: BLE001 - one bad file must not sink the list
+                    log.warning("could not read run_state for %s", f.id)
+        out: dict[str, dict] = {}
+        for file_id, text in raw.items():
+            if text is None:
+                continue
+            try:
+                data = yaml.safe_load(text) or {}
+            except yaml.YAMLError:
+                log.warning("run_state.yaml is not valid YAML (%s)", file_id)
+                data = {}
+            out[file_id] = data if isinstance(data, dict) else {}
+        return out
+
     def list_runs(self, agent: str) -> list[RunSummary]:
         runs_id = self._runs_folder_id()
         if runs_id is None:
             return []
+        run_folders = [c for c in self.client.list_folder(runs_id) if _is_folder(c)]
+        if not run_folders:
+            return []
+
+        # ── Why this is not a plain loop ────────────────────────────────────
+        # The obvious shape — for each run: list its folder, then download
+        # run_state.yaml — costs 1 + 2N Drive round-trips, SEQUENTIALLY. On a
+        # real opp (12 runs) that measured ~25 calls and 30-50 s of wall clock,
+        # behind a 30 s content cache that a 50 s load can never populate. So
+        # every page view paid full price.
+        #
+        # Two optional fast paths, both negotiated off the client so any
+        # implementation that lacks them still works:
+        #   find_in_folders  — one query for run_state.yaml across ALL run
+        #                      folders, replacing N list_folder calls.
+        #   get_contents     — the N downloads concurrently. Kept on the client
+        #                      because thread-safety is the client's business:
+        #                      googleapiclient's service object is not
+        #                      thread-safe and only the implementation knows
+        #                      how to hand each worker its own transport.
+        state_by_parent = self._state_files_by_parent(run_folders)
+        contents = self._read_states_bulk(list(state_by_parent.values()))
+
         summaries: list[RunSummary] = []
-        for child in self.client.list_folder(runs_id):
-            if not _is_folder(child):
-                continue
-            run_children = self.client.list_folder(child.id)
-            state_data, state_file = self._read_state(run_children)
+        for child in run_folders:
+            state_file = state_by_parent.get(child.id)
             if state_file is None:
                 continue  # half-initialized run folder
+            state_data = contents.get(state_file.id, {})
             # Cheap status: synthesize steps from run_state alone (no tree walk).
             snaps = _build_steps(
                 self.skill_registry,
