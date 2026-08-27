@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { listOpenItems, type ItemOut } from '@/api/items'
 import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
-import { RunnerCodeAlerts } from '@/components/supervisor/RunnerCodeAlerts'
+import { RunnerAlerts } from '@/components/supervisor/RunnerAlerts'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -197,7 +197,7 @@ export default function SupervisorPage(): JSX.Element {
         </div>
       )}
 
-      <RunnerCodeAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
+      <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
 
       <Tabs value={tab} onValueChange={onTab} className="gap-4">
         <TabsList className="w-full">

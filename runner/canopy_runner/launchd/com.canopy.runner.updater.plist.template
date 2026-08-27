@@ -10,6 +10,19 @@
   a human notices. An independent timer keeps checking regardless of what state
   the runner is in, so shipping a fix is enough to rescue every box automatically.
 
+  THE BOUNDARY OF THAT INDEPENDENCE: this is a LaunchAgent, so it lives and dies
+  with the macOS login session — the same session as the runner. It is
+  independent of the runner PROCESS, not of the machine. Log the account out and
+  both jobs stop together, which is the one failure this design cannot rescue:
+  no timer fires, the `update_available` doorbell has no daemon to ring, and the
+  box's last heartbeat keeps the server describing it in the present tense.
+  Do not "harden" this by moving it to a LaunchDaemon — the runner drives emdash
+  over CDP and genuinely needs a user session, so a root-domain updater would
+  only keep a box current at running nothing. The real countermeasure is making
+  the silence visible: the supervisor's dark-runner banner (24h, see
+  frontend/src/components/supervisor/runnerAlertRules.ts). Observed 2026-08-27,
+  acedimagi-mbp-cdp, three days behind and logged out.
+
   It runs the INSTALLER, not the runner: `uv tool install --force` replaces the
   runner's venv, and a process cannot safely have its own interpreter and modules
   swapped out from under it mid-run.

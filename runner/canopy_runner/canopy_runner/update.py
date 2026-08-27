@@ -16,6 +16,11 @@ The question has three parts, and each is answered by whoever actually knows:
   daemon writes each tick. An update restarts the daemon, and a chat turn is
   bridged across ticks, so restarting mid-turn strands a reply.
 
+None of this reaches a box whose macOS account is logged out: the updater is a
+LaunchAgent in the same login session as the daemon, so nothing here runs at all.
+See com.canopy.runner.updater.plist.template § THE BOUNDARY OF THAT INDEPENDENCE
+— that case is caught by the supervisor's dark-runner banner, not by this file.
+
 Read-only by construction: this asks the control plane via GET, and must never
 heartbeat. A heartbeat from this second process would stamp the runner ONLINE and
 overwrite the provenance the real daemon reports — the updater would be forging
