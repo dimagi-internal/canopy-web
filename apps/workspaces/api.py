@@ -140,6 +140,43 @@ def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     return _out(m.workspace, m.role)
 
 
+@router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",
+               openapi_extra={"x-mcp-expose": True})
+def delete_workspace(request: HttpRequest, slug: str):
+    """Delete an empty workspace. Owner-only, and never one that still owns agents.
+
+    Creation (`POST /`) was a one-way door: a workspace made with a typo'd
+    slug was permanent, and the slug appears in every URL its team uses. That
+    is a bad property for a self-serve create endpoint, and it made the
+    onboarding path un-rehearsable for the same reason agent creation was.
+
+    Two guards, both deliberate:
+
+    - **Owner-only**, matching the rest of workspace administration (invites,
+      member roles). An editor may act *within* a tenant; removing the tenant
+      itself is an owner's call.
+    - **Refuses while any agent still lives here.** `Agent.workspace` is
+      PROTECT precisely so a tenant cannot be pulled out from under its
+      agents, and Django would raise ProtectedError — a 500. Checking first
+      turns that into an actionable 409 naming what is in the way, so the
+      caller deletes the agents (or moves them) and retries. Memberships and
+      invites are the workspace's own bookkeeping and cascade with it.
+    """
+    _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    ws = Workspace.objects.filter(slug=slug).first()
+    if ws is None:
+        raise HttpError(404, f"workspace '{slug}' not found")
+    agent_slugs = sorted(ws.agents.values_list("slug", flat=True))
+    if agent_slugs:
+        raise HttpError(
+            409,
+            f"workspace '{slug}' still owns {len(agent_slugs)} agent(s): "
+            f"{', '.join(agent_slugs)}. Delete or move them first.",
+        )
+    ws.delete()
+    return Status(204, None)
+
+
 # ---- members ----
 @router.get("/{slug}/members/", response=list[MemberOut], summary="List members (member-only)",
             openapi_extra={"x-mcp-expose": True})
