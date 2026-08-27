@@ -1390,7 +1390,28 @@ export interface paths {
         readonly get: operations["apps_agents_api_get_agent"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Delete an agent (editor/owner)
+         * @description Remove an agent and everything hanging off it.
+         *
+         *     Registration (`POST /`) was a one-way door until this existed: an agent
+         *     created by mistake — a typo'd slug, a scaffold someone was only trying
+         *     out, a test — was permanent and fleet-visible to every member of its
+         *     workspace, because the only way back was a shell on the box. That made
+         *     *rehearsing* the onboarding path impossible: you could not walk a new
+         *     operator's steps end to end without leaving a fake agent behind forever.
+         *
+         *     Gated one step ABOVE creation deliberately. Any member may upsert an
+         *     agent; deleting one requires editor or owner, so a viewer cannot destroy
+         *     a fleet member's board. `_get_agent_or_404` runs first, so a non-member
+         *     gets 404 (no existence leak) rather than 403.
+         *
+         *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
+         *     syncs, work products, schedules, items, runner assignments/drills), so
+         *     this is a real delete rather than a soft flag — nothing is left dangling
+         *     and nothing blocks it.
+         */
+        readonly delete: operations["apps_agents_api_delete_agent"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2045,7 +2066,28 @@ export interface paths {
         readonly get: operations["apps_workspaces_api_get_workspace"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Delete a workspace (owner-only)
+         * @description Delete an empty workspace. Owner-only, and never one that still owns agents.
+         *
+         *     Creation (`POST /`) was a one-way door: a workspace made with a typo'd
+         *     slug was permanent, and the slug appears in every URL its team uses. That
+         *     is a bad property for a self-serve create endpoint, and it made the
+         *     onboarding path un-rehearsable for the same reason agent creation was.
+         *
+         *     Two guards, both deliberate:
+         *
+         *     - **Owner-only**, matching the rest of workspace administration (invites,
+         *       member roles). An editor may act *within* a tenant; removing the tenant
+         *       itself is an owner's call.
+         *     - **Refuses while any agent still lives here.** `Agent.workspace` is
+         *       PROTECT precisely so a tenant cannot be pulled out from under its
+         *       agents, and Django would raise ProtectedError — a 500. Checking first
+         *       turns that into an actionable 409 naming what is in the way, so the
+         *       caller deletes the agents (or moves them) and retries. Memberships and
+         *       invites are the workspace's own bookkeeping and cascade with it.
+         */
+        readonly delete: operations["apps_workspaces_api_delete_workspace"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -11604,6 +11646,26 @@ export interface operations {
             };
         };
     };
+    readonly apps_agents_api_delete_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly apps_agents_api_set_runner_preference: {
         readonly parameters: {
             readonly query?: never;
@@ -12733,6 +12795,26 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceOut"];
                 };
+            };
+        };
+    };
+    readonly apps_workspaces_api_delete_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

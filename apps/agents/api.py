@@ -143,6 +143,39 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return AgentDetailOut.model_validate(services.agent_detail(agent))
 
 
+@router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",
+               openapi_extra={"x-mcp-expose": True})
+def delete_agent(request: HttpRequest, slug: str):
+    """Remove an agent and everything hanging off it.
+
+    Registration (`POST /`) was a one-way door until this existed: an agent
+    created by mistake — a typo'd slug, a scaffold someone was only trying
+    out, a test — was permanent and fleet-visible to every member of its
+    workspace, because the only way back was a shell on the box. That made
+    *rehearsing* the onboarding path impossible: you could not walk a new
+    operator's steps end to end without leaving a fake agent behind forever.
+
+    Gated one step ABOVE creation deliberately. Any member may upsert an
+    agent; deleting one requires editor or owner, so a viewer cannot destroy
+    a fleet member's board. `_get_agent_or_404` runs first, so a non-member
+    gets 404 (no existence leak) rather than 403.
+
+    Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
+    syncs, work products, schedules, items, runner assignments/drills), so
+    this is a real delete rather than a soft flag — nothing is left dangling
+    and nothing blocks it.
+    """
+    agent = _get_agent_or_404(request, slug)
+    membership = wsvc.WorkspaceMembership.objects.filter(
+        user=request.user, workspace_id=agent.workspace_id
+    ).first()
+    allowed = {wsvc.WorkspaceMembership.OWNER, wsvc.WorkspaceMembership.EDITOR}
+    if membership is None or membership.role not in allowed:
+        raise HttpError(403, "deleting an agent requires the editor or owner role")
+    agent.delete()
+    return Status(204, None)
+
+
 @router.patch("/{slug}/runner-preference", response=AgentDetailOut,
               summary="Set an agent's ordered runner-kind preference")
 def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPreferenceIn) -> AgentDetailOut:
