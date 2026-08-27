@@ -35,6 +35,10 @@ import logging
 import time
 from pathlib import Path
 
+from . import platform_jobs
+# Re-exported so existing callers and tests keep importing it from here.
+from .platform_jobs import UPDATER_LABEL  # noqa: F401
+
 logger = logging.getLogger("canopy_runner.update")
 
 CURRENT = "current"
@@ -89,17 +93,8 @@ def in_flight(cfg, *, now: float | None = None) -> int | None:
 NUDGE_MIN_SECONDS = 600.0
 _last_nudge_at = 0.0
 
-UPDATER_LABEL = "com.canopy.runner.updater"
-
-
 def _kickstart_updater() -> None:
-    import os
-    import subprocess
-
-    subprocess.run(
-        ["launchctl", "kickstart", f"gui/{os.getuid()}/{UPDATER_LABEL}"],
-        capture_output=True, timeout=15, check=True,
-    )
+    platform_jobs.kickstart_updater()
 
 
 def nudge(cfg, expected_sha: str, *, now: float | None = None) -> bool:
@@ -124,17 +119,18 @@ def nudge(cfg, expected_sha: str, *, now: float | None = None) -> bool:
         return False
     if now - _last_nudge_at < NUDGE_MIN_SECONDS:
         return False
-    # Advance the throttle on the ATTEMPT, not the success: a broken launchctl
-    # would otherwise warn on every ~10s heartbeat, and the 30-min timer is the
-    # rescue for that case regardless.
+    # Advance the throttle on the ATTEMPT, not the success: a broken supervisor
+    # call would otherwise warn on every ~10s heartbeat, and the 30-min timer is
+    # the rescue for that case regardless.
     _last_nudge_at = now
+    job = platform_jobs.updater_job_name()   # launchd label, or Task Scheduler path
     try:
         _kickstart_updater()
-    except Exception as exc:  # noqa: BLE001 — a launchctl hiccup must not cost the socket
-        logger.warning("update nudge: could not kickstart %s: %s", UPDATER_LABEL, exc)
+    except Exception as exc:  # noqa: BLE001 — a supervisor hiccup must not cost the socket
+        logger.warning("update nudge: could not kickstart %s: %s", job, exc)
         return False
     logger.info("update nudge: kickstarted %s (expected %s, installed %s)",
-                UPDATER_LABEL, expected[:12], installed[:12])
+                job, expected[:12], installed[:12])
     return True
 
 

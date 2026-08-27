@@ -130,6 +130,9 @@ them together would make the two modules import each other.
      within 30 minutes. `launchctl bootout gui/$(id -u)/com.canopy.runner.updater`
      first, or install with `--no-auto-update`.
 
+   **On Windows, run `scripts/install-runner.ps1` instead** — same steps, Task
+   Scheduler in place of launchd. See "Windows" below.
+
    The timer runs `~/.canopy/canopy-runner-update` (a copy of this script placed
    there by the install) rather than the script in your checkout — macOS names
    background items after the executable, so pointing at the repo made canopy's
@@ -215,3 +218,61 @@ python3 -m canopy_runner.main verify-emdash --config ~/.canopy/runner.json
   `READ_SCHEMA` (the allowlist these reads are checked against) to match.
 - the DB itself can't be read → exit 2 (bad `emdash_db` path, or emdash not
   installed).
+
+## Windows
+
+The runner is **not** macOS-only, and never mostly was. Everything it does is
+portable — `inbox.py` and `schedules.py` shell out to `gog` and do date math,
+`cdp_control` drives emdash through `node`, `transcript`/`tail` are pure
+pathlib, and emdash itself ships `emdash-x64.exe` / `.msi`. What was macOS-only
+was the **supervision**: two launchd jobs, and one inline `launchctl kickstart`.
+
+That split now has exactly two homes:
+
+| | macOS | Windows |
+|---|---|---|
+| installer | `scripts/install-runner.sh` | `scripts/install-runner.ps1` |
+| supervisor | launchd | Task Scheduler |
+| runner job | `com.canopy.runner` | `\Canopy\canopy-runner` |
+| updater job | `com.canopy.runner.updater` | `\Canopy\canopy-runner-updater` |
+| run-now verb | `launchctl kickstart gui/<uid>/<label>` | `schtasks /Run /TN <task>` |
+| in-process split | `canopy_runner/platform_jobs.py` | same file, other branch |
+
+Setup mirrors the macOS steps above:
+
+```powershell
+# 1. emdash with its debug port (the CDP equivalent of the "Emdash CDP" app):
+#    make a shortcut to emdash.exe whose Target ends with
+#    --remote-debugging-port=9222
+# 2. pair the runner (same POST as above), then write %USERPROFILE%\.canopy\runner.json
+#    — note the Windows emdash DB path:
+#      "emdash_db": "C:\\Users\\<you>\\AppData\\Roaming\\Emdash\\emdash4.db"
+# 3. install:
+.\runner\canopy_runner\scripts\install-runner.ps1
+```
+
+`-NoTasks`, `-NoAutoUpdate`, `-Ref` and `-IfStale` mean what `--no-launchd`,
+`--no-auto-update`, `--ref` and `--if-stale` mean for the bash installer.
+
+Three Windows differences that are behaviour, not cosmetics:
+
+- **Task Scheduler has no `StandardOutPath`.** launchd redirects a job's stdout
+  for free; Task Scheduler does not. Both jobs are wrapped in
+  `cmd.exe /c "... >> log 2>&1"` so `~\.canopy\runner.log` and `updater.log`
+  exist exactly as on macOS. Without that wrapper the logs are empty — which
+  looks identical to a healthy quiet runner.
+- **`KeepAlive` becomes restart-on-failure**, plus `ExecutionTimeLimit 0`.
+  Task Scheduler otherwise stops a task after three days by default, which
+  would read as a runner that mysteriously goes dark midweek.
+- **Same session boundary.** The tasks are registered for the interactive user,
+  not as a Windows service, because the runner drives emdash's real UI over CDP
+  and needs a desktop session. Logging out stops both jobs together — the same
+  limit the updater plist documents, with the same countermeasure (the
+  supervisor's dark-runner banner).
+
+**What is verified, and what is not.** `platform_jobs` is unit-tested on both
+branches from either host (`tests/test_platform_jobs.py`), and the installer is
+parse- and PSScriptAnalyzer-clean. It has **not** been executed on a Windows
+box — there is none in the fleet yet. Treat the first Windows install as a
+bring-up: run it with `-NoTasks` first, confirm `canopy-runner update-check`
+answers, then register the tasks.
