@@ -651,6 +651,10 @@ def _build_fork_run_state(
 # ---------------------------------------------------------------------------
 # DriveRunStore
 # ---------------------------------------------------------------------------
+# Distinguishes "not looked yet" from "looked, and there is no name".
+_UNSET = object()
+
+
 class DriveRunStore:
     """A `RunStore` reading ACE-shaped Drive run-folders into the read model.
 
@@ -685,6 +689,8 @@ class DriveRunStore:
         self.skill_registry = list(
             skill_registry if skill_registry is not None else DEFAULT_SKILL_REGISTRY
         )
+        # Per-instance memo for opp.yaml's display_name; see _opp_display_name.
+        self._display_name: object = _UNSET
 
     # -- internal resolution --
     def _registered_skills(self) -> set[str]:
@@ -718,6 +724,26 @@ class DriveRunStore:
         return data, state_file
 
     def _opp_display_name(self) -> str | None:
+        """The opp's display name, read at most ONCE per store instance.
+
+        This is called from `_run_header_fields`, which runs once PER RUN — so
+        without memoisation a 12-run opp did 12 identical `list_folder` +
+        `get_content` round-trips for the same `opp.yaml`. Profiled against a
+        real opp: 12 redundant reads costing 8.7s of a 19s call, which is the
+        single largest item and dwarfs the per-run state reads the batching
+        work targeted. `opp.yaml` cannot change mid-listing, so one read is
+        the correct number.
+
+        `_UNSET` rather than None as the sentinel: None is a legitimate answer
+        (no opp.yaml, or no display_name in it) and caching it must stop the
+        re-read, otherwise the opps that lack the file keep paying full price.
+        """
+        if self._display_name is not _UNSET:
+            return self._display_name
+        self._display_name = self._read_opp_display_name()
+        return self._display_name
+
+    def _read_opp_display_name(self) -> str | None:
         children = self.client.list_folder(self.root_folder_id)
         opp_yaml = _find_child(children, "opp.yaml")
         if opp_yaml is None:
