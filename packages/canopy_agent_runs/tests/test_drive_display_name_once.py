@@ -10,7 +10,6 @@ The batching made `list_runs` issue 2 Drive calls instead of 25 and the
 endpoint got no faster, because this loop was still there. That is the lesson
 worth keeping: optimise what you MEASURED, not what you assumed.
 """
-import pytest
 
 from canopy_agent_runs.drive.store import DriveRunStore, SkillMeta
 from tests.fixtures.fake_drive import FakeDriveClient
