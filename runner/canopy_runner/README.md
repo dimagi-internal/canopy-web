@@ -114,8 +114,18 @@ them together would make the two modules import each other.
    - It is a **separate** job on purpose. A runner that updated itself could
      ship a version that crash-loops on startup and then never update again —
      it would never heartbeat, never learn it was behind, and stay bricked.
-     An independent timer keeps checking whatever state the runner is in, so
-     shipping a fix is enough to rescue every box.
+     An independent timer keeps checking whatever state the *runner process* is
+     in, so shipping a fix is enough to rescue every box that is still running.
+   - **It does not survive the macOS account logging out.** Both jobs are
+     LaunchAgents in one login session, so the independence above is
+     independence *from the runner*, not from the machine: a logout stops the
+     runner and its rescuer at the same instant, and nothing on that box
+     updates, self-heals, or reports until somebody logs back in. Auto-update
+     covers "the runner is broken"; it cannot cover "nobody is home."
+     Observed 2026-08-27 — `acedimagi-mbp-cdp` sat three days behind because
+     its account was logged out. The supervisor now raises a **dark runner**
+     banner after 24h of silence (`runnerAlertRules.ts`) so this is visible as
+     itself rather than as a version-drift warning nobody can act on.
    - Testing a branch on a box? The updater will revert it to the deployed sha
      within 30 minutes. `launchctl bootout gui/$(id -u)/com.canopy.runner.updater`
      first, or install with `--no-auto-update`.

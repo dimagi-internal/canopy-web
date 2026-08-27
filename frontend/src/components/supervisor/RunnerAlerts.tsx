@@ -1,16 +1,17 @@
 import type { JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
-import { runnerCodeAlerts, type RunnerCodeAlert } from './codeProvenance'
+import { humanizeSilence, macAccount, runnerAlerts, type RunnerAlert } from './runnerAlertRules'
 
-// LOUD alert: this runner is not executing the code we think it is. Two faults
-// (see codeProvenance.ts) — a source checkout on the wrong branch, or an
-// install that is behind what shipped. In both cases a HEARTBEATING runner is
-// fixed on its machine, while a QUIET one can never clear on its own (what is
-// shown is its last report), so the in-place resolve there is Retire.
+// LOUD alert: something is wrong with this runner. Three faults, ranked in
+// runnerAlertRules.ts — it has gone dark, its source checkout is on the wrong
+// branch, or its install is behind what shipped. A HEARTBEATING runner is fixed
+// on its machine; a QUIET one can never clear on its own (what is shown is its
+// last report), so the in-place resolve there is Retire.
 const UPDATE_CMD = 'runner/canopy_runner/scripts/install-runner.sh'
 const BRANCH_CMD = 'git -C ~/emdash-projects/canopy-web checkout main && git pull'
 
-function headline({ kind, unreachable }: RunnerCodeAlert): string {
+function headline({ kind, unreachable, silentForMs }: RunnerAlert): string {
+  if (kind === 'dark') return `⚠ Runner has gone dark — ${humanizeSilence(silentForMs ?? 0)} with no heartbeat`
   if (kind === 'branch') {
     return unreachable
       ? '⚠ Offline runner stuck on wrong branch'
@@ -23,7 +24,77 @@ function headline({ kind, unreachable }: RunnerCodeAlert): string {
   return unreachable ? '⚠ Offline runner is out of date' : '⚠ Runner is out of date'
 }
 
-export function RunnerCodeAlerts({
+const Sha = ({ value }: { value: string }): JSX.Element => (
+  <span className="rounded bg-destructive/20 px-1 font-mono font-semibold">{value.slice(0, 12)}</span>
+)
+
+/**
+ * The dark-runner body.
+ *
+ * It leads with the silence and then explains, in the banner itself, why no
+ * automation is going to resolve this. That explanation is the feature: the
+ * auto-updater is deliberately a SEPARATE launchd job so that a crash-looping
+ * runner can still be rescued (see com.canopy.runner.updater.plist.template),
+ * and it is easy — we did it — to read that as "a dark box heals itself". It
+ * does not. Both jobs are LaunchAgents in the same macOS login session, so the
+ * one failure that takes out the runner by taking out its whole user session
+ * takes out its rescuer at the same instant. Whatever the box last reported
+ * about its code is shown as history, never as an instruction.
+ */
+function DarkBody({ runner: r, silentForMs }: RunnerAlert): JSX.Element {
+  const account = macAccount(r.host)
+  const behind =
+    r.code_sha && r.expected_code_sha && r.code_sha !== r.expected_code_sha
+      ? { mine: r.code_sha, shipped: r.expected_code_sha }
+      : null
+  return (
+    <>
+      <p className="mt-1 text-[13px] leading-snug">
+        <span className="font-semibold">{r.name}</span>
+        {r.host ? <> ({r.host})</> : null} last checked in{' '}
+        <span className="font-semibold">{humanizeSilence(silentForMs ?? 0)} ago</span>. Nothing on
+        that box is running —{' '}
+        <span className="font-semibold">including its auto-updater</span>, which is a launchd agent
+        in the same login session as the runner. It cannot update, self-heal, or clear this alert
+        on its own.
+      </p>
+      {behind && (
+        <p className="mt-1 text-[13px] leading-snug">
+          Its last report was runner{' '}
+          <span className="font-mono font-semibold">{r.code_version || 'unknown'}</span> built from{' '}
+          <Sha value={behind.mine} /> and <Sha value={behind.shipped} /> has since shipped — but
+          that is history, not a task: the gap cannot close until the box is back.
+        </p>
+      )}
+      {r.paused && (
+        <p className="mt-1 text-[13px] leading-snug">
+          It is <span className="font-semibold">also paused</span>
+          {r.paused_note ? <> ({r.paused_note})</> : null}
+          {r.paused_at ? <> since {new Date(r.paused_at).toLocaleDateString()}</> : null}, so
+          bringing it back online will not resume work until it is unpaused.
+        </p>
+      )}
+      <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
+        {r.kind === 'emdash' ? (
+          <>
+            Log back into{' '}
+            {account ? (
+              <span className="font-mono font-semibold">{account}</span>
+            ) : (
+              'that macOS account'
+            )}{' '}
+            on that machine — launchd loads the runner and its updater at login, and the updater
+            then installs what shipped within 30 minutes.
+          </>
+        ) : (
+          <>Bring that box back up; it resumes heartbeating and updating on its own once it does.</>
+        )}
+      </p>
+    </>
+  )
+}
+
+export function RunnerAlerts({
   runners,
   retiringId,
   onRetire,
@@ -34,7 +105,7 @@ export function RunnerCodeAlerts({
 }): JSX.Element {
   return (
     <>
-      {runnerCodeAlerts(runners).map((alert) => {
+      {runnerAlerts(runners).map((alert) => {
         const { runner: r, kind, unreachable } = alert
         return (
           <div
@@ -50,7 +121,9 @@ export function RunnerCodeAlerts({
           >
             <p className="text-[13px] font-bold uppercase tracking-wide">{headline(alert)}</p>
 
-            {kind === 'ahead' ? (
+            {kind === 'dark' ? (
+              <DarkBody {...alert} />
+            ) : kind === 'ahead' ? (
               <p className="mt-1 text-[13px] leading-snug">
                 <span className="font-semibold">{r.name}</span> is running runner code from{' '}
                 <span className="rounded bg-foreground/10 px-1 font-mono font-semibold">
@@ -87,15 +160,8 @@ export function RunnerCodeAlerts({
               <p className="mt-1 text-[13px] leading-snug">
                 <span className="font-semibold">{r.name}</span> is running runner{' '}
                 <span className="font-mono font-semibold">{r.code_version || 'unknown'}</span> built
-                from{' '}
-                <span className="rounded bg-destructive/20 px-1 font-mono font-semibold">
-                  {r.code_sha.slice(0, 12)}
-                </span>
-                , but{' '}
-                <span className="rounded bg-destructive/20 px-1 font-mono font-semibold">
-                  {r.expected_code_sha.slice(0, 12)}
-                </span>{' '}
-                has shipped.{' '}
+                from <Sha value={r.code_sha} />, but <Sha value={r.expected_code_sha} /> has
+                shipped.{' '}
                 {unreachable ? (
                   <>
                     It has <span className="font-semibold">stopped heartbeating</span>, so this
@@ -109,7 +175,7 @@ export function RunnerCodeAlerts({
               </p>
             )}
 
-            {kind !== 'ahead' && (
+            {kind !== 'ahead' && kind !== 'dark' && (
               <p className="mt-1.5 break-words text-[12px] leading-snug opacity-90">
                 {unreachable ? 'Bring it back on that machine:' : 'Run this on that machine:'}
                 <br />
@@ -132,8 +198,9 @@ export function RunnerCodeAlerts({
                   {retiringId === r.id ? 'Retiring…' : 'Retire runner'}
                 </button>
                 <p className="mt-1 text-[11px] leading-snug opacity-80">
-                  Retiring is permanent for this row and clears the alert; re-pairing later mints a
-                  fresh runner.
+                  {kind === 'dark'
+                    ? 'Only if this box is gone for good — retiring is permanent for this row, and re-pairing later mints a fresh one.'
+                    : 'Retiring is permanent for this row and clears the alert; re-pairing later mints a fresh runner.'}
                 </p>
               </>
             )}
