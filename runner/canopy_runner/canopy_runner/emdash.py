@@ -15,18 +15,28 @@ mistake "could not read" for "zero open sessions" — reporting an empty list cl
 every RunnerBinding server-side. The risk both reads share is a *silent* schema drift —
 emdash renaming a column these queries name — which is why `check_read_schema`
 (surfaced as `canopy_runner verify-emdash`) exists: run it after an emdash update to
-confirm the columns these two functions depend on still exist. Keep `READ_SCHEMA` in
-lockstep with the SQL below — it IS the list of columns the SQL names.
+confirm the columns these two functions depend on still exist. Keep
+`REQUIRED_SCHEMA`/`OPTIONAL_SCHEMA` in lockstep with the SQL below — between them they
+ARE the list of columns the SQL names, and `READ_SCHEMA` is just their union.
 
-**A row is live only if it is neither archived NOR soft-deleted.** emdash 1.2 added
-`deleted_at` to `tasks` and `projects` and its own queries pair the two —
-`and(isNull(tasks.archivedAt), isNull(tasks.deletedAt))` is how emdash itself asks for
-live tasks. Matching that is not defensive tidiness: filtering on `archived_at` alone
-means canopy reports as OPEN a task emdash no longer shows anywhere, so the supervisor
-grows sessions nobody can click into and `task_state` calls a deleted task "live" and
-hands it to the reuse path. The columns were empty on the fleet laptop when this was
-written (2026-08-28), so the divergence is latent rather than observed — which is the
-point of fixing it now: it starts costing the moment anyone deletes a task.
+**A row is live only if it is neither archived NOR soft-deleted** — but the three
+tables emdash 1.2 gave `deleted_at` do not use it alike, and the difference decides
+which of these filters is load-bearing (read out of the shipped bundle, 2026-08-28):
+
+  * `projects` ARE soft-deleted: `update(projects).set({deletedAt: ...})`, which emdash
+    itself calls "tombstoned". This filter is the one that matters. `list_projects`
+    feeds `capabilities.projects`, which is what makes a repo's turns claimable — so
+    without it a project someone removed keeps being advertised as drivable and the
+    runner claims turns for a repo it can no longer open.
+  * `tasks` are still HARD deleted: both paths run
+    `tx.delete(tasks).where(eq(tasks.id, task.id))`. emdash FILTERS on
+    `tasks.deleted_at` (`and(isNull(archivedAt), isNull(deletedAt))`) but nothing
+    writes it, so our matching filter is alignment with emdash's own query rather than
+    a live fix — correct to keep, and currently inert.
+
+The consequence worth remembering: 1.2 does NOT give canopy the closing signal it
+lacks. Absence from the wholesale open-task report is still the only signal emdash
+gives that a session is over.
 """
 from __future__ import annotations
 
