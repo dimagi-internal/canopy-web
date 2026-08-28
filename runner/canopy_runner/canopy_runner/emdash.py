@@ -35,38 +35,87 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-# The exact columns the two reads below depend on. verify-emdash asserts these
-# still exist after an emdash update. Update this the moment you change the SQL.
-READ_SCHEMA: dict[str, list[str]] = {
-    "tasks": [
-        "name",
-        "archived_at",
-        "created_at",
-        "status",
-        "last_interacted_at",
-        "type",
-        "project_id",
-        "deleted_at",
-    ],
-    "projects": ["id", "name", "deleted_at"],
-    # Emdash's OWN liveness flag, per conversation. Read fail-soft (see
-    # `_agent_statuses`) but listed here anyway: verify-emdash is where you find
-    # out a read drifted, and a degradation that nothing reports is exactly the
-    # class this file exists to prevent.
-    #
-    # `last_interacted_at` lived here until emdash 1.2. Its migration train copied
-    # the values into `last_session_activity_at` (0036) and then dropped the legacy
-    # column (0037) — so the successor is emdash's own choice, not our guess. It is
-    # NULLABLE and sparsely populated (10 of 26 rows on the fleet laptop, 2026-08-28),
-    # hence the COALESCE onto `updated_at` in the ORDER BY below rather than a
-    # straight swap: ordering by a mostly-NULL column is not an ordering.
-    "conversations": [
-        "task_id",
-        "agent_status",
-        "last_session_activity_at",
-        "updated_at",
-    ],
+# The columns the reads below depend on, split by WHEN emdash grew them.
+#
+# The split exists because the fleet's boxes update independently: two macOS accounts,
+# each with its own auto-updating emdash, were provably at different versions on
+# 2026-08-28. A read that names a 1.2 column unconditionally does not degrade on an
+# older box — `list_open_sessions` RAISES, and its caller must then skip the session
+# report entirely (reporting an empty list would clear every RunnerBinding). So the
+# SQL is built from what the connected DB actually has; see `_cols`.
+#
+# REQUIRED: present in every emdash we support. Missing one IS a drift.
+REQUIRED_SCHEMA: dict[str, list[str]] = {
+    "tasks": ["name", "archived_at", "created_at", "status", "last_interacted_at",
+              "type", "project_id"],
+    "projects": ["id", "name"],
+    # Emdash's OWN liveness flag, per conversation — the one signal a transcript
+    # cannot give (a session inside a long tool call is silent, not finished).
+    "conversations": ["task_id", "agent_status"],
 }
+
+# VERSION-GATED: introduced by emdash 1.2. Absence means "older emdash", NOT drift —
+# reporting it as drift is a false red on a healthy box, and a check that cries wolf
+# is muted before the day it is right.
+#
+#   * `deleted_at` — 1.2 soft-deletes PROJECTS (emdash calls them "tombstoned") and
+#     filters live tasks as and(isNull(archivedAt), isNull(deletedAt)). The projects
+#     one is load-bearing: without it a removed repo keeps being advertised in
+#     `capabilities.projects` and the runner claims turns it cannot possibly run.
+#   * `last_session_activity_at` — 1.2's migration train copied
+#     `conversations.last_interacted_at` into it (0036) and dropped the legacy name
+#     (0037), so the successor is emdash's own choice rather than our guess.
+OPTIONAL_SCHEMA: dict[str, list[str]] = {
+    "tasks": ["deleted_at"],
+    "projects": ["deleted_at"],
+    "conversations": ["last_session_activity_at", "updated_at"],
+}
+
+# Kept as the union so existing callers/tests that ask "every column we touch" still
+# get one answer. `check_read_schema` is what distinguishes the two halves.
+READ_SCHEMA: dict[str, list[str]] = {
+    t: REQUIRED_SCHEMA.get(t, []) + OPTIONAL_SCHEMA.get(t, [])
+    for t in {**REQUIRED_SCHEMA, **OPTIONAL_SCHEMA}
+}
+
+
+def _cols(conn: sqlite3.Connection, table: str) -> set[str]:
+    """The column names `table` actually has, or an empty set if it has none.
+
+    Every version-gated predicate below asks this rather than assuming, because the
+    cost of assuming is not a degraded read — it is a raised one, and a raised one
+    costs the whole session report.
+    """
+    try:
+        # PRAGMA cannot be parameter-bound; the table name is our own constant.
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.Error:
+        return set()
+
+
+def _not_deleted(conn: sqlite3.Connection, table: str, alias: str) -> str:
+    """`AND <alias>.deleted_at IS NULL`, or "" on an emdash that has no such column.
+
+    Empty is the correct degradation: an emdash without the column cannot have
+    soft-deleted anything, so there is nothing the predicate would have excluded.
+    """
+    return f" AND {alias}.deleted_at IS NULL" if "deleted_at" in _cols(conn, table) else ""
+
+
+# Conversation ordering, newest last, most-preferred first. 1.2 renamed the first to
+# the second; `updated_at` is the NOT NULL backstop, needed because
+# `last_session_activity_at` is nullable and sparsely written (10 of 26 rows on the
+# fleet laptop) — ordering by a mostly-NULL column is not an ordering.
+_CONV_ORDER_CANDIDATES = ("last_session_activity_at", "last_interacted_at", "updated_at")
+
+
+def _conv_order(conn: sqlite3.Connection) -> str:
+    """The ORDER BY expression for `conversations`, from what this emdash actually has."""
+    have = [c for c in _CONV_ORDER_CANDIDATES if c in _cols(conn, "conversations")]
+    if not have:
+        return "rowid"          # no timestamp at all: insertion order still beats nothing
+    return f"COALESCE({', '.join(have)})" if len(have) > 1 else have[0]
+
 
 # `conversations.agent_status` when emdash is actively driving the agent. The
 # other value seen in practice is 'awaiting-input' (the agent stopped and is
@@ -107,30 +156,45 @@ def _db(db_path: str) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def check_read_schema(db_path: str) -> list[str]:
-    """Verify every column the CDP-path reads depend on still exists.
+def check_read_schema(db_path: str) -> tuple[list[str], list[str]]:
+    """Verify the columns the reads depend on. Returns ``(problems, older)``.
 
-    Returns a list of human-readable problems (``"tasks.foo missing"``,
-    ``"table 'projects' missing"``); an EMPTY list means the read surface is intact.
+    ``problems`` are real drifts — a REQUIRED column or whole table that has gone.
+    ``older`` are version-gated columns emdash 1.2 introduced and this DB lacks, which
+    means "an emdash older than 1.2", NOT a drift.
+
+    Keeping those apart is the whole point. Reporting a pre-1.2 box as drifted is a
+    false red on a perfectly healthy install, and a check that reddens on healthy boxes
+    gets muted — after which it is absent on the day it is right. The reads themselves
+    already tolerate the older shape (see `_cols`), so "older" is genuinely informational.
+
     Raises ``SchemaCheckError`` if the DB itself can't be opened, so "can't find the
     DB" stays distinct from "the schema drifted".
     """
     if not Path(db_path).exists():  # don't let sqlite3.connect() create an empty file
         raise SchemaCheckError(f"emdash DB not found at {db_path}")
     problems: list[str] = []
+    older: list[str] = []
     try:
         with _db(db_path) as conn:
-            for table, cols in READ_SCHEMA.items():
-                # PRAGMA can't be parameter-bound; the table name is our own constant,
-                # never user input, so the f-string is safe here.
-                present = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for table in READ_SCHEMA:
+                present = _cols(conn, table)
                 if not present:
                     problems.append(f"table {table!r} missing (or has no columns)")
                     continue
-                problems.extend(f"{table}.{col} missing" for col in cols if col not in present)
+                problems.extend(
+                    f"{table}.{col} missing"
+                    for col in REQUIRED_SCHEMA.get(table, [])
+                    if col not in present
+                )
+                older.extend(
+                    f"{table}.{col} absent (emdash 1.2+ only)"
+                    for col in OPTIONAL_SCHEMA.get(table, [])
+                    if col not in present
+                )
     except sqlite3.Error as exc:
         raise SchemaCheckError(f"cannot read emdash DB {db_path}: {exc}") from exc
-    return problems
+    return problems, older
 
 
 def task_state(db_path: str, name: str) -> str:
@@ -156,7 +220,8 @@ def task_state(db_path: str, name: str) -> str:
     try:
         with _db(db_path) as conn:
             row = conn.execute(
-                "SELECT archived_at FROM tasks WHERE name=? AND deleted_at IS NULL "
+                "SELECT archived_at FROM tasks WHERE name=?"
+                f"{_not_deleted(conn, 'tasks', 'tasks')} "
                 "ORDER BY created_at DESC LIMIT 1",
                 (name,),
             ).fetchone()
@@ -192,8 +257,7 @@ def _agent_statuses(conn: sqlite3.Connection) -> dict[str, str]:
             """
             SELECT task_id, COALESCE(agent_status, '') AS agent_status
             FROM conversations
-            ORDER BY COALESCE(last_session_activity_at, updated_at)
-            """
+            ORDER BY """ + _conv_order(conn)
         ).fetchall()
     except sqlite3.Error:
         return {}
@@ -237,7 +301,8 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
                        t.last_interacted_at AS last_interacted_at
                 FROM tasks t
                 LEFT JOIN projects p ON p.id = t.project_id
-                WHERE t.archived_at IS NULL AND t.deleted_at IS NULL AND t.type = 'task'
+                WHERE t.archived_at IS NULL AND t.type = 'task'
+                """ + _not_deleted(conn, "tasks", "t") + """
                 ORDER BY t.last_interacted_at DESC
                 LIMIT ?
                 """,
@@ -289,7 +354,8 @@ def list_projects(db_path: str) -> list[str]:
     try:
         with _db(db_path) as conn:
             rows = conn.execute(
-                "SELECT name FROM projects WHERE deleted_at IS NULL ORDER BY name"
+                "SELECT name FROM projects WHERE 1=1"
+                f"{_not_deleted(conn, 'projects', 'projects')} ORDER BY name"
             ).fetchall()
     except sqlite3.Error as exc:
         raise EmdashReadError(f"emdash project read failed: {exc}") from exc
@@ -317,7 +383,8 @@ def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
                 """
                 SELECT t.name AS emdash_task
                 FROM tasks t
-                WHERE t.archived_at IS NOT NULL AND t.deleted_at IS NULL AND t.type = 'task'
+                WHERE t.archived_at IS NOT NULL AND t.type = 'task'
+                """ + _not_deleted(conn, "tasks", "t") + """
                 ORDER BY t.archived_at DESC
                 LIMIT ?
                 """,
