@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, emdash, hooks, inbox_due, sessions, streams
+from . import chat_bridge, chat_pump, close, hooks, inbox_due, sessions, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
