@@ -240,3 +240,69 @@ def test_a_pre_1_2_emdash_skips_rather_than_reporting_a_drift(paths, tmp_path):
     check = upgrade_check.check_transcripts(db, home=home, claude_home=claude_home)
     assert check.ok and check.skipped
     assert "predates provider_session_id" in check.summary
+
+
+# --- the startup hook ---------------------------------------------------------------------
+# emdash auto-updates, so a check nobody runs is a check that does not exist (#643).
+
+class _Log:
+    def __init__(self):
+        self.warns, self.infos = [], []
+    def warning(self, msg, *a): self.warns.append(msg % a if a else msg)
+    def info(self, msg, *a): self.infos.append(msg % a if a else msg)
+    def debug(self, *a, **k): pass
+
+
+def test_startup_warns_and_says_what_to_run_when_a_surface_drifts(paths, tmp_path):
+    home, claude_home = paths
+    db = _db(tmp_path)
+    _session(db, repo="canopy-web", task="emdash-check", sid="sid-1")
+    _plant_transcript(home, claude_home, worktree_rel="totally-new-shape/emdash-check", sid="sid-1")
+    log = _Log()
+
+    upgrade_check.log_startup_drift(db, home=home, claude_home=claude_home, log=log)
+
+    assert any("DRIFT" in w for w in log.warns)
+    assert any("verify-emdash" in w for w in log.warns)
+
+
+def test_startup_is_quiet_when_everything_is_intact(paths, tmp_path):
+    """A startup line per boot is fine; a WARNING per boot trains people to ignore
+    warnings from this runner."""
+    home, claude_home = paths
+    db = _db(tmp_path)
+    _session(db, repo="ace", task="fresh", sid=None)
+    log = _Log()
+
+    upgrade_check.log_startup_drift(db, home=home, claude_home=claude_home, log=log)
+
+    assert log.warns == []
+    assert log.infos
+
+
+def test_an_older_emdash_does_not_warn(paths, tmp_path):
+    """"predates 1.2" is a healthy state — the reads adapt to it (#641). Warning here
+    would put a permanent, un-actionable warning in the log of every older box."""
+    home, claude_home = paths
+    old = _SCHEMA_12.replace(",\n      provider_session_id TEXT", "")
+    old = old.replace(", deleted_at TEXT\n    );", "\n    );")
+    old = old.replace(",\n      last_session_activity_at TEXT", "")
+    db = _db(tmp_path, old)
+    log = _Log()
+
+    upgrade_check.log_startup_drift(db, home=home, claude_home=claude_home, log=log)
+
+    assert log.warns == []
+
+
+def test_startup_never_raises_even_when_the_check_itself_breaks(paths, tmp_path, monkeypatch):
+    """A diagnostic that can kill the runner is a liability, not a safeguard — launchd
+    KeepAlive would turn it into a restart loop."""
+    home, claude_home = paths
+    monkeypatch.setattr(upgrade_check, "check_schema",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
+    log = _Log()
+
+    upgrade_check.log_startup_drift("whatever", home=home, claude_home=claude_home, log=log)
+
+    assert log.warns == []
