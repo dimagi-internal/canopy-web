@@ -26,6 +26,50 @@ from apps.workspaces.services import workspace_member_ids
 
 from . import groups
 
+# Ledger kinds that ALSO arrive on the session's transcript stream. Everything a
+# runner tails out of the .jsonl — see stream_map.turn_event_to_frames for the
+# aliases — as opposed to turn-lifecycle kinds (status / error / cancel), which
+# no transcript ever contains.
+TRANSCRIPT_ROW_KINDS = frozenset(
+    {"user", "assistant", "tool_start", "tool_use", "tool_end", "tool_result"}
+)
+
+
+def _session_chat_events(turn, events):
+    """The ledger events that still belong on the SESSION group.
+
+    On a transcript-sourced session the chat rows are the transcript tailer's
+    to ship: `/session-stream` sends every conversational record keyed by its
+    durable composite ordinal, and the ledger's own copy of the same assistant
+    text is a SECOND delivery under an id the client cannot reconcile with the
+    first (`seq:<ordinal>` from the tailer vs `<turn8>:<ledger seq>` here,
+    because a transcript-sourced session never projects Messages from a Turn,
+    so `_resolve_message_id_sync` falls back to a synthetic id).
+
+    The other row kinds survive that on their own — tool rows reconcile on
+    `tool_use_id` and user rows on their text — but an assistant row has no
+    correlation key at all, so both copies render and every reply doubles on
+    screen while a reload shows it once. Observed live 2026-08-27 on the
+    `targeting` session: four assistant lines, each on screen twice.
+
+    Both runners have shipped `/session-stream` since the transcript became the
+    durable source (spec 2026-07-24; runner/ec2 `_sync_session_streams` mirrors
+    runner/canopy_runner `sync_session_streams`), which is what made the ledger
+    copy redundant rather than merely noisy — nobody switched it off then.
+
+    Ledger-sourced sessions (the dev stub, and pre-unification sessions that
+    have not been reset) have no transcript to tail, so for them the ledger IS
+    the only producer and every event goes through untouched.
+    """
+    # Function-local: keeps the chat app out of this module's import graph, as
+    # the receiver below has always done.
+    from apps.canopy_sessions.services import transcript_sourced
+
+    session = turn.chat_session
+    if session is None or not transcript_sourced(session):
+        return events
+    return [e for e in events if e.get("kind") not in TRANSCRIPT_ROW_KINDS]
+
 
 @receiver(turn_events_appended, dispatch_uid="realtime_turn_events")
 def _on_turn_events(sender, turn, rows, **kwargs):
@@ -34,12 +78,11 @@ def _on_turn_events(sender, turn, rows, **kwargs):
     for event in events:
         groups.publish(group, {"type": "turn.event", "event": event})
     # A session turn also fans out to the per-session multiplayer group (SP3), so
-    # every participant on the session socket sees the streamed response. Uses the
-    # field only (turn.chat_session_id) — no chat-app import here.
+    # every participant on the session socket sees the streamed response.
     if turn.chat_session_id:
         sgroup = groups.session_group(turn.chat_session_id)
         turn_id = str(turn.id)
-        for event in events:
+        for event in _session_chat_events(turn, events):
             groups.publish(sgroup, {"type": "chat.turn_event", "event": event, "turn_id": turn_id})
 
 
