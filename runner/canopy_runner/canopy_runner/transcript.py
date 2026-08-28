@@ -97,7 +97,10 @@ _SUFFIX_RE = re.compile(r"-[0-9a-z]+$")
 # written the same encoding). Re-exported so existing callers and tests keep
 # importing it from here.
 from canopy_transcript import encode_project_dir  # noqa: E402,F401
+from canopy_transcript import resolve_cli_transcript as _resolve_cli
 from canopy_transcript import resolve_emdash_transcript as _resolve_emdash
+
+from . import emdash as _emdash
 
 
 def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
@@ -109,12 +112,44 @@ def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
     return [root / "emdash" / task, root / task]
 
 
-def resolve_transcript(repo: str, task: str, *, home: Path, claude_home: Path) -> Path | None:
+def resolve_transcript(
+    repo: str,
+    task: str,
+    *,
+    home: Path,
+    claude_home: Path,
+    emdash_db: str | None = None,
+) -> Path | None:
     """Newest transcript .jsonl for (repo, task), or None.
 
-    Thin wrapper over `canopy_transcript.resolve_emdash_transcript`; the
-    convention and its two real-world wrinkles are documented there.
+    Two strategies, in order of how much they assume:
+
+    **Ask emdash** (`emdash_db` given). emdash 1.2 records `conversations.cwd` and
+    `conversations.provider_session_id` — the worktree, and Claude Code's own session
+    id, which NAMES the file. Together they address it exactly, via the same
+    `resolve_cli_transcript` the cloud runner has always used. Nothing is guessed.
+
+    **Ask the convention** (otherwise, or when emdash cannot answer). Reconstruct the
+    worktree path from (repo, task) and take the newest .jsonl in the matching project
+    dir — see `canopy_transcript.resolve_emdash_transcript` for the three layouts and
+    why each exists.
+
+    The fallback is load-bearing, not politeness: emdash knows a task before Claude
+    Code has written anything, `provider_session_id` is NULL until the provider
+    reports one, and a pre-1.2 emdash has neither column. So this is strictly
+    additive — it can make resolution SUCCEED where the convention failed, never the
+    reverse. Which matters, because the convention is the part that breaks silently
+    when emdash renames a directory, and every caller reads None as "not yet".
     """
+    if emdash_db:
+        ref = _emdash.session_transcript_ref(emdash_db, repo, task)
+        if ref is not None:
+            exact = _resolve_cli(ref[0], ref[1], claude_home=claude_home)
+            # A ref that does not resolve is NOT a dead end: emdash can name a session
+            # whose file Claude Code has not created yet. Fall through rather than
+            # returning None, so the convention still gets its say.
+            if exact is not None:
+                return exact
     return _resolve_emdash(repo, task, home=home, claude_home=claude_home)
 
 

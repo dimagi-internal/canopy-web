@@ -15,6 +15,7 @@ from canopy_runner import transcript
 
 class _Cfg:
     session_tail_count = 30
+    emdash_db = ""      # no emdash DB here: resolution falls back to the convention
 
 
 def _touch(path, when):

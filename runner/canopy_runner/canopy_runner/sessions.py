@@ -75,7 +75,8 @@ def session_changed(cfg: Config, sessions: list[dict]) -> bool:
         tr = _tail_readers.get(task)
         if tr is None:  # unresolved (new session, or transcript not found yet) — (re)try
             path = transcript.resolve_transcript(
-                s.get("project") or "", task, home=home, claude_home=claude_home
+                s.get("project") or "", task, home=home, claude_home=claude_home,
+                emdash_db=cfg.emdash_db,
             )
             tr = TailReader(str(path)) if path else None
             if tr is not None:
@@ -157,7 +158,8 @@ def annotate_engine_staleness(
             continue
         try:
             path = transcript.resolve_transcript(
-                s.get("project") or "", task, home=home, claude_home=claude_home
+                s.get("project") or "", task, home=home, claude_home=claude_home,
+                emdash_db=cfg.emdash_db,
             )
         except Exception:  # noqa: BLE001 — a fragile half must not cost us the report
             path = None

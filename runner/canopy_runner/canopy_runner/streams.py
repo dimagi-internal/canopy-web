@@ -117,7 +117,8 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         # after which the reader tails a file nobody is writing to, forever. Costs
         # a scandir per session per tick against a warm dentry cache.
         path = transcript.resolve_transcript(
-            st["project"], st["session_key"], home=home, claude_home=claude_home
+            st["project"], st["session_key"], home=home, claude_home=claude_home,
+            emdash_db=cfg.emdash_db,
         )
         if not path:
             continue  # transcript wasn't there yet — retry resolving next tick
@@ -255,7 +256,8 @@ def drain_backfills(cfg: Config, client: Client) -> None:
     for b in backfills:
         sid = b.get("session_id")
         path = transcript.resolve_transcript(
-            b.get("project") or "", b.get("session_key") or "", home=home, claude_home=claude_home
+            b.get("project") or "", b.get("session_key") or "", home=home,
+            claude_home=claude_home, emdash_db=cfg.emdash_db,
         )
         if not (sid and path):
             continue  # transcript not resolvable -> leave it; server keeps showing the tail
