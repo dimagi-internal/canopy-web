@@ -49,7 +49,7 @@ def db(tmp_path: Path) -> str:
 # --------------------------------------------------------------------------------------
 
 def test_check_read_schema_intact(db):
-    assert check_read_schema(db) == []
+    assert check_read_schema(db) == ([], [])
 
 
 def test_check_read_schema_names_a_dropped_column(db):
@@ -59,8 +59,9 @@ def test_check_read_schema_names_a_dropped_column(db):
     conn.execute("ALTER TABLE tasks RENAME COLUMN last_interacted_at TO touched_at")
     conn.commit()
     conn.close()
-    problems = check_read_schema(db)
+    problems, older = check_read_schema(db)
     assert problems == ["tasks.last_interacted_at missing"]
+    assert older == []
 
 
 def test_check_read_schema_reports_a_missing_table(tmp_path):
@@ -72,7 +73,8 @@ def test_check_read_schema_reports_a_missing_table(tmp_path):
     )  # no `projects` table at all
     conn.commit()
     conn.close()
-    assert "table 'projects' missing (or has no columns)" in check_read_schema(str(path))
+    problems, _ = check_read_schema(str(path))
+    assert "table 'projects' missing (or has no columns)" in problems
 
 
 def test_check_read_schema_raises_when_db_absent(tmp_path):
@@ -276,7 +278,7 @@ def test_a_drifted_conversations_table_costs_the_status_not_the_report(db):
     assert row["emdash_task"] == "still-listed"
     assert row["agent_status"] == ""
     # ...and verify-emdash is where that degradation becomes visible.
-    assert check_read_schema(db) == ["conversations.agent_status missing"]
+    assert check_read_schema(db)[0] == ["conversations.agent_status missing"]
 
 
 # --------------------------------------------------------------------------------------
@@ -319,3 +321,77 @@ def test_a_soft_deleted_task_is_not_reported_as_archived(db):
     _add_task(db, "binned", archived_at="2026-08-27T00:00:00Z")
     _soft_delete(db, "binned")
     assert list_recently_archived_tasks(db) == ["really-archived"]
+
+
+# --------------------------------------------------------------------------------------
+# An emdash OLDER than 1.2. The fleet's two macOS accounts each auto-update their own
+# emdash, so it is routinely mixed-version — and a read that names a 1.2 column
+# unconditionally does not degrade on the older box, it RAISES. `list_open_sessions`
+# raising means the caller skips the whole session report (reporting empty would clear
+# every RunnerBinding), so the phone's list silently goes stale and stays stale (#641).
+#
+# Every fixture above was moved to 1.2's shape when those columns were added, which is
+# exactly why nothing caught it. These pin the older shape.
+# --------------------------------------------------------------------------------------
+
+_PRE_1_2_SCHEMA = """
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, project_id TEXT, name TEXT NOT NULL, status TEXT,
+      archived_at TEXT, created_at TEXT, last_interacted_at TEXT,
+      type TEXT DEFAULT 'task' NOT NULL
+    );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY, task_id TEXT, agent_status TEXT, last_interacted_at TEXT
+    );
+"""
+
+
+@pytest.fixture()
+def old_db(tmp_path: Path) -> str:
+    path = tmp_path / "emdash4.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(_PRE_1_2_SCHEMA)
+    conn.execute("INSERT INTO projects (id, name) VALUES ('p', 'canopy-web')")
+    conn.execute(
+        "INSERT INTO tasks (id, project_id, name, status, type) "
+        "VALUES ('t', 'p', 'some-task', 'in_progress', 'task')"
+    )
+    conn.execute(
+        "INSERT INTO conversations (id, task_id, agent_status, last_interacted_at) "
+        "VALUES ('c', 't', 'working', '2026-08-20T00:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+def test_open_sessions_still_work_on_a_pre_1_2_emdash(old_db):
+    rows = list_open_sessions(old_db)
+    assert [r["emdash_task"] for r in rows] == ["some-task"]
+
+
+def test_agent_status_survives_on_a_pre_1_2_emdash(old_db):
+    """The ordering column was RENAMED, not merely added, so this is the one that has
+    to fall back rather than simply omit a predicate — `last_interacted_at` is what the
+    older emdash calls it."""
+    (row,) = list_open_sessions(old_db)
+    assert row["agent_status"] == "working"
+
+
+def test_task_state_still_answers_on_a_pre_1_2_emdash(old_db):
+    """"unknown" here would push every reuse decision onto the CDP verdict, which is
+    the false-negative that duplicates live sessions."""
+    assert task_state(old_db, "some-task") == "live"
+
+
+def test_projects_still_list_on_a_pre_1_2_emdash(old_db):
+    from canopy_runner.emdash import list_projects
+
+    assert list_projects(old_db) == ["canopy-web"]
+
+
+def test_a_pre_1_2_emdash_is_not_reported_as_drifted(old_db):
+    problems, older = check_read_schema(old_db)
+    assert problems == []
+    assert any("deleted_at" in o for o in older)

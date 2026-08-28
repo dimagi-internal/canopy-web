@@ -118,10 +118,15 @@ def check_version() -> Check:
 
 
 def check_schema(db_path: str) -> Check:
-    """The sqlite columns the CDP-path reads name. The pre-existing check, unchanged
-    in behaviour — it is the one surface that was already covered."""
+    """The sqlite columns the reads name.
+
+    Distinguishes a REQUIRED column going missing (a real drift, and the failure this
+    check was built for) from a version-gated 1.2 column simply not being there yet —
+    which is an older emdash, reported as a note. The reads tolerate both shapes, so
+    calling the older one a failure would redden a healthy box for no action.
+    """
     try:
-        problems = emdash.check_read_schema(db_path)
+        problems, older = emdash.check_read_schema(db_path)
     except emdash.SchemaCheckError as exc:
         return Check("db schema", False, str(exc))
     if problems:
@@ -130,12 +135,19 @@ def check_schema(db_path: str) -> Check:
             "read schema drifted — the reads would SILENTLY degrade",
             notes=problems + [
                 "fix: reconcile emdash.py's SQL against emdash's new schema, then "
-                "update READ_SCHEMA to match",
+                "update REQUIRED_SCHEMA/OPTIONAL_SCHEMA to match",
             ],
         )
-    n = sum(len(c) for c in emdash.READ_SCHEMA.values())
+    n = sum(len(c) for c in emdash.REQUIRED_SCHEMA.values())
+    if older:
+        return Check(
+            "db schema", True,
+            f"all {n} required columns present; this emdash predates 1.2",
+            notes=older + ["the reads adapt to it — nothing to do unless you want 1.2's features"],
+        )
+    total = sum(len(c) for c in emdash.READ_SCHEMA.values())
     return Check("db schema", True,
-                 f"all {n} columns across {', '.join(emdash.READ_SCHEMA)} present")
+                 f"all {total} columns across {', '.join(emdash.READ_SCHEMA)} present")
 
 
 def check_transcripts(db_path: str, *, home: Path, claude_home: Path) -> Check:

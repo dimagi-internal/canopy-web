@@ -74,9 +74,25 @@ def paths(tmp_path):
 
 # --- the schema surface (the drift emdash 1.2 actually shipped) -------------------------
 
-def test_a_dropped_column_is_named(tmp_path):
-    """emdash 1.2 dropped `conversations.last_interacted_at`. The check has to say
-    WHICH column: "something drifted" sends a human to read a diff of the whole app."""
+def test_a_dropped_required_column_is_named(tmp_path):
+    """The check has to say WHICH column: "something drifted" sends a human to read a
+    diff of the whole app."""
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    conn.execute("ALTER TABLE conversations DROP COLUMN agent_status")
+    conn.commit()
+    conn.close()
+
+    check = upgrade_check.check_schema(db)
+    assert not check.ok
+    assert any("conversations.agent_status missing" in n for n in check.notes)
+
+
+def test_an_absent_1_2_column_reads_as_an_older_emdash_not_a_drift(tmp_path):
+    """The distinction #641 exists for. The fleet's boxes auto-update independently, so
+    it is routinely mixed-version. Calling the older shape "drifted" reddens a healthy
+    install — and a check that reddens on healthy boxes is muted before the day it is
+    right. The reads adapt, so this is informational."""
     db = _db(tmp_path)
     conn = sqlite3.connect(db)
     conn.execute("ALTER TABLE conversations DROP COLUMN last_session_activity_at")
@@ -84,8 +100,9 @@ def test_a_dropped_column_is_named(tmp_path):
     conn.close()
 
     check = upgrade_check.check_schema(db)
-    assert not check.ok
-    assert any("conversations.last_session_activity_at missing" in n for n in check.notes)
+    assert check.ok
+    assert "predates 1.2" in check.summary
+    assert any("last_session_activity_at absent" in n for n in check.notes)
 
 
 def test_a_missing_db_is_not_reported_as_a_drift(tmp_path):
