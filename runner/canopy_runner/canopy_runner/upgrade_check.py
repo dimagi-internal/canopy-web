@@ -279,3 +279,45 @@ def render(checks: list[Check]) -> str:
         lines.append(f"  {mark} {c.name}: {c.summary}")
         lines.extend(f"      {n}" for n in c.notes)
     return "\n".join(lines)
+
+
+def log_startup_drift(db_path: str, *, home: Path, claude_home: Path, log) -> None:
+    """Run the CHEAP checks at runner startup and log what they find.
+
+    emdash auto-updates: nobody is prompted, nobody picks a moment. `verify-emdash` is
+    only as good as somebody remembering to type it after an event they were never told
+    about — which is the weakest possible trigger for a check whose whole purpose is
+    catching a silent change. The runner restarts on update and on reboot, so this is
+    the one moment that reliably follows an emdash change without anyone deciding
+    anything.
+
+    Deliberately NOT the DOM probe: it shells out to node and costs seconds, and the
+    contract it checks fails loudly on the next real turn anyway. The two silent
+    surfaces are the ones worth paying for here.
+
+    Never blocks and never raises. A drifted schema still leaves most of the runner
+    working, so refusing to start would turn a partial degradation into a total outage —
+    and a diagnostic that can kill the process is a liability, not a safeguard.
+
+    WARNING is reserved for a real drift. "This emdash predates 1.2" is a healthy state
+    (the reads adapt to it), and logging it at warning level would fill the fleet's logs
+    with a condition nobody should act on.
+    """
+    try:
+        checks = [check_schema(db_path),
+                  check_transcripts(db_path, home=home, claude_home=claude_home)]
+    except Exception:  # noqa: BLE001 — a diagnostic must never cost the runner its start
+        log.debug("emdash startup check failed to run (non-fatal)", exc_info=True)
+        return
+
+    drifted = [c for c in checks if not c.ok]
+    if not drifted:
+        detail = "; ".join(c.summary for c in checks if not c.skipped)
+        log.info("  emdash: %s", detail or "checks skipped")
+        return
+
+    for c in drifted:
+        log.warning("emdash DRIFT (%s): %s", c.name, c.summary)
+        for n in c.notes:
+            log.warning("    %s", n)
+    log.warning("    run `canopy-runner verify-emdash --config <cfg>` for the full report")

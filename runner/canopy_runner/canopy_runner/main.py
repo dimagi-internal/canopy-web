@@ -922,6 +922,13 @@ def main() -> None:
     logger.info("  COST note: idle cycles + inbox polls are ~free (HTTP only); a 'CREATE' "
                 "line = one NEW claude session (tokens), 'REUSE' = none. grep the log for CREATE.")
 
+    # emdash auto-updates, so the only reliable moment to notice it moved under us is a
+    # restart — which an update causes anyway. Cheap checks only, never blocking. See
+    # upgrade_check.log_startup_drift.
+    from . import upgrade_check as _uc
+    _uc.log_startup_drift(cfg.emdash_db, home=Path.home(),
+                          claude_home=Path.home() / ".claude" / "projects", log=logger)
+
     # Pause sentinel: the menu-bar app (or `touch ~/.canopy/PAUSED`) drops this file
     # to halt ALL token-spending work instantly without killing the process or fighting
     # launchd's KeepAlive. Paused = we still heartbeat (so the control plane sees the
