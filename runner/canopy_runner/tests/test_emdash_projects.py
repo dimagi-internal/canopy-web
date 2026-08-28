@@ -22,12 +22,12 @@ def _make_db(path):
     conn = sqlite3.connect(path)
     conn.executescript(
         """
-        CREATE TABLE projects (id TEXT, name TEXT, path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT, path TEXT, deleted_at TEXT);
         CREATE TABLE tasks (id TEXT, project_id TEXT, name TEXT, status TEXT,
                             archived_at TEXT, last_interacted_at TEXT, type TEXT);
-        INSERT INTO projects VALUES ('p2','canopy-web','/x/canopy-web');
-        INSERT INTO projects VALUES ('p1','canopy','/x/canopy');
-        INSERT INTO projects VALUES ('p3','','/x/nameless');
+        INSERT INTO projects (id, name, path) VALUES ('p2','canopy-web','/x/canopy-web');
+        INSERT INTO projects (id, name, path) VALUES ('p1','canopy','/x/canopy');
+        INSERT INTO projects (id, name, path) VALUES ('p3','','/x/nameless');
         """
     )
     conn.commit()
@@ -62,7 +62,7 @@ def test_an_empty_projects_table_is_a_real_empty_list(tmp_path):
     which is the entire point of raising in that case."""
     db = tmp_path / "empty.db"
     conn = sqlite3.connect(str(db))
-    conn.executescript("CREATE TABLE projects (id TEXT, name TEXT, path TEXT);")
+    conn.executescript("CREATE TABLE projects (id TEXT, name TEXT, path TEXT, deleted_at TEXT);")
     conn.commit()
     conn.close()
     assert emdash.list_projects(str(db)) == []

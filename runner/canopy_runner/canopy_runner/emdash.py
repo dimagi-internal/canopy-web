@@ -17,6 +17,16 @@ emdash renaming a column these queries name — which is why `check_read_schema`
 (surfaced as `canopy_runner verify-emdash`) exists: run it after an emdash update to
 confirm the columns these two functions depend on still exist. Keep `READ_SCHEMA` in
 lockstep with the SQL below — it IS the list of columns the SQL names.
+
+**A row is live only if it is neither archived NOR soft-deleted.** emdash 1.2 added
+`deleted_at` to `tasks` and `projects` and its own queries pair the two —
+`and(isNull(tasks.archivedAt), isNull(tasks.deletedAt))` is how emdash itself asks for
+live tasks. Matching that is not defensive tidiness: filtering on `archived_at` alone
+means canopy reports as OPEN a task emdash no longer shows anywhere, so the supervisor
+grows sessions nobody can click into and `task_state` calls a deleted task "live" and
+hands it to the reuse path. The columns were empty on the fleet laptop when this was
+written (2026-08-28), so the divergence is latent rather than observed — which is the
+point of fixing it now: it starts costing the moment anyone deletes a task.
 """
 from __future__ import annotations
 
@@ -36,13 +46,26 @@ READ_SCHEMA: dict[str, list[str]] = {
         "last_interacted_at",
         "type",
         "project_id",
+        "deleted_at",
     ],
-    "projects": ["id", "name"],
+    "projects": ["id", "name", "deleted_at"],
     # Emdash's OWN liveness flag, per conversation. Read fail-soft (see
     # `_agent_statuses`) but listed here anyway: verify-emdash is where you find
     # out a read drifted, and a degradation that nothing reports is exactly the
     # class this file exists to prevent.
-    "conversations": ["task_id", "agent_status", "last_interacted_at"],
+    #
+    # `last_interacted_at` lived here until emdash 1.2. Its migration train copied
+    # the values into `last_session_activity_at` (0036) and then dropped the legacy
+    # column (0037) — so the successor is emdash's own choice, not our guess. It is
+    # NULLABLE and sparsely populated (10 of 26 rows on the fleet laptop, 2026-08-28),
+    # hence the COALESCE onto `updated_at` in the ORDER BY below rather than a
+    # straight swap: ordering by a mostly-NULL column is not an ordering.
+    "conversations": [
+        "task_id",
+        "agent_status",
+        "last_session_activity_at",
+        "updated_at",
+    ],
 }
 
 # `conversations.agent_status` when emdash is actively driving the agent. The
@@ -133,7 +156,8 @@ def task_state(db_path: str, name: str) -> str:
     try:
         with _db(db_path) as conn:
             row = conn.execute(
-                "SELECT archived_at FROM tasks WHERE name=? ORDER BY created_at DESC LIMIT 1",
+                "SELECT archived_at FROM tasks WHERE name=? AND deleted_at IS NULL "
+                "ORDER BY created_at DESC LIMIT 1",
                 (name,),
             ).fetchone()
     except sqlite3.Error:
@@ -168,7 +192,7 @@ def _agent_statuses(conn: sqlite3.Connection) -> dict[str, str]:
             """
             SELECT task_id, COALESCE(agent_status, '') AS agent_status
             FROM conversations
-            ORDER BY last_interacted_at
+            ORDER BY COALESCE(last_session_activity_at, updated_at)
             """
         ).fetchall()
     except sqlite3.Error:
@@ -213,7 +237,7 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
                        t.last_interacted_at AS last_interacted_at
                 FROM tasks t
                 LEFT JOIN projects p ON p.id = t.project_id
-                WHERE t.archived_at IS NULL AND t.type = 'task'
+                WHERE t.archived_at IS NULL AND t.deleted_at IS NULL AND t.type = 'task'
                 ORDER BY t.last_interacted_at DESC
                 LIMIT ?
                 """,
@@ -264,7 +288,9 @@ def list_projects(db_path: str) -> list[str]:
         return []
     try:
         with _db(db_path) as conn:
-            rows = conn.execute("SELECT name FROM projects ORDER BY name").fetchall()
+            rows = conn.execute(
+                "SELECT name FROM projects WHERE deleted_at IS NULL ORDER BY name"
+            ).fetchall()
     except sqlite3.Error as exc:
         raise EmdashReadError(f"emdash project read failed: {exc}") from exc
     return [r["name"] for r in rows if r["name"]]
@@ -291,7 +317,7 @@ def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
                 """
                 SELECT t.name AS emdash_task
                 FROM tasks t
-                WHERE t.archived_at IS NOT NULL AND t.type = 'task'
+                WHERE t.archived_at IS NOT NULL AND t.deleted_at IS NULL AND t.type = 'task'
                 ORDER BY t.archived_at DESC
                 LIMIT ?
                 """,

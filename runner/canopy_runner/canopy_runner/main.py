@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, emdash, hooks, inbox_due, sessions, streams
+from . import chat_bridge, chat_pump, close, hooks, inbox_due, sessions, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -652,38 +652,38 @@ def drain_one(cfg: Config, client: Client) -> str:
 
 
 def verify_emdash(cfg_path: Path) -> int:
-    """Read-only check that emdash's DB still has the columns the CDP-path reads
-    depend on. Exit 0 = intact; 1 = drifted (names each missing column); 2 = the
-    DB itself couldn't be read.
+    """Read-only check that canopy's four emdash assumptions still hold. Exit 0 =
+    intact; 1 = something drifted (each one named); 2 = the DB itself couldn't be read.
 
-    This is the ONE emdash assumption that fails SILENTLY. task_state() and
+    Run it after an emdash update. It started life as the schema check alone, because
+    that was the one emdash assumption believed to fail SILENTLY: task_state() and
     list_open_sessions() swallow sqlite errors (a read failure must never be mistaken
-    for "session gone"), so a renamed tasks/projects column doesn't crash — it quietly
-    degrades the runner into spawning duplicate sessions and blanking the supervisor,
-    with nothing in the log. Everything else we assume about emdash fails LOUDLY and is
-    obvious within a tick (emdash not installed → won't launch; CDP down → degraded
-    heartbeat + a WARNING; transcripts unreadable → visible). So this verifies the quiet
-    one. Run it after an emdash update.
+    for "session gone"), so a renamed column doesn't crash — it quietly degrades the
+    runner into spawning duplicate sessions and blanking the supervisor, with nothing
+    in the log.
+
+    emdash 1.2 showed that reasoning was half right. The schema check did its job and
+    named `conversations.last_interacted_at` the moment it went. But the same release
+    also changed the WORKTREE LAYOUT, and that assumption is quieter still: a path we
+    can no longer derive returns None, and every caller treats None as "no transcript
+    yet" — so a session streams nothing and backfills nothing, indefinitely, with no
+    error anywhere. Nothing was watching that, so this now checks it, along with the
+    DOM contracts and the version itself. See `upgrade_check`.
     """
+    from . import upgrade_check
+
     raw = json.loads(Path(cfg_path).read_text())
     db = raw.get("emdash_db")
     if not db:
         print(f"✗ no 'emdash_db' in {cfg_path}"); return 2
-    try:
-        problems = emdash.check_read_schema(db)
-    except emdash.SchemaCheckError as exc:
-        print(f"✗ {exc}"); return 2
-    if problems:
-        print("✗ emdash read schema drifted — the CDP-path reads would SILENTLY degrade:")
-        for p in problems:
-            print(f"    - {p}")
-        print("  fix: reconcile task_state()/list_open_sessions() in canopy_runner/emdash.py")
-        print("       against emdash's new schema, then update READ_SCHEMA to match.")
-        return 1
-    n = sum(len(c) for c in emdash.READ_SCHEMA.values())
-    print(f"✓ emdash read schema intact — all {n} columns across "
-          f"{', '.join(emdash.READ_SCHEMA)} present in {db}")
-    return 0
+    port = int(raw.get("cdp_port") or 9222)
+
+    checks, code = upgrade_check.run(
+        db, port=port, home=Path.home(), claude_home=Path.home() / ".claude" / "projects"
+    )
+    print("emdash upgrade check" + (" — OK" if code == 0 else " — ATTENTION"))
+    print(upgrade_check.render(checks))
+    return code
 
 
 def update_check(cfg_path: Path) -> int:
@@ -772,8 +772,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser(
         "verify-emdash",
-        help="read-only check that emdash's DB still has the columns the CDP-path "
-             "reads depend on (run after an emdash update)",
+        help="read-only check that canopy's emdash assumptions still hold — DB "
+             "columns, worktree layout, DOM contracts, version (run after an "
+             "emdash update)",
     )
     verify_parser.add_argument("--config", required=True)
 

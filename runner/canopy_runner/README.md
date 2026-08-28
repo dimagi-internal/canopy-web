@@ -162,8 +162,9 @@ them together would make the two modules import each other.
 - `run` (default when no subcommand is given) — the main watch loop. `--once`
   runs a single iteration (used by cron/tests/launchd health checks);
   `--drain-one` claims + runs exactly one queued turn, then exits.
-- `verify-emdash` — read-only check that emdash's DB still has the columns the
-  reads depend on (run after an emdash update; see below).
+- `verify-emdash` — read-only check that canopy's emdash assumptions still hold
+  — DB columns, worktree layout, DOM contracts, version (run after an emdash
+  update; see below).
 
 ## E2E check
 
@@ -202,22 +203,59 @@ worry about: it surfaces either as a `task_state` false-"unknown" (duplicate
 sessions) or a skipped session report (the phone's list goes stale), with
 nothing else in the log.
 
-`verify-emdash` is the proactive guard against exactly that drift. Run it
-after an emdash update:
+`verify-emdash` is the proactive guard. Run it after every emdash update:
 
 ```bash
 python3 -m canopy_runner.main verify-emdash --config ~/.canopy/runner.json
 ```
 
-- all read columns present → exit 0, `✓ … schema intact`. Nothing else to do —
-  everything else the runner assumes about emdash (it's installed, its CDP port,
-  transcripts) fails LOUDLY and is obvious within a tick.
-- a column drifted → exit 1, naming each missing `table.column`. Reconcile
-  `task_state()` / `list_open_sessions()` / `list_recently_archived_tasks()` in
-  `canopy_runner/emdash.py` against emdash's new schema, then update
-  `READ_SCHEMA` (the allowlist these reads are checked against) to match.
+It checks **four** surfaces, because canopy couples to emdash across four and
+they fail differently:
+
+| surface | what breaks | how it fails |
+|---|---|---|
+| `db schema` | the columns the sqlite reads name | silently — the reads are fail-soft |
+| `transcripts` | the worktree-path convention | silently — a miss returns `None` and every caller `continue`s |
+| `cdp dom` | the aria-labels + xterm selectors | loudly, but not until the next real turn |
+| `version` | nothing — it is the reason to look | n/a |
+
+Every check is **read-only**: it clicks nothing, opens nothing, selects no tab
+and writes no row, so it is safe to run mid-turn on a working box.
+
+- everything intact → exit 0. The version is stamped in
+  `~/.canopy/emdash-verified.json`, so a later run can say "unchanged since the
+  last clean check" and a version bump announces itself.
+- something drifted → exit 1, naming it. A schema drift names each missing
+  `table.column` (reconcile the SQL in `canopy_runner/emdash.py`, then
+  `READ_SCHEMA`). A transcript drift names each session emdash can resolve and
+  we cannot (teach the layout to `_worktree_bases` / `parse_emdash_worktree` in
+  `canopy_transcript/paths.py`). A DOM drift names the contract (reconcile the
+  selectors in `cdp/emdash_control.mjs`).
 - the DB itself can't be read → exit 2 (bad `emdash_db` path, or emdash not
-  installed).
+  installed). Distinct from 1 on purpose: "I could not look" is triaged
+  differently from "I looked and it drifted".
+
+Sections skip rather than fail when they cannot draw a conclusion — emdash not
+running skips the DOM probe, an emdash older than 1.2 skips the transcript
+check (it predates `provider_session_id`, the ground truth that check compares
+against). A check that goes red on a healthy box is a check that gets muted.
+
+### What emdash 1.2 changed
+
+Kept here as the worked example, because it is the release that showed one
+check was not enough. 1.2 moved **three** things at once:
+
+- dropped `conversations.last_interacted_at` (its own migration train copied
+  the values to `last_session_activity_at` first — that successor is emdash's
+  choice, not our guess). The schema check named it immediately.
+- changed the **worktree layout** from `worktrees/<repo>/emdash/<task>-<suffix>`
+  to `worktrees/<repo>-<8 hex>/emdash-<task>-<suffix>`. Nothing was watching
+  this, and nothing would have: sessions on the new layout resolved to no
+  transcript, so they streamed nothing and backfilled nothing, indefinitely,
+  with no error anywhere. This is why the `transcripts` check now exists.
+- added `deleted_at` to `tasks`/`projects`, and asks for live tasks as
+  `and(isNull(archivedAt), isNull(deletedAt))`. Canopy's reads now match that,
+  so a soft-deleted task stops being reported as an open session.
 
 ## Windows
 

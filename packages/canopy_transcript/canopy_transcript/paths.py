@@ -49,14 +49,49 @@ def encode_project_dir(worktree: Path | str) -> str:
     return str(worktree).replace("/", "-").replace(".", "-").replace("_", "-")
 
 
+# emdash 1.2 renamed the worktree ROOT as well as the leaf: a task now lives at
+# `worktrees/<repo>-<8 hex>/emdash-<task>-<suffix>` instead of
+# `worktrees/<repo>/emdash/<task>-<suffix>`. The 8-hex tail is per-repo, not
+# per-task, so it cannot be derived from (repo, task) — it has to be read off disk.
+_REPO_DIR_RE = re.compile(r"^(?P<repo>.+)-[0-9a-f]{8}$")
+_FLAT_TASK_PREFIX = "emdash-"
+
+
 def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
-    """Candidate worktree paths for (repo, task). Verified against the live fleet
-    (2026-07-20): most agents nest under `<repo>/emdash/<task>`, but some
-    worktrees sit directly at `<repo>/<task>` with no `emdash` segment. Try both;
-    a wrong guess simply doesn't match a project dir and degrades to no
-    transcript."""
+    """Candidate worktree paths for (repo, task), most-specific first.
+
+    Three layouts are live on the fleet, all of them observed rather than guessed:
+
+    * `<repo>/emdash/<task>` — the common pre-1.2 nesting (verified 2026-07-20).
+    * `<repo>/<task>` — some worktrees (e.g. echo's) skip the `emdash` segment.
+    * `<repo>-<8 hex>/emdash-<task>` — **emdash 1.2**. Every worktree created after
+      the 1.2 upgrade uses it (verified 2026-08-28: all four such dirs on the fleet
+      laptop were created minutes after 1.2 first ran, and every older one is the
+      pre-1.2 shape).
+
+    The 1.2 root carries a random per-repo hash, so unlike the other two this
+    candidate cannot be constructed — the worktree root is globbed off disk. That
+    makes the list empty for a repo with no checkout yet, which is correct: a base
+    we cannot name is a base we cannot match.
+
+    A wrong guess simply doesn't match a project dir and degrades to no transcript.
+    """
     root = home / "emdash" / "worktrees" / repo
-    return [root / "emdash" / task, root / task]
+    bases = [root / "emdash" / task, root / task]
+    try:
+        for repo_dir in sorted((home / "emdash" / "worktrees").glob(f"{repo}-*")):
+            if not repo_dir.is_dir():
+                continue
+            hashed = _REPO_DIR_RE.match(repo_dir.name)
+            # The glob is a prefix match, so `canopy-*` also lands on
+            # `canopy-web-05b9fcc4`. Only the repo half of the split may be
+            # trusted: without this, repo `canopy` borrows `canopy-web`'s
+            # transcripts — a wrong session's history, which is worse than none.
+            if hashed and hashed.group("repo") == repo:
+                bases.append(repo_dir / f"{_FLAT_TASK_PREFIX}{task}")
+    except OSError:
+        pass
+    return bases
 
 
 def resolve_emdash_transcript(
@@ -130,10 +165,17 @@ def parse_emdash_worktree(cwd: Path | str, *, home: Path) -> tuple[str, str] | N
 
     A Claude Code hook reports the session's `cwd`, but canopy identifies a
     session by (project, session_key) — so the live path needs to run the
-    convention backwards. Handles both observed layouts
-    (`<repo>/emdash/<task>` and `<repo>/<task>`) and strips emdash's random
-    de-dupe suffix, so `…/canopy-web/emdash/runner-yipnn` resolves to
-    ("canopy-web", "runner").
+    convention backwards. Handles all three observed layouts
+    (`<repo>/emdash/<task>`, `<repo>/<task>`, and emdash 1.2's
+    `<repo>-<8 hex>/emdash-<task>`) and strips emdash's random de-dupe suffix,
+    so `…/canopy-web/emdash/runner-yipnn` resolves to ("canopy-web", "runner").
+
+    The 1.2 shape has to be recognised explicitly rather than falling through to
+    the two-segment case: that case would hand back the hashed dir as the repo
+    (`canopy-web-05b9fcc4`) and the prefixed dir as the task
+    (`emdash-emdash-check-sq69z`), and NEITHER survives `emdash_task_candidates`
+    — so the session matches nothing and the hook silently describes a session
+    canopy does not believe exists.
 
     The suffix strip is ambiguous by construction — a task legitimately named
     `foo-bar` is indistinguishable from task `foo` with suffix `bar`. Both
@@ -149,6 +191,12 @@ def parse_emdash_worktree(cwd: Path | str, *, home: Path) -> tuple[str, str] | N
     if len(parts) >= 3 and parts[1] == "emdash":
         return parts[0], parts[2]
     if len(parts) >= 2:
+        hashed = _REPO_DIR_RE.match(parts[0])
+        if hashed and parts[1].startswith(_FLAT_TASK_PREFIX):
+            # emdash 1.2. The de-dupe suffix is left ON the task, exactly as the
+            # other layouts leave it — `emdash_task_candidates` is the one place
+            # that strips it, and it needs the raw name to offer both readings.
+            return hashed.group("repo"), parts[1][len(_FLAT_TASK_PREFIX):]
         return parts[0], parts[1]
     return None
 
