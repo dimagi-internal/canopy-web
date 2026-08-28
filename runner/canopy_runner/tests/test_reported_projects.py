@@ -18,9 +18,9 @@ from canopy_runner import sessions
 def _db(tmp_path, *names) -> str:
     path = tmp_path / "emdash4.db"
     conn = sqlite3.connect(str(path))
-    conn.executescript("CREATE TABLE projects (id TEXT, name TEXT, path TEXT);")
+    conn.executescript("CREATE TABLE projects (id TEXT, name TEXT, path TEXT, deleted_at TEXT);")
     for i, n in enumerate(names):
-        conn.execute("INSERT INTO projects VALUES (?,?,?)", (f"p{i}", n, f"/x/{n}"))
+        conn.execute("INSERT INTO projects VALUES (?,?,?,NULL)", (f"p{i}", n, f"/x/{n}"))
     conn.commit()
     conn.close()
     return str(path)

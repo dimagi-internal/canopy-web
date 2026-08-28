@@ -50,11 +50,12 @@ def db(tmp_path: Path) -> str:
     conn = sqlite3.connect(path)
     conn.executescript(
         """
-        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, deleted_at TEXT);
         CREATE TABLE tasks (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
           archived_at TEXT, last_interacted_at TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, type TEXT DEFAULT 'task' NOT NULL
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, type TEXT DEFAULT 'task' NOT NULL,
+          deleted_at TEXT
         );
         """
     )

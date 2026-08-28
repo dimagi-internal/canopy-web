@@ -160,6 +160,20 @@ def list_tasks(*, port: int = 9222) -> dict:
     return _run("list", {"port": port})
 
 
+def probe(*, port: int = 9222) -> dict:
+    """READ-ONLY: a count per DOM contract this module depends on.
+
+    The upgrade counterpart to `verify-emdash`'s schema check, for the half of the
+    coupling that lives in emdash's UI rather than its DB. Clicks nothing and opens
+    nothing, so it is safe to run against a fleet mid-turn.
+
+    Counts rather than booleans because the interesting failures are not binary: a
+    sidebar that renders but exposes no `Open task` labels is a drift, and so is one
+    that suddenly exposes two Claude tabs where `send-keys` requires exactly one.
+    """
+    return _run("probe", {"port": port}, timeout=30)
+
+
 def create_task(project: str, prompt: str, *, task_name: str = "", port: int = 9222) -> dict:
     """Create a NEW emdash task under `project` with `prompt` as the initial message.
     Pass `task_name` for a deterministic, reusable name (recommended — the auto-name

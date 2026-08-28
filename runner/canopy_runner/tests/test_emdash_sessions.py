@@ -9,15 +9,16 @@ def _make_db(path):
     conn = sqlite3.connect(path)
     conn.executescript(
         """
-        CREATE TABLE projects (id TEXT, name TEXT, path TEXT);
+        CREATE TABLE projects (id TEXT, name TEXT, path TEXT, deleted_at TEXT);
         CREATE TABLE tasks (id TEXT, project_id TEXT, name TEXT, status TEXT,
-                            archived_at TEXT, last_interacted_at TEXT, type TEXT);
-        INSERT INTO projects VALUES ('p1','canopy-web','/x/canopy-web');
-        INSERT INTO tasks VALUES ('t1','p1','cloud-runner','in_progress',NULL,'2026-07-16T15:52:00','task');
-        INSERT INTO tasks VALUES ('t2','p1','ddd','in_progress',NULL,'2026-07-16T12:41:00','task');
-        INSERT INTO tasks VALUES ('t3','p1','old','done','2026-07-15T00:00:00','2026-07-15T00:00:00','task');
+                            archived_at TEXT, last_interacted_at TEXT, type TEXT,
+                            deleted_at TEXT);
+        INSERT INTO projects (id, name, path) VALUES ('p1','canopy-web','/x/canopy-web');
+        INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t1','p1','cloud-runner','in_progress',NULL,'2026-07-16T15:52:00','task');
+        INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t2','p1','ddd','in_progress',NULL,'2026-07-16T12:41:00','task');
+        INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t3','p1','old','done','2026-07-15T00:00:00','2026-07-15T00:00:00','task');
         -- an un-promoted automation-run: emdash hides it under "Automations", so must NOT show.
-        INSERT INTO tasks VALUES ('t4','p1','plain-keys-rescue','in_progress',NULL,'2026-07-13T15:01:00','automation-run');
+        INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t4','p1','plain-keys-rescue','in_progress',NULL,'2026-07-13T15:01:00','automation-run');
         """
     )
     conn.commit()
@@ -68,17 +69,17 @@ def test_lists_recently_archived_task_names_newest_first(tmp_path):
     conn.execute("DELETE FROM tasks WHERE name='old'")
     # OLDER-archived row inserted FIRST...
     conn.execute(
-        "INSERT INTO tasks VALUES ('t5','p1','older','done','2026-07-01T00:00:00',"
+        "INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t5','p1','older','done','2026-07-01T00:00:00',"
         "'2026-07-01T00:00:00','task')"
     )
     # ...NEWER-archived row inserted SECOND — reversed vs. the expected output order.
     conn.execute(
-        "INSERT INTO tasks VALUES ('t3','p1','old','done','2026-07-15T00:00:00',"
+        "INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t3','p1','old','done','2026-07-15T00:00:00',"
         "'2026-07-15T00:00:00','task')"
     )
     # an archived AUTOMATION-RUN must not leak in either — it was never a session
     conn.execute(
-        "INSERT INTO tasks VALUES ('t6','p1','auto-gone','done','2026-07-20T00:00:00',"
+        "INSERT INTO tasks (id, project_id, name, status, archived_at, last_interacted_at, type) VALUES ('t6','p1','auto-gone','done','2026-07-20T00:00:00',"
         "'2026-07-20T00:00:00','automation-run')"
     )
     conn.commit()

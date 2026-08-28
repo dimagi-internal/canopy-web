@@ -5,14 +5,17 @@ from pathlib import Path
 from canopy_runner.main import verify_emdash
 
 _SCHEMA = """
-    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, deleted_at TEXT);
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
       archived_at TEXT, last_interacted_at TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, type TEXT DEFAULT 'task' NOT NULL
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, type TEXT DEFAULT 'task' NOT NULL,
+      deleted_at TEXT
     );
     CREATE TABLE conversations (
-      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT, last_interacted_at TEXT
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT,
+      last_session_activity_at TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
     );
 """
 
@@ -21,6 +24,10 @@ def _cfg(tmp_path, db_path) -> Path:
     p = tmp_path / "runner.json"
     p.write_text(json.dumps({
         "base_url": "http://x", "token": "t", "runner_id": "r-1", "emdash_db": str(db_path),
+        # A port nothing listens on, so the DOM probe SKIPS. Without it these tests
+        # reach out to whatever emdash happens to be running on the developer's box
+        # and stop being about the schema at all.
+        "cdp_port": 1,
     }))
     return p
 
@@ -37,7 +44,9 @@ def _mkdb(tmp_path, schema=_SCHEMA):
 def test_verify_exits_0_when_schema_intact(tmp_path, capsys):
     cfg = _cfg(tmp_path, _mkdb(tmp_path))
     assert verify_emdash(cfg) == 0
-    assert "intact" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "db schema" in out
 
 
 def test_verify_exits_1_and_names_the_drift(tmp_path, capsys):

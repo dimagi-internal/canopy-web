@@ -18,16 +18,17 @@ def _emdash_schema() -> str:
     and list_open_sessions() name. Deliberately a superset-shaped, minimal stand-in
     for emdash's real schema — only the read columns matter here."""
     return """
-        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, deleted_at TEXT);
         CREATE TABLE tasks (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
           archived_at TEXT, last_interacted_at TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          type TEXT DEFAULT 'task' NOT NULL, automation_run_id TEXT
+          type TEXT DEFAULT 'task' NOT NULL, automation_run_id TEXT, deleted_at TEXT
         );
         CREATE TABLE conversations (
           id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT,
-          last_interacted_at TEXT
+          last_session_activity_at TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
         );
     """
 
@@ -67,7 +68,7 @@ def test_check_read_schema_reports_a_missing_table(tmp_path):
     conn = sqlite3.connect(path)
     conn.executescript(
         "CREATE TABLE tasks (name TEXT, archived_at TEXT, created_at TEXT, status TEXT, "
-        "last_interacted_at TEXT, type TEXT, project_id TEXT);"
+        "last_interacted_at TEXT, type TEXT, project_id TEXT, deleted_at TEXT);"
     )  # no `projects` table at all
     conn.commit()
     conn.close()
@@ -197,11 +198,14 @@ def test_list_open_sessions_is_fail_soft_on_missing_db(tmp_path):
 # cannot give: a session inside a long tool call is silent, not finished.
 # --------------------------------------------------------------------------------------
 
-def _add_conversation(db, task_id, agent_status, *, at="2026-08-12T23:00:00Z"):
+def _add_conversation(db, task_id, agent_status, *, at="2026-08-12T23:00:00Z", column="last_session_activity_at"):
+    """`column` picks which timestamp carries the ordering. emdash 1.2 populates
+    `last_session_activity_at` sparsely (10 of 26 rows on the fleet laptop), so the
+    read COALESCEs onto the always-present `updated_at` — pass "updated_at" to build
+    the rows that exercise that leg."""
     conn = sqlite3.connect(db)
     conn.execute(
-        "INSERT INTO conversations (id, task_id, agent_status, last_interacted_at) "
-        "VALUES (?, ?, ?, ?)",
+        f"INSERT INTO conversations (id, task_id, agent_status, {column}) VALUES (?, ?, ?, ?)",
         (str(uuid.uuid4()), task_id, agent_status, at),
     )
     conn.commit()
@@ -242,6 +246,21 @@ def test_without_working_the_newest_conversation_answers(db):
     assert row["agent_status"] == "compacting"
 
 
+def test_a_null_activity_stamp_still_orders_by_updated_at(db):
+    """emdash 1.2 dropped `conversations.last_interacted_at` and its migration train
+    (0036) copied the values into `last_session_activity_at` — but that successor is
+    NULLABLE and sparsely written (10 of 26 rows, fleet laptop 2026-08-28). Ordering
+    by it alone is therefore not an ordering: the 16 NULL rows sort together and the
+    newest-wins rule silently picks an arbitrary one. The read COALESCEs onto
+    `updated_at`, which emdash declares NOT NULL, so a row with no activity stamp
+    still sorts where it belongs."""
+    _add_task(db, "sparse", task_id="t-6")
+    _add_conversation(db, "t-6", "idle", at="2026-08-12T22:00:00Z", column="updated_at")
+    _add_conversation(db, "t-6", "awaiting-input", at="2026-08-12T23:00:00Z", column="updated_at")
+    (row,) = list_open_sessions(db)
+    assert row["agent_status"] == "awaiting-input"
+
+
 def test_a_drifted_conversations_table_costs_the_status_not_the_report(db):
     """The asymmetry that matters: this read is an ENRICHMENT. An emdash that cannot
     answer must leave us reporting sessions without the flag — raising here would skip
@@ -258,3 +277,45 @@ def test_a_drifted_conversations_table_costs_the_status_not_the_report(db):
     assert row["agent_status"] == ""
     # ...and verify-emdash is where that degradation becomes visible.
     assert check_read_schema(db) == ["conversations.agent_status missing"]
+
+
+# --------------------------------------------------------------------------------------
+# Soft delete. emdash 1.2 added `deleted_at` to tasks/projects and asks for live tasks as
+# `and(isNull(archivedAt), isNull(deletedAt))`. Matching that is what keeps canopy's idea
+# of "open" the same as emdash's — filtering on archived_at alone reports sessions that
+# emdash no longer shows anywhere, which is a session nobody can click into.
+# --------------------------------------------------------------------------------------
+
+def _soft_delete(db, name):
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE tasks SET deleted_at = '2026-08-28T06:00:00Z' WHERE name = ?", (name,))
+    conn.commit()
+    conn.close()
+
+
+def test_a_soft_deleted_task_is_not_an_open_session(db):
+    _add_task(db, "kept")
+    _add_task(db, "binned")
+    _soft_delete(db, "binned")
+    assert {r["emdash_task"] for r in list_open_sessions(db)} == {"kept"}
+
+
+def test_a_soft_deleted_task_is_absent_not_live(db):
+    """`task_state` drives the REUSE decision. Calling a deleted task "live" sends the
+    runner to open a task emdash will not find, and the CDP path then fails at a point
+    where it can no longer tell "glitched" from "gone"."""
+    _add_task(db, "binned")
+    _soft_delete(db, "binned")
+    assert task_state(db, "binned") == "absent"
+
+
+def test_a_soft_deleted_task_is_not_reported_as_archived(db):
+    """The archived list is the CLOSING signal — the server un-retires anything absent
+    from it. A deleted task is not something the human archived, and reporting it as
+    such would resurrect it."""
+    from canopy_runner.emdash import list_recently_archived_tasks
+
+    _add_task(db, "really-archived", archived_at="2026-08-27T00:00:00Z")
+    _add_task(db, "binned", archived_at="2026-08-27T00:00:00Z")
+    _soft_delete(db, "binned")
+    assert list_recently_archived_tasks(db) == ["really-archived"]

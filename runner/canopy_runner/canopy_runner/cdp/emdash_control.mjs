@@ -559,6 +559,36 @@ try {
     }
     out({ ok: true, task, sent: keys.length });
 
+  } else if (command === 'probe') {
+    // READ-ONLY upgrade probe: does every DOM contract this sidecar depends on still
+    // resolve? Clicks NOTHING and opens NOTHING — an upgrade check that stole focus
+    // or selected a tab would be a check nobody dares run on a working fleet, and
+    // #510 is the record of what a read-on-a-signal costs.
+    //
+    // It reports what it can SEE, so a contract is only meaningful when the UI is
+    // showing that part of itself: with no task open there is no terminal, which is
+    // not a drift. Hence `present` (found it), `absent` (looked, not there) and the
+    // caller deciding which absences matter — see upgrade_check.CDP_CONTRACTS.
+    const data = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+      const labels = [...document.querySelectorAll('button')]
+        .map(b => b.getAttribute('aria-label') || '');
+      const term = activeTerm();
+      const claudeTabs = [...document.querySelectorAll('[role="button"][title]')]
+        .filter(el => /^Claude\s*\(/.test(el.getAttribute('title') || ''));
+      return {
+        open_task_labels:  labels.filter(t => t.startsWith('Open task ')).length,
+        new_task_labels:   labels.filter(t => t.startsWith('New task for ')).length,
+        sidebar_scroller:  document.querySelectorAll('.overflow-y-auto').length,
+        xterm_any:         document.querySelectorAll('.xterm').length,
+        xterm_active:      term ? 1 : 0,
+        xterm_rows:        term && term.querySelector('.xterm-rows') ? 1 : 0,
+        terminal_input:    (term && term.querySelector('.xterm-helper-textarea'))
+                             || document.querySelector('textarea[aria-label="Terminal input"]') ? 1 : 0,
+        claude_tabs:       claudeTabs.length,
+      };
+    })(); })()`);
+    out({ ok: true, ...data });
+
   } else {
     fail(`unknown command: ${command}`);
   }

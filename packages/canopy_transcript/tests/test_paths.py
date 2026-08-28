@@ -32,7 +32,11 @@ def test_encoding_collapses_every_separator_it_knows():
 
 import os
 
-from canopy_transcript import resolve_emdash_transcript
+from canopy_transcript import (
+    emdash_task_candidates,
+    parse_emdash_worktree,
+    resolve_emdash_transcript,
+)
 
 
 def _plant(home, claude_home, repo, worktree_name, stem, *, mtime, make_worktree):
@@ -88,3 +92,80 @@ def test_a_sibling_task_is_never_borrowed(tmp_path):
     _plant(home, claude_home, "ace", "bednet-2-tsnn3", "sibling", mtime=9000, make_worktree=True)
 
     assert resolve_emdash_transcript("ace", "bednet", home=home, claude_home=claude_home) is None
+
+
+# --------------------------------------------------------------------------------------
+# emdash 1.2's worktree layout. Both the repo root and the leaf changed shape:
+# `worktrees/<repo>-<8 hex>/emdash-<task>-<suffix>` replaced
+# `worktrees/<repo>/emdash/<task>-<suffix>`. Verified on the fleet laptop 2026-08-28 —
+# every worktree created after 1.2 first ran uses it, every older one does not.
+# --------------------------------------------------------------------------------------
+
+def _plant_v12(home, claude_home, repo, repo_hash, worktree_name, stem, *, make_worktree=True):
+    """A project dir (+ transcript) for emdash 1.2's `<repo>-<hash>/emdash-<name>`."""
+    worktree = home / "emdash" / "worktrees" / f"{repo}-{repo_hash}" / f"emdash-{worktree_name}"
+    if make_worktree:
+        worktree.mkdir(parents=True)
+    proj = claude_home / encode_project_dir(worktree)
+    proj.mkdir(parents=True)
+    jsonl = proj / f"{stem}.jsonl"
+    jsonl.write_text("{}\n")
+    return jsonl
+
+
+def test_the_1_2_layout_resolves(tmp_path):
+    """Before this, every session created on emdash 1.2 resolved to no transcript at
+    all — so it streamed nothing and backfilled nothing, silently, forever."""
+    home, claude_home = tmp_path / "home", tmp_path / "home" / ".claude" / "projects"
+    _plant_v12(home, claude_home, "canopy-web", "05b9fcc4", "emdash-check-sq69z", "live")
+
+    got = resolve_emdash_transcript("canopy-web", "emdash-check", home=home, claude_home=claude_home)
+    assert got is not None and got.stem == "live"
+
+
+def test_the_1_2_layout_does_not_borrow_a_sibling_repo(tmp_path):
+    """`canopy` must not match `canopy-web-05b9fcc4` — the hash is 8 hex characters,
+    so `web-05b9fcc4` is not one and the dir belongs to a different repo."""
+    home, claude_home = tmp_path / "home", tmp_path / "home" / ".claude" / "projects"
+    _plant_v12(home, claude_home, "canopy-web", "05b9fcc4", "emdash-check-sq69z", "other")
+
+    assert resolve_emdash_transcript("canopy", "emdash-check", home=home, claude_home=claude_home) is None
+
+
+def test_the_pre_1_2_layouts_still_resolve(tmp_path):
+    """The three layouts coexist: a fleet mid-upgrade has live worktrees in all of
+    them, so recognising 1.2 must not cost the older two."""
+    home, claude_home = tmp_path / "home", tmp_path / "home" / ".claude" / "projects"
+    _plant(home, claude_home, "ace", "spark-ry12q", "nested", mtime=1000, make_worktree=True)
+
+    got = resolve_emdash_transcript("ace", "spark", home=home, claude_home=claude_home)
+    assert got is not None and got.stem == "nested"
+
+
+# --- the inverse, used by the hook path -------------------------------------------------
+
+def test_parse_reads_the_1_2_layout_back(tmp_path):
+    """A hook reports a cwd; canopy has to turn it back into (repo, task). Falling
+    through to the plain two-segment case yields ("canopy-web-05b9fcc4",
+    "emdash-emdash-check-sq69z") — a repo and a task canopy has never heard of, so the
+    hook describes a session nothing matches."""
+    home = tmp_path / "home"
+    cwd = home / "emdash" / "worktrees" / "canopy-web-05b9fcc4" / "emdash-emdash-check-sq69z"
+    cwd.mkdir(parents=True)
+
+    repo, task = parse_emdash_worktree(cwd, home=home)
+    assert repo == "canopy-web"
+    assert "emdash-check" in emdash_task_candidates(task)
+
+
+def test_parse_leaves_the_older_layouts_alone(tmp_path):
+    home = tmp_path / "home"
+    for parts, want in [
+        (("ace", "emdash", "spark-ry12q"), ("ace", "spark")),
+        (("echo", "thread-abc12"), ("echo", "thread")),
+    ]:
+        cwd = home.joinpath("emdash", "worktrees", *parts)
+        cwd.mkdir(parents=True)
+        repo, task = parse_emdash_worktree(cwd, home=home)
+        assert repo == want[0]
+        assert want[1] in emdash_task_candidates(task)
