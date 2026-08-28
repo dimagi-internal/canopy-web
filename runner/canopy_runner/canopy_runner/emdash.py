@@ -326,3 +326,48 @@ def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
         return [r["emdash_task"] for r in rows]
     except sqlite3.Error as exc:
         raise EmdashReadError(f"emdash archived-task read failed: {exc}") from exc
+
+
+def session_transcript_ref(db_path: str, project: str, task: str) -> tuple[str, str] | None:
+    """READ-ONLY: `(cwd, provider_session_id)` for an emdash (project, task), or None.
+
+    The two halves of "where is this session's transcript", answered by emdash rather
+    than reconstructed from a path convention emdash owns and has now changed twice.
+    `cwd` is the real worktree; `provider_session_id` is Claude Code's OWN session id,
+    which NAMES the .jsonl — so together they address the file exactly, with nothing
+    left to guess (see `canopy_transcript.resolve_cli_transcript`, which already does
+    this lookup for the cloud runner).
+
+    Returns None — never raises, and never a partial answer — when emdash cannot
+    answer: no DB, a pre-1.2 emdash without the columns, no such task, or a session
+    Claude Code has not reported an id for yet (`provider_session_id` is NULL until it
+    does). Every one of those is a legitimate "ask the convention instead", and the
+    caller falls back. Raising here would turn "emdash is older than I expected" into
+    a broken runner.
+
+    A task can own several conversations; the newest that HAS an id wins, for the same
+    reason `_agent_statuses` prefers the newest — an earlier conversation under a
+    reused task name must not answer for the live one.
+    """
+    if not project or not task or not Path(db_path).exists():
+        return None
+    try:
+        with _db(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT cv.cwd AS cwd, cv.provider_session_id AS sid
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                JOIN conversations cv ON cv.task_id = t.id
+                WHERE t.name = ? AND p.name = ? AND t.deleted_at IS NULL
+                  AND cv.cwd IS NOT NULL AND cv.provider_session_id IS NOT NULL
+                ORDER BY COALESCE(cv.last_session_activity_at, cv.updated_at) DESC
+                LIMIT 1
+                """,
+                (task, project),
+            ).fetchone()
+    except sqlite3.Error:
+        return None            # older emdash, locked db, drifted column — all "ask the convention"
+    if row is None or not row["cwd"] or not row["sid"]:
+        return None
+    return row["cwd"], row["sid"]

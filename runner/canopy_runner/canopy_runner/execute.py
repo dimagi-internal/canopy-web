@@ -176,21 +176,28 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
     return f"reused:{turn_id}"
 
 
-def _resolve_transcript_path(target: str, task: str):
+def _resolve_transcript_path(target: str, task: str, *, emdash_db: str | None = None):
     home = Path.home()
     return transcript.resolve_transcript(
-        target, task, home=home, claude_home=home / ".claude" / "projects"
+        target, task, home=home, claude_home=home / ".claude" / "projects",
+        emdash_db=emdash_db,
     )
 
 
-def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll: float = 0.5):
+def _wait_for_transcript(target: str, task: str, *, timeout: float = 45.0, poll: float = 0.5,
+                         emdash_db: str | None = None):
     """A freshly-created emdash session's transcript .jsonl doesn't exist until Claude
-    Code starts writing. Wait (bounded) for it to appear; reused sessions resolve at once."""
+    Code starts writing. Wait (bounded) for it to appear; reused sessions resolve at once.
+
+    This is the one caller where asking emdash pays twice: it re-resolves on every poll,
+    and emdash names the session's `provider_session_id` as soon as Claude Code reports
+    it — which is earlier than the directory-scan can find a file, and exact when it
+    does."""
     deadline = time.monotonic() + timeout
-    path = _resolve_transcript_path(target, task)
+    path = _resolve_transcript_path(target, task, emdash_db=emdash_db)
     while path is None and time.monotonic() < deadline:
         time.sleep(poll)
-        path = _resolve_transcript_path(target, task)
+        path = _resolve_transcript_path(target, task, emdash_db=emdash_db)
     return path
 
 
@@ -379,7 +386,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         )
         logger.info("chat turn=%s created emdash task=%s (agent=%s)", turn_id, task, target)
 
-    path = _wait_for_transcript(target, task)
+    path = _wait_for_transcript(target, task, emdash_db=cfg.emdash_db)
     if path is None:
         logger.warning("chat turn=%s: no transcript for task=%s (agent=%s) — reply not bridged",
                        turn_id, task, target)

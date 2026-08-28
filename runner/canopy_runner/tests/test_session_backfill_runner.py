@@ -9,6 +9,7 @@ from canopy_runner.chat_bridge import compose_index as _ix
 
 class _Cfg:
     runner_id = "r"
+    emdash_db = ""      # no emdash DB here: resolution falls back to the convention
 
 
 class _Client:
