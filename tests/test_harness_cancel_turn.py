@@ -179,12 +179,14 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
     assert turn.status == Turn.CANCELLED
 
 
-def test_finish_turn_done_is_coerced_to_cancelled_when_cancel_was_requested(canopy, jj):
-    """I2 server-side backstop: a deaf/poll-only runner can miss the
-    runner.cancel control frame and finish the turn DONE anyway. finish_turn
-    must coerce that to CANCELLED when a cancel_requested event is already on
-    the ledger — the user asked to stop, so a full reply that raced through
-    the interrupt is still a cancelled turn, not a done one."""
+def test_a_turn_that_completed_despite_a_cancel_stays_done_and_says_so(canopy, jj):
+    """A deaf/poll-only runner can miss the runner.cancel frame and finish DONE.
+
+    This USED to be rewritten DONE -> CANCELLED. It is not any more: the turn carries
+    a complete reply, so `cancelled` would file a full answer under a status saying it
+    was stopped — and, worse, would store the same thing as a stop that actually
+    worked, which is what made a broken stop button so hard to pin down (#649).
+    The outcome stays truthful; the failed stop is recorded alongside it."""
     from django.utils import timezone
 
     from apps.harness import services
@@ -202,7 +204,74 @@ def test_finish_turn_done_is_coerced_to_cancelled_when_cancel_was_requested(cano
 
     out = services.finish_turn(turn, status=Turn.DONE, result_note="all done")
 
-    assert out.status == Turn.CANCELLED
+    assert out.status == Turn.DONE, "it completed; that is the outcome"
+    assert "never reached the runner" in out.result_note
+    assert "all done" in out.result_note, "the runner's own note is kept, not replaced"
+    # And it must be VISIBLE: a `status` event carries no client-visible frame, so
+    # without this the honest DONE looks on screen like a turn nobody tried to stop.
+    detail = turn.events.filter(kind="error").values_list("payload", flat=True).first()
+    assert detail and "your stop never reached the runner" in detail["detail"]
+
+
+def test_a_completed_scheduled_turn_discharges_its_nag_even_after_a_cancel(canopy, jj, monkeypatch):
+    """A consequence of dropping the coercion, and an argument for having dropped it.
+
+    The nag discharge keys on DONE. While a completed-after-cancel turn was rewritten
+    CANCELLED, the discharge was skipped — so a scheduled slot whose work had in fact
+    finished went on asking for attention."""
+    from django.utils import timezone
+
+    from apps.harness import services
+
+    agent = Agent.objects.create(slug="echo-nag", name="Echo", workspace=canopy)
+    runner = Runner.objects.create(
+        name="jj-mbp2", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(),
+    )
+    turn = Turn.objects.create(
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-i2-nag",
+        status=Turn.RUNNING, claimed_by=runner, origin_ref={"schedule_id": "sched-1"},
+    )
+    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+
+    discharged = []
+    monkeypatch.setattr(services, "resolve_schedule_nags", discharged.append)
+
+    out = services.finish_turn(turn, status=Turn.DONE, result_note="done")
+
+    assert out.status == Turn.DONE
+    assert discharged == ["sched-1"], "the slot's work completed — stop nagging for it"
+
+
+def test_a_drill_whose_stop_was_ignored_still_resolves(canopy, jj):
+    """The one thing that HAD to move when the coercion went away.
+
+    Such a turn used to arrive at the drill hook as CANCELLED and resolve its
+    RunnerDrill. Keying that hook on status alone would now let it through as DONE
+    and strand OUTCOME_PENDING forever — reintroducing, by the side door, the exact
+    failure the hook exists to prevent."""
+    from django.utils import timezone
+
+    from apps.harness import services
+    from apps.harness.models import RunnerDrill
+
+    agent = Agent.objects.create(slug="echo-drill-ignored", name="Echo", workspace=canopy)
+    runner = Runner.objects.create(
+        name="jj-mbp3", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(),
+    )
+    [drill] = services.start_drill(runner, [agent])
+    turn = drill.turn
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=runner)
+    turn.refresh_from_db()
+    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+
+    out = services.finish_turn(turn, status=Turn.DONE, result_note="done")
+
+    assert out.status == Turn.DONE
+    drill.refresh_from_db()
+    assert drill.outcome == RunnerDrill.OUTCOME_FAIL
+    assert drill.outcome != RunnerDrill.OUTCOME_PENDING, "must not strand"
 
 
 def test_finish_turn_done_without_cancel_request_stays_done(canopy, jj):
