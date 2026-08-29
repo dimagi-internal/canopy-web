@@ -332,7 +332,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     tick (`chat_pump.pump_chat_bridges`) and the turn is finished there, when the transcript
     says the agent handed the floor back. Cancellation moved with it: the pump watches
     CANCELLED_TURNS, presses Escape in the live emdash session, and finishes CANCELLED.
-    `cancel_check` is accepted for signature compatibility and is no longer read here.
+
+    `cancel_check` is read ONCE here, immediately before delivery. It used to be
+    ignored outright ("accepted for signature compatibility"), which made the cheapest
+    stop of all impossible: a human who hits stop between the claim and the send still
+    had the message typed into their agent, because the only consumer of the signal
+    was a pump that does not exist yet at this point. Nothing after delivery is checked
+    here — from then on the bridge owns it, and the pump does the interrupting.
     """
     turn_id = turn["id"]
     agent_slug = turn.get("agent_slug") or ""
@@ -351,6 +357,17 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     task = plan.get("emdash_task_id") if plan.get("reuse") else None
     if task and emdash.task_state(cfg.emdash_db, task) in ("absent", "archived"):
         task = None  # the linked emdash session is gone — create a fresh one
+
+    # The stop arrived before we typed anything. Deliver NOTHING — the cheapest and
+    # most complete cancel there is, and the only one that leaves no trace in the
+    # agent's session. `client.start` has already run, so the turn is RUNNING and
+    # finishing it CANCELLED is a legal transition.
+    if cancel_check is not None and cancel_check(turn_id):
+        logger.info("chat turn=%s cancelled before delivery (agent=%s)", turn_id, target)
+        client.finish(turn_id, note="cancelled by user before the message was delivered",
+                      status="cancelled", emdash_task_id=task or "")
+        return f"cancelled:{turn_id}"
+
     if task:
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)

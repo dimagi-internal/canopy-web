@@ -39,22 +39,92 @@ def _is_blocked(task: str) -> bool:
 
 def finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note: str) -> None:
     """Retire one in-flight bridge: drop it from the registry FIRST (so a failing
-    finish can't leave it pumping forever), interrupt the live session on a cancel,
-    then tell the server. Best-effort — a client hiccup must not wedge the loop."""
-    from . import cdp_control
+    finish can't leave it pumping forever), then tell the server. Best-effort — a
+    client hiccup must not wedge the loop.
 
+    Pressing Escape is NOT done here any more; see `cancel_chat_bridge`. It used to
+    be, and a cancel arrived at this function already committed to finishing the turn
+    `cancelled` — so an interrupt that raised was caught, logged at WARNING, and the
+    turn was reported cancelled anyway. The website said "stopped" while the agent
+    kept working, and a test asserted that behaviour."""
     chat_bridge.IN_FLIGHT.pop(bridge.turn_id, None)
     CANCELLED_TURNS.discard(bridge.turn_id)
-    if status == "cancelled":
-        try:
-            cdp_control.interrupt(bridge.task, port=cfg.cdp_port)
-        except Exception as exc:  # noqa: BLE001 — cancel must still finish the turn
-            logger.warning("chat turn=%s: interrupt failed: %s", bridge.turn_id, exc)
     try:
         client.finish(bridge.turn_id, note=note, status=status, emdash_task_id=bridge.task)
     except Exception:  # noqa: BLE001
         logger.warning("chat turn=%s: finish failed", bridge.turn_id, exc_info=True)
     logger.info("chat turn=%s %s (task=%s): %s", bridge.turn_id, status, bridge.task, note)
+
+
+# How many ticks a stop may spend trying before we report what actually happened.
+# Each attempt is itself two Escapes with a repaint wait inside the sidecar, so this
+# is seconds, not minutes — the human is watching a button they just pressed.
+CANCEL_MAX_ATTEMPTS = 3
+
+
+def cancel_chat_bridge(cfg: Config, client: Client, bridge) -> None:
+    """Act on a stop for one in-flight bridge: interrupt the live session, and finish
+    the turn ONLY once we know what the interrupt did.
+
+    The outcomes are the sidecar's, and they are not all "cancelled":
+
+    * `interrupted` / `idle` — the agent is not running. Finish CANCELLED; true.
+    * `still-running`        — Escape did not take. Retried across ticks, then the
+                               turn finishes FAILED, because a turn reported
+                               cancelled while its agent runs on is the one outcome
+                               a stop button must never produce. The note names it.
+    * `unreadable` / raised  — we could not see. Retried, then CANCELLED with the
+                               uncertainty IN the note: a false red is a wrong answer
+                               too, and "emdash is gone" genuinely does end the turn.
+
+    Retrying leaves the bridge in flight for a tick, which pauses streaming for that
+    tick. That is the right trade: the human asked for it to stop.
+    """
+    from . import cdp_control
+
+    try:
+        res = cdp_control.interrupt(bridge.task, port=cfg.cdp_port) or {}
+        # A sidecar older than this code returns no `action`. Unverified, NOT success:
+        # runner and sidecar update separately, so that version will be live here.
+        action = res.get("action") or "unreadable"
+        err = ""
+    except Exception as exc:  # noqa: BLE001 — a stop must still reach a verdict
+        action, err = "unreadable", str(exc)[:200]
+
+    if action in ("interrupted", "idle"):
+        note = "cancelled by user" if action == "interrupted" else (
+            "cancelled by user (the agent had already stopped)")
+        finish_chat_bridge(cfg, client, bridge, status="cancelled", note=note)
+        return
+
+    bridge.cancel_attempts += 1
+    if bridge.cancel_attempts < CANCEL_MAX_ATTEMPTS:
+        logger.warning("chat turn=%s: stop attempt %d/%d on task=%s did not confirm (%s%s)",
+                       bridge.turn_id, bridge.cancel_attempts, CANCEL_MAX_ATTEMPTS,
+                       bridge.task, action, f": {err}" if err else "")
+        return  # stays in flight; CANCELLED_TURNS still holds the id, so we retry next tick
+
+    if action == "still-running":
+        note = (f"stop did not take: Escape was pressed {CANCEL_MAX_ATTEMPTS} times and "
+                f"'{bridge.task}' is still running — the agent may still be working")
+        # SAY IT ON THE CHANNEL THE HUMAN IS WATCHING. A turn's terminal `status` and
+        # its result_note carry no client-visible frame (stream_map.turn_event_to_frames:
+        # "status / heartbeat / question / approval carry no client-visible stream
+        # frame"), so finishing `failed` alone would just make the reply stop — which
+        # is what a successful stop looks like too. An `error` event renders as
+        # chat.stream_error, which is the only way this fix reaches the person who
+        # pressed the button.
+        try:
+            client.post_events(bridge.turn_id, [{"kind": "error", "payload": {"detail": note}}])
+        except Exception:  # noqa: BLE001 — telling them is best-effort; finishing is not
+            logger.warning("chat turn=%s: could not report the failed stop to the client",
+                           bridge.turn_id, exc_info=True)
+        finish_chat_bridge(cfg, client, bridge, status="failed", note=note)
+    else:
+        finish_chat_bridge(
+            cfg, client, bridge, status="cancelled",
+            note=("cancelled by user (interrupt could not be verified"
+                  + (f": {err}" if err else "") + ")"))
 
 
 def pump_chat_bridges(cfg: Config, client: Client) -> None:
@@ -71,7 +141,7 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
     """
     for turn_id, bridge in list(chat_bridge.IN_FLIGHT.items()):
         if turn_id in CANCELLED_TURNS:
-            finish_chat_bridge(cfg, client, bridge, status="cancelled", note="cancelled by user")
+            cancel_chat_bridge(cfg, client, bridge)
             continue
         try:
             new_records = bridge.reader.read_new()
