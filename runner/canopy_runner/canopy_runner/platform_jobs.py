@@ -1,11 +1,18 @@
 """The ONE place the runner knows which OS supervises it.
 
-Everything else in `canopy_runner` is already platform-neutral — the producers
+Nearly everything else in `canopy_runner` is platform-neutral — the producers
 (`inbox.py`, `schedules.py`) shell out to `gog` and do date math, `cdp_control`
 drives emdash through `node`, and the transcript/tail layer is pure pathlib. The
-only genuinely OS-specific thing the runner does is **ask its supervisor to run
-the updater job now**, and that was written inline against `launchctl`, which
-made the whole daemon look macOS-only when one function was.
+OS-specific things the runner does are **ask its supervisor to run the updater
+job now** (here), and **render the collision dialog** (`dialog.py`, which carries
+its own osascript/PowerShell split for the same reason). This one was written
+inline against `launchctl`, which made the whole daemon look macOS-only when one
+function was.
+
+Say "nearly": this docstring used to claim everything else WAS neutral, and
+`dialog.py` was osascript-only the whole time it said so — on Windows the human
+was never asked and the message was silently dropped. A confident inventory is
+the thing that stops anyone re-checking, so keep this list honest or drop it.
 
 So the split lives here rather than as `if sys.platform` scattered at call
 sites: a second OS is a new branch in one function with one test, not an audit.
