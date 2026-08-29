@@ -34,6 +34,15 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         if isinstance(menu, dict) and menu:
             data["menu"] = menu
         return [{"event": "session.activity", "data": data}]
+
+    if isinstance(kind, str) and kind.startswith("stop:"):
+        # Did the stop the human asked for actually land. Its own frame rather than
+        # a value of `activity`, because the two are independent: a stop that FAILED
+        # leaves the agent `working`, which is true and has to stay true, and a
+        # `stop:failed` folded into activity would either overwrite that with a lie
+        # or be dropped as "still working, nothing to say" — which is precisely the
+        # silence this frame exists to break.
+        return [{"event": "session.stop", "data": {"state": kind.split(":", 1)[1]}}]
     if kind == "user":
         # Text a human typed straight into emdash. It reaches no web client any
         # other way — there was no optimistic echo, because no web client sent

@@ -68,6 +68,18 @@ router = Router(auth=session_auth, tags=["harness"])
 # Allowed values for TurnEvent.kind. Kept in sync with the event kinds the
 # runner/agent side actually emits; anything else 422s at the API boundary
 # rather than being silently persisted.
+# Session-stream kinds that are STATE, not transcript: they fan out to watching
+# clients and are never persisted (index -1 already excludes them from the durable
+# write, and they have no transcript row to be).
+#
+#   activity:  is the agent producing right now — working | idle | blocked
+#   stop:      did a stop the human asked for actually land — requested | stopped
+#              | failed. A SEPARATE axis from activity on purpose: after a stop
+#              that did not take, the agent is still `working`, and that is true
+#              and must stay true. Folding "the stop failed" into activity would
+#              either lie about what the agent is doing or lose the stop entirely.
+LIVE_ONLY_PREFIXES = ("activity:", "stop:")
+
 ALLOWED_EVENT_KINDS = {
     "status",
     "assistant",
@@ -785,7 +797,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # applied only on the durable path would drop a harness marker from
         # history while still pushing it to every watching client — so it would
         # appear live, then vanish on reload. Same rule, both paths.
-        if e.kind.startswith("activity:"):
+        if e.kind.startswith(LIVE_ONLY_PREFIXES):
             # Fans out, never persists — index -1 already excludes it from the
             # durable write, and it has no transcript row to be.
             groups.publish(sgroup, {

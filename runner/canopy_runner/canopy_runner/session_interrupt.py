@@ -103,22 +103,31 @@ def drain(cfg, client, runner_id: str) -> int:
             action = "unreadable"
 
         confirmed = action in ("interrupted", "idle")
+        done = settle(session_key, confirmed=confirmed)
+
+        # Say what happened, on both outcomes. Only the SUCCESS was reported before,
+        # which left a failed stop indistinguishable from a stop nobody asked for —
+        # the person who pressed the button watched a session that just went on
+        # working with no explanation. Two independent facts go up:
+        #
+        #   activity:  what the AGENT is doing. `idle` only when confirmed. Never
+        #              touched on failure, because it is genuinely still working.
+        #   stop:      whether the STOP took. This is the one that was missing.
+        events = []
         if confirmed:
             confirmed_count += 1
-            # Tell the web the agent is idle now. `activity` is the only state the
-            # session surface has, and after a confirmed interrupt "idle" is simply
-            # true. Nothing is posted when it is NOT confirmed, deliberately: the
-            # session stays `working`, which is also true, and is what tells the
-            # person who pressed the button that the stop has not taken.
-            if session_id:
-                try:
-                    client.post_session_stream(runner_id, session_id, [{
-                        "kind": "activity:idle", "seq": -1, "index": -1, "payload": {},
-                    }])
-                except Exception:  # noqa: BLE001 — reporting is best-effort
-                    logger.debug("session stop: could not report idle for %s",
-                                 session_id, exc_info=True)
-        done = settle(session_key, confirmed=confirmed)
+            events.append({"kind": "activity:idle", "seq": -1, "index": -1, "payload": {}})
+            events.append({"kind": "stop:stopped", "seq": -1, "index": -1, "payload": {}})
+        elif done:
+            events.append({"kind": "stop:failed", "seq": -1, "index": -1,
+                           "payload": {"attempts": MAX_ATTEMPTS, "reason": action}})
+        if events and session_id:
+            try:
+                client.post_session_stream(runner_id, session_id, events)
+            except Exception:  # noqa: BLE001 — reporting is best-effort, stopping is not
+                logger.debug("session stop: could not report the outcome for %s",
+                             session_id, exc_info=True)
+
         if confirmed:
             logger.info("session stop: %s interrupted (%s)", session_key, action)
         elif done:

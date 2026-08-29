@@ -686,3 +686,44 @@ describe("the dialog an agent is blocked on", () => {
     expect(state.menu?.options[0].description).toContain("real LLO");
   });
 });
+
+describe("session.stop — whether the stop actually landed", () => {
+  const base = (over: Partial<SessionState> = {}): SessionState => ({
+    messages: [],
+    active_draft: null,
+    participants: [],
+    presence_user_ids: [],
+    current_user_id: 1,
+    ...over,
+  });
+
+  it("records a requested stop without claiming it worked", () => {
+    const out = sessionReducer(base(), {
+      event: "session.stop",
+      data: { state: "requested" },
+    } as WsEvent);
+    expect(out.stopState).toBe("requested");
+  });
+
+  it("keeps the agent WORKING when the stop failed", () => {
+    // The whole point of a separate axis. A failed stop leaves the agent running,
+    // and both facts have to survive together — collapsing them into `activity`
+    // loses whichever one loses the race, and it was always the stop.
+    const out = sessionReducer(base({ activity: "working" }), {
+      event: "session.stop",
+      data: { state: "failed" },
+    } as WsEvent);
+    expect(out.stopState).toBe("failed");
+    expect(out.activity).toBe("working");
+  });
+
+  it("a new turn clears a stale stop outcome", () => {
+    // "your stop did not take" pinned over fresh work is a warning about
+    // something the human has already moved on from.
+    const out = sessionReducer(base({ stopState: "failed" }), {
+      event: "chat.stream_start",
+      data: { message_id: "m1" },
+    } as WsEvent);
+    expect(out.stopState).toBeUndefined();
+  });
+});
