@@ -272,8 +272,11 @@ def _evaluate_bodies():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
            / "emdash_control.mjs").read_text()
-    helpers = {name: (re.search(rf"const {name} = String\.raw`([\s\S]*?)`;", src) or [None, ""])[1]
-               for name in ("ACTIVE_TERM_FN", "COMPOSER_FN")}
+    # DISCOVERED, not listed. A hardcoded roster silently exempts the next helper
+    # someone adds: its `${NEW_FN}` survives into the body, `new Function` chokes on
+    # the literal `${`, and the failure reads as "your JS is broken" rather than
+    # "the test doesn't know about this one".
+    helpers = dict(re.findall(r"const (\w+_FN) = String\.raw`([\s\S]*?)`;", src))
     bodies = []
     for m in re.findall(r"page\.evaluate\(String\.raw`([\s\S]*?)`\)", src):
         for name, helper_src in helpers.items():
@@ -439,3 +442,138 @@ def test_close_task_reports_an_already_gone_task_as_absent(monkeypatch):
         cdp_control, "_run", lambda c, a, **k: {"ok": True, "action": "absent"}
     )
     assert cdp_control.close_task("gone")["action"] == "absent"
+
+
+# -- typed vs offered: the dim-suggestion misread ------------------------------
+#
+# claude offers an inline next-prompt suggestion INSIDE an empty composer, drawn
+# with xterm's dim attribute and the block cursor on its FIRST character. Read as
+# bare text it is indistinguishable from a half-typed human thought, so every send
+# into such a session came back `collision` and the message was never delivered
+# (measured live 2026-08-28: three chat turns deferred inside 40 minutes, composer
+# empty in all three). BRIGHT_FN blanks dim runs so `typed` sees only keystrokes.
+
+def _bright_fn_source():
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
+           / "emdash_control.mjs").read_text()
+    m = re.search(r"const BRIGHT_FN = String\.raw`([\s\S]*?)`;", src)
+    assert m, "BRIGHT_FN not found in emdash_control.mjs"
+    return m.group(1)
+
+
+def _typed(descriptors):
+    """Run the real readComposer pair (composerText over the full frame, and over
+    the dim-blanked one) against row descriptors, exactly as the sidecar does."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    script = (_composer_fn_source() + _bright_fn_source()
+              + "\nconst d = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              + "\nconst full = composerText(d.map(x => x.text));"
+              + "\nconst t = composerText(brightRows(d));"
+              + "\nprocess.stdout.write(JSON.stringify("
+              + "{found: full.found, text: full.text, typed: t.found ? t.text : full.text}));")
+    out = subprocess.run([node, "-e", script], input=json.dumps(descriptors),
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, f"brightRows/composerText crashed: {out.stderr[:300]}"
+    return json.loads(out.stdout)
+
+
+def _plain(text):
+    return {"text": text, "spans": [{"text": text, "dim": False}]}
+
+
+def _frame(*composer_rows):
+    """A fresh-session frame (see _fresh_session) in descriptor form."""
+    body = [_plain("  word: ready."), _plain(""), _plain("⏺ ready"), _plain("")]
+    return (body + [_plain(_RULE), *composer_rows, _plain(_RULE), _plain(_STATUS)]
+            + [_plain("")] * 24)
+
+
+def test_offered_suggestion_reads_as_empty_typed():
+    # THE repro, span-for-span as measured on a live emdash 2026-08-28: cursor block
+    # parked on the suggestion's first character, every cell after ❯ dim.
+    suggestion = {
+        "text": "❯ run the concept and visual judges on all three",
+        "spans": [
+            {"text": "❯ ", "dim": False},
+            {"text": "r", "dim": True},
+            {"text": "un the concept and visual judges on all three", "dim": True},
+        ],
+    }
+    r = _typed(_frame(suggestion))
+    assert r["found"] is True
+    assert r["text"] == "run the concept and visual judges on all three"
+    assert r["typed"] == ""          # nothing to collide with — the send must go through
+
+
+def test_real_typed_text_still_collides():
+    # The guard's whole reason to exist: undimmed keystrokes are never blanked.
+    typed = {
+        "text": "❯ okay so any changes we should do here?",
+        "spans": [
+            {"text": "❯ ", "dim": False},
+            {"text": "okay so any changes we should do here?", "dim": False},
+        ],
+    }
+    r = _typed(_frame(typed))
+    assert r["typed"] == "okay so any changes we should do here?"
+
+
+def test_typed_prefix_with_dim_completion_keeps_the_prefix():
+    # Half-typed, with claude completing the rest inline: the human's words are a
+    # real collision, the offered tail is not part of it.
+    mixed = {
+        "text": "❯ run the concept and visual judges",
+        "spans": [
+            {"text": "❯ ", "dim": False},
+            {"text": "run the ", "dim": False},
+            {"text": "concept and visual judges", "dim": True},
+        ],
+    }
+    r = _typed(_frame(mixed))
+    assert r["typed"] == "run the"
+
+
+def test_blanking_preserves_columns_so_the_frame_stays_findable():
+    # Dim runs are padded, not dropped. If they were dropped the ❯ row would shift
+    # and the structural scan would lose the composer entirely — reading UNREADABLE
+    # (refuse every send) instead of empty.
+    wrapped = [
+        {"text": "❯ a long offered line that", "spans": [
+            {"text": "❯ ", "dim": False},
+            {"text": "a long offered line that", "dim": True}]},
+        {"text": "  wraps onto more rows", "spans": [
+            {"text": "  wraps onto more rows", "dim": True}]},
+    ]
+    r = _typed(_frame(*wrapped))
+    assert r["found"] is True
+    assert r["text"] == "a long offered line that wraps onto more rows"
+    assert r["typed"] == ""
+
+
+def test_rows_without_spans_fall_back_to_text():
+    # xterm rows are spans, but a row can render as a bare text node; the fallback
+    # must not silently blank a real composer.
+    r = _typed(_frame({"text": "❯ typed with no spans", "spans": []}))
+    assert r["typed"] == "typed with no spans"
+
+
+def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
+    # If the box rules or ❯ were themselves dim the blanked frame would lose the
+    # composer, and this rule would not model that terminal. Fail CLOSED — report
+    # the full text (the human gets asked) rather than '' (send, and clobber it).
+    dim_everything = [
+        {"text": _RULE, "spans": [{"text": _RULE, "dim": True}]},
+        {"text": "❯ something already here", "spans": [
+            {"text": "❯ something already here", "dim": True}]},
+        {"text": _RULE, "spans": [{"text": _RULE, "dim": True}]},
+        {"text": _STATUS, "spans": [{"text": _STATUS, "dim": True}]},
+    ]
+    r = _typed([_plain("⏺ transcript"), *dim_everything])
+    assert r["found"] is True
+    assert r["typed"] == "something already here"

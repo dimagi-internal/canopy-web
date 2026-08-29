@@ -78,6 +78,14 @@ def _slug(text: str, n: int = 28) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:n].strip("-")
 
 
+def _preview(line: str, n: int = 120) -> str:
+    """Truncate a composer line for the log/event trail. It is the human's own
+    half-typed words, so it is bounded rather than dropped — enough to recognise
+    what blocked a send, not the whole thought."""
+    s = (line or "").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
 def _task_name(agent: str, turn: dict, now=None) -> str:
     """A HUMAN-READABLE, per-thread-UNIQUE emdash task name: agent + subject slug +
     a short thread discriminator + MMDD-HHMM, e.g. 'hal-security-alert-6355-0714-1514'.
@@ -139,11 +147,17 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
         return f"failed:{turn_id}"
 
     if res.get("action") == "collision":
-        choice = dialog.collision_choice(task, res.get("line", ""))
-        logger.info("collision on '%s' (turn=%s): unsent text in prompt — human chose %r",
-                    task, turn_id, choice)
+        line = res.get("line", "")
+        choice = dialog.collision_choice(task, line)
+        # Log the LINE, not just the choice. Without it a collision is unfalsifiable
+        # after the fact — a real half-typed thought and a misread ghost suggestion
+        # produce identical log entries, which is how the dim-suggestion misread ran
+        # unnoticed (see cdp/emdash_control.mjs, readComposer `typed`).
+        logger.info("collision on '%s' (turn=%s): unsent text in prompt %r — human chose %r",
+                    task, turn_id, _preview(line), choice)
         client.post_events(turn_id, [{"kind": "status",
-            "payload": {"status": "collision", "task": task, "choice": choice}}])
+            "payload": {"status": "collision", "task": task, "choice": choice,
+                        "line": _preview(line)}}])
         if choice == dialog.NEW:
             return None                         # leave the prompt untouched; create fresh
         if choice == dialog.CANCEL:
@@ -353,9 +367,10 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # asks the same way, because it is the SAME hazard and the human is right
         # there.
         if res.get("action") == "collision":
-            choice = dialog.collision_choice(task, res.get("line", ""))
-            logger.info("chat collision on '%s' (turn=%s): unsent text in prompt — "
-                        "human chose %r", task, turn_id, choice)
+            line = res.get("line", "")
+            choice = dialog.collision_choice(task, line)
+            logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
+                        "human chose %r", task, turn_id, _preview(line), choice)
             if choice == dialog.CLEAR:
                 cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port)
             elif choice == dialog.CANCEL:
