@@ -4,12 +4,16 @@
   counterpart to install-runner.sh's launchd path.
 
 .DESCRIPTION
-  The runner's Python is already platform-neutral: the producers (inbox.py,
-  schedules.py) shell out to `gog` and do date math, cdp_control drives emdash
-  through `node`, and the transcript layer is pure pathlib. What made the daemon
-  macOS-only was its SUPERVISION -- two launchd jobs and a `launchctl kickstart`.
-  This script provides the other half of that split (see canopy_runner/
-  platform_jobs.py for the in-process half).
+  The runner's Python is platform-neutral with two exceptions: the producers
+  (inbox.py, schedules.py) shell out to `gog` and do date math, cdp_control drives
+  emdash through `node`, and the transcript layer is pure pathlib. What made the
+  daemon macOS-only was its SUPERVISION -- two launchd jobs and a `launchctl
+  kickstart`. This script provides the other half of that split (see
+  canopy_runner/platform_jobs.py for the in-process half); the second exception is
+  the collision dialog, which carries its own split in canopy_runner/dialog.py
+  (osascript on macOS, WScript.Shell.Popup here). That one was macOS-only long
+  after this file said supervision was the only gap -- on Windows the collision
+  dialog never rendered and the message was dropped without anyone being asked.
 
   It mirrors install-runner.sh step for step, deliberately:
 

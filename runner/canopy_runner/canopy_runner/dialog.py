@@ -1,20 +1,40 @@
-"""Native macOS dialog for runner↔human collision resolution.
+"""Native dialog for runner↔human collision resolution — macOS AND Windows.
 
 When the runner goes to deliver a turn into a live emdash session and finds the
 prompt already holds unsent text — almost always the human's own words, leaked in
 when emdash switched to that task while they were typing elsewhere — it asks the
 human where to send instead of clobbering the line.
 
-Renders via `osascript display dialog`, which only works when the runner runs in
-the user's Aqua GUI session (a launchd **LaunchAgent**, which
-`com.canopy.runner` is — not a LaunchDaemon). If osascript is unavailable or the
-dialog times out with nobody answering, the choice comes back as NEW — the
-non-destructive default (route to a fresh session, leave the existing prompt
-untouched). We NEVER delete the human's text without an explicit "Clear & send".
+**This was macOS-only, and silently so.** `platform_jobs` says the rest of the
+runner is platform-neutral and that supervision is the only OS-specific thing;
+that was true of every module except this one. On Windows `osascript` raised
+FileNotFoundError, the except arm returned NEW, and the human was never asked —
+so a collision there did not degrade to "ask later", it degraded to a chat
+message the sender watched vanish. That is worse than on macOS, where the dialog
+at least appears if someone is at the machine. Two renderers now, one contract.
+
+- **macOS** — `osascript display dialog`, three real buttons, which only works
+  when the runner is in the user's Aqua GUI session (a launchd **LaunchAgent**,
+  which `com.canopy.runner` is — not a LaunchDaemon).
+- **Windows** — `WScript.Shell.Popup` via PowerShell, run under the interactive
+  Scheduled Task (`\\Canopy\\canopy-runner`, registered for the logged-in user
+  precisely so it has a desktop). Popup is the one native prompt that takes a
+  TIMEOUT, which the contract below depends on; a WinForms MessageBox would hang
+  forever with nobody there. Its button labels are fixed by the OS, so the
+  Yes/No/Cancel triple is mapped to our three choices and the mapping is spelled
+  out in the message body rather than left for the reader to guess.
+
+Either way, if the dialog cannot render or times out with nobody answering, the
+choice comes back as NEW — the non-destructive default (route to a fresh session,
+leave the existing prompt untouched). We NEVER delete the human's text without an
+explicit "Clear & send".
 """
 from __future__ import annotations
 
+import os as _os
 import subprocess
+
+from . import platform_jobs
 
 # The three button labels — also the return values. Kept identical to the AppleScript
 # button strings below so a returned label round-trips by equality.
@@ -38,6 +58,34 @@ _APPLESCRIPT = """on run argv
     return button returned of r
 end run"""
 
+# Windows counterpart. WScript.Shell.Popup(text, seconds, title, flags) is the only
+# native prompt that self-times-out; flags 3 = Yes/No/Cancel, +32 = question icon.
+# Returns 6=Yes, 7=No, 2=Cancel, and -1 when it gave up — the exact shape the
+# AppleScript's `gave up of r` gives us, so both branches share one contract.
+# The message text is passed on stdin, not interpolated, so a composer line
+# carrying quotes or a `$` cannot break out into PowerShell.
+_POWERSHELL = r"""
+$msg = [Console]::In.ReadToEnd()
+try {
+  $w = New-Object -ComObject WScript.Shell
+  $r = $w.Popup($msg, $env:CANOPY_DIALOG_TIMEOUT -as [int], "canopy runner - session busy", 3 + 32)
+} catch { Write-Output "New session"; exit 0 }
+switch ($r) {
+  6       { Write-Output "Clear & send" }
+  7       { Write-Output "New session" }
+  2       { Write-Output "Cancel" }
+  default { Write-Output "New session" }   # -1 = timed out, nobody there
+}
+"""
+
+#: Windows MessageBox labels are the OS's, not ours, so the mapping has to be
+#: visible in the body. macOS renders our three labels directly and needs no key.
+_WINDOWS_KEY = (
+    "\n\n[ Yes ] = Clear & send     "
+    "[ No ] = New session     "
+    "[ Cancel ] = do nothing"
+)
+
 
 def collision_choice(task: str, line: str, *, timeout: int = 30) -> str:
     """Ask the human where to deliver when session `task`'s prompt already has text.
@@ -55,13 +103,26 @@ def collision_choice(task: str, line: str, *, timeout: int = 30) -> str:
         f"•  New session — leave it, send to a fresh session\n"
         f"•  Cancel — do nothing (retry later)"
     )
+    # `timeout` must be positive on BOTH renderers: AppleScript's `giving up after 0`
+    # and Popup's 0 both mean "wait forever", which would wedge the runner's turn
+    # loop behind a dialog nobody is looking at.
+    timeout = max(1, int(timeout))
+    if platform_jobs.is_windows():
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", _POWERSHELL]
+        stdin, env = msg + _WINDOWS_KEY, {"CANOPY_DIALOG_TIMEOUT": str(timeout)}
+    else:
+        cmd = ["osascript", "-", msg, str(timeout)]
+        stdin, env = _APPLESCRIPT, None
     try:
         proc = subprocess.run(
-            ["osascript", "-", msg, str(timeout)],
-            input=_APPLESCRIPT,
+            cmd,
+            input=stdin,
             capture_output=True,
             text=True,
-            timeout=timeout + 10,   # osascript self-times-out at `timeout`; this is a backstop
+            # Both renderers self-time-out at `timeout`; this is the backstop for a
+            # renderer that hangs instead (no desktop, a wedged COM host).
+            timeout=timeout + 10,
+            **({"env": {**_os.environ, **env}} if env else {}),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return NEW
