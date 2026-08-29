@@ -476,7 +476,7 @@ def _typed(descriptors):
               + "\nconst full = composerText(d.map(x => x.text));"
               + "\nconst t = composerText(brightRows(d));"
               + "\nprocess.stdout.write(JSON.stringify("
-              + "{found: full.found, text: full.text, typed: t.found ? t.text : ''}));")
+              + "{found: full.found, text: full.text, typed: t.found ? t.text : full.text}));")
     out = subprocess.run([node, "-e", script], input=json.dumps(descriptors),
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, f"brightRows/composerText crashed: {out.stderr[:300]}"
@@ -561,3 +561,19 @@ def test_rows_without_spans_fall_back_to_text():
     # must not silently blank a real composer.
     r = _typed(_frame({"text": "❯ typed with no spans", "spans": []}))
     assert r["typed"] == "typed with no spans"
+
+
+def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
+    # If the box rules or ❯ were themselves dim the blanked frame would lose the
+    # composer, and this rule would not model that terminal. Fail CLOSED — report
+    # the full text (the human gets asked) rather than '' (send, and clobber it).
+    dim_everything = [
+        {"text": _RULE, "spans": [{"text": _RULE, "dim": True}]},
+        {"text": "❯ something already here", "spans": [
+            {"text": "❯ something already here", "dim": True}]},
+        {"text": _RULE, "spans": [{"text": _RULE, "dim": True}]},
+        {"text": _STATUS, "spans": [{"text": _STATUS, "dim": True}]},
+    ]
+    r = _typed([_plain("⏺ transcript"), *dim_everything])
+    assert r["found"] is True
+    assert r["typed"] == "something already here"

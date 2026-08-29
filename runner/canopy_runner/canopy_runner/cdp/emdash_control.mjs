@@ -351,7 +351,12 @@ try {
       }));
       const full = composerText(descriptors.map(d => d.text));
       const typed = composerText(brightRows(descriptors));
-      return { found: full.found, text: full.text, typed: typed.found ? typed.text : '' };
+      // If the blanked frame LOSES the composer the structure itself was dim, which
+      // this rule does not model — so fall back to the full text (a collision, the
+      // human is asked) rather than to '' (send, and clobber whatever is there).
+      // Every send site in this file fails closed; this one does too.
+      return { found: full.found, text: full.text,
+               typed: typed.found ? typed.text : full.text };
     })(); })()`);
     // A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
     // task click, a menu/dialog covering the input, or a clipped stale frame (all
