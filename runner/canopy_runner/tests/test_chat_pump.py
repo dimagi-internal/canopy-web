@@ -99,37 +99,111 @@ def test_pump_retries_undelivered_text_instead_of_losing_it():
     assert client.finished[0][1] == "done"
 
 
-def test_pump_cancels_via_interrupt_and_finishes_cancelled(monkeypatch):
+def _interrupts(monkeypatch, *actions):
+    """Stub cdp_control.interrupt to return `actions` in order (last one repeats).
+    An element that is an Exception is raised instead. Records the calls."""
     from canopy_runner import cdp_control
 
-    interrupted = {}
-    monkeypatch.setattr(cdp_control, "interrupt",
-                        lambda task, port=None: interrupted.update(task=task, port=port))
+    calls = []
+    seq = list(actions)
+
+    def _fake(task, port=None):
+        calls.append((task, port))
+        action = seq.pop(0) if len(seq) > 1 else seq[0]
+        if isinstance(action, Exception):
+            raise action
+        return {"ok": True, "task": task, "action": action}
+
+    monkeypatch.setattr(cdp_control, "interrupt", _fake)
+    return calls
+
+
+def test_pump_cancels_via_interrupt_and_finishes_cancelled(monkeypatch):
+    calls = _interrupts(monkeypatch, "interrupted")
 
     client = _FakeClient()
     _register([[]])
     cancel.CANCELLED_TURNS.add("t1")
     chat_pump.pump_chat_bridges(_cfg(), client)
 
-    assert interrupted == {"task": "echo-1", "port": 9222}
+    assert calls == [("echo-1", 9222)]
     assert client.finished == [("t1", "cancelled", "cancelled by user")]
     assert chat_bridge.IN_FLIGHT == {}
     assert "t1" not in cancel.CANCELLED_TURNS
 
 
-def test_pump_cancel_survives_a_failed_interrupt(monkeypatch):
-    """Cancel must not get stuck because the Escape press failed (emdash closed)."""
-    from canopy_runner import cdp_control
-
-    def _boom(task, port=None):
-        raise RuntimeError("emdash gone")
-
-    monkeypatch.setattr(cdp_control, "interrupt", _boom)
+def test_pump_cancel_of_an_already_idle_session_is_still_a_cancel(monkeypatch):
+    """The stop raced the reply: nothing was running. The user still asked to stop."""
+    _interrupts(monkeypatch, "idle")
     client = _FakeClient()
     _register([[]])
     cancel.CANCELLED_TURNS.add("t1")
     chat_pump.pump_chat_bridges(_cfg(), client)
-    assert client.finished == [("t1", "cancelled", "cancelled by user")]
+    assert client.finished[0][1] == "cancelled"
+    assert "already stopped" in client.finished[0][2]
+
+
+def test_pump_retries_a_stop_that_did_not_take_then_reports_it_failed(monkeypatch):
+    """THE REGRESSION THIS FILE USED TO ASSERT THE WRONG WAY ROUND.
+
+    An Escape that does not stop the agent must never finish the turn `cancelled` —
+    that is the website saying "stopped" over an agent that is still working. Retry,
+    then say what actually happened."""
+    calls = _interrupts(monkeypatch, "still-running")
+    client = _FakeClient()
+    _register([[], [], []])
+    cancel.CANCELLED_TURNS.add("t1")
+
+    for _ in range(chat_pump.CANCEL_MAX_ATTEMPTS - 1):
+        chat_pump.pump_chat_bridges(_cfg(), client)
+        assert client.finished == [], "an unconfirmed stop must keep trying, not finish"
+        assert "t1" in chat_bridge.IN_FLIGHT
+
+    chat_pump.pump_chat_bridges(_cfg(), client)
+    assert len(calls) == chat_pump.CANCEL_MAX_ATTEMPTS
+    assert client.finished[0][:2] == ("t1", "failed")
+    assert "still running" in client.finished[0][2]
+    assert chat_bridge.IN_FLIGHT == {}
+    # And the person who pressed stop has to SEE it. A terminal status carries no
+    # client-visible frame, so without this the failed stop looks exactly like a
+    # successful one: the reply simply stops arriving.
+    assert [e["kind"] for e in client.events] == ["error"]
+    assert "still running" in client.events[0]["payload"]["detail"]
+
+
+def test_pump_cancel_survives_a_failed_interrupt(monkeypatch):
+    """Cancel must not get stuck because the Escape press failed (emdash closed).
+
+    Still CANCELLED — an unreadable frame is not evidence the agent kept running, and
+    "emdash is gone" really does end the turn — but the note carries the uncertainty
+    instead of claiming a clean stop."""
+    _interrupts(monkeypatch, RuntimeError("emdash gone"))
+    client = _FakeClient()
+    _register([[], [], []])
+    cancel.CANCELLED_TURNS.add("t1")
+    for _ in range(chat_pump.CANCEL_MAX_ATTEMPTS):
+        chat_pump.pump_chat_bridges(_cfg(), client)
+    assert client.finished[0][:2] == ("t1", "cancelled")
+    assert "could not be verified" in client.finished[0][2]
+    assert "emdash gone" in client.finished[0][2]
+
+
+def test_pump_treats_an_old_sidecar_as_unverified_not_success(monkeypatch):
+    """A sidecar predating the verifying `interrupt` returns no `action`. The runner
+    and the sidecar update separately, so that version WILL run under this code — and
+    reading a missing key as success is exactly the false green being removed."""
+    from canopy_runner import cdp_control
+
+    monkeypatch.setattr(cdp_control, "interrupt", lambda task, port=None: {"ok": True})
+    client = _FakeClient()
+    _register([[], [], []])
+    cancel.CANCELLED_TURNS.add("t1")
+    chat_pump.pump_chat_bridges(_cfg(), client)
+    assert client.finished == [], "no `action` is unverified — retry, don't declare victory"
+    for _ in range(chat_pump.CANCEL_MAX_ATTEMPTS - 1):
+        chat_pump.pump_chat_bridges(_cfg(), client)
+    assert client.finished[0][:2] == ("t1", "cancelled")
+    assert "could not be verified" in client.finished[0][2]
 
 
 def test_pump_survives_an_unreadable_transcript():

@@ -230,11 +230,27 @@ def send_keys(task: str, keys: list[str], *, port: int = 9222) -> dict:
 
 
 def interrupt(task: str, *, port: int = 9222) -> dict:
-    """Press Escape in the task's emdash session — interrupts the running turn.
+    """Press Escape in the task's emdash session and VERIFY it stopped.
 
     Opens `task` the same way `open_and_send` does (no text is inserted), then sends
     Escape, which Claude Code's TUI treats as "stop the current turn". Raises CDPError
-    if the task isn't present (mirrors open_and_send's TASK_NOT_FOUND)."""
+    if the task isn't present (mirrors open_and_send's TASK_NOT_FOUND).
+
+    Returns ``{"action": ...}`` — the sidecar reports what it SAW, and the caller
+    decides what it means:
+
+    * ``interrupted``   — the running marker was there and is gone. The stop landed.
+    * ``idle``          — nothing was running. A stop that raced the reply; cancelling
+                          the turn is still correct.
+    * ``still-running`` — two Escapes and Claude Code is STILL running. The stop did
+                          not land, and reporting the turn cancelled would be a lie.
+    * ``unreadable``    — the frame could not be identified. We make no claim; the
+                          caller treats this as unverified rather than as failure,
+                          because a false red is still a wrong answer.
+
+    An older sidecar returns no ``action`` at all; callers must treat a missing key
+    as ``unreadable`` (unverified), never as success — a runner and its sidecar are
+    updated separately, so the un-verifying version WILL be live under this code."""
     return _run("interrupt", {"task": task, "port": port})
 
 

@@ -413,10 +413,57 @@ try {
     // Cancel: open the task exactly as open-send does (find + focus its terminal),
     // but instead of inserting text just press Escape — Claude Code's TUI treats Esc
     // as "stop the current turn" mid-flight.
+    //
+    // AND THEN CHECK. This used to be `press('Escape'); out({ok:true})` — a keypress
+    // fired at a pane and reported as a stop, with no readback of any kind. Every
+    // send site in this file verifies what it did; the one command whose entire job
+    // is "make the agent stop" did not, so a stop that missed was indistinguishable
+    // from one that landed, all the way up to a web UI that said "cancelled".
+    //
+    // The running-state signal is Claude Code's own status line, `esc to interrupt`
+    // — the same marker `activeTerm`, `composerText` and the send-keys pane check
+    // already key off, so this adds no new contract to drift (verify-emdash covers
+    // it). Two presses, because Esc is context-sensitive: with a dialog up the first
+    // one dismisses the dialog and the turn keeps running.
+    //
+    // Reports FACTS, never a verdict, and never fails the command — the runner
+    // decides what a non-stop means (chat_pump.finish_chat_bridge):
+    //   interrupted  = was running, is not now
+    //   idle         = nothing was running to interrupt (a stop that raced the reply)
+    //   still-running = pressed twice, the status line is still there
+    //   unreadable   = could not see the frame; we make NO claim either way
     const { task } = args;
     await openTask(task);
-    await page.keyboard.press('Escape');   // Claude Code: Esc interrupts the running turn
-    out({ ok: true, task });
+    const running = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+      const term = activeTerm();
+      const rows = term && term.querySelector('.xterm-rows');
+      if (!rows) return null;                       // no frame to read — not "stopped"
+      const text = rows.textContent || '';
+      if (/esc to interrupt/i.test(text)) return true;
+      // A frame we can positively identify as Claude's, without the running marker,
+      // is a real "not running". Anything else is unreadable, not idle — the
+      // distinction this whole branch exists to preserve.
+      if (/[⏺✻⎿]/.test(text) || /shift\\+tab to cycle|bypass permissions/i.test(text)) return false;
+      return null;
+    })(); })()`);
+
+    const before = await running();
+    if (before === false) { out({ ok: true, task, action: 'idle' }); }
+    else {
+      let state = before;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await page.keyboard.press('Escape');   // Claude Code: Esc interrupts the running turn
+        // Give the TUI time to repaint its status line before believing the frame.
+        for (let i = 0; i < 5; i++) {
+          await page.waitForTimeout(400);
+          state = await running();
+          if (state === false) break;
+        }
+        if (state === false) break;
+      }
+      out({ ok: true, task,
+            action: state === false ? 'interrupted' : state === true ? 'still-running' : 'unreadable' });
+    }
 
   } else if (command === 'close-task') {
     // Delete `task` from the sidebar (the designed close behaviour). emdash's context

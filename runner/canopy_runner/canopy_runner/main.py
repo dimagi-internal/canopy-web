@@ -506,7 +506,17 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         # ids aren't reused today, but leaking membership is a latent footgun either
         # way — and it just keeps a module-level set growing unbounded for the life
         # of the process).
-        CANCELLED_TURNS.discard(turn["id"])
+        #
+        # UNLESS a chat bridge now owns the turn. `cancel` arrives on the wake-listener
+        # THREAD while this one is still inside execute_turn, and that window is long:
+        # the CDP send, plus `_wait_for_transcript` — up to 45 SECONDS for a freshly
+        # created session. An id added during it was read by nobody (execute_chat_turn
+        # hands off without consulting it) and then wiped right here, so the pump never
+        # saw the stop, the agent ran the whole turn, and the server's DONE ->
+        # CANCELLED backstop labelled the finished turn "cancelled" anyway. Press stop
+        # in that window and it looked like it worked; nothing had been interrupted.
+        if turn["id"] not in chat_bridge.IN_FLIGHT:
+            CANCELLED_TURNS.discard(turn["id"])
         _mark_in_flight(cfg)
 
 

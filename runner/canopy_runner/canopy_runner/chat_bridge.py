@@ -136,6 +136,10 @@ class LiveBridge:
     raw_pending: list[str] = field(default_factory=list)
     raw_batches_sent: int = 0
     transcript_truncated: bool = False
+    # Stops attempted on this turn whose interrupt did NOT confirm. Between-tick
+    # state for the same reason everything else here is: `cancel_chat_bridge` retries
+    # the Escape across ticks rather than finishing on the first unconfirmed press.
+    cancel_attempts: int = 0
 
     def step(self, new_records: list[dict], raw_lines: list[str] | None = None,
              blocked: bool = False) -> None:

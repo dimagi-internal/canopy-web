@@ -212,3 +212,29 @@ def test_a_bounce_with_no_dialog_on_screen_stays_a_plain_failure(monkeypatch):
     assert res.startswith("failed:")
     assert not [e for s in client.streamed for e in s["events"]
                 if e["kind"] == "activity:blocked"]
+
+
+def test_a_stop_before_delivery_sends_nothing_at_all(monkeypatch, tmp_path):
+    """The cheapest cancel there is: the human pressed stop between the claim and the
+    send, so the message must never reach the agent's session.
+
+    `cancel_check` used to be "accepted for signature compatibility and is no longer
+    read here", which made this cancel impossible — the only consumer of the signal
+    was the pump, and at this point there is no bridge for it to pump. The message was
+    typed into the agent regardless, and the turn then ran to completion."""
+    sent = []
+    monkeypatch.setattr(execute.cdp_control, "create_task",
+                        lambda *a, **k: sent.append(a) or {"task": "echo-1234"})
+    monkeypatch.setattr(execute.cdp_control, "open_and_send",
+                        lambda *a, **k: sent.append(a) or {"action": "sent"})
+
+    cfg = types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent")
+    client = _FakeClient()
+
+    res = execute.execute_chat_turn(cfg, client, "runner1", _turn(),
+                                    cancel_check=lambda tid: tid == "t1")
+
+    assert res == "cancelled:t1"
+    assert sent == [], "nothing may be delivered into the agent's session"
+    assert client.finished_status == "cancelled"
+    assert chat_bridge.IN_FLIGHT == {}, "no bridge to pump — the turn is already over"
