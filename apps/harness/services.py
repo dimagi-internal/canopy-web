@@ -975,14 +975,40 @@ def finish_turn(
     """
     if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
         raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
-    if status == Turn.DONE and turn.events.filter(kind="cancel_requested").exists():
-        # Server-side backstop (a deaf/poll-only runner can miss the
-        # runner.cancel control frame entirely and finish DONE anyway,
-        # stranding a cancel_requested event with no CANCELLED turn to match
-        # it). Mirrors sweep_expired_leases's same reasoning: the user asked to
-        # stop, so a full reply that raced through the interrupt is still a
-        # cancelled turn, not a done one.
-        status = Turn.CANCELLED
+    # A turn that RAN TO COMPLETION after a stop was requested. This used to be
+    # rewritten DONE -> CANCELLED, on the reasoning that the user asked to stop so a
+    # reply that raced the interrupt "is still a cancelled turn". That records the
+    # user's INTENT in the field that is supposed to record the OUTCOME, and it costs
+    # more than it buys:
+    #
+    #   * The turn carries a complete reply. Labelling it `cancelled` puts a full
+    #     answer under a status that says it was stopped — self-contradictory on its
+    #     face, and unreadable to anyone auditing a session later.
+    #   * A stop that worked and a stop that was completely ignored both stored
+    #     `cancelled`, so the ledger could not tell them apart. That is exactly what
+    #     made "stop doesn't seem reliable" so hard to pin down (#649): the record
+    #     said the same thing either way.
+    #   * A scheduled occurrence that completed did NOT discharge its nag, because
+    #     the discharge below keys on DONE and the coercion had moved it. The work
+    #     was done and the board still asked for attention.
+    #
+    # And the "stranded cancel_requested" it was written to prevent is not stranded:
+    # the event is on the ledger, which is the durable record, and `cancel_requested`
+    # on a DONE turn is precisely the fact worth keeping — we asked, it finished
+    # anyway. So keep the outcome truthful and make the failed stop legible instead.
+    #
+    # Scoped deliberately to this case. `sweep_expired_leases` keeps its own
+    # cancel_requested -> CANCELLED rule: there the turn did NOT complete and the
+    # runner vanished mid-flight, so nothing knows what the agent did, and neither
+    # label is a claim about a finished reply.
+    stop_ignored = (
+        status == Turn.DONE and turn.events.filter(kind="cancel_requested").exists()
+    )
+    if stop_ignored:
+        result_note = (
+            f"{result_note} — NOTE: you asked to stop this turn and it ran to "
+            f"completion anyway; the cancel never reached the runner"
+        ).lstrip(" —")
     now = timezone.now()
     from_states = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
     if allow_queued:
@@ -994,6 +1020,14 @@ def finish_turn(
     if not updated:
         return turn
     append_events(turn, [{"kind": "status", "payload": {"status": status, "result_note": result_note}}])
+    if stop_ignored:
+        # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event
+        # carries no client-visible frame (stream_map.turn_event_to_frames), so the
+        # truthful DONE above would otherwise be indistinguishable, on screen, from a
+        # turn nobody tried to stop. `error` renders as chat.stream_error.
+        append_events(turn, [{"kind": "error", "payload": {
+            "detail": "your stop never reached the runner — this turn ran to completion",
+        }}])
     # A finished scheduled occurrence discharges any open nag for its schedule —
     # you no longer owe attention to a slot that has since completed.
     if status == Turn.DONE:
@@ -1011,8 +1045,18 @@ def finish_turn(
     # mode this hook exists to prevent for FAILED.
     # Keyed on the RunnerDrill FK, not the origin: a drill is an ordinary `api`
     # turn that names its runner, and the filter no-ops for a non-drill turn.
-    if status in (Turn.FAILED, Turn.CANCELLED):
-        if status == Turn.CANCELLED:
+    #
+    # `stop_ignored` is here for the same anti-stranding reason, and it is the one
+    # thing that had to move when the DONE -> CANCELLED coercion went away: such a
+    # turn USED to arrive here as CANCELLED and resolve its drill. Keying the hook on
+    # the status alone would have let it fall through as DONE and strand
+    # OUTCOME_PENDING forever — reintroducing, through the side door, the exact
+    # failure this hook exists to prevent. The drill's resolution depends on "a stop
+    # was requested", not on which label the turn ended up with.
+    if status in (Turn.FAILED, Turn.CANCELLED) or stop_ignored:
+        if stop_ignored:
+            summary = "drill turn completed after a cancel that never landed"
+        elif status == Turn.CANCELLED:
             summary = "drill turn cancelled"
         else:
             summary = result_note or "drill turn failed"
