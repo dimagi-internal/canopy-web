@@ -112,6 +112,33 @@ function composerText(rows) {
 }
 `;
 
+// TYPED vs OFFERED — the other half of the collision guard. claude renders an
+// inline suggestion (its offered next prompt, and its ghost hints) as DIM cells:
+// xterm gives them `.xterm-dim` / rgba(...,0.5) and parks the block cursor on the
+// suggestion's FIRST character. Real keystrokes are never dim. Reading the rows as
+// bare textContent threw that distinction away, so an offered suggestion read
+// exactly like a half-typed thought and every send into that session came back
+// `collision` — a dialog nobody was there to answer, defaulting to "don't deliver".
+// Measured on a live emdash 2026-08-28: three chat turns deferred inside 40 minutes
+// with the composer empty in all three, the whole line dim, cursor on its first char.
+//
+// Input is one descriptor per row, `{ text, spans: [{ text, dim }] }`. Dim runs are
+// blanked to spaces of the SAME WIDTH rather than dropped, so column positions — and
+// the box rules composerText() keys on — come through unchanged, which is what lets
+// the same scan run over both the full frame and the typed-only one.
+const BRIGHT_FN = String.raw`
+function brightRows(rows) {
+  return rows.map(r => {
+    const spans = r.spans || [];
+    if (!spans.length) return r.text || '';
+    return spans.map(s => {
+      const t = s.text || '';
+      return s.dim ? ' '.repeat(t.length) : t;
+    }).join('');
+  });
+}
+`;
+
 const command = process.argv[2];
 const args = JSON.parse(process.argv[3] || '{}');
 const port = args.port || 9222;
@@ -308,11 +335,23 @@ try {
     // draws its composer near the TOP of the pane (measured: row 13 of 38, the
     // whole scanned window blank) — which is exactly the state every new chat
     // session is in (#521).
-    const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; ${COMPOSER_FN}; return (() => {
+    // Returns {found, text, typed}: `text` is everything rendered in the composer,
+    // `typed` only the part the HUMAN put there (see BRIGHT_FN — dim cells are the
+    // suggestion claude is offering, not keystrokes). `found` comes from the full
+    // frame, since the box rules and ❯ that make a composer findable are never dim.
+    const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; ${COMPOSER_FN}; ${BRIGHT_FN}; return (() => {
       const term = activeTerm();
-      if (!term) return { found: false, text: '' };
-      const rows = [...term.querySelectorAll('.xterm-rows > div')].map(r => r.textContent || '');
-      return composerText(rows);
+      if (!term) return { found: false, text: '', typed: '' };
+      const descriptors = [...term.querySelectorAll('.xterm-rows > div')].map(r => ({
+        text: r.textContent || '',
+        spans: [...r.children].map(s => ({
+          text: s.textContent || '',
+          dim: (s.className || '').includes('xterm-dim'),
+        })),
+      }));
+      const full = composerText(descriptors.map(d => d.text));
+      const typed = composerText(brightRows(descriptors));
+      return { found: full.found, text: full.text, typed: typed.found ? typed.text : '' };
     })(); })()`);
     // A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
     // task click, a menu/dialog covering the input, or a clipped stale frame (all
@@ -320,7 +359,7 @@ try {
     // a blind send would append into a composer we cannot see. The runner treats a
     // CDPError as "task exists but undrivable" and retries the turn; it never
     // duplicates the session.
-    let composer = { found: false, text: '' };
+    let composer = { found: false, text: '', typed: '' };
     for (let attempt = 0; attempt < 4; attempt++) {
       composer = await readComposer();
       if (composer.found) break;
@@ -331,7 +370,9 @@ try {
            `(mid-redraw, a menu is up, or a stale frame) — refusing a blind send`);
     }
     // Ghost/placeholder hints claude shows in an EMPTY input — treat as empty so the
-    // fast path still fires instead of popping a spurious collision dialog.
+    // fast path still fires instead of popping a spurious collision dialog. `typed`
+    // (above) already blanks every dim cell, which is the general form of this rule;
+    // the prefix list stays as a second net for any hint claude renders undimmed.
     const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
     const isEmpty = (s) => !s || PLACEHOLDER.test(s);
 
@@ -343,7 +384,10 @@ try {
       await page.keyboard.press('Control+U');
       for (let i = 0; i < 6; i++) {
         const cur = await readComposer();
-        const n = Math.min(cur.found ? cur.text.length : 0, 300);
+        // `typed`, not `text`: once Ctrl+U empties the line claude re-offers a
+        // suggestion into it, and measuring THAT would backspace forever against
+        // text no keystroke can delete.
+        const n = Math.min(cur.found ? cur.typed.length : 0, 300);
         if (n === 0) break;
         await page.keyboard.press('End');
         for (let k = 0; k < n; k++) await page.keyboard.press('Backspace');
@@ -351,9 +395,9 @@ try {
       await page.keyboard.insertText(text);
       await page.keyboard.press('Enter');
       out({ ok: true, action: 'sent-cleared', task });
-    } else if (!isEmpty(composer.text)) {
+    } else if (!isEmpty(composer.typed)) {
       // Don't touch it — hand the collision back to the runner to ask the human.
-      out({ ok: true, action: 'collision', task, line: composer.text });
+      out({ ok: true, action: 'collision', task, line: composer.typed });
     } else {
       await page.keyboard.insertText(text);   // atomic commit, not char-by-char
       await page.keyboard.press('Enter');
