@@ -1122,6 +1122,44 @@ def answer_menu(*, session: Session, option: int | None,
     return "sent"
 
 
+def interrupt_session(session: Session) -> str:
+    """Stop whatever this session's agent is doing, by interrupting its TERMINAL.
+
+    The turn-shaped stop (`cancel_session_turns` below) can only reach work a
+    non-terminal Turn still owns, which in practice means chat. An agent, board or
+    scheduled turn is fire-and-continue: `execute_turn` finishes it the moment the
+    prompt is delivered (runner execute.py), so seconds later the agent is working
+    hard on a turn that is already DONE, and a stop keyed on turns finds nothing to
+    cancel and silently does nothing.
+
+    But the work is not turn-shaped, it is SESSION-shaped, and canopy already knows
+    the session: `harness.services.record_session` gives every agent/project/phone
+    thread a durable Session plus a RunnerBinding carrying `session_key` — the very
+    same binding `answer_menu` above uses to press a key into that terminal. So
+    stopping is addressed exactly like answering: name the session, let the runner
+    own the keystroke.
+
+    Returns "sent" | "unavailable" | "unbound", mirroring `answer_menu`'s refusal
+    shape rather than raising — a session can go idle between a thumb reaching the
+    button and the frame landing, and that is ordinary, not an error.
+    """
+    binding = getattr(session, "runner_binding", None)
+    if binding is None or binding.runner_id is None or not binding.session_key:
+        return "unbound"
+    # Same reasoning as answer_menu: pause stops STARTING work, never finishing it,
+    # and an agent mid-turn is work already running. Reachable, not available.
+    if not binding.runner.is_reachable:
+        return "unavailable"
+
+    from apps.realtime import groups
+    groups.publish(groups.runner_group(binding.runner_id), {
+        "type": "runner.session_interrupt",
+        "session_id": str(session.id),
+        "session_key": binding.session_key,
+    })
+    return "sent"
+
+
 def cancel_session_turns(session: Session) -> bool:
     """Cancel every non-terminal turn on a session. Returns whether anything moved.
 

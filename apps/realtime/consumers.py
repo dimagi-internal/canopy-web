@@ -244,6 +244,19 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # cancel set every bridge poll (~0.5s), interrupts emdash, finishes CANCELLED.
         await self.send_json({"type": "cancel", "turn_id": message.get("turn_id")})
 
+    async def runner_session_interrupt(self, message):
+        # runner.{id} group_send type="runner.session_interrupt" — the user asked to
+        # stop a SESSION rather than a turn. The turn-shaped cancel above can only
+        # reach work a live Turn still owns; an agent/board/scheduled turn is
+        # fire-and-continue and terminal seconds after delivery, so this is the only
+        # route that reaches it. The runner presses Escape in that session's
+        # terminal, keyed on session_key exactly as menu_answer is.
+        await self.send_json({
+            "type": "session_interrupt",
+            "session_id": message.get("session_id"),
+            "session_key": message.get("session_key"),
+        })
+
     async def runner_stream(self, message):
         # runner.{id} group_send type="runner.stream" — start/stop live streaming a
         # session this runner backs. Forwarded to the runner socket; the runner also
