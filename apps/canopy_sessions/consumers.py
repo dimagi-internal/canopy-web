@@ -153,8 +153,17 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # but only when something was actually cancelled/cancel-requested, so a
         # stray Stop with nothing to cancel doesn't flip everyone's UI to
         # "cancelled" for no reason.
-        stopped = await database_sync_to_async(self._stop_session)()
-        if not stopped:
+        route = await database_sync_to_async(self._stop_session)()
+        if not route:
+            return
+        if route == "session":
+            # NOT `chat.stream_cancelled`. All that has happened is that a frame was
+            # published to the runner; nothing has pressed Escape yet, and it may
+            # well fail (#649 exists because it often did). Claiming "cancelled"
+            # here would be the same false green that bug was about, moved onto the
+            # new path. Say what is actually true — we asked — and let the runner
+            # report whether it landed (`stop:stopped` / `stop:failed`).
+            await self._broadcast({"type": "session.stop", "state": "requested"})
             return
         await self._broadcast({
             "type": "chat.stream_cancelled",
@@ -178,8 +187,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             draft.save(update_fields=["body", "version", "updated_at"])
         return draft
 
-    def _stop_session(self) -> bool:
+    def _stop_session(self) -> str:
         """Stop this session, by whichever route actually owns the running work.
+
+        Returns WHICH route fired — "turns" | "session" | "" — because the two mean
+        different things to the client and must not be reported identically. A
+        cancelled turn is a cancellation that has happened; a published session
+        interrupt is a request that has not been attempted yet.
 
         TURNS FIRST. A chat reply is owned by a live Turn: cancelling it is what
         records the intent, reaches a queued turn behind the running one, and lets
@@ -207,8 +221,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             if harness_services.cancel_turn(turn) is not None:
                 cancelled = True
         if cancelled:
-            return True
-        return chat_services.interrupt_session(self.session) == "sent"
+            return "turns"
+        return "session" if chat_services.interrupt_session(self.session) == "sent" else ""
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
@@ -270,6 +284,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({
             "event": "chat.stream_cancelled",
             "data": {"message_id": message.get("message_id"), "partial_len": message.get("partial_len", 0)},
+        })
+
+    async def session_stop(self, message):
+        # "requested" comes from here, the moment we publish to the runner.
+        # "stopped"/"failed" come from the runner itself, up the session stream
+        # as `stop:` events (stream_map) — this handler serves the first only.
+        await self.send_json({
+            "event": "session.stop", "data": {"state": message.get("state", "requested")},
         })
 
     async def presence_joined(self, message):

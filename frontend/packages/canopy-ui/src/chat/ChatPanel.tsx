@@ -176,6 +176,7 @@ export function ChatPanel({
         onUpdate={onUpdateDraft}
         onSend={onSend}
         onStop={onStop}
+        stopState={state.stopState}
         onTakeOver={onTakeOver}
         banner={banner}
         disabledReason={disabledReason}

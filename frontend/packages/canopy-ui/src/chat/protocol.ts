@@ -131,6 +131,16 @@ export interface SessionState {
    *  those apart — but it is the difference between "still thinking, wait" and
    *  "it is waiting on YOU", which previously rendered identically. */
   activity?: "working" | "idle" | "blocked";
+  /** Whether a stop the human asked for actually landed. A SEPARATE axis from
+   *  `activity`, deliberately: a stop that failed leaves the agent `working`,
+   *  which is true and must stay true, so the outcome of the stop cannot be a
+   *  value of activity without either lying or being lost.
+   *
+   *  "requested" is set the moment the server publishes to the runner — nothing
+   *  has pressed Escape yet. Only the runner can say "stopped" or "failed", and
+   *  it only says so after verifying the terminal (see #649: an unverified
+   *  Escape reported as success is what made Stop untrustworthy). */
+  stopState?: "requested" | "stopped" | "failed";
   /** The dialog the agent is waiting on. Carried in the CONNECT SNAPSHOT, not
    *  only in live frames: `session.activity` is view-only and reaches a client
    *  only if it was already connected when the agent blocked — which is exactly
@@ -162,6 +172,7 @@ export type WsEvent =
   // The agent started or finished a turn. Distinct from tool events: it fires
   // while Claude is THINKING, before any content exists to show.
   | { event: "session.activity"; data: { state: "working" | "idle" | "blocked"; menu?: SessionMenu } }
+  | { event: "session.stop"; data: { state: "requested" | "stopped" | "failed" } }
   // The agent started, or stopped, waiting on a dialog. Its own frame rather
   // than an overloaded `session.activity`: activity answers "is it producing",
   // which the hook path owns on a much faster clock, and inventing a state here

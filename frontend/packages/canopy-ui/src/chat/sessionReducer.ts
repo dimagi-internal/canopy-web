@@ -28,6 +28,12 @@ const UNBLOCKING_FRAMES = new Set([
 ]);
 
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
+  if (frame.event === "chat.stream_start" || frame.event === "draft.committed") {
+    // A new turn is starting, so the previous turn's stop outcome is history —
+    // leaving "your stop did not take" pinned over fresh work would be a stale
+    // warning about something the human has already moved on from.
+    prev = { ...prev, stopState: undefined };
+  }
   if (prev.activity === "blocked" && UNBLOCKING_FRAMES.has(frame.event)) {
     // Dropping the menu with the state matters as much as the state itself —
     // the dialog is gone, and buttons that answer a gone dialog send a stray
@@ -84,6 +90,14 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         return { ...prev, activity: frame.data.state, menu: undefined };
       }
       return { ...prev, activity: "blocked", menu: frame.data.menu ?? prev.menu };
+
+    case "session.stop":
+      // Independent of `activity` on purpose. A stop that FAILED leaves the agent
+      // working, and both facts have to be sayable at once: "it is still going"
+      // AND "your stop did not take". Collapsing them loses whichever one loses
+      // the race, and it was always the second — which is how a dead Stop button
+      // stayed invisible.
+      return { ...prev, stopState: frame.data.state };
 
     case "session.menu":
       // The authoritative producer: the session report re-derives the dialog

@@ -44,6 +44,10 @@ interface Props {
    *  The server cancels every non-terminal turn regardless, so a null id is
    *  a valid cancel, not a no-op. */
   onStop: (messageId: string | null) => void;
+  /** Whether the stop the human asked for actually landed. Rendered next to the
+   *  button that asked for it, because that is where the person who pressed it
+   *  is looking. Undefined = no stop has been asked for on this turn. */
+  stopState?: "requested" | "stopped" | "failed";
   onTakeOver: () => void;
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
@@ -76,6 +80,7 @@ export function SendBox({
   onUpdate,
   onSend,
   onStop,
+  stopState,
   onTakeOver,
   banner,
   disabledReason,
@@ -335,6 +340,26 @@ export function SendBox({
               {disabledReason}
             </span>
           )}
+          {stopState === "failed" ? (
+            // The one state that MUST be loud. Everything else here is either
+            // self-evident (the reply stopped) or transient. A stop that did not
+            // take looks exactly like a stop that worked — the agent keeps
+            // running either way — so without this it is invisible, which is the
+            // whole reason Stop could not be trusted.
+            <span
+              role="status"
+              className="mr-auto text-xs font-medium text-destructive"
+              title="Escape was pressed and the agent is still running. Try again, or stop it in the terminal."
+            >
+              stop didn&rsquo;t take — still running
+            </span>
+          ) : null}
+          {/* Never DISABLED while a stop is in flight, only relabelled. If the
+              runner dies between the request and the verdict, `stopState` never
+              advances — and a button that latched off would leave the human with
+              no way to ask again, the exact trap #519 documents for the composer
+              lock. Pressing again is harmless: the runner dedupes by session_key,
+              so three impatient presses are still one Escape. */}
           {isStreaming ? (
             <Button
               type="button"
@@ -342,7 +367,7 @@ export function SendBox({
               size="sm"
               onClick={handleStopClick}
             >
-              stop
+              {stopState === "requested" ? "stopping…" : "stop"}
             </Button>
           ) : null}
           {!canEdit && holderIsPresent && !holderIsIdle ? (

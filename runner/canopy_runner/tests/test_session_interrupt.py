@@ -61,7 +61,10 @@ def test_a_rung_session_is_interrupted_and_reported_idle(monkeypatch):
     # stop appears to undo itself.
     [(session_id, events)] = client.streamed
     assert session_id == "sess-1"
-    assert events[0]["kind"] == "activity:idle"
+    kinds = [e["kind"] for e in events]
+    # TWO independent facts: what the agent is doing, and whether the stop took.
+    assert "activity:idle" in kinds
+    assert "stop:stopped" in kinds
 
 
 def test_an_unconfirmed_stop_retries_then_gives_up_quietly(monkeypatch):
@@ -78,7 +81,16 @@ def test_an_unconfirmed_stop_retries_then_gives_up_quietly(monkeypatch):
     assert session_interrupt.drain(_cfg(), client, "r1") == 0
     assert len(calls) == session_interrupt.MAX_ATTEMPTS
     assert session_interrupt._pending == {}, "bounded — never retried forever"
-    assert client.streamed == [], "an unconfirmed stop must not claim the agent is idle"
+
+    # It must SAY SO. Reporting only the success left a failed stop
+    # indistinguishable from a stop nobody asked for: the agent just went on
+    # working with no explanation, which is how a dead Stop button stayed
+    # invisible in the first place.
+    [(session_id, events)] = client.streamed
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["stop:failed"]
+    assert "activity:idle" not in kinds, "it is still working — do not claim idle"
+    assert events[0]["payload"]["attempts"] == session_interrupt.MAX_ATTEMPTS
 
 
 def test_an_old_sidecar_counts_as_unconfirmed_not_success(monkeypatch):
@@ -91,7 +103,7 @@ def test_an_old_sidecar_counts_as_unconfirmed_not_success(monkeypatch):
     session_interrupt.ring("hal-canopy-sweep", "sess-1")
 
     assert session_interrupt.drain(_cfg(), client, "r1") == 0
-    assert client.streamed == []
+    assert client.streamed == [], "one unconfirmed attempt is not yet a verdict"
 
 
 def test_a_dead_emdash_never_kills_the_loop(monkeypatch):

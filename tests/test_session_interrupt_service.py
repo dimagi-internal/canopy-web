@@ -126,7 +126,7 @@ def test_a_chat_session_with_a_live_turn_is_not_double_interrupted(seeded, monke
 
     consumer = SessionConsumer()
     consumer.session = session
-    assert consumer._stop_session() is True
+    assert consumer._stop_session() == "turns"
     assert interrupted == [], "the turn owned it — don't also fire at the terminal"
 
 
@@ -144,7 +144,7 @@ def test_stop_falls_through_to_the_session_when_no_turn_owns_it(seeded, monkeypa
 
     consumer = SessionConsumer()
     consumer.session = session
-    assert consumer._stop_session() is True
+    assert consumer._stop_session() == "session"
     assert interrupted == [session]
 
 
@@ -157,4 +157,36 @@ def test_stop_still_reports_nothing_happened_when_it_could_not_reach_anything(se
 
     consumer = SessionConsumer()
     consumer.session = session
-    assert consumer._stop_session() is False
+    assert consumer._stop_session() == ""
+
+
+def test_a_published_frame_is_reported_as_requested_not_as_cancelled():
+    """`interrupt_session` returning "sent" means A FRAME WAS PUBLISHED — nothing
+    has pressed Escape yet, and it may well fail.
+
+    Reporting that as `chat.stream_cancelled` (which the client renders as
+    "cancelled") would be the #649 false green rebuilt on the session path: the UI
+    declaring victory before anything was attempted. The session route says
+    `session.stop / requested`, and only the RUNNER — after verifying the terminal
+    — may say stopped or failed.
+    """
+    from apps.canopy_sessions import stream_map
+
+    assert stream_map.turn_event_to_frames({"kind": "stop:stopped", "seq": -1,
+                                            "payload": {}}, lambda _s: "m") == [
+        {"event": "session.stop", "data": {"state": "stopped"}}]
+    assert stream_map.turn_event_to_frames({"kind": "stop:failed", "seq": -1,
+                                            "payload": {}}, lambda _s: "m") == [
+        {"event": "session.stop", "data": {"state": "failed"}}]
+
+
+def test_a_stop_event_fans_out_live_and_is_never_persisted():
+    """Same contract as `activity:` — it is state, not transcript. Persisting it
+    would put "stop failed" into the durable history as if it were something the
+    agent said."""
+    from apps.harness.api import LIVE_ONLY_PREFIXES
+
+    assert "stop:".startswith(LIVE_ONLY_PREFIXES) or "stop:" in LIVE_ONLY_PREFIXES
+    assert "stop:failed".startswith(LIVE_ONLY_PREFIXES)
+    assert "activity:working".startswith(LIVE_ONLY_PREFIXES)
+    assert not "assistant".startswith(LIVE_ONLY_PREFIXES)
