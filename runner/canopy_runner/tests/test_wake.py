@@ -171,3 +171,41 @@ def test_a_failed_retire_does_not_cost_the_socket(monkeypatch):
     on_control({"type": "menu_answer", "session_key": "k", "option": 1,
                 "session_id": "s", "answer_id": "a"})
     assert len(pressed) == 1
+
+
+def test_session_interrupt_frame_rings_without_touching_cdp():
+    """A stop aimed at a SESSION — the only route that reaches an agent/board/
+    scheduled turn, which is terminal seconds after its prompt is delivered.
+
+    It must only MARK the work due. This runs on the wake-listener thread, which
+    also carries cancel, wake and menu_answer; a CDP round trip here would block
+    the socket that keeps the runner alive for as long as emdash takes to answer.
+    """
+    from canopy_runner import cdp_control, session_interrupt
+
+    session_interrupt._pending.clear()
+    on_control, waker = _handler()
+
+    def _must_not_run(*a, **k):  # pragma: no cover - the assertion is that it isn't
+        raise AssertionError("interrupt must not be pressed on the wake thread")
+
+    real = cdp_control.interrupt
+    cdp_control.interrupt = _must_not_run
+    try:
+        on_control({"type": "session_interrupt", "session_id": "s1", "session_key": "hal-1"})
+    finally:
+        cdp_control.interrupt = real
+
+    assert "hal-1" in session_interrupt._pending
+    assert session_interrupt._pending["hal-1"]["session_id"] == "s1"
+    assert waker.event.is_set(), "the poll thread has work — don't wait out the tick"
+    session_interrupt._pending.clear()
+
+
+def test_session_interrupt_frame_without_a_key_is_ignored():
+    from canopy_runner import session_interrupt
+
+    session_interrupt._pending.clear()
+    on_control, _w = _handler()
+    on_control({"type": "session_interrupt", "session_id": "s1"})
+    assert session_interrupt._pending == {}

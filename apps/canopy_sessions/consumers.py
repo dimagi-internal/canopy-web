@@ -153,8 +153,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # but only when something was actually cancelled/cancel-requested, so a
         # stray Stop with nothing to cancel doesn't flip everyone's UI to
         # "cancelled" for no reason.
-        cancelled = await database_sync_to_async(self._cancel_session_turn)()
-        if not cancelled:
+        stopped = await database_sync_to_async(self._stop_session)()
+        if not stopped:
             return
         await self._broadcast({
             "type": "chat.stream_cancelled",
@@ -178,7 +178,24 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             draft.save(update_fields=["body", "version", "updated_at"])
         return draft
 
-    def _cancel_session_turn(self) -> bool:
+    def _stop_session(self) -> bool:
+        """Stop this session, by whichever route actually owns the running work.
+
+        TURNS FIRST. A chat reply is owned by a live Turn: cancelling it is what
+        records the intent, reaches a queued turn behind the running one, and lets
+        the runner's bridge interrupt and finish it. That path is unchanged.
+
+        THEN THE SESSION. If no turn moved, the work is not turn-shaped — which is
+        the normal state of an agent, board or scheduled turn, because those are
+        fire-and-continue and go terminal seconds after the prompt is delivered
+        (runner execute.py). Stop used to end here, find nothing, and return False:
+        no interrupt, no broadcast, not even a flicker, while the agent worked on
+        for another ten minutes. They are all sessions, so stop them as sessions.
+
+        Deliberately not both: a chat turn's cancel already interrupts the same
+        terminal through the bridge, and firing a second Escape at it could land
+        after the agent has moved on to something else.
+        """
         # ALL non-terminal turns, not just the newest: a mid-reply send queues a
         # second turn behind the one still running, so Stop must reach both.
         # NOTE: not a bare `any(... for turn in turns)` — any() short-circuits
@@ -189,7 +206,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         for turn in turns:
             if harness_services.cancel_turn(turn) is not None:
                 cancelled = True
-        return cancelled
+        if cancelled:
+            return True
+        return chat_services.interrupt_session(self.session) == "sent"
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:

@@ -36,7 +36,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, hooks, inbox_due, sessions, streams
+from . import chat_bridge, chat_pump, close, hooks, inbox_due, sessions, session_interrupt, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -584,6 +584,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # ARRIVING, which is the very thing a drifted config stops.
     hooks.ensure_hook_config()
     chat_pump.pump_chat_bridges(cfg, client)
+    # Before the session report, so a session stopped this tick is reported idle
+    # rather than working — otherwise the very next report re-asserts `working`
+    # over the interrupt and the web shows the stop undoing itself.
+    session_interrupt.drain(cfg, client, cfg.runner_id)
     sessions.maybe_report_sessions(cfg, client)
     streams.sync_session_streams(cfg, client)
     streams.drain_menu_answers(cfg, client)
@@ -811,6 +815,14 @@ def make_control_handler(cfg: Config, waker, client=None):
     def _on_control(msg: dict) -> None:
         if msg.get("type") == "cancel" and msg.get("turn_id"):
             CANCELLED_TURNS.add(str(msg["turn_id"]))
+        elif msg.get("type") == "session_interrupt" and msg.get("session_key"):
+            # A stop aimed at a SESSION, not a turn — the only route that reaches an
+            # agent/board/scheduled turn, which is terminal seconds after its prompt
+            # is delivered and so owns nothing for a turn-cancel to find.
+            # Only marks it due: pressing Escape is a CDP round trip, and this thread
+            # also carries cancel, wake and menu_answer.
+            session_interrupt.ring(str(msg["session_key"]), str(msg.get("session_id") or ""))
+            waker.event.set()
         elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
             # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
             # on the next tick instead of waiting out inbox_poll_seconds. Only
