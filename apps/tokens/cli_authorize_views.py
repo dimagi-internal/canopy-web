@@ -25,6 +25,8 @@ from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest, HttpR
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 
+from apps.common.script_prefix import self_full_path
+
 from .models import PersonalToken
 
 logger = logging.getLogger(__name__)
@@ -80,7 +82,10 @@ def cli_authorize(request: HttpRequest) -> HttpResponse:
             {
                 "label": label,
                 "cb_host": urlparse(cb).netloc,
-                "form_action": request.get_full_path(),
+                # NOT request.get_full_path() — under the /canopy script prefix
+                # that omits the prefix, so the Authorize button POSTs to a
+                # Connect Labs path and 404s. See apps.common.script_prefix.
+                "form_action": self_full_path(request),
             },
         )
 

@@ -5,10 +5,10 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.test import AsyncRequestFactory, override_settings
 from django.urls import reverse
 
-from apps.tokens.cli_authorize_views import _validate_callback
+from apps.tokens.cli_authorize_views import _validate_callback, cli_authorize
 from apps.tokens.models import PersonalToken
 
 User = get_user_model()
@@ -167,3 +167,47 @@ def test_method_not_allowed(authed_client):
     client, _ = authed_client
     resp = client.delete(reverse("cli_authorize") + "?" + urlencode(_qs()))
     assert resp.status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# Script-prefix regression — the deployed instance runs at /canopy
+# ---------------------------------------------------------------------------
+#
+# These use AsyncRequestFactory, NOT the default test client, and that choice is
+# the whole point. The bug is ASGI-only: WSGIRequest rebuilds `path` as
+# SCRIPT_NAME + PATH_INFO, so under the ordinary (WSGI) test client
+# get_full_path() ALREADY carries /canopy and the broken code passes. ASGIRequest
+# instead sets `self.path = scope["path"]` verbatim, and canopy-web's ASGI
+# wrapper has already stripped the prefix from that scope — which is exactly
+# what production does. Written against the WSGI client, every assertion below
+# passes on the unfixed view (measured, 2026-09-01).
+
+
+def _asgi_get(path="/auth/cli/authorize/", **overrides):
+    """A request shaped like the one uvicorn hands Django behind /canopy."""
+    request = AsyncRequestFactory().get(path, _qs(**overrides))
+    request.user = User(username="alice", email="alice@dimagi.com")
+    return request
+
+
+@override_settings(FORCE_SCRIPT_NAME="/canopy")
+def test_form_action_carries_the_script_prefix():
+    """The Authorize button must POST back to canopy-web, not its host tenant.
+
+    request.get_full_path() names a Connect Labs URL here; posting there 404s
+    with Resolver404, which reads like a canopy-web outage rather than a
+    canopy-web bug. See apps.common.script_prefix.
+    """
+    resp = cli_authorize(_asgi_get())
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert 'action="/canopy/auth/cli/authorize/?' in body
+    # the handshake params must survive into the POST target
+    assert "state=nonce-abc" in body
+
+
+def test_form_action_has_no_prefix_when_unprefixed():
+    # local dev and GCP: FORCE_SCRIPT_NAME unset, nothing to re-add
+    resp = cli_authorize(_asgi_get())
+    assert resp.status_code == 200
+    assert 'action="/auth/cli/authorize/?' in resp.content.decode()

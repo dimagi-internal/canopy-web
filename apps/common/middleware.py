@@ -11,6 +11,8 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
+from apps.common.script_prefix import self_full_path
+
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
     "/admin/",               # Django admin has its own auth
@@ -21,7 +23,13 @@ PUBLIC_PATH_PREFIXES = (
     "/api/docs/",             # Scalar HTML
     "/api/redoc/",            # Redoc HTML
     "/api/mcp/",              # FastMCP server — auth via Bearer in the request
-    "/auth/cli/authorize/",   # @login_required handles its own OAuth bounce + preserves ?cb/?state/?label
+    # NOTE: /auth/cli/authorize/ is deliberately NOT listed. It used to be, so
+    # that the view's own @login_required would bounce and preserve
+    # ?cb/?state/?label — but Django's decorator builds ?next= from
+    # request.get_full_path(), which drops the /canopy script prefix (see
+    # apps.common.script_prefix), so a first-time operator landed on Connect
+    # Labs after signing in. This middleware's own bounce below preserves the
+    # query string too AND keeps the prefix, so it is the correct handler.
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
 )
@@ -168,9 +176,8 @@ class LoginRequiredMiddleware:
         if request.path.startswith("/api/"):
             return JsonResponse({"detail": "Authentication required"}, status=401)
 
-        # Build the post-login target from SCRIPT_NAME + path_info so it works
-        # both locally (no prefix) and on the labs sub-path deployment, where
-        # request.path is prefix-stripped by the StripScriptName ASGI wrapper —
-        # a bare request.path would bounce the user to a sibling tenant's path.
-        next_target = request.META.get("SCRIPT_NAME", "") + request.get_full_path_info()
+        # Build the post-login target so it works both locally (no prefix) and
+        # on the labs sub-path deployment — a bare request.path would bounce the
+        # user to a sibling tenant's path. See apps.common.script_prefix.
+        next_target = self_full_path(request)
         return redirect(f"{settings.LOGIN_URL}?{urlencode({'next': next_target})}")
