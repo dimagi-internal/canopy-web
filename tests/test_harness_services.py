@@ -242,3 +242,121 @@ def test_finish_turn_idempotent_on_terminal():
     assert result.status == Turn.DONE
     assert result.result_note == "first"
     assert result.events.count() == events_after_first
+
+
+# ---------------------------------------------------------------------------
+# Sessionless-failure requeue: a turn that died before its session existed is a
+# NON-attempt, not a failed attempt. See services.finish_turn.
+# ---------------------------------------------------------------------------
+
+
+def _claimed_turn(origin="email", key="k1", slug="echo"):
+    a = _agent(slug)
+    services.enqueue_turn(agent=a, origin=origin, idempotency_key=key)
+    r = _runner(a)
+    return services.claim_next_turn(r), r
+
+
+def test_failed_turn_with_no_session_goes_back_on_the_queue():
+    """The Stripe-email case: emdash never came up, so no agent ever saw the prompt."""
+    claimed, _ = _claimed_turn()
+    services.mark_running(claimed)
+
+    result = services.finish_turn(
+        claimed, status="failed",
+        result_note="emdash create failed: cannot connect to emdash CDP on 127.0.0.1:9223",
+    )
+    result.refresh_from_db()
+    assert result.status == Turn.QUEUED
+    assert result.attempts == 1
+    # the claim is fully released so a HEALTHY runner can take it
+    assert result.claimed_by_id is None
+    assert result.claimed_at is None and result.lease_expires_at is None
+    assert result.started_at is None
+    assert result.finished_at is None
+    # ...and why it went back is on the ledger, not just inferable
+    ev = result.events.order_by("-id").first()
+    assert ev.payload["requeued_after"] == Turn.FAILED and ev.payload["attempt"] == 1
+
+
+def test_requeued_turn_is_claimable_again():
+    claimed, r = _claimed_turn()
+    services.finish_turn(claimed, status="failed", result_note="emdash create failed: boom")
+    again = services.claim_next_turn(r)
+    assert again is not None and again.pk == claimed.pk
+
+
+def test_failed_turn_that_HAD_a_session_stays_terminal():
+    """The guard that makes the retry safe: a session existed, so the agent may have
+    already sent mail or edited files. Never re-run that."""
+    claimed, _ = _claimed_turn()
+    Turn.objects.filter(pk=claimed.pk).update(emdash_task_id="eva-api-8195-0904-0711")
+    claimed.refresh_from_db()
+
+    result = services.finish_turn(claimed, status="failed", result_note="agent errored mid-turn")
+    result.refresh_from_db()
+    assert result.status == Turn.FAILED
+    assert result.attempts == 0 and result.finished_at is not None
+
+
+def test_requeue_gives_up_after_the_cap():
+    claimed, r = _claimed_turn()
+    for expected in range(1, services.MAX_SESSIONLESS_RETRIES + 1):
+        t = services.claim_next_turn(r) if expected > 1 else claimed
+        services.finish_turn(t, status="failed", result_note="emdash create failed: still down")
+        t.refresh_from_db()
+        assert t.status == Turn.QUEUED and t.attempts == expected
+
+    # one more failure exhausts the budget and the turn stays dead + visible
+    final = services.claim_next_turn(r)
+    services.finish_turn(final, status="failed", result_note="emdash create failed: still down")
+    final.refresh_from_db()
+    assert final.status == Turn.FAILED
+    assert final.attempts == services.MAX_SESSIONLESS_RETRIES
+    assert final.finished_at is not None
+
+
+def test_done_and_cancelled_are_never_requeued():
+    for status in ("done", "cancelled"):
+        claimed, _ = _claimed_turn(key=f"k-{status}", slug=f"echo-{status}")
+        services.finish_turn(claimed, status=status, result_note="")
+        claimed.refresh_from_db()
+        assert claimed.status == status and claimed.attempts == 0
+
+
+def test_requeue_does_not_resurrect_a_lost_turn():
+    """A lease sweep already declared it dead; a late sessionless failure report from
+    the zombie runner must not put it back on the queue."""
+    claimed, _ = _claimed_turn()
+    Turn.objects.filter(pk=claimed.pk).update(
+        lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
+    services.sweep_expired_leases()
+    claimed.refresh_from_db()
+    assert claimed.status == Turn.LOST
+
+    result = services.finish_turn(claimed, status="failed", result_note="emdash create failed: late")
+    result.refresh_from_db()
+    assert result.status == Turn.LOST and result.attempts == 0
+
+
+def test_a_failed_drill_is_never_requeued():
+    """A drill's whole job is to find out whether a session can be created, so a
+    sessionless failure is its ANSWER. Requeueing would retry the probe and leave the
+    RunnerDrill pending while it churned."""
+    from apps.harness.models import RunnerDrill
+
+    a = _agent()
+    r = _runner(a)
+    Runner.objects.filter(pk=r.pk).update(status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+    r.refresh_from_db()
+    [drill] = services.start_drill(r, [a])
+    turn = drill.turn
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_by=r)
+    turn.refresh_from_db()
+
+    services.finish_turn(turn, status=Turn.FAILED,
+                         result_note="emdash create failed: cannot connect to emdash CDP")
+    turn.refresh_from_db()
+    drill.refresh_from_db()
+    assert turn.status == Turn.FAILED and turn.attempts == 0
+    assert drill.outcome == RunnerDrill.OUTCOME_FAIL
