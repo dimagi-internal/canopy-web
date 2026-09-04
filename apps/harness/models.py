@@ -418,6 +418,14 @@ class Turn(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     session_id = models.CharField(max_length=64, blank=True, default="")
     result_note = models.TextField(blank=True, default="")
+    # How many times this turn has been handed to a runner. Incremented ONLY by the
+    # sessionless-failure requeue in services.finish_turn -- an ordinary claim does
+    # not touch it, so `attempts > 0` reads as "this turn died before an agent ever
+    # saw it, N times" and nothing else.
+    attempts = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Sessionless retries so far — see services.MAX_SESSIONLESS_RETRIES.",
+    )
     # The human who launched this turn, when a person did (a manual / phone-composer
     # enqueue). Null for cron / email / system origins and for dispatched turns.
     # Lets you filter "turns I launched" and notify the launcher when theirs fails.

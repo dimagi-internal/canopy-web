@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Max, Q
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.canopy_sessions.staleness import stale_cutoff
@@ -41,6 +41,11 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_LEASE_SECONDS = 900
+# How many times a turn that died BEFORE its session existed goes back on the queue
+# before we give up and let it stay FAILED. Three is enough to ride out an emdash
+# restart or a laptop waking up mid-drain; past that the fault is not transient and a
+# turn that keeps churning is worse than one that stops and stays visible.
+MAX_SESSIONLESS_RETRIES = 3
 
 
 def enqueue_turn(
@@ -975,6 +980,76 @@ def finish_turn(
     """
     if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
         raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
+
+    # ---- a turn that never got a session is a NON-attempt, not a failed attempt ----
+    #
+    # `emdash_task_id` is written the moment cdp_control creates the session and the
+    # runner reports it at finish; every runner failure path (client.fail_turn) sends
+    # no task id at all. So an empty value on a FAILED turn is proof that no agent
+    # ever received the prompt: nothing was read, nothing was sent, no partial work
+    # exists. Re-running it is side-effect-free by construction, which is exactly what
+    # makes this safe to do automatically and what makes the opposite case (a session
+    # DID exist) something we must never retry blind.
+    #
+    # WHY THIS EXISTS. Every origin except the scheduler was silently at-most-once. A
+    # scheduled slot's identity is the CLOCK -- fire_schedule mints `sched:<id>:<slot>`
+    # -- so the next cron tick generates a genuinely new key and the work simply
+    # happens again; that is why cron looked reliable and nothing else did. An email
+    # turn's identity is `email-<agent>-<thread>-<messageCount>`, i.e. MAILBOX STATE AT
+    # ENQUEUE, and enqueue_turn short-circuits on the key with NO status filter, so the
+    # key is spent the instant the row is created -- before anyone knows whether the
+    # session will even start. A CDP fault therefore buried the request permanently:
+    # the thread stayed UNREAD, the poller re-saw it on every later tick, regenerated
+    # the identical key, collapsed onto the dead row, and logged it "seen".
+    #
+    # Measured: 2026-09-03, jjackson emailed eva "Stripe sessions". Its only turn
+    # failed at `emdash create failed: cannot connect to emdash CDP on 127.0.0.1:9223`
+    # and nothing looked at that thread again; a human noticed a day later. The same
+    # hole swallows `api`-origin dispatches, which is how an agent-to-agent fix brief
+    # can vanish with no trace but a `failed` row nobody reads.
+    #
+    # Backoff needs nothing new. readiness.mark_failed already marks the box not-ready
+    # for MARKER_TTL_SECONDS and claim_next_turn will not hand a not-ready runner a
+    # turn, so a requeued turn waits for a healthy runner rather than hot-looping on
+    # the broken one. MAX_SESSIONLESS_RETRIES caps it so a persistently-down emdash
+    # ends terminal and visible instead of churning forever.
+    # A DRILL is the one turn this must never touch. Everywhere else, session
+    # creation is incidental to the work and its failure says nothing about the
+    # request; for a drill, session creation IS the work -- "can this runner still
+    # start a session?" -- so a sessionless failure is the drill's ANSWER, not an
+    # interruption of it. Requeueing one would retry the probe whose failure is the
+    # result, and strand its RunnerDrill at OUTCOME_PENDING while it churned. Keyed on
+    # the RunnerDrill FK rather than the origin, matching the two hooks below: a drill
+    # is an ordinary `api` turn that names its runner.
+    if (
+        status == Turn.FAILED
+        and not turn.emdash_task_id
+        and turn.attempts < MAX_SESSIONLESS_RETRIES
+        and not RunnerDrill.objects.filter(turn=turn).exists()
+    ):
+        now = timezone.now()
+        requeued = Turn.objects.filter(
+            pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], emdash_task_id=""
+        ).update(
+            status=Turn.QUEUED,
+            attempts=F("attempts") + 1,
+            claimed_by=None,
+            claimed_at=None,
+            lease_expires_at=None,
+            started_at=None,
+            result_note=result_note,
+        )
+        turn.refresh_from_db()
+        if requeued:
+            append_events(turn, [{"kind": "status", "payload": {
+                "status": Turn.QUEUED,
+                "requeued_after": Turn.FAILED,
+                "attempt": turn.attempts,
+                "detail": result_note,
+            }}])
+            return turn
+        # Fell through: the turn was not executing (already terminal, or queued and
+        # never claimed). Let the normal path below decide, exactly as before.
     # A turn that RAN TO COMPLETION after a stop was requested. This used to be
     # rewritten DONE -> CANCELLED, on the reasoning that the user asked to stop so a
     # reply that raced the interrupt "is still a cancelled turn". That records the

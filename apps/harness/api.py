@@ -1209,8 +1209,15 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
         turn.save(update_fields=["emdash_task_id"])
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
+    # Read the state BEFORE finishing: a non-terminal result is now ambiguous. It
+    # means either "you tried to finish a turn you never claimed" (the 409 this guard
+    # was written for) or "your sessionless failure was put back on the queue"
+    # (services.finish_turn's requeue — a SUCCESSFUL finish that legitimately lands on
+    # QUEUED). Only the executing case can produce the second, so that is what tells
+    # them apart; keying on the result status alone would 409 every retry.
+    was_executing = turn.status in services.EXECUTING
     result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)
-    if result.status not in Turn.TERMINAL:
+    if result.status not in Turn.TERMINAL and not was_executing:
         # services.finish_turn only transitions claimed/running/needs_human — a
         # queued turn is a silent no-op there. Surface that as a 409 instead of
         # returning a turn that looks unchanged.
