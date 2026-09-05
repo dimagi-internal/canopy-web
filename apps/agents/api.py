@@ -18,6 +18,9 @@ from .schemas import (
     AgentIn,
     AgentOut,
     AgentRunnerOut,
+    AgentCredentialStatusOut,
+    AgentCredentialsIn,
+    AgentCredentialsResolveOut,
     AgentRunnerRuleOut,
     AgentRunnerRulesIn,
     AgentRunnerRowIn,
@@ -590,3 +593,87 @@ def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCo
     if cmd is None:
         raise HttpError(404, f"command {cmd_id} not found")
     return AgentTaskCommandOut.model_validate(services.apply_command(cmd, payload.result_note))
+
+
+# ---- Agent credentials (spec 2026-09-05-agent-credentials-design) -----------
+
+@router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
+            summary="Set named secrets for an agent (write-only)")
+def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
+    """Upsert. Non-clobbering: a ref absent from the body is untouched.
+
+    There is no read counterpart on purpose — the response is the MASKED status,
+    so even the caller who just wrote a value cannot read one back through the
+    browser."""
+    agent = _get_agent_or_404(request, slug)
+    try:
+        services.set_agent_credentials(agent, payload.values, user=request.user)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return services.agent_credential_status(agent)
+
+
+@router.get("/{slug}/credentials/status", response=list[AgentCredentialStatusOut],
+            summary="Which declared refs are set (masked — booleans, never values)")
+def agent_credential_status(request: HttpRequest, slug: str):
+    """The question this answers is 'what is stopping this agent from running',
+    which today requires SSH-ing to a box and reading a keyring."""
+    agent = _get_agent_or_404(request, slug)
+    return services.agent_credential_status(agent)
+
+
+@router.get("/{slug}/credentials/resolve", response=AgentCredentialsResolveOut,
+            summary="PLAINTEXT — a runner stages this agent's secrets")
+def resolve_agent_credentials(request: HttpRequest, slug: str):
+    """The one route that returns values, and it is not for a browser.
+
+    Two gates, both required:
+
+    1. **Bearer only.** A session cookie is refused even for the owner. That is
+       what makes "the browser never sees plaintext" a property of the system
+       rather than a habit of the UI — a future page cannot accidentally acquire
+       the ability to render a secret.
+    2. **The caller must pair a live runner this agent routes to.** Tighter than
+       workspace membership on purpose: plaintext should reach a box that runs
+       the agent, not everyone who can see it. Mirrors the runner credential
+       fetch, whose boundary is "the caller who can claim turns as this runner".
+
+    Every read is recorded, so a credential fetch is visible in the fleet log
+    rather than silent.
+    """
+    if not request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
+        raise HttpError(403, "resolve requires a bearer token; a browser session is never given values")
+
+    agent = _get_agent_or_404(request, slug)
+    if not services.caller_runs_agent(request.user, agent):
+        raise HttpError(403, "no live runner you pair is assigned to this agent")
+
+    values = services.resolve_agent_credentials(agent)
+    try:
+        from apps.events import services as events
+
+        events.record(
+            [{
+                "source": "agents.credentials",
+                "kind": "agent.credentials.resolved",
+                "level": "info",
+                "key": f"{agent.slug}:{request.user.pk}",
+                "summary": f"{len(values)} secret(s) resolved for {agent.slug}",
+                "payload": {"agent": agent.slug, "count": len(values)},
+            }],
+            workspace=agent.workspace,
+        )
+    except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
+        pass
+    return AgentCredentialsResolveOut(values=values)
+
+
+# Registered AFTER the literal `status`/`resolve` paths on purpose: Django
+# resolves in order, so a `{name}` pattern declared first swallows "status" and
+# answers 405 Method Not Allowed — the route exists, it is simply unreachable.
+@router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
+               summary="Remove one named secret")
+def delete_agent_credential(request: HttpRequest, slug: str, name: str):
+    agent = _get_agent_or_404(request, slug)
+    services.delete_agent_credential(agent, name)
+    return services.agent_credential_status(agent)

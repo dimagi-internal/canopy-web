@@ -1742,6 +1742,102 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set named secrets for an agent (write-only)
+         * @description Upsert. Non-clobbering: a ref absent from the body is untouched.
+         *
+         *     There is no read counterpart on purpose — the response is the MASKED status,
+         *     so even the caller who just wrote a value cannot read one back through the
+         *     browser.
+         */
+        readonly put: operations["apps_agents_api_set_agent_credentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/status": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which declared refs are set (masked — booleans, never values)
+         * @description The question this answers is 'what is stopping this agent from running',
+         *     which today requires SSH-ing to a box and reading a keyring.
+         */
+        readonly get: operations["apps_agents_api_agent_credential_status"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * PLAINTEXT — a runner stages this agent's secrets
+         * @description The one route that returns values, and it is not for a browser.
+         *
+         *     Two gates, both required:
+         *
+         *     1. **Bearer only.** A session cookie is refused even for the owner. That is
+         *        what makes "the browser never sees plaintext" a property of the system
+         *        rather than a habit of the UI — a future page cannot accidentally acquire
+         *        the ability to render a secret.
+         *     2. **The caller must pair a live runner this agent routes to.** Tighter than
+         *        workspace membership on purpose: plaintext should reach a box that runs
+         *        the agent, not everyone who can see it. Mirrors the runner credential
+         *        fetch, whose boundary is "the caller who can claim turns as this runner".
+         *
+         *     Every read is recorded, so a credential fetch is visible in the fleet log
+         *     rather than silent.
+         */
+        readonly get: operations["apps_agents_api_resolve_agent_credentials"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove one named secret */
+        readonly delete: operations["apps_agents_api_delete_agent_credential"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runs/": {
         readonly parameters: {
             readonly query?: never;
@@ -7134,6 +7230,51 @@ export interface components {
              */
             readonly result_note: string;
         };
+        /**
+         * AgentCredentialStatusOut
+         * @description Masked view — booleans and timestamps, NEVER values.
+         *
+         *     `declared` distinguishes a ref the agent's runtime.yaml asks for from an
+         *     orphan left behind when one was removed; `source` says which store a live
+         *     value came from, so a canopy-web/1Password divergence during migration is
+         *     visible rather than silent.
+         */
+        readonly AgentCredentialStatusOut: {
+            /** Name */
+            readonly name: string;
+            /** Declared */
+            readonly declared: boolean;
+            /** Set */
+            readonly set: boolean;
+            /** Source */
+            readonly source: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
+            /** Updated By Email */
+            readonly updated_by_email?: string | null;
+        };
+        /**
+         * AgentCredentialsIn
+         * @description Upsert named secrets. NON-CLOBBERING — a ref absent from `values` is left
+         *     alone, so a single-field edit cannot wipe the rest. There is deliberately no
+         *     read counterpart: the only route that returns values is the runner's.
+         */
+        readonly AgentCredentialsIn: {
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * AgentCredentialsResolveOut
+         * @description PLAINTEXT, for a runner. The one route that returns values.
+         */
+        readonly AgentCredentialsResolveOut: {
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
+        };
         /** Page[RunSummary] */
         readonly Page_RunSummary_: {
             /** Items */
@@ -12250,6 +12391,99 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskCommandOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_set_agent_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentCredentialsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_agent_credential_status: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_resolve_agent_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCredentialsResolveOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_delete_agent_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
                 };
             };
         };

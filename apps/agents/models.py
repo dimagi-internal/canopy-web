@@ -93,6 +93,53 @@ class Agent(models.Model):
         return f"agent:{self.slug}"
 
 
+class AgentCredential(models.Model):
+    """One named secret for one agent, encrypted at rest.
+
+    Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
+
+    canopy-web is the agent secret store so that standing up an agent does not
+    require a 1Password vault someone must be granted. 1Password remains an
+    import source and a per-secret FALLBACK, which is what makes the migration
+    reversible: an agent with nothing here keeps working.
+
+    Write-only over the API. The value is readable by exactly one caller — a
+    runner that could actually run this agent — and never by a browser, which is
+    what makes "write-only" a property of the system rather than of the UI.
+
+    NAMED SLOTS, not fixed columns: RunnerCredential has five columns because a
+    runner has five credentials; ACE declares 45 refs and echo 12.
+
+    Deliberately carries NO `optional`/`env`/`path` metadata. That is the
+    DECLARATION's job, and it lives in the agent's runtime.yaml (reaching
+    canopy-web as Agent.runtime_secrets). Storing shape here too is the
+    two-writers mistake that produced the gog_client drift — three copies of one
+    fact, two of them wrong.
+    """
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credentials")
+    #: Matches a `secrets[].name` in the agent's runtime.yaml.
+    name = models.CharField(max_length=120)
+    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext.
+    value_enc = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["agent_id", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent", "name"], name="one_value_per_agent_secret"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent.slug}:{self.name}"
+
+
 class AgentSync(models.Model):
     """A periodic manager sync — a Google Doc covering code/skill improvement AND
     work products. Body lives in `doc_url`; canopy-web keeps the summary +

@@ -458,3 +458,33 @@ class CountOut(StrictModel):
     created: int = 0
     replaced: int = 0
     count: int = 0
+
+
+class AgentCredentialsIn(StrictModel):
+    """Upsert named secrets. NON-CLOBBERING — a ref absent from `values` is left
+    alone, so a single-field edit cannot wipe the rest. There is deliberately no
+    read counterpart: the only route that returns values is the runner's."""
+
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class AgentCredentialStatusOut(StrictModel):
+    """Masked view — booleans and timestamps, NEVER values.
+
+    `declared` distinguishes a ref the agent's runtime.yaml asks for from an
+    orphan left behind when one was removed; `source` says which store a live
+    value came from, so a canopy-web/1Password divergence during migration is
+    visible rather than silent."""
+
+    name: str
+    declared: bool
+    set: bool
+    source: str
+    updated_at: dt.datetime | None = None
+    updated_by_email: str | None = None
+
+
+class AgentCredentialsResolveOut(StrictModel):
+    """PLAINTEXT, for a runner. The one route that returns values."""
+
+    values: dict[str, str] = Field(default_factory=dict)
