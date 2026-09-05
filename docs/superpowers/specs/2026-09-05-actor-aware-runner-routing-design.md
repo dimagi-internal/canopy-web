@@ -21,16 +21,21 @@ passed readiness drills for ace/echo/eva/hal on 2026-08-12/13 — the ACE drill 
 `bin/ace-doctor` on the box end to end and returned *47 PASS / 13 WARN / 0 FAIL,
 HEALTHY*.
 
-It has nonetheless claimed **zero turns**. Measured over the 200 most recent turns,
-2026-08-17 → 2026-09-04:
+It has nonetheless claimed **zero turns**. Of the 100 turns created since the
+operator paused the `jj-mbp-cdp` account on 2026-08-27:
 
 ```
-39  canopy_scheduler -> jj-mbp-cdp        22  canopy_web_chat -> acedimagi-mbp-cdp
-34  email            -> jj-mbp-cdp        17  api             -> jj-mbp-cdp
-29  email            -> acedimagi-mbp-cdp 15  api             -> acedimagi-mbp-cdp
-24  canopy_scheduler -> acedimagi-mbp-cdp  9  canopy_web_chat -> jj-mbp-cdp
-                                           0  * -> cloud-ec2-1
+ 89  -> acedimagi-mbp-cdp
+ 11  -> (unclaimed)
+  0  -> jj-mbp-cdp        (the pause working correctly)
+  0  -> cloud-ec2-1
 ```
+
+Every claimed turn in the fleet — five agents, every source — lands on a single
+macOS account on the operator's own machine. Widening to the last 200 turns
+(2026-08-17 →) splits those claims across `jj-mbp-cdp` and `acedimagi-mbp-cdp`, but
+that is the *same operator on two accounts* before and after a pause, not two
+people; `cloud-ec2-1` is still at zero across the whole window.
 
 `cloud-ec2-1` is `enabled: false` on **every** agent's assignment list, and no agent
 has a single source rule (`GET /api/agents/{slug}/runner-rules` → `[]` for all five).
@@ -96,11 +101,22 @@ So the actor must first be made *observable*, and it is not one field.
 - **Actor rules are the same rows as source rules**, with one more column.
   `actor=""` means *any actor* — bit-for-bit today's behaviour, so no existing row
   changes meaning and the migration cannot alter routing.
-- **One actor per row.** Two addresses for one person (Beth appears as both
-  `bgeoffroy@` and `egeoffroy@`) is two rows. No comma-lists, no cohort objects —
+- **One actor per rule.** Two addresses for one person (Beth appears as both
+  `bgeoffroy@` and `egeoffroy@`) is two rules. No comma-lists, no cohort objects —
   each rule stays independently toggleable and auditable, which is what "while we
-  work out the kinks" needs. `RunnerAssignment.rank` remains the escape hatch if an
-  ordered per-actor list is ever wanted.
+  work out the kinks" needs.
+- **A rule is an ordered LIST of runners, not one runner.** This is a change from
+  the source-rule model, and it is forced by the operator's actual topology:
+  `jj-mbp-cdp` and `acedimagi-mbp-cdp` are two macOS accounts on the operator's
+  own machine, alternated as each runs out of tokens. So "my work stays on my
+  boxes, never cloud" names *two* runners whose live one **rotates**. A
+  single-runner rule cannot say it: strict names one box and parks whenever the
+  other account is the active one, and non-strict falls through to the default
+  order — which, on a cloud-default agent, puts cloud *above* the operator's other
+  laptop and lands the work in exactly the place the rule existed to avoid.
+  The source spec left the door open for this, keeping `rank` on the row because
+  *"the column stays free for a future ordered source list without another
+  migration."* This is that future; `rank` becomes meaningful within a rule.
 - **`strict` is per-rule, and stays per-rule.** It already is a boolean on the row;
   actor rules inherit it unchanged. There is no global strict mode, and the direction
   is not fixed: a strict rule pointing *at* cloud keeps other people's work off the
@@ -144,41 +160,60 @@ scheduler turn and for any turn enqueued by an unauthenticated caller.
 actor = models.CharField(max_length=254, blank=True, default="")   # 254 = RFC 5321
 ```
 
-The `one_priority_runner_per_agent_source` constraint is replaced by:
+A **rule** is now the set of rows sharing `(agent, source, actor)`, ordered by `rank`.
+The `one_priority_runner_per_agent_source` constraint — which capped a rule at one
+runner — is replaced by one that caps a *runner* at one appearance per rule:
 
 ```python
 models.UniqueConstraint(
-    fields=["agent", "source", "actor"],
+    fields=["agent", "source", "actor", "runner"],
     condition=~models.Q(source=""),
-    name="one_priority_runner_per_agent_source_actor",
+    name="one_row_per_runner_per_agent_source_actor",
 )
 ```
 
 `one_default_assignment_per_agent_runner` (`condition=Q(source="")`) is untouched —
 a default row never carries an actor, and `actor` is not in its key.
 
-No existing row has a non-empty `actor`, so the swap cannot fail and every current
-rule keeps meaning exactly what it means today.
+Two properties are rule-level but stored per row:
+
+- **`strict`** must agree across every row of a rule; the API writes one value to
+  all of them and the composer reads the first. Enforced on write (422), not left
+  to disagree silently.
+- **`enabled`** stays genuinely per row, so one runner can be dropped from a rule
+  without deleting it. A rule whose rows are *all* disabled vanishes from
+  `load_assignment_rows` and the turn falls through — which is the existing
+  documented semantics ("a disabled source row is simply the rule switched off"),
+  and it means **disabling a strict rule also disables its strictness**. That is
+  intended and worth stating: switching a rule off must not park a queue.
+
+Relaxing a uniqueness constraint can never fail on existing data, and no existing
+row has a non-empty `actor`, so every current rule keeps meaning exactly what it
+means today — a one-runner rule is just a rule of length one.
 
 ### Claim-time composition
 
 `assignment_rows_for` gains one parameter and one rung. It stays pure.
+
+`priorities` maps `(agent_id, source, actor)` to a **rank-ordered list of rows** —
+the rule — rather than to a single row.
 
 ```python
 def assignment_rows_for(agent_id, origin, actor, defaults, priorities) -> list:
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
     anyone = priorities.get((agent_id, origin, ""))
-    ladder = [row for row in (exact, anyone) if row is not None]
+    ladder = [rule for rule in (exact, anyone) if rule]
     if not ladder:
         return [(i, r) for i, (_rank, r) in enumerate(base)]
 
     seen, out, truncated = set(), [], False
-    for row in ladder:                            # actor rule, then source rule …
-        if row.runner_id not in seen:
-            seen.add(row.runner_id)
-            out.append(row.runner)
-        if row.strict:                            # "that runner or nothing":
+    for rule in ladder:                           # actor rule, then source rule …
+        for row in rule:                          # … each already rank-ordered
+            if row.runner_id not in seen:
+                seen.add(row.runner_id)
+                out.append(row.runner)
+        if rule[0].strict:                        # "these runners or nothing":
             truncated = True                      # nothing below this rung may claim
             break
     if not truncated:
@@ -227,11 +262,38 @@ re-derived as a bug.
 
 ## API
 
-`AgentRunnerRuleOut` and `AgentRunnerRuleIn` gain `actor: str = ""`.
+**`AgentRunnerRuleOut` stays flat — one entry per row**, gaining `actor` and `rank`.
+A rule of two runners is two entries sharing `(source, actor)`; the UI groups them.
+Keeping it flat preserves the shape the frontend already consumes (`runner_name`,
+`kind`, `online`, `ready`, `enabled` per runner) instead of nesting it, and the
+derived-liveness fields are per runner anyway.
 
-- **Dedupe key in `replace_agent_runner_rules` becomes `(source, actor)`**, and the
-  422 message becomes `"one rule per (source, actor): duplicate in list"`. The
-  existing wholesale-replace discipline is unchanged, as is its scoping to
+**`AgentRunnerRuleIn` becomes rule-shaped**, reusing the row schema the default-list
+PUT already has:
+
+```python
+class AgentRunnerRuleIn(StrictModel):
+    source: RoutableSource
+    actor: str = ""                      # "" = any actor (today's source rule)
+    runners: list[AgentRunnerRowIn]      # ORDERED; rank = list index
+    strict: bool = False                 # rule-level; written to every row
+```
+
+This drops the rule-level `enabled` in favour of the per-row `enabled` inside
+`AgentRunnerRowIn`. That is a breaking change to the request body — acceptable
+because the endpoint's only consumer is canopy-web's own frontend and **there are
+zero rules in production today** (all five agents return `[]`), so there is no
+migration to perform and no third-party caller to break. Worth doing now rather
+than after rules exist.
+
+- **Dedupe key in `replace_agent_runner_rules` becomes `(source, actor)`** across
+  rules, and `runner_id` within a rule; the 422s are
+  `"one rule per (source, actor): duplicate in list"` and
+  `"a runner may appear once per rule: duplicate runner in <source>/<actor>"`.
+- **An empty `runners` list is a 422**, not a rule that matches and yields nothing.
+  A zero-length strict rule would compose to an empty list and park the queue with
+  no runner named as the reason — deleting the rule is how you turn it off.
+- The existing wholesale-replace discipline is unchanged, as is its scoping to
   `.exclude(source="")` — the default-list PUT must still not clobber rules, and
   vice versa.
 - **`actor` is normalized at the boundary** (lowercase, `parseaddr`'d) so a rule
@@ -243,6 +305,8 @@ re-derived as a bug.
   becomes a small Python group-by over `Turn.objects.filter(agent, status=QUEUED)
   .only("origin", "origin_ref", "enqueued_by")`. Queued sets are single digits in
   practice; this is not a hot path, and getting it wrong makes the parked warning lie.
+  Every row of a rule repeats its rule's count — the parked queue belongs to the
+  rule, not to one runner in it.
 - `GET`/`PUT` paths, auth, and `_runner_visibility_q` gating are unchanged.
 
 Regenerate `frontend/src/api/generated.ts` (`npm run gen:api`) — `regen-openapi.yml`
@@ -253,20 +317,26 @@ fails the PR otherwise.
 `RunnerSourceRules.tsx` keeps its shape; each rule line gains an optional actor field.
 
 ```
-▾ Ace
+▾ Echo
     DEFAULT ORDER
-    [1 ● jj-mbp-cdp emdash ↑ ↓ ⏻]  [2 ● acedimagi-mbp emdash ↑ ↓ ⏻]  [+ add]
+    [1 ● cloud-ec2-1 cloud ↑ ↓ ⏻]  [2 ● acedimagi-mbp emdash ↑ ↓ ⏻]  [3 ● jj-mbp-cdp emdash ↑ ↓ ⏻]  [+ add]
 
     EXCEPT WHEN THE WORK COMES FROM
-    email    from [stewari@dimagi.com]  →  [● cloud-ec2-1 ▾]  ( only | fall through )  ✕
-    ace_web  from [stewari@dimagi.com]  →  [● cloud-ec2-1 ▾]  ( only | fall through )  ✕
-    email    from [anyone            ]  →  [● jj-mbp-cdp  ▾]  ( only | fall through )  ✕
+    email   from [jjackson@dimagi.com]  →  [1 ● acedimagi-mbp ↑ ↓ ⏻] [2 ● jj-mbp-cdp ↑ ↓ ⏻] [+]   ( only | fall through )  ✕
+    api     from [jjackson@dimagi.com]  →  [1 ● acedimagi-mbp ↑ ↓ ⏻] [2 ● jj-mbp-cdp ↑ ↓ ⏻] [+]   ( only | fall through )  ✕
+    email   from [anyone             ]  →  [1 ● cloud-ec2-1  ↑ ↓ ⏻]                          [+]   ( only | fall through )  ✕
     [+ rule]
 ```
 
+- **A rule's runners render as the same rank chip row the default order uses**,
+  with the same `↑ ↓ ⏻` affordances and the same optimistic-commit machinery
+  (`rowsRef`, `commitSeqRef`). One interaction model for both, rather than a
+  dropdown for rules and chips for the default list.
 - The actor field is free text with placeholder `anyone`; empty renders as `anyone`
-  and stores `""`, which is today's source rule. **The existing rules keep rendering
-  and editing identically** — this is the property that makes the UI change additive.
+  and stores `""`, which is today's source rule. **A pre-existing one-runner source
+  rule keeps rendering and editing identically** — it is simply a rule of length
+  one — which is the property that makes this change additive rather than a
+  migration of the UI's mental model.
 - The source picker no longer excludes a source that already has a rule (several
   actors may share one source); it excludes only exact `(source, actor)` duplicates,
   which is what the API validates.
@@ -280,8 +350,10 @@ fails the PR otherwise.
 ## Migration
 
 1. Add `RunnerAssignment.actor`; swap `one_priority_runner_per_agent_source` for the
-   three-field constraint. No data migration — every existing row gets `actor=""`,
-   which is its current meaning.
+   four-field `one_row_per_runner_per_agent_source_actor`. No data migration —
+   every existing row gets `actor=""`, which is its current meaning, and `rank`
+   (previously written `0` and ignored on a source row) becomes meaningful within a
+   rule while `0` stays correct for a rule of length one.
 2. `canopy_sessions/services.py`: thread `user` into `enqueue_turn(..., enqueued_by=user)`
    on **both** send paths — `send_message` and `_send_transcript_sourced_message`
    (the latter needs `user` added to its signature; it does not take one today).
@@ -301,34 +373,58 @@ with it, and old code composing without an actor gets precisely today's behaviou
 The point of the work. Applied **after** the code lands and a real round-trip is
 verified, not before.
 
+**`OPERATOR_BOXES` = `[acedimagi-mbp-cdp, jj-mbp-cdp]`** — one machine, two macOS
+accounts, alternated as each runs out of tokens. `acedimagi` is listed first because
+it is the live one (100% of the 100 turns since the 2026-08-27 pause). Any rule that
+means "the operator's own work" names **both, in that order** — never one.
+
 | agent | default order | rules |
 |---|---|---|
-| **ace** | unchanged: `[1 jj-mbp-cdp] [2 acedimagi-mbp-cdp]` | `(email, stewari@dimagi.com) → cloud-ec2-1` **only**<br>`(ace_web, stewari@dimagi.com) → cloud-ec2-1` **only**<br>`(email, <matt>) → cloud-ec2-1` **only**<br>`(ace_web, <matt>) → cloud-ec2-1` **only** |
-| **echo** | `[1 cloud-ec2-1] [2 jj-mbp-cdp] [3 acedimagi-mbp-cdp]` | `(email, jjackson@dimagi.com) → jj-mbp-cdp` **only**<br>`(canopy_web_chat, jjackson@dimagi.com) → jj-mbp-cdp` **only**<br>`(api, jjackson@dimagi.com) → jj-mbp-cdp` **only** |
-| **eva, hal, ada** | unchanged (laptop-default) | none |
+| **ace** | unchanged: `OPERATOR_BOXES` | `(email, stewari@dimagi.com) → [cloud-ec2-1]` **only**<br>`(ace_web, stewari@dimagi.com) → [cloud-ec2-1]` **only**<br>`(email, <matt>) → [cloud-ec2-1]` **only**<br>`(ace_web, <matt>) → [cloud-ec2-1]` **only** |
+| **echo** | `[1 cloud-ec2-1] + OPERATOR_BOXES` | `(email, jjackson@dimagi.com) → OPERATOR_BOXES` **only**<br>`(canopy_web_chat, jjackson@dimagi.com) → OPERATOR_BOXES` **only**<br>`(api, jjackson@dimagi.com) → OPERATOR_BOXES` **only** |
+| **eva, hal, ada** | unchanged (operator-default) | none |
 
 ACE is an **allowlist to cloud**: named people go to the cloud box, everything else —
-including all of the operator's own work — stays local while the kinks get worked out.
-Echo is the inverse, cloud-default with the operator carved back out, because Echo
-already declares `runner_preference: ['cloud','emdash']`.
+including all of the operator's own work — stays on the operator's boxes while the
+kinks get worked out. Note ACE therefore needs **no rule for the operator at all**:
+its default order is already exactly `OPERATOR_BOXES`.
+
+Echo is the inverse — cloud-default, with the operator carved back out by rule. That
+carve-out is the case that *requires* multi-runner rules, and it is why the model
+changed.
 
 Strict in both directions is deliberate: strict cloud rules keep other people's work
-off the operator's laptop (the isolation the whole feature exists for), and strict
-laptop rules keep the operator's work off cloud.
+off the operator's boxes (the isolation the whole feature exists for), and the strict
+operator rules keep the operator's work off cloud without pinning it to whichever
+account happens to be logged out.
 
-**Two prerequisites this config depends on, both currently unmet:**
+**One prerequisite this config depends on, currently unmet:**
 
-- **`cloud-ec2-1` must be `enabled: true`** on ace and echo. It is `enabled: false`
-  on all five agents today. An actor rule is its own row with its own toggle, so the
-  rule rows can be enabled without touching ace's default list — but echo's
-  cloud-default *does* require flipping the existing row.
-- **`jj-mbp-cdp` is paused** (`~/.canopy/PAUSED`, since 2026-08-27) and reads
-  `online: false`. Every strict rule pointing at it will park immediately. That is
-  the toggle working as specified, and the UI will say so with a count — but it must
-  be an expected outcome, not a surprise. Unpause before applying echo's rules.
+- **`cloud-ec2-1` must be `enabled: true`.** It is `enabled: false` on all five
+  agents today, which is the single reason it has claimed nothing. An actor rule is
+  its own row with its own toggle, so ace's rule rows can be enabled without touching
+  ace's default list — but echo's cloud-default *does* require flipping the existing
+  rank-2 row and re-ranking it to 0.
+
+**Not a prerequisite, contrary to an earlier draft of this spec:** `jj-mbp-cdp` being
+paused does not need fixing before applying these rules. Under the multi-runner model
+its rules also name `acedimagi-mbp-cdp`, which is online — so a paused account
+degrades within the rule instead of parking the queue. Removing that prerequisite is
+the concrete payoff of the model change.
+
+**Correction worth recording:** an earlier draft singled Echo out because it was the
+only agent with a non-empty `Agent.runner_preference` (`['cloud','emdash']`). That
+field does not route. It is read in exactly one place —
+`harness/services.seed_assignments_from_capabilities`, the one-time bridge behind
+data migration `0024_seed_runner_assignments` — and the frontend calls it "the
+deprecated kind-based `runner_preference` … supersed[ed] by RunnerAssignment". All
+five agents have identical live routing config. Echo's selection here is a product
+choice, not a reflection of existing state, and `runner_preference` should be treated
+as vestigial by anything reasoning about routing.
 
 `<matt>`'s address is the one input not yet resolved; it is not in `config/allowlist.txt`
-(which is domain-wide `@dimagi.com`) and no fleet turn carries it.
+(which is domain-wide `@dimagi.com`) and no fleet turn carries it. ACE's other three
+rules do not depend on it and can ship first.
 
 ## Testing
 
@@ -338,10 +434,18 @@ new suite.
 - **Resolution** — every row of the actor table, against the real header shapes:
   bare address, `Display Name <addr>`, `"Quoted, Name" <addr>`, empty, malformed.
   Case-folding. `canopy_scheduler` → `""`.
-- **Composition** — no rule → default; actor rule non-strict → actor, source, defaults
-  deduped in that order; actor rule strict → that runner only; actor rule absent but
-  source rule present → today's behaviour exactly; disabled actor rule → falls to
-  source rule; actor `""` rule behaves identically to a pre-migration source rule.
+- **Composition** — no rule → default; actor rule non-strict → actor rule's runners
+  in rank order, then the source rule's, then defaults, deduped; actor rule strict →
+  that rule's runners **and no others**; actor rule absent but source rule present →
+  today's behaviour exactly; a rule whose rows are all disabled → falls through
+  (and its strictness falls through with it); actor `""` rule of length one behaves
+  identically to a pre-migration source rule.
+- **Multi-runner rules — the case the model exists for.** A strict two-runner rule
+  `(echo, email, jjackson@) → [acedimagi, jj-mbp]` composes to exactly those two in
+  that order, never cloud; with `acedimagi` unavailable it yields `jj-mbp` rather
+  than parking; with **both** unavailable it parks rather than falling to cloud.
+  All three are asserted, because the middle one is the whole point and the third is
+  what makes it strict.
 - **Strictness holds past the grace** — a queued strict actor turn older than
   `CASCADE_GRACE_SECONDS` still refuses every non-priority runner.
 - **Precedence** — a pinned turn ignores a contradicting actor rule; a bound session
@@ -368,8 +472,12 @@ new suite.
 
 - **A Slack producer.** `slack` is already a reserved origin and needs nothing here
   beyond setting `enqueued_by` when it lands; actor rules will work on it for free.
-- **Actor cohorts / groups.** One actor per row, deliberately. Revisit if the rule
-  list outgrows a screen.
+- **Actor cohorts / groups.** One actor per rule, deliberately — two people wanting
+  the same routing is two rules. Revisit if the rule list outgrows a screen. (The
+  *runner* side is now a list; the *actor* side is deliberately not.)
+- **Retiring `Agent.runner_preference`.** Confirmed vestigial by this work — read
+  only by the `0024` seed bridge, described as deprecated by the frontend. Deleting
+  it is a separate, unrelated cleanup and touches the agents API surface.
 - **Scheduler actors** (`AgentSchedule.created_by`). Named as the extension point;
   no current need routes on it.
 - **Retiring `turn_driver`** (ace-web Task 12). Unblocked by this work in principle —
