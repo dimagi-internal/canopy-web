@@ -66,6 +66,30 @@ export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
 export type UnclaimableTurn = components['schemas']['UnclaimableTurnOut']
 
 /** Queued turns no online runner can claim — a silent stall unless surfaced. */
+export type CredentialStatus = components['schemas']['RunnerCredentialStatusOut']
+
+/** Which credential slots are set — booleans and a timestamp, never values. */
+export async function getRunnerCredentialStatus(runnerId: string): Promise<CredentialStatus> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/credential/status', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'getRunnerCredentialStatus')
+}
+
+/** Set one or more slots. Omitted fields are UNCHANGED (the write schema is
+ *  non-clobbering), so callers must send only what was actually entered —
+ *  sending "" would wipe a working credential. Returns the masked status. */
+export async function setRunnerCredential(
+  runnerId: string,
+  values: Record<string, string>,
+): Promise<CredentialStatus> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credential', {
+    params: { path: { runner_id: runnerId } },
+    body: values as never,
+  })
+  return unwrap(res, 'setRunnerCredential')
+}
+
 export async function listUnclaimableTurns(): Promise<UnclaimableTurn[]> {
   const res = await apiV2.GET('/api/harness/turns/unclaimable')
   // Array.from for the same Readable<T> reason as listRunners above.
