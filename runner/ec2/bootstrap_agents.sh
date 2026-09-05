@@ -75,6 +75,86 @@ gog_config_dir() {
   fi
 }
 
+# ── The fleet roster comes from canopy-web (Agent Runtime Registry) ────────────
+# It used to be pinned in THREE places — the AgentSlugs CFN parameter, AGENT_SLUGS
+# in runner.env, and this script's default — so adding an agent meant editing the
+# CloudFormation stack. canopy-web already serves the answer
+# (`GET /api/agents/{slug}/runtime`: "what a runner needs from canopy-web to run
+# this agent"); nothing consumed it. Now it does, and AGENT_SLUGS is the OFFLINE
+# fallback rather than the source. Register an agent in canopy-web and the next
+# bootstrap picks it up — no stack change, no SSH.
+#
+# Spec: docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md
+#
+# EVERY failure path here yields an EMPTY registry, never a non-zero exit: under
+# `set -e` an unreachable canopy-web would otherwise abort bootstrap and strand a
+# box that could perfectly well provision the agents it already knows.
+_REGISTRY_CACHE=""
+_REGISTRY_READ=""
+
+agent_registry() {  # -> "slug<TAB>repo_url" per agent, or nothing
+  # `:-` so the function does not depend on the initialisers above having run
+  # (extracted-function tests, and any future sourcing order).
+  if [[ -n "${_REGISTRY_READ:-}" ]]; then
+    printf '%s' "${_REGISTRY_CACHE:-}"
+    return 0
+  fi
+  _REGISTRY_READ=1
+  local base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+  [[ -n "$base" && -n "$tok" ]] || return 0
+  local list
+  list="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/?limit=200" 2>/dev/null)" || return 0
+  local slugs
+  slugs="$(printf '%s' "$list" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+items = d.get("items") if isinstance(d, dict) else d
+for a in (items or []):
+    slug = (a or {}).get("slug") or ""
+    if slug:
+        print(slug)
+' 2>/dev/null)" || return 0
+  [[ -n "$slugs" ]] || return 0
+  local out="" slug rt repo
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    # The repo pointer lives on /runtime, not on the list payload.
+    rt="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/${slug}/runtime" 2>/dev/null)" || continue
+    repo="$(printf '%s' "$rt" | python3 -c '
+import json, sys
+try:
+    print((json.load(sys.stdin).get("repo_url") or "").strip())
+except Exception:
+    pass
+' 2>/dev/null)" || repo=""
+    out+="${slug}"$'\t'"${repo}"$'\n'
+  done <<<"$slugs"
+  _REGISTRY_CACHE="$out"
+  printf '%s' "$out"
+}
+
+resolve_roster() {  # -> comma-joined slugs; registry first, AGENT_SLUGS offline
+  local reg; reg="$(agent_registry)"
+  local slugs
+  slugs="$(printf '%s' "$reg" | cut -f1 | grep -v '^$' | paste -sd, - 2>/dev/null || true)"
+  # An EMPTY registry is treated as "could not read", not as "provision nothing":
+  # a canopy-web with zero agents is indistinguishable from an outage, and the
+  # second reading would strand the box.
+  printf '%s\n' "${slugs:-${AGENT_SLUGS:-}}"
+}
+
+agent_repo_url() {  # slug -> clone url; registry pointer, else the org convention
+  local slug="$1" reg url
+  reg="$(agent_registry)"
+  url="$(printf '%s' "$reg" | awk -F'\t' -v s="$slug" '$1==s {print $2; exit}')"
+  printf '%s\n' "${url:-https://github.com/${AGENT_REPO_ORG:-dimagi-internal}/${slug}}"
+}
+
 vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
   local slug="$1"
   printf 'Agent-%s\n' "${slug^}"
@@ -201,6 +281,8 @@ step2_gog_config() {
   # Bash associative arrays don't cross into a heredoc's subshell, so resolve
   # slug->client->email into plain "email=client" pairs here and hand those to
   # python (below) to merge into config.json's `account_clients` map.
+  # Registry-first (see agent_registry above); AGENT_SLUGS is the offline fallback.
+  AGENT_SLUGS="$(resolve_roster)"
   local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
   local pairs=()
   for slug in "${slugs[@]}"; do
@@ -387,7 +469,8 @@ bootstrap_one_agent() {
 
   log "── agent $slug ──"
 
-  if ! clone_or_pull "https://github.com/${AGENT_REPO_ORG}/${slug}.git" "$dest"; then
+  local repo_url; repo_url="$(agent_repo_url "$slug")"
+  if ! clone_or_pull "${repo_url%.git}.git" "$dest"; then
     fail "$slug: clone/pull of ${AGENT_REPO_ORG}/${slug} failed (private repo — is the staged GitHub token valid?)"
     FAILED_AGENTS+=("$slug")
     return
