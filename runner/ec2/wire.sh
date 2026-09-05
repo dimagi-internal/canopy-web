@@ -159,6 +159,12 @@ fi
 for slug in "${AGENT_SLUGS[@]}"; do
   [[ -n "$slug" ]] || continue
   api GET "/api/agents/${slug}/runners" > "$TMP/rows-${slug}.json" 2>/dev/null || true
+  # Source/actor ROUTING RULES are assignment rows too (same table), so retiring
+  # the predecessor cascades them exactly as it cascades the default rows — and
+  # they must be snapshotted here, pre-retire, for the same reason. Losing them
+  # silently reverts the fleet to "everything runs on the operator's laptop",
+  # which is the state actor rules exist to end (spec 2026-09-05).
+  api GET "/api/agents/${slug}/runner-rules" > "$TMP/rules-${slug}.json" 2>/dev/null || true
 done
 
 echo ">> retiring other non-retired '$RUNNER_NAME' cloud runners"
@@ -228,6 +234,43 @@ print('replaced' if swapped else 'appended')
   fi
   api PUT "/api/agents/${slug}/runners" "$TMP/put-${slug}.json" >/dev/null
   echo "   $slug: $ACTION"
+
+  # …and the same swap over this agent's routing rules, from the pre-retire
+  # snapshot. A rule naming any OTHER runner is carried across byte-for-byte:
+  # rewriting one would be the same silent config edit the `enabled` regression
+  # was, in reverse.
+  rm -f "$TMP/put-rules-${slug}.json"
+  [[ -s "$TMP/rules-${slug}.json" ]] || continue
+  RULE_ACTION=$(python3 -c "
+import json, os
+rows = json.load(open('$TMP/rules-${slug}.json'))
+if not isinstance(rows, list) or not rows:
+    print('none'); raise SystemExit(0)
+predecessors = set(l.strip() for l in open('$TMP/predecessors.txt')) if os.path.exists('$TMP/predecessors.txt') else set()
+new_id = '$RUNNER_ID'
+# The API returns rule rows FLAT, one per runner; a RULE is the rows sharing
+# (source, actor), ordered by rank. Regroup, swap, and re-emit in that shape.
+rules, order = {}, []
+for r in sorted(rows, key=lambda r: r.get('rank', 0)):
+    key = (r['source'], r.get('actor', ''))
+    if key not in rules:
+        rules[key] = {'source': r['source'], 'actor': r.get('actor', ''),
+                      'strict': r['strict'], 'runners': []}
+        order.append(key)
+    rid = new_id if r['runner_id'] in predecessors else r['runner_id']
+    # A rule naming BOTH the predecessor and the new box would otherwise emit the
+    # same runner twice, which the API rejects (one row per runner per rule).
+    if rid not in [x['runner_id'] for x in rules[key]['runners']]:
+        rules[key]['runners'].append({'runner_id': rid, 'enabled': r['enabled']})
+out = [rules[k] for k in order]
+swapped = sum(1 for r in rows if r['runner_id'] in predecessors)
+json.dump({'rules': out}, open('$TMP/put-rules-${slug}.json', 'w'))
+print(f'{len(out)} rule(s), {swapped} row(s) moved')
+")
+  if [[ "$RULE_ACTION" != "none" ]]; then
+    api PUT "/api/agents/${slug}/runner-rules" "$TMP/put-rules-${slug}.json" >/dev/null
+    echo "   $slug rules: $RULE_ACTION"
+  fi
 done
 
 # ── Step 5: optional drill wave ──────────────────────────────────────────────────
