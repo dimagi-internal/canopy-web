@@ -11,6 +11,7 @@ session (continuity) or a fresh one.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 
 # UNREAD only — the "new email" signal. Critically NOT "all recent threads":
@@ -18,6 +19,29 @@ import subprocess
 # is a cost bomb. Idempotency (thread+messageCount) means an unread thread fires
 # exactly once until its state changes.
 DEFAULT_QUERY = "in:inbox is:unread newer_than:14d"
+
+#: A CloudWatch/SNS alarm notification subject: `ALARM: "<name>" in <region>`, and its
+#: matching `OK: "<name>" in <region>`. The quoted alarm name is what pairs the two.
+_ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
+
+
+def alarm_key(thread: dict) -> tuple[str, str] | None:
+    """``(state, alarm_name)`` for a CloudWatch alarm notification, else ``None``.
+
+    Deliberately narrow on BOTH axes, because everything downstream of it suppresses a
+    turn and a false positive here is a silently-dropped message:
+
+    * the sender must be SNS — a human writing ``OK: "the deploy" in staging`` is not an
+      alarm and must never be coalesced;
+    * the subject must match the CloudWatch shape exactly.
+
+    Anything unrecognised returns ``None``, which every caller treats as "enqueue
+    normally". That is the fail-open direction.
+    """
+    if "sns.amazonaws.com" not in (thread.get("from") or "").lower():
+        return None
+    m = _ALARM_SUBJECT.match(thread.get("subject") or "")
+    return (m.group(1).upper(), m.group(2)) if m else None
 
 
 class InboxError(Exception):
@@ -93,7 +117,8 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 sender_of=None, discovered_by: str = "poll") -> dict:
     """Enqueue an email-origin turn for each new thread state. Returns
     {"new": [thread_ids that became a NEW turn], "seen": [ids already tracked],
-    "skipped": [ids whose newest message is the agent's own reply]} — the split matters
+    "skipped": [ids whose newest message is the agent's own reply],
+    "coalesced": [SNS `OK:` ids folded into their `ALARM:` turn]} — the split matters
     for logging: re-polling the same unread mail is idempotent server-side, so it must
     read as "nothing new", not as fresh work.
 
@@ -113,7 +138,22 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     new: list[str] = []
     seen: list[str] = []
     skipped: list[str] = []
+    coalesced: list[str] = []
     box = mailbox.lower()
+    # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
+    # (the subjects differ), so one alarm transition used to enqueue two turns — and the
+    # `OK:` half can never produce a finding: its `ALARM:` already owns the incident, so
+    # the second session's whole job is to discover it should stand down.
+    #
+    # Measured on hal, 2026-08-31 -> 09-05: 10 sessions for 5 incidents, the `OK:` halves
+    # burning 3,186 of 7,232 transcript events to conclude "not mine" (one of them 1,362
+    # events, having taken over from a stalled owner and died on a usage limit).
+    #
+    # So an `OK:` whose alarm ALSO has an `ALARM:` thread in this batch is coalesced into
+    # that turn. Deterministic and free — both threads are already in hand, so this costs
+    # no extra subprocess and no LLM judgment, preserving this module's "fixed rule, no
+    # judgment in the hot path" contract.
+    alarming = {k[1] for k in (alarm_key(t) for t in threads) if k and k[0] == "ALARM"}
     for t in threads:
         tid = t.get("id")
         if not tid:
@@ -124,6 +164,19 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # be no-ops, and the subprocess is the expensive one.
         if _seen_state.get((box, tid)) == count:
             seen.append(tid)
+            continue
+        # Coalesce BEFORE `sender_of`, which is a `gog gmail thread get` subprocess —
+        # the same cost-ordering reason the idempotency check sits above.
+        key = alarm_key(t)
+        if key and key[0] == "OK" and key[1] in alarming:
+            coalesced.append(tid)
+            # Remember it so the next poll doesn't re-evaluate the same state. NOTE:
+            # `_seen_state` is process-local (see its docstring), so a runner restart
+            # while this `OK:` is still unread can fire one turn for it. That is exactly
+            # today's behaviour — strictly never worse — and closing it properly belongs
+            # on the agent side: the `ALARM:` owner groups the storm by alarm name and
+            # marks the whole storm read.
+            _seen_state[(box, tid)] = count
             continue
         latest = sender_of(tid)
         if latest and box in latest:
@@ -148,4 +201,4 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         )
         _seen_state[(box, tid)] = count
         (new if (res or {}).get("_created") else seen).append(tid)
-    return {"new": new, "seen": seen, "skipped": skipped}
+    return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced}
