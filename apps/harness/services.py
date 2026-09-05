@@ -20,6 +20,7 @@ from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.canopy_sessions.staleness import stale_cutoff
+from apps.harness import actors
 from apps.workspaces import services as wsvc
 
 # HEARTBEAT_ONLINE_WINDOW lives on models.py (Runner.live_status uses it too;
@@ -226,11 +227,14 @@ def sweep_expired_leases() -> int:
 def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
     """Load every ENABLED assignment row for these agents in one query, split into
     the two shapes routing needs: the per-agent default list (rank-ordered) and the
-    per-(agent, source) priority row.
+    per-(agent, source, actor) RULE — a rank-ordered LIST of rows, not one row
+    (spec 2026-09-05).
 
     enabled=False is filtered here, once, so a disabled row can neither claim nor
-    count as a better-ranked availability blocker — and a disabled SOURCE row means
-    the rule is simply off, falling back to the default list.
+    count as a better-ranked availability blocker. A rule whose rows are ALL
+    disabled therefore disappears entirely and its turns fall through — meaning
+    switching a rule off also switches its strictness off, which is what keeps
+    "off" from parking a queue.
     """
     defaults: dict = {}
     priorities: dict = {}
@@ -242,31 +246,51 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
     )
     for row in rows:
         if row.source:
-            priorities[(row.agent_id, row.source)] = row
+            priorities.setdefault((row.agent_id, row.source, row.actor), []).append(row)
         else:
             defaults.setdefault(row.agent_id, []).append((row.rank, row.runner))
     return defaults, priorities
 
 
-def assignment_rows_for(agent_id, origin: str, defaults: dict, priorities: dict) -> list:
-    """THE ordered runner list for one (agent, source) pair — what the availability
-    cascade then walks. Pure: no queries, no clock.
+def assignment_rows_for(
+    agent_id, origin: str, actor: str, defaults: dict, priorities: dict
+) -> list:
+    """THE ordered runner list for one (agent, source, actor) triple — what the
+    availability cascade then walks. Pure: no queries, no clock.
+
+    The ladder is actor rule, then source rule (`actor=""`), then the default
+    order; `claim_next_turn` layers pins and session stickiness above it.
 
     Ranks are renumbered from 0 because the cascade compares them to decide who
-    blocks whom; a source row's stored rank is meaningless (one row per source) and
-    leaving it would put two runners at rank 0, each apparently blocking the other.
+    blocks whom; stored ranks are per-rule and would otherwise put two runners at
+    rank 0, each apparently blocking the other.
     """
     base = defaults.get(agent_id) or []
-    row = priorities.get((agent_id, origin))
-    if row is None:
+    exact = priorities.get((agent_id, origin, actor)) if actor else None
+    anyone = priorities.get((agent_id, origin, ""))
+    ladder = [rule for rule in (exact, anyone) if rule]
+    if not ladder:
         return [(i, r) for i, (_rank, r) in enumerate(base)]
-    if row.strict:
-        # That runner or nothing: the turn waits rather than degrading. Everyone
-        # else is absent from the list, so the wedged-runner grace cannot promote
-        # them either — which is what makes "and nowhere else" actually hold.
-        return [(0, row.runner)]
-    rest = [r for _rank, r in base if r.id != row.runner_id]
-    return [(0, row.runner)] + [(i + 1, r) for i, r in enumerate(rest)]
+
+    seen: set = set()
+    out: list = []
+    truncated = False
+    for rule in ladder:
+        for row in rule:  # already rank-ordered by load_assignment_rows
+            if row.runner_id not in seen:
+                seen.add(row.runner_id)
+                out.append(row.runner)
+        # "These runners or nothing": the turn waits rather than degrading.
+        # Everything below this rung is absent from the list, so the wedged-runner
+        # grace has nobody to promote — which is what makes "and nowhere else"
+        # actually hold. Appending the default order regardless would hand the work
+        # straight back to the runners the rule exists to exclude.
+        if rule[0].strict:
+            truncated = True
+            break
+    if not truncated:
+        out += [r for _rank, r in base if r.id not in seen]
+    return list(enumerate(out))
 
 
 def _kind_allows(runner: Runner, routing: str) -> bool:
@@ -293,7 +317,9 @@ def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     single-entry list, so every other runner reads as "not in the list" and the
     grace has nobody to promote.
     """
-    rows = assignment_rows_for(agent_id, turn.origin, defaults, priorities)
+    rows = assignment_rows_for(
+        agent_id, turn.origin, actors.actor_of(turn), defaults, priorities
+    )
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
         return False
@@ -493,7 +519,13 @@ def unclaimable_queued_turns(user) -> list[dict]:
             routed_agent = t.agent_id
         if not routed_agent:
             return True  # project turn / agentless session: runner_target_q had the last word
-        rows = assignment_rows_for(routed_agent, t.origin, defaults, priorities)
+        # The SAME actor resolution the claim path uses. These two disagreeing is
+        # the drift class tests/test_claim_schedule_parity.py exists for: a strict
+        # actor rule pointing at an offline box must report `offline`
+        # (recoverable), never `config` (never runs).
+        rows = assignment_rows_for(
+            routed_agent, t.origin, actors.actor_of(t), defaults, priorities
+        )
         return any(rr.id == r.id for _rank, rr in rows)
 
     def _covered_by(rs) -> set:

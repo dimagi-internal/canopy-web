@@ -852,8 +852,8 @@ def send_message(
     origin = origin or default_origin(session)
     if transcript_sourced(session):
         return _send_transcript_sourced_message(
-            session=session, text=text, client_id=client_id, placement=placement,
-            origin=origin,
+            session=session, text=text, user=user, client_id=client_id,
+            placement=placement, origin=origin,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -897,6 +897,13 @@ def send_message(
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
             origin_ref=origin_ref,
+            # WHO sent it. Not decoration: this is the actor half of the routing key
+            # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
+            # `canopy_web_chat` turn can get one — neither carries the
+            # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
+            # rule on those sources silently matches nothing. `enqueue_turn` ignores an
+            # unauthenticated user, so this is safe to pass unconditionally.
+            enqueued_by=user,
             pinned_runner=pinned,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
@@ -940,8 +947,8 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
 
 
 def _send_transcript_sourced_message(
-    *, session: Session, text: str, client_id: str = "", placement: str | None = None,
-    origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
+    *, session: Session, text: str, user=None, client_id: str = "",
+    placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -982,6 +989,13 @@ def _send_transcript_sourced_message(
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
         origin_ref=origin_ref,
+        # WHO sent it. Not decoration: this is the actor half of the routing key
+        # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
+        # `canopy_web_chat` turn can get one — neither carries the
+        # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
+        # rule on those sources silently matches nothing. `enqueue_turn` ignores an
+        # unauthenticated user, so this is safe to pass unconditionally.
+        enqueued_by=user,
         pinned_runner=pinned,
     )
     _maybe_interject(session, message)

@@ -254,7 +254,7 @@ export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRule
 
 export async function putAgentRunnerRules(
   slug: string,
-  rules: readonly { source: string; runnerId: string; strict: boolean }[],
+  rules: readonly { source: string; actor: string; runnerIds: readonly string[]; strict: boolean }[],
 ): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },
@@ -264,12 +264,21 @@ export async function putAgentRunnerRules(
         // .source is a plain string (output schemas serialize what the DB holds),
         // so casting to it would type-check nothing.
         source: r.source as RoutableSource,
-        runner_id: r.runnerId,
+        // '' = any actor, which is what a rule meant before actors existed. The
+        // server normalizes (a pasted "Name <addr>" header resolves to the bare
+        // lowercase address) and 422s anything that isn't address-shaped.
+        actor: r.actor,
+        // ORDER IS THE PREFERENCE: rank is the index. A rule names several
+        // runners because the operator's two macOS accounts alternate, so the
+        // live one rotates (spec 2026-09-05).
+        runners: r.runnerIds.map((id) => ({
+          runner_id: id,
+          // Always enabled: this editor has no per-runner disable affordance —
+          // a runner you don't want in a rule is removed from it (cheap to
+          // re-add). The server keeps `enabled` per row for the API's sake.
+          enabled: true,
+        })),
         strict: r.strict,
-        // Always sent: the generated body type requires it, and this editor has
-        // no disable affordance — a rule you don't want is deleted (cheap to
-        // re-add), so every rule it writes is an enabled one.
-        enabled: true,
       })),
     },
   })

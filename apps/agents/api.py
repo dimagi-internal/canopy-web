@@ -310,24 +310,36 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     """The per-source overrides on top of the default ordered list (spec
     2026-07-27). One rule per source, max — the priority runner, and whether it is
     the only one allowed to take that source's work."""
-    from django.db.models import Count
+    from collections import Counter
 
+    from apps.harness.actors import actor_of
     from apps.harness.models import Runner, RunnerAssignment, Turn
 
     agent = _get_agent_or_404(request, slug)
-    # Per-source queued depth in one query — what the UI's "N turns are parked"
-    # warning renders next to a strict rule whose runner is offline.
-    queued = dict(
+    # Queued depth per (source, actor) — what the UI's "N turns are parked" warning
+    # renders next to a strict rule whose runner is offline. This cannot stay a
+    # `values_list("origin").annotate(Count)` now that the key includes the actor:
+    # the actor is DERIVED per turn (from `origin_ref["from"]` for mail, from
+    # `enqueued_by` otherwise), so it is grouped in Python. Queued sets are single
+    # digits in practice, and a count keyed only on origin would attribute other
+    # people's parked work to your rule.
+    queued: Counter = Counter()
+    for t in (
         Turn.objects.filter(agent=agent, status=Turn.QUEUED)
-        .values_list("origin").annotate(n=Count("id"))
-    )
+        .select_related("enqueued_by")
+        .only("origin", "origin_ref", "enqueued_by")
+    ):
+        queued[(t.origin, actor_of(t))] += 1
+
     rows = (
         RunnerAssignment.objects.filter(agent=agent).exclude(source="")
-        .select_related("runner").order_by("source")
+        .select_related("runner").order_by("source", "actor", "rank")
     )
     return [
         AgentRunnerRuleOut(
             source=row.source,
+            actor=row.actor,
+            rank=row.rank,
             runner_id=row.runner.id,
             runner_name=row.runner.name,
             kind=row.runner.kind,
@@ -337,7 +349,9 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
             online=row.runner.live_status == Runner.ONLINE,
             ready=row.runner.ready,
             enabled=row.enabled,
-            queued_count=queued.get(row.source, 0),
+            # Every row of a rule repeats its RULE's count: the parked queue belongs
+            # to the rule, not to one runner in it.
+            queued_count=queued.get((row.source, row.actor), 0),
         )
         for row in rows
     ]
@@ -355,20 +369,44 @@ def replace_agent_runner_rules(
     the other's rows (they share one table), and so the existing GET response
     shape stays what the frontend already consumes.
     """
+    from apps.harness.actors import normalize_actor
     from apps.harness.api import _runner_visibility_q
     from apps.harness.models import Runner, RunnerAssignment
 
     agent = _get_agent_or_404(request, slug)
 
-    # One rule per source. Caught here rather than left to the DB constraint so
-    # the caller gets a named reason instead of an IntegrityError 500.
-    sources = [r.source for r in payload.rules]
-    if len(sources) != len(set(sources)):
-        raise HttpError(422, "one rule per source: duplicate source in list")
+    # Normalize BEFORE validating or storing, so a rule pasted straight out of a
+    # mail client ("Sarvesh Tewari <STewari@Dimagi.com>") matches a turn whose
+    # sender resolves to the bare lowercase address. Rejecting an unparseable
+    # actor is the point: stored as-is it would be a rule that silently never
+    # matches, which is indistinguishable from a routing bug.
+    actors: list[str] = []
+    for r in payload.rules:
+        actor = normalize_actor(r.actor) if r.actor else ""
+        if r.actor and not actor:
+            raise HttpError(422, f"not an email address: {r.actor!r}")
+        actors.append(actor)
+
+    # One rule per (source, actor) — several actors MAY share a source, which is
+    # the whole feature. Caught here rather than left to the DB constraint so the
+    # caller gets a named reason instead of an IntegrityError 500.
+    keys = list(zip([r.source for r in payload.rules], actors))
+    if len(keys) != len(set(keys)):
+        raise HttpError(422, "one rule per (source, actor): duplicate in list")
+
+    for r, actor in zip(payload.rules, actors):
+        if not r.runners:
+            # A zero-length strict rule composes to an empty list and parks the
+            # queue naming no runner as the reason. Deleting the rule is how you
+            # turn it off.
+            raise HttpError(422, f"a rule needs at least one runner: {r.source}/{actor}")
+        seen = [row.runner_id for row in r.runners]
+        if len(seen) != len(set(seen)):
+            raise HttpError(422, f"a runner may appear once per rule: {r.source}/{actor}")
 
     # Same visibility predicate the default-list PUT gates on — a runner the
     # caller can't see must 422 as unknown, never be attachable by guessed UUID.
-    ids = [r.runner_id for r in payload.rules]
+    ids = [row.runner_id for r in payload.rules for row in r.runners]
     runners = list(
         Runner.objects.filter(id__in=ids)
         .exclude(status=Runner.RETIRED)
@@ -382,13 +420,15 @@ def replace_agent_runner_rules(
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
         RunnerAssignment.objects.bulk_create([
-            # rank=0: meaningless on a source row (the constraint allows exactly
-            # one per source), and the composition helper renumbers anyway.
+            # `rank` is the runner's position WITHIN its rule — the list order the
+            # caller sent. `strict` is rule-level and written to every row of the
+            # rule, so the composer can read it off the first.
             RunnerAssignment(
-                agent=agent, runner=by_id[r.runner_id], rank=0,
-                source=r.source, strict=r.strict, enabled=r.enabled,
+                agent=agent, runner=by_id[row.runner_id], rank=rank,
+                source=r.source, actor=actor, strict=r.strict, enabled=row.enabled,
             )
-            for r in payload.rules
+            for r, actor in zip(payload.rules, actors)
+            for rank, row in enumerate(r.runners)
         ])
     return list_agent_runner_rules(request, slug)
 

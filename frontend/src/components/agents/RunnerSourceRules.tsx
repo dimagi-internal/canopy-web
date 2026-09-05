@@ -7,11 +7,22 @@ import {
 } from '@/api/agents'
 import { type RunnerOut } from '@/api/harness'
 
-// The per-source exception list that sits under an agent's DEFAULT runner order
-// (see RunnerAssignments). A rule is one priority runner plus a strict toggle —
-// deliberately not a second ordered list: ordering already exists once, in the
-// default list, and a source only needs to say "prefer this box" and optionally
-// "and nowhere else".
+export type { AgentRunnerRuleOut }
+
+// The per-(source, actor) exception list that sits under an agent's DEFAULT
+// runner order (see RunnerAssignments).
+//
+// A rule is (source, actor) -> an ORDERED LIST of runners, plus a strict toggle.
+// It names a LIST rather than one runner because the operator's own boxes are two
+// macOS accounts on one machine, alternated as each runs out of tokens: "my work,
+// on either of mine, never cloud" cannot be said with a single runner — naming the
+// logged-out account parks the queue roughly half the time, and falling through
+// hands the work to whatever sits next in the default order (on a cloud-default
+// agent, cloud). Spec: 2026-09-05-actor-aware-runner-routing-design.md.
+//
+// `actor: ''` means "any actor" — bit-for-bit the pre-actor source rule — so an
+// existing rule is simply a rule of length one with an empty actor, and renders
+// and edits exactly as it did.
 //
 // Mirrors RunnerAssignments' commit machinery: optimistic local state, a ref that
 // keeps pace with it so a fast second click composes on top of the first, and a
@@ -41,39 +52,148 @@ const SOURCE_LABEL: Record<string, string> = {
   api: 'api (unclassified)',
 }
 
-export type RuleRow = { source: string; runnerId: string; strict: boolean }
+export type RuleRow = {
+  source: string
+  actor: string
+  runnerIds: string[]
+  strict: boolean
+}
 
-function toRows(rules: readonly AgentRunnerRuleOut[]): RuleRow[] {
-  return rules.map((r) => ({ source: r.source, runnerId: r.runner_id, strict: r.strict }))
+// A rule's identity is the PAIR. Keying on source alone is what the pre-actor
+// version did, and it is why several actors could not share a source.
+// NUL-joined so an actor containing the separator can't forge another rule's key.
+export function ruleKey(r: { source: string; actor: string }): string {
+  return `${r.source}\u0000${r.actor}`
+}
+
+export type GroupedRule = {
+  source: string
+  actor: string
+  strict: boolean
+  runners: AgentRunnerRuleOut[]
+  queuedCount: number
+  // A STRICT rule with no online runner left. Not "its first runner is offline":
+  // naming two boxes exists precisely so one being asleep is not a parked queue.
+  // A fall-through rule is never parked — it degrades to the default order.
+  parked: boolean
+}
+
+// The API returns rows FLAT, one per runner, so the response shape stays the one
+// the frontend already consumes (name/kind/online/ready are per runner anyway).
+// Grouping happens here.
+export function groupRules(rules: readonly AgentRunnerRuleOut[]): GroupedRule[] {
+  const byKey = new Map<string, AgentRunnerRuleOut[]>()
+  for (const row of rules) {
+    const k = ruleKey(row)
+    const bucket = byKey.get(k)
+    if (bucket) bucket.push(row)
+    else byKey.set(k, [row])
+  }
+  const out: GroupedRule[] = []
+  for (const rows of byKey.values()) {
+    const runners = [...rows].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+    const first = runners[0]
+    out.push({
+      source: first.source,
+      actor: first.actor ?? '',
+      strict: first.strict,
+      runners,
+      queuedCount: first.queued_count ?? 0,
+      parked: first.strict && !runners.some((r) => r.online),
+    })
+  }
+  // Specific rules above the catch-all, matching the order the cascade evaluates
+  // them in, so reading the list top-down reads the precedence.
+  return out.sort(
+    (a, b) =>
+      a.source.localeCompare(b.source) ||
+      (a.actor === '' ? 1 : 0) - (b.actor === '' ? 1 : 0) ||
+      a.actor.localeCompare(b.actor),
+  )
+}
+
+export function toRows(rules: readonly AgentRunnerRuleOut[]): RuleRow[] {
+  return groupRules(rules).map((g) => ({
+    source: g.source,
+    actor: g.actor,
+    runnerIds: g.runners.map((r) => r.runner_id),
+    strict: g.strict,
+  }))
 }
 
 // Pure list transforms, extracted so they unit-test without a React renderer
 // (see RunnerSourceRules.test.tsx). None of them mutates its input — the commit
 // lane keeps a `prev` snapshot to revert to on failure.
+function mapRule(
+  rules: readonly RuleRow[], key: string, fn: (r: RuleRow) => RuleRow,
+): RuleRow[] {
+  return rules.map((r) => (ruleKey(r) === key ? fn(r) : r))
+}
+
 export function nextRulesForAdd(
   rules: readonly RuleRow[], source: string, runnerId: string,
 ): RuleRow[] {
   // strict=false by default: a new rule prefers a box without parking the queue
   // when that box is down. Opting into "only" should be a deliberate click.
-  return [...rules, { source, runnerId, strict: false }]
+  // actor='' by default: a rule is born as a plain source rule, and naming a
+  // person is the second, explicit step.
+  return [...rules, { source, actor: '', runnerIds: [runnerId], strict: false }]
 }
 
-export function nextRulesForRunner(
-  rules: readonly RuleRow[], source: string, runnerId: string,
+export function nextRulesForActor(
+  rules: readonly RuleRow[], key: string, actor: string,
 ): RuleRow[] {
-  return rules.map((r) => (r.source === source ? { ...r, runnerId } : r))
+  return mapRule(rules, key, (r) => ({ ...r, actor }))
 }
 
-export function nextRulesForStrict(rules: readonly RuleRow[], source: string): RuleRow[] {
-  return rules.map((r) => (r.source === source ? { ...r, strict: !r.strict } : r))
+export function nextRulesForStrict(rules: readonly RuleRow[], key: string): RuleRow[] {
+  return mapRule(rules, key, (r) => ({ ...r, strict: !r.strict }))
 }
 
-export function nextRulesForRemove(rules: readonly RuleRow[], source: string): RuleRow[] {
-  return rules.filter((r) => r.source !== source)
+export function nextRulesForRemove(rules: readonly RuleRow[], key: string): RuleRow[] {
+  return rules.filter((r) => ruleKey(r) !== key)
+}
+
+export function nextRulesForRunnerAdd(
+  rules: readonly RuleRow[], key: string, runnerId: string,
+): RuleRow[] {
+  // A runner twice in one rule is a 422 server-side; refusing here keeps the
+  // optimistic render honest rather than showing a row the save will reject.
+  return mapRule(rules, key, (r) =>
+    r.runnerIds.includes(runnerId) ? r : { ...r, runnerIds: [...r.runnerIds, runnerId] },
+  )
+}
+
+export function nextRulesForRunnerMove(
+  rules: readonly RuleRow[], key: string, index: number, delta: number,
+): RuleRow[] {
+  return mapRule(rules, key, (r) => {
+    const to = index + delta
+    if (to < 0 || to >= r.runnerIds.length) return r
+    const ids = [...r.runnerIds]
+    ;[ids[index], ids[to]] = [ids[to], ids[index]]
+    return { ...r, runnerIds: ids }
+  })
+}
+
+export function nextRulesForRunnerRemove(
+  rules: readonly RuleRow[], key: string, runnerId: string,
+): RuleRow[] {
+  // Dropping the last runner deletes the RULE. A zero-runner rule is a 422: a
+  // strict one would compose to an empty list and park the queue naming no
+  // runner as the reason.
+  return rules.flatMap((r) => {
+    if (ruleKey(r) !== key) return [r]
+    const ids = r.runnerIds.filter((id) => id !== runnerId)
+    return ids.length ? [{ ...r, runnerIds: ids }] : []
+  })
 }
 
 export function availableSources(rules: readonly RuleRow[]): RoutableSource[] {
-  const taken = new Set(rules.map((r) => r.source))
+  // Only a CATCH-ALL rule (actor: '') consumes a source — several actors may
+  // share one, which is the feature. A source whose only rules name people must
+  // still be addable for everyone else.
+  const taken = new Set(rules.filter((r) => r.actor === '').map((r) => r.source))
   return ROUTABLE_SOURCES.filter((s) => !taken.has(s))
 }
 
@@ -113,23 +233,28 @@ export function RunnerSourceRules(
   const commit = async (next: RuleRow[], prev: AgentRunnerRuleOut[]) => {
     const mySeq = ++seqRef.current
     // Optimistic: patch names/state from the fleet list so a fresh rule renders
-    // immediately rather than flashing empty until the PUT returns.
+    // immediately rather than flashing empty until the PUT returns. Flattened
+    // back to one row per runner, which is the shape the server returns.
     apply(
-      next.map((r) => {
-        const existing = prev.find((p) => p.source === r.source)
-        const f = fleet.find((x) => x.id === r.runnerId)
-        return {
-          source: r.source,
-          runner_id: r.runnerId,
-          runner_name: f?.name ?? existing?.runner_name ?? r.runnerId,
-          kind: f?.kind ?? existing?.kind ?? '',
-          strict: r.strict,
-          online: f ? f.status === 'online' : (existing?.online ?? false),
-          ready: f?.ready ?? existing?.ready ?? false,
-          enabled: true,
-          queued_count: existing?.queued_count ?? 0,
-        } as AgentRunnerRuleOut
-      }),
+      next.flatMap((r) =>
+        r.runnerIds.map((id, rank) => {
+          const existing = prev.find((p) => ruleKey(p) === ruleKey(r) && p.runner_id === id)
+          const f = fleet.find((x) => x.id === id)
+          return {
+            source: r.source,
+            actor: r.actor,
+            rank,
+            runner_id: id,
+            runner_name: f?.name ?? existing?.runner_name ?? id,
+            kind: f?.kind ?? existing?.kind ?? '',
+            strict: r.strict,
+            online: f ? f.status === 'online' : (existing?.online ?? false),
+            ready: f?.ready ?? existing?.ready ?? false,
+            enabled: true,
+            queued_count: existing?.queued_count ?? 0,
+          } as AgentRunnerRuleOut
+        }),
+      ),
     )
     setError(null)
     try {
@@ -157,7 +282,10 @@ export function RunnerSourceRules(
     )
   }
 
+  const grouped = groupRules(rules)
   const unruled = availableSources(toRows(rules))
+  const unused = (g: GroupedRule) =>
+    fleet.filter((f) => !g.runners.some((r) => r.runner_id === f.id))
 
   return (
     <div className="flex flex-col gap-1" data-testid={`runner-rules-${agentSlug}`}>
@@ -165,91 +293,164 @@ export function RunnerSourceRules(
         Except when the work comes from
       </span>
 
-      {rules.length === 0 && (
+      {grouped.length === 0 && (
         <span className="text-[11px] text-muted-foreground">
           No exceptions — every source follows the default order.
         </span>
       )}
 
-      {rules.map((r) => (
-        <div key={r.source} data-testid={`runner-rule-${r.source}`}>
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-1">
-            <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
-              {SOURCE_LABEL[r.source] ?? r.source}
-            </span>
-            <span className="text-muted-foreground">→</span>
+      {grouped.map((g) => {
+        const key = ruleKey(g)
+        const testId = g.actor ? `${g.source}-${g.actor}` : g.source
+        return (
+          <div key={key} data-testid={`runner-rule-${testId}`}>
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-1">
+              <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
+                {SOURCE_LABEL[g.source] ?? g.source}
+              </span>
 
-            <select
-              value={r.runner_id}
-              onChange={(e) => mutate((rows) => nextRulesForRunner(rows, r.source, e.target.value))}
-              aria-label={`Runner for ${r.source}`}
-              className="rounded border border-input bg-input px-1.5 py-0.5 text-[12px] text-foreground"
-            >
-              {fleet.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+              {/* Free text, placeholder `anyone`: an operator pastes what their
+                  mail client shows, and the server normalizes a full
+                  "Name <addr>" header down to the bare address it routes on. */}
+              <span className="text-[11px] text-muted-foreground">from</span>
+              <input
+                type="text"
+                defaultValue={g.actor}
+                placeholder="anyone"
+                onBlur={(e) => {
+                  const v = e.target.value.trim()
+                  if (v !== g.actor) mutate((rows) => nextRulesForActor(rows, key, v))
+                }}
+                aria-label={`Actor for the ${g.source} rule`}
+                className="w-52 rounded border border-input bg-input px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+              />
+              <span className="text-muted-foreground">→</span>
 
-            {/* The strict toggle, worded as its consequence rather than as the
-                flag name: "only" parks the queue when that box is down, which is
-                the point for a source that can only run in one place. */}
-            <div className="flex overflow-hidden rounded border border-input text-[10px]">
+              {/* The rule's runners as the SAME rank chip row the default order
+                  uses — order is the preference, and a rule may name several
+                  because the operator's two macOS accounts alternate. */}
+              <div className="flex flex-wrap items-center gap-1">
+                {g.runners.map((r, i) => (
+                  <span
+                    key={r.runner_id}
+                    className="flex items-center gap-1 rounded border border-input bg-input px-1.5 py-0.5 text-[11px]"
+                    data-testid={`rule-runner-${testId}-${r.runner_name}`}
+                  >
+                    <span className={r.online ? 'text-success' : 'text-muted-foreground'}>●</span>
+                    <span className="font-mono">{r.runner_name}</span>
+                    <button
+                      type="button"
+                      onClick={() => mutate((rows) => nextRulesForRunnerMove(rows, key, i, -1))}
+                      disabled={i === 0}
+                      aria-label={`Move ${r.runner_name} up in the ${g.source} rule`}
+                      className="text-muted-foreground hover:text-primary disabled:opacity-30"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => mutate((rows) => nextRulesForRunnerMove(rows, key, i, 1))}
+                      disabled={i === g.runners.length - 1}
+                      aria-label={`Move ${r.runner_name} down in the ${g.source} rule`}
+                      className="text-muted-foreground hover:text-primary disabled:opacity-30"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        mutate((rows) => nextRulesForRunnerRemove(rows, key, r.runner_id))
+                      }
+                      aria-label={`Remove ${r.runner_name} from the ${g.source} rule`}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+                {unused(g).length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        mutate((rows) => nextRulesForRunnerAdd(rows, key, e.target.value))
+                      }
+                    }}
+                    aria-label={`Add a runner to the ${g.source} rule`}
+                    className="rounded border border-input bg-input px-1 py-0.5 text-[11px] text-foreground-secondary"
+                  >
+                    <option value="">+</option>
+                    {unused(g).map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* The strict toggle, worded as its consequence rather than as the
+                  flag name: "only" parks the queue when every runner it names is
+                  down, which is the point for work that can only run in one place. */}
+              <div className="flex overflow-hidden rounded border border-input text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!g.strict) mutate((rows) => nextRulesForStrict(rows, key))
+                  }}
+                  className={`px-2 py-0.5 ${
+                    g.strict ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
+                  }`}
+                  aria-pressed={g.strict}
+                >
+                  only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (g.strict) mutate((rows) => nextRulesForStrict(rows, key))
+                  }}
+                  className={`px-2 py-0.5 ${
+                    g.strict ? 'text-muted-foreground' : 'bg-primary text-primary-foreground'
+                  }`}
+                  aria-pressed={!g.strict}
+                >
+                  fall through
+                </button>
+              </div>
+
+              {/* Rules ARE deletable, unlike default-order chips (which toggle):
+                  a rule is cheap to re-add, and a greyed rule sitting next to a
+                  greyed runner would read as two different kinds of "off". */}
               <button
                 type="button"
-                onClick={() => {
-                  if (!r.strict) mutate((rows) => nextRulesForStrict(rows, r.source))
-                }}
-                className={`px-2 py-0.5 ${
-                  r.strict ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
-                }`}
-                aria-pressed={r.strict}
+                onClick={() => mutate((rows) => nextRulesForRemove(rows, key))}
+                aria-label={`Remove the ${g.source} rule`}
+                className="ml-auto px-1 text-muted-foreground hover:text-destructive"
               >
-                only
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (r.strict) mutate((rows) => nextRulesForStrict(rows, r.source))
-                }}
-                className={`px-2 py-0.5 ${
-                  r.strict ? 'text-muted-foreground' : 'bg-primary text-primary-foreground'
-                }`}
-                aria-pressed={!r.strict}
-              >
-                fall through
+                ✕
               </button>
             </div>
 
-            {/* Rules ARE deletable, unlike default-order chips (which toggle):
-                a rule is cheap to re-add, and a greyed rule sitting next to a
-                greyed runner would read as two different kinds of "off". */}
-            <button
-              type="button"
-              onClick={() => mutate((rows) => nextRulesForRemove(rows, r.source))}
-              aria-label={`Remove the ${r.source} rule`}
-              className="ml-auto px-1 text-muted-foreground hover:text-destructive"
-            >
-              ✕
-            </button>
+            {/* Strictness parking a queue is the toggle working; parking it
+                SILENTLY is the failure. Say it, with the count — and only when
+                EVERY runner the rule names is down, since naming two boxes
+                exists precisely so one being asleep is not a parked queue. */}
+            {g.parked && (
+              <p
+                className="mt-0.5 pl-2 text-[11px] text-warning"
+                data-testid={`runner-rule-parked-${testId}`}
+              >
+                ⚠ {g.runners.map((r) => r.runner_name).join(' and ')}{' '}
+                {g.runners.length > 1 ? 'are' : 'is'} offline
+                {g.queuedCount > 0
+                  ? ` — ${g.queuedCount} ${g.source}${g.actor ? ` turn${g.queuedCount === 1 ? '' : 's'} from ${g.actor}` : ` turn${g.queuedCount === 1 ? '' : 's'}`} parked, and will stay parked.`
+                  : ' — this work will not run until one returns.'}
+              </p>
+            )}
           </div>
-
-          {/* Strictness parking a queue is the toggle working; parking it
-              SILENTLY is the failure. Say it, with the count. */}
-          {r.strict && !r.online && (
-            <p
-              className="mt-0.5 pl-2 text-[11px] text-warning"
-              data-testid={`runner-rule-parked-${r.source}`}
-            >
-              ⚠ {r.runner_name} is offline
-              {r.queued_count > 0
-                ? ` — ${r.queued_count} ${r.source} turn${r.queued_count === 1 ? '' : 's'} parked, and will stay parked.`
-                : ' — this source will not run until it returns.'}
-            </p>
-          )}
-        </div>
-      ))}
+        )
+      })}
 
       <div className="relative">
         <button
@@ -282,12 +483,13 @@ export function RunnerSourceRules(
 
       {/* The precedence ladder, stated once where rules are edited — and the one
           place `enabled` means two things: a runner switched OFF in Default order
-          still takes the work of any source that names it, because the rule is
-          its own row with its own toggle. Left unsaid, a greyed chip above reads
-          as "this box is off" while it is quietly answering email. */}
+          still takes the work of any rule that names it, because the rule is its
+          own row with its own toggle. Left unsaid, a greyed chip above reads as
+          "this box is off" while it is quietly answering email. */}
       <p className="text-[10px] text-foreground-subtle">
-        A named runner wins over a rule; a live chat stays on the box hosting it.
-        A rule still routes to its runner even when that runner is switched off above.
+        A named runner wins over a rule; a live chat stays on the box hosting it; a rule naming
+        a person beats one naming only a source, which beats the default order. A rule still
+        routes to its runners even when they are switched off above.
       </p>
 
       {error && <span className="text-[11px] text-destructive">{error}</span>}

@@ -25,16 +25,35 @@ def _runner(name):
     return Runner.objects.create(name=name, kind=Runner.EMDASH, capabilities={})
 
 
-def _rows(agent, origin):
+def _rows(agent, origin, actor=""):
+    """Every assertion in this file passes actor="" — which is the point: a rule
+    with no actor must behave exactly as it did before actors existed."""
     defaults, priorities = services.load_assignment_rows([agent.id])
-    return [r for _rank, r in services.assignment_rows_for(agent.id, origin, defaults, priorities)]
+    return [
+        r for _rank, r in services.assignment_rows_for(agent.id, origin, actor, defaults, priorities)
+    ]
 
 
-def test_one_priority_runner_per_agent_and_source():
+def test_a_source_rule_may_now_hold_several_runners_in_rank_order():
+    """DELIBERATE RELAXATION (spec 2026-09-05). This used to raise IntegrityError:
+    the old `one_priority_runner_per_agent_source` capped a rule at one runner.
+
+    That cap could not express the operator's real case — "either of my two macOS
+    accounts, never cloud", where which account is live rotates — so a rule became
+    a rank-ordered LIST. `rank` was already reserved for this by the source spec.
+    """
     a, r1, r2 = _agent(), _runner("r1"), _runner("r2")
     RunnerAssignment.objects.create(agent=a, runner=r1, rank=0, source=Turn.ORIGIN_EMAIL)
+    RunnerAssignment.objects.create(agent=a, runner=r2, rank=1, source=Turn.ORIGIN_EMAIL)
+    assert _rows(a, Turn.ORIGIN_EMAIL) == [r1, r2]
+
+
+def test_but_the_same_runner_still_cannot_appear_twice_in_one_rule():
+    """The cap moved from the RULE to the RUNNER; it did not disappear."""
+    a, r1 = _agent(), _runner("r1")
+    RunnerAssignment.objects.create(agent=a, runner=r1, rank=0, source=Turn.ORIGIN_EMAIL)
     with pytest.raises(IntegrityError):
-        RunnerAssignment.objects.create(agent=a, runner=r2, rank=0, source=Turn.ORIGIN_EMAIL)
+        RunnerAssignment.objects.create(agent=a, runner=r1, rank=1, source=Turn.ORIGIN_EMAIL)
 
 
 def test_the_same_runner_may_be_a_default_and_a_priority():
@@ -76,7 +95,7 @@ def test_the_composed_list_is_renumbered_from_zero():
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
     RunnerAssignment.objects.create(agent=a, runner=cloud, rank=0, source=Turn.ORIGIN_ACE_WEB)
     defaults, priorities = services.load_assignment_rows([a.id])
-    composed = services.assignment_rows_for(a.id, Turn.ORIGIN_ACE_WEB, defaults, priorities)
+    composed = services.assignment_rows_for(a.id, Turn.ORIGIN_ACE_WEB, "", defaults, priorities)
     assert [rank for rank, _r in composed] == [0, 1]
 
 

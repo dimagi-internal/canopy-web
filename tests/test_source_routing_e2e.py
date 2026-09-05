@@ -43,10 +43,18 @@ def fleet(client):
     return {"client": client, "ace": ace, "echo": echo, "laptop": laptop, "cloud": cloud}
 
 
-def _rule(client, slug, source, runner, strict):
+def _rule(client, slug, source, runner, strict, actor=""):
+    """A rule now names an ORDERED LIST of runners (spec 2026-09-05); this helper
+    keeps posting one, so every assertion below is unchanged — which is the point:
+    a one-runner, no-actor rule must behave exactly as it did before actors."""
     res = client.put(
         f"/api/agents/{slug}/runner-rules",
-        data={"rules": [{"source": source, "runner_id": str(runner.id), "strict": strict}]},
+        data={"rules": [{
+            "source": source,
+            "actor": actor,
+            "runners": [{"runner_id": str(runner.id), "enabled": True}],
+            "strict": strict,
+        }]},
         content_type="application/json",
     )
     assert res.status_code == 200, res.content
@@ -133,3 +141,140 @@ def test_the_three_rules_coexist_on_one_fleet(fleet):
 
     assert first is not None and first.origin == Turn.ORIGIN_EMAIL
     assert second is not None and second.origin == Turn.ORIGIN_ACE_WEB
+
+
+# --- actor rules: route by WHO, not just what kind (spec 2026-09-05) ----------
+
+def _rules(client, slug, rules):
+    """Several rules at once — the wholesale-replace body the Runners tab sends."""
+    res = client.put(
+        f"/api/agents/{slug}/runner-rules",
+        data={"rules": rules}, content_type="application/json",
+    )
+    assert res.status_code == 200, res.content
+
+
+def _runners_of(rule):
+    return [{"runner_id": str(r.id), "enabled": True} for r in rule]
+
+
+def test_one_persons_mail_goes_to_cloud_while_everyone_elses_stays_local(fleet):
+    """THE case multiplayer was blocked on.
+
+    ACE keeps the operator's boxes as its default order and allowlists named
+    colleagues onto the cloud runner — so other people can use ace-web without
+    their work landing on the machine the operator is debugging on.
+    """
+    _rules(fleet["client"], "ace", [{
+        "source": "email", "actor": "stewari@dimagi.com",
+        "runners": _runners_of([fleet["cloud"]]), "strict": True,
+    }])
+
+    theirs = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-sarvesh",
+                    origin_ref={"from": "Sarvesh Tewari <STewari@Dimagi.com>"})
+    mine = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-jj",
+                  origin_ref={"from": "Jonathan Jackson <jjackson@dimagi.com>"})
+
+    # The laptop outranks cloud in the default order and Sarvesh's turn is the
+    # OLDER of the two — yet the laptop skips straight past it to the operator's
+    # own mail, because the strict rule removes the laptop from Sarvesh's list.
+    assert services.claim_next_turn(fleet["laptop"]).id == mine.id
+
+    # `one_executing_turn_per_agent` now holds ace's slot, so free it before
+    # asking who takes Sarvesh's — otherwise this asserts the index, not routing.
+    services.finish_turn(mine, status=Turn.DONE)
+
+    assert services.claim_next_turn(fleet["cloud"]).id == theirs.id
+
+
+def test_a_strict_operator_rule_survives_one_of_the_two_accounts_being_down(fleet):
+    """OPERATOR_BOXES. jj-mbp and acedimagi-mbp are two macOS accounts on ONE
+    machine, alternated as each runs out of tokens — so a rule naming only the
+    logged-out one would park roughly half the time. Naming both is the fix, and
+    this is the assertion that proves a one-runner rule could not have done it."""
+    acedimagi = Runner.objects.create(
+        name="acedimagi-mbp", kind=Runner.EMDASH, paired_by=fleet["laptop"].paired_by,
+        status=Runner.DISCONNECTED, last_heartbeat_at=timezone.now() - dt.timedelta(hours=2),
+        capabilities={},
+    )
+    # echo is cloud-DEFAULT: without the rule, the operator's own work goes to cloud.
+    RunnerAssignment.objects.filter(agent=fleet["echo"], runner=fleet["cloud"]).update(rank=0)
+    RunnerAssignment.objects.filter(agent=fleet["echo"], runner=fleet["laptop"]).update(rank=1)
+    _rules(fleet["client"], "echo", [{
+        "source": "email", "actor": "jjackson@dimagi.com",
+        # acedimagi first — it is normally the live account — then jj-mbp.
+        "runners": _runners_of([acedimagi, fleet["laptop"]]), "strict": True,
+    }])
+
+    _queue(fleet["echo"], Turn.ORIGIN_EMAIL, "k-mine",
+           origin_ref={"from": "Jonathan Jackson <jjackson@dimagi.com>"})
+
+    # The preferred account is offline, so the rule degrades WITHIN itself …
+    assert services.claim_next_turn(fleet["laptop"]) is not None
+    # … and never to cloud, which outranks both in the default order.
+    assert services.claim_next_turn(fleet["cloud"]) is None
+
+
+def test_a_strict_rule_parks_rather_than_leaking_to_cloud_past_the_grace(fleet):
+    """The wedged-runner grace opens a turn to lower ranks after 60s. A strict
+    rule's excluded runners are absent from the list entirely, so there is nobody
+    for the grace to promote — including past the grace."""
+    RunnerAssignment.objects.filter(agent=fleet["echo"], runner=fleet["cloud"]).update(rank=0)
+    _rules(fleet["client"], "echo", [{
+        "source": "email", "actor": "jjackson@dimagi.com",
+        "runners": _runners_of([fleet["laptop"]]), "strict": True,
+    }])
+    old = _queue(fleet["echo"], Turn.ORIGIN_EMAIL, "k-old",
+                 origin_ref={"from": "jjackson@dimagi.com"})
+    Turn.objects.filter(pk=old.pk).update(
+        created_at=timezone.now() - dt.timedelta(seconds=services.CASCADE_GRACE_SECONDS + 30)
+    )
+
+    assert services.claim_next_turn(fleet["cloud"]) is None
+    assert services.claim_next_turn(fleet["laptop"]).id == old.id
+
+
+def test_a_scheduled_turn_matches_no_actor_rule(fleet):
+    """A schedule has no human actor, so it must fall through to the source rule
+    rather than match somebody's rule by accident."""
+    _rules(fleet["client"], "echo", [
+        {"source": "canopy_scheduler", "actor": "jjackson@dimagi.com",
+         "runners": _runners_of([fleet["laptop"]]), "strict": True},
+        {"source": "canopy_scheduler", "actor": "",
+         "runners": _runners_of([fleet["cloud"]]), "strict": True},
+    ])
+    fired = _queue(fleet["echo"], Turn.ORIGIN_CANOPY_SCHEDULER, "k-sched",
+                   origin_ref={"schedule_id": 1, "slot": "2026-09-05T00:00:00Z"})
+
+    assert services.claim_next_turn(fleet["laptop"]) is None
+    assert services.claim_next_turn(fleet["cloud"]).id == fired.id
+
+
+def test_claim_and_unclaimable_agree_per_actor(fleet):
+    """The parity discipline, extended to the actor key. A strict actor rule
+    pointing at a box that is merely OFFLINE must read as recoverable — if these
+    two disagree, the UI tells the operator a live queue will never run."""
+    fleet["laptop"].status = Runner.DISCONNECTED
+    fleet["laptop"].last_heartbeat_at = timezone.now() - dt.timedelta(hours=2)
+    fleet["laptop"].save()
+    _rules(fleet["client"], "ace", [{
+        "source": "email", "actor": "jjackson@dimagi.com",
+        "runners": _runners_of([fleet["laptop"]]), "strict": True,
+    }])
+    parked = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-parked",
+                    origin_ref={"from": "jjackson@dimagi.com"})
+    # Age it past UNCLAIMABLE_GRACE — the warning deliberately ignores turns that
+    # have only just been queued, so a fresh one reports nothing at all.
+    Turn.objects.filter(pk=parked.pk).update(
+        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(minutes=1)
+    )
+
+    # Nobody can claim it right now …
+    assert services.claim_next_turn(fleet["cloud"]) is None
+    # … and the warning says OFFLINE (wait for the box), never CONFIG (never runs).
+    # `kind` is the classification the UI branches on; `reason` is its prose.
+    reported = {
+        r["turn_id"]: r["kind"]
+        for r in services.unclaimable_queued_turns(fleet["laptop"].paired_by)
+    }
+    assert reported.get(str(parked.id)) == "offline"
