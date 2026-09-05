@@ -117,6 +117,48 @@ GET  /api/agents/{slug}/oauth/google/callback -> stores refresh token as `gog-to
   with that client*, so recording which client produced it turns an invisible
   mismatch into a rendered fact.
 
+### BLOCKED, measured 2026-09-05 — and not on code
+
+The browser mint cannot be built against the **shared `canopy` OAuth client**.
+Probed directly against Google's authorize endpoint with that client id and a
+canopy-web redirect:
+
+```
+redirect_uri = https://labs.connect.dimagi.com/canopy/api/agents/ace/oauth/google/callback
+-> Error 400: redirect_uri_mismatch  ("Access blocked")
+```
+
+The stored credential is `{client_id, client_secret}` and nothing else — no
+`redirect_uris`, no `auth_uri` — because `gog` is a CLI and authorises over a
+**loopback** redirect. A server-side web redirect is a different registration,
+and on a *Desktop-app* client type Google will not permit an https redirect at
+all.
+
+So the remaining work is an **administrative step in the Google Cloud project
+that owns the client**, and it is one of:
+
+1. **Register the callback** on the existing `canopy` client — only possible if
+   it is a Web-application client, which the loopback usage suggests it is not.
+2. **Create a new Web-application OAuth client for canopy-web** (recommended) —
+   a separate surface deserves a separate client, and it keeps the CLI's
+   loopback client unchanged.
+
+**Option 2 has a consequence this spec must state, because it is the same trap
+that cost a mailbox on 2026-09-05:** a token minted under a *new* web client
+**will not work** with `gog --client canopy`. A token is minted FOR a client and
+works only with that client. So adopting option 2 means the agent's gog client
+becomes the new one, and every place that names `canopy` — `config/agent.json`,
+`runtime.yaml`, the box's `account_clients` map — has to move together, or the
+box authenticates against a client the token was never issued for.
+
+That is precisely why the design stamps each stored token with its minting
+client: it turns this from an invisible mismatch into a rendered fact.
+
+**Until one of those is done, the terminal path (`gog login`) remains the only
+way to mint an agent's Google token**, and ACE's mailbox stays dead. Everything
+else in this spec — the store, the status screen, the resolve gate — is
+independent of it and has shipped (#666, #667).
+
 **Claude credentials stay out of scope.** `claude setup-token` is Anthropic's flow
 and not ours to embed, and the Claude login is **runner-level, not agent-level** —
 the agent brings its identity, not its AI subscription (both `runtime.yaml` files
