@@ -278,3 +278,50 @@ def test_claim_and_unclaimable_agree_per_actor(fleet):
         for r in services.unclaimable_queued_turns(fleet["laptop"].paired_by)
     }
     assert reported.get(str(parked.id)) == "offline"
+
+
+def test_a_rule_alone_makes_a_runner_targetable_with_its_default_row_disabled(fleet):
+    """THE day-one ACE configuration, which nothing else here covers.
+
+    ACE keeps the operator's boxes as its default order and leaves cloud-ec2-1
+    DISABLED there (the escape hatch for flipping the default later). Cloud is
+    reachable only through an actor rule — its own row, with its own toggle.
+
+    That leans on `runner_target_q`'s agent leg putting both conditions on the
+    SAME assignment row: if it matched a runner via any enabled row on the agent,
+    a disabled default would be irrelevant; if it required the DEFAULT row to be
+    enabled, the whole allowlist-to-cloud posture would silently route nothing
+    and the flip would look like a no-op.
+    """
+    RunnerAssignment.objects.filter(agent=fleet["ace"], runner=fleet["cloud"]).update(
+        enabled=False, rank=2
+    )
+    _rules(fleet["client"], "ace", [{
+        "source": "email", "actor": "stewari@dimagi.com",
+        "runners": _runners_of([fleet["cloud"]]), "strict": True,
+    }])
+
+    theirs = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-sarvesh",
+                    origin_ref={"from": "Sarvesh Tewari <stewari@dimagi.com>"})
+
+    assert services.claim_next_turn(fleet["laptop"]) is None
+    assert services.claim_next_turn(fleet["cloud"]).id == theirs.id
+
+
+def test_the_operators_own_work_is_untouched_by_a_colleagues_rule(fleet):
+    """The other half of the same posture: adding Sarvesh's rule must not change
+    where the operator's own ACE work goes. No rule of their own is needed —
+    ACE's default order already IS the operator's boxes."""
+    RunnerAssignment.objects.filter(agent=fleet["ace"], runner=fleet["cloud"]).update(
+        enabled=False, rank=2
+    )
+    _rules(fleet["client"], "ace", [{
+        "source": "email", "actor": "stewari@dimagi.com",
+        "runners": _runners_of([fleet["cloud"]]), "strict": True,
+    }])
+
+    mine = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-jj",
+                  origin_ref={"from": "Jonathan Jackson <jjackson@dimagi.com>"})
+
+    assert services.claim_next_turn(fleet["cloud"]) is None
+    assert services.claim_next_turn(fleet["laptop"]).id == mine.id
