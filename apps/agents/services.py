@@ -416,3 +416,110 @@ def apply_command(cmd: AgentTaskCommand, result_note: str = "") -> AgentTaskComm
         cmd.result_note = result_note
     cmd.save(update_fields=["status", "applied_at", "result_note"])
     return cmd
+
+
+# ---- Agent credentials (per-agent secret store, encrypted at rest) ----------
+# Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
+
+#: Where a resolved value came from. During migration a secret can exist in BOTH
+#: stores and the box silently prefers canopy-web, so the screen must say which
+#: is live rather than only that something is set.
+SOURCE_CANOPY_WEB = "canopy-web"
+SOURCE_UNSET = "unset"
+
+
+def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
+    """Upsert named secrets. NON-CLOBBERING: a ref absent from `values` is left
+    alone, so a single-field edit can never wipe the rest (the same rule
+    RunnerCredentialIn follows, for the same reason).
+
+    Rejects a blank value rather than storing one: "" is how a UI says "I did not
+    type anything", and storing it makes a declared ref read as SET while
+    resolving to nothing — the worst of both.
+    """
+    from apps.agents.models import AgentCredential
+    from apps.common.encryption import encrypt_secret
+
+    blank = sorted(k for k, v in values.items() if not (v or "").strip())
+    if blank:
+        raise ValueError(f"blank value for: {', '.join(blank)}")
+
+    written = 0
+    for name, value in values.items():
+        AgentCredential.objects.update_or_create(
+            agent=agent,
+            name=name.strip(),
+            defaults={
+                "value_enc": encrypt_secret(value.strip()),
+                "updated_by": user if getattr(user, "is_authenticated", False) else None,
+            },
+        )
+        written += 1
+    return written
+
+
+def delete_agent_credential(agent, name: str) -> int:
+    from apps.agents.models import AgentCredential
+
+    deleted, _ = AgentCredential.objects.filter(agent=agent, name=name).delete()
+    return deleted
+
+
+def agent_credential_status(agent) -> list[dict]:
+    """Every ref the agent DECLARES, against what is actually set — booleans and
+    timestamps, never values.
+
+    This is the screen that would have caught the 2026-09-05 failure: ACE's
+    mailbox had been dead since May and seeing that required SSH-ing to a box and
+    running `gog auth list`. A credential that lives only in a vault and a
+    keyring is a credential nobody is watching.
+
+    Declared-but-unset rows appear (that is the question the page answers), and
+    so do stored-but-undeclared ones — an orphan left behind when a ref was
+    removed from runtime.yaml is a live secret nothing accounts for, and hiding
+    it is how it stays that way.
+    """
+    from apps.agents.models import AgentCredential
+
+    stored = {c.name: c for c in AgentCredential.objects.filter(agent=agent).select_related("updated_by")}
+    declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
+
+    rows: list[dict] = []
+    for name in declared + [n for n in sorted(stored) if n not in declared]:
+        cred = stored.get(name)
+        rows.append({
+            "name": name,
+            "declared": name in declared,
+            "set": cred is not None,
+            "source": SOURCE_CANOPY_WEB if cred else SOURCE_UNSET,
+            "updated_at": cred.updated_at if cred else None,
+            "updated_by_email": (cred.updated_by.email if cred and cred.updated_by_id else None),
+        })
+    return rows
+
+
+def resolve_agent_credentials(agent) -> dict[str, str]:
+    """PLAINTEXT. The only path that returns values, and only to a runner."""
+    from apps.agents.models import AgentCredential
+    from apps.common.encryption import decrypt_secret
+
+    return {
+        c.name: decrypt_secret(c.value_enc)
+        for c in AgentCredential.objects.filter(agent=agent)
+    }
+
+
+def caller_runs_agent(user, agent) -> bool:
+    """True when `user` pairs a live runner that this agent's routing could
+    actually send work to.
+
+    Tighter than workspace membership, deliberately: plaintext should reach a box
+    that runs the agent, not everyone who can see it. Mirrors the runner
+    credential fetch, whose trust boundary is "the caller who can claim turns as
+    this runner".
+    """
+    from apps.harness.models import Runner, RunnerAssignment
+
+    return RunnerAssignment.objects.filter(
+        agent=agent, enabled=True, runner__paired_by=user,
+    ).exclude(runner__status=Runner.RETIRED).exists()
