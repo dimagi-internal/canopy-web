@@ -99,6 +99,14 @@ class AgentRunnerRuleOut(StrictModel):
     queued turns from this source, which is what the UI's parked warning reads."""
 
     source: str
+    # "" = the rule applies to any actor (what a source rule meant before actors).
+    # Otherwise a normalized bare address. Plain `str` for the same reason `source`
+    # is: an output schema serializes what the DB holds.
+    actor: str = ""
+    # Position WITHIN this rule. Rows sharing (source, actor) are one rule; the UI
+    # groups on that pair and renders them as the same rank chip row the default
+    # order uses.
+    rank: int = 0
     runner_id: uuid.UUID
     runner_name: str
     kind: str
@@ -110,14 +118,28 @@ class AgentRunnerRuleOut(StrictModel):
 
 
 class AgentRunnerRuleIn(StrictModel):
-    """One rule of the wholesale-replace body. `source` is typed as the routable
-    literal so an unknown source is a 422 here rather than a rule that silently
-    never matches anything — and so the generated TypeScript carries the union."""
+    """One rule of the wholesale-replace body — a source, an optional actor, and
+    the ORDERED runners that may take that work.
+
+    `source` is typed as the routable literal so an unknown source is a 422 here
+    rather than a rule that silently never matches anything — and so the generated
+    TypeScript carries the union.
+
+    `runners` reuses the default list's row schema, and its ORDER is the rule's
+    rank order. A rule names several runners because the operator's own boxes are
+    two macOS accounts alternated as each runs out of tokens: "either of mine,
+    never cloud" cannot be said with one runner (spec 2026-09-05). Per-runner
+    `enabled` lives on the row, which is why this schema has no rule-level
+    `enabled` — a change from the pre-actor shape, safe because canopy-web's own
+    frontend is the only caller and no rules exist in production yet.
+
+    `strict` is rule-level and written to every row.
+    """
 
     source: RoutableSource
-    runner_id: uuid.UUID
+    actor: str = ""
+    runners: list[AgentRunnerRowIn] = Field(default_factory=list)
     strict: bool = False
-    enabled: bool = True
 
 
 class AgentRunnerRulesIn(StrictModel):

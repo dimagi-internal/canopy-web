@@ -69,8 +69,17 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
     already filtered by `load_assignment_rows`.
     """
     defaults, priorities = harness.load_assignment_rows([mailbox.agent_id])
+    # actor="" DELIBERATELY: a Gmail push carries a mailbox, not a sender — the
+    # sender is only known after the `gog gmail thread get` the runner does AFTER
+    # this ring. So the doorbell composes at the SOURCE rung and rings that
+    # superset. Safe by this function's own design (it already rings every
+    # eligible runner rather than the best rank, and the enqueue is idempotent per
+    # (thread, messageCount)): under a strict actor rule the box that DISCOVERS a
+    # thread may not be the box that ANSWERS it — the enqueue lands, the discoverer
+    # is refused at claim time, and the rule's runner takes it on its own 5s claim
+    # poll. A ring we get wrong costs latency, never correctness (spec 2026-09-05).
     rows = harness.assignment_rows_for(
-        mailbox.agent_id, Turn.ORIGIN_EMAIL, defaults, priorities
+        mailbox.agent_id, Turn.ORIGIN_EMAIL, "", defaults, priorities
     )
     # `is_available`, not `live_status == ONLINE`: it is the cascade's own
     # availability probe (online AND self-reported ready), so "who might claim

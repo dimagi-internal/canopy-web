@@ -883,6 +883,14 @@ class RunnerAssignment(models.Model):
     # it, because the rule is its own row with its own toggle. Pinned by
     # tests/test_source_rules.py and stated in the Runners-tab UI.
     source = models.CharField(max_length=32, blank=True, default="")
+    # THE ACTOR RULE (spec 2026-09-05). "" = this rule applies to any actor
+    # (exactly what a source rule meant before actors existed). Non-empty = a
+    # normalized, lowercased bare address, matched against `actors.actor_of(turn)`.
+    #
+    # Only meaningful alongside a non-empty `source`: a default-list row routes
+    # every actor by definition, and the constraints below keep `actor` out of
+    # its key. 254 is the RFC 5321 maximum address length.
+    actor = models.CharField(max_length=254, blank=True, default="")
     # Only meaningful on a source row. False: the priority runner goes first and
     # the default list follows beneath it. True: that runner or nothing — the turn
     # waits rather than degrading, which is the point for a source whose work can
@@ -899,11 +907,15 @@ class RunnerAssignment(models.Model):
                 condition=models.Q(source=""),
                 name="one_default_assignment_per_agent_runner",
             ),
-            # … and exactly one priority runner per (agent, source).
+            # … and, within one RULE — the rows sharing (agent, source, actor),
+            # rank-ordered — each runner at most once. This REPLACED a constraint
+            # that capped a rule at a single runner, which could not express
+            # "either of my two boxes, never cloud" for an operator whose live
+            # account rotates (spec 2026-09-05).
             models.UniqueConstraint(
-                fields=["agent", "source"],
+                fields=["agent", "source", "actor", "runner"],
                 condition=~models.Q(source=""),
-                name="one_priority_runner_per_agent_source",
+                name="one_row_per_runner_per_agent_source_actor",
             ),
         ]
 
