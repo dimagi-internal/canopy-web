@@ -32,6 +32,7 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     // needs its own fetch to say "3" isn't worth a request on every rail render.
     { to: 'schedules', label: 'Schedules' },
     { to: 'syncs', label: 'Syncs', count: agent.sync_count },
+    { to: 'credentials', label: 'Credentials' },
     { to: 'work-products', label: 'Work products', count: agent.work_product_count },
     { to: 'skills', label: 'Skills', count: agent.skill_count },
   ]
