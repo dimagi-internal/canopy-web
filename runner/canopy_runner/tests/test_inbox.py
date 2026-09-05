@@ -48,7 +48,7 @@ def test_idempotency_key_includes_message_count():
 
 def test_empty_inbox_enqueues_nothing():
     client = FakeClient()
-    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": []}
+    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": []}
     assert client.enqueued == []
 
 
@@ -108,3 +108,129 @@ def test_newest_sender_returns_none_on_gog_failure():
     def fail(cmd, capture_output, text, timeout):
         return SimpleNamespace(returncode=1, stdout="", stderr="boom")
     assert inbox.newest_sender("m", "c", "thr-1", runner=fail) is None
+
+
+# --- CloudWatch alarm pairs: one incident, one turn -------------------------------
+#
+# Real subjects and sender from the 2026-09-05 `labs-jj-web-cpu-high` incident, which
+# spawned two hal sessions for one alarm transition.
+
+SNS = "Labs Alerts <no-reply@sns.amazonaws.com>"
+_ALARM = 'ALARM: "labs-jj-web-cpu-high" in US East (N. Virginia)'
+_OK = 'OK: "labs-jj-web-cpu-high" in US East (N. Virginia)'
+
+
+def _alarm_pair():
+    return [
+        {"id": "thr-alarm", "from": SNS, "subject": _ALARM, "messageCount": 1},
+        {"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1},
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _clear_seen_state():
+    """`_seen_state` is module-global and these tests reuse thread ids."""
+    inbox._seen_state.clear()
+    yield
+    inbox._seen_state.clear()
+
+
+def test_alarm_key_parses_both_states():
+    assert inbox.alarm_key({"from": SNS, "subject": _ALARM}) == ("ALARM", "labs-jj-web-cpu-high")
+    assert inbox.alarm_key({"from": SNS, "subject": _OK}) == ("OK", "labs-jj-web-cpu-high")
+
+
+def test_alarm_key_ignores_non_sns_sender():
+    """A human writing `OK: "the deploy"` is not an alarm and must never be coalesced."""
+    assert inbox.alarm_key({"from": "Jonathan <jjackson@dimagi.com>",
+                            "subject": 'OK: "the deploy" in staging'}) is None
+
+
+def test_alarm_key_ignores_unparseable_subject():
+    assert inbox.alarm_key({"from": SNS, "subject": "your monthly AWS bill"}) is None
+    assert inbox.alarm_key({"from": SNS, "subject": "OK: no quotes here"}) is None
+
+
+def test_ok_thread_is_coalesced_into_its_alarm_turn():
+    """The bug: ALARM: and OK: are two threads for ONE incident, so a single transition
+    enqueued two turns — and the OK: half can never produce a finding."""
+    client = FakeClient()
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(_alarm_pair()), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-alarm"]
+    assert res["coalesced"] == ["thr-ok"]
+    assert [e["prompt"] for e in client.enqueued] == ["/hal:turn --thread thr-alarm"]
+
+
+def test_coalescing_holds_regardless_of_thread_order():
+    """The OK: arrives BEFORE its ALARM: in the batch — the pairing is by alarm name,
+    not by position, so ordering must not change the outcome."""
+    client = FakeClient()
+    threads = list(reversed(_alarm_pair()))
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-alarm"]
+    assert res["coalesced"] == ["thr-ok"]
+
+
+def test_lone_ok_with_no_matching_alarm_still_fires():
+    """Fail-open: an OK: whose ALARM: is not in the batch is the only signal there is,
+    so it must still become a turn. Never silently drop a message."""
+    client = FakeClient()
+    threads = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-ok"]
+    assert res["coalesced"] == []
+
+
+def test_ok_for_a_different_alarm_is_not_coalesced():
+    """Pairing is per alarm NAME — an unrelated alarm's OK: must not be swallowed by a
+    live ALARM: for something else."""
+    client = FakeClient()
+    threads = _alarm_pair() + [
+        {"id": "thr-other-ok", "from": SNS, "messageCount": 1,
+         "subject": 'OK: "labs-jj-web-worker-crash-loop" in US East (N. Virginia)'},
+    ]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-alarm", "thr-other-ok"]
+    assert res["coalesced"] == ["thr-ok"]
+
+
+def test_alarm_thread_itself_is_never_coalesced():
+    """Only the OK: side is ever suppressed; the ALARM: always owns the incident."""
+    client = FakeClient()
+    threads = [{"id": "thr-alarm", "from": SNS, "subject": _ALARM, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-alarm"]
+    assert res["coalesced"] == []
+
+
+def test_coalescing_skips_the_thread_get_subprocess():
+    """The coalesce check sits ABOVE `sender_of` (a `gog gmail thread get` subprocess),
+    so a suppressed OK: must not cost one."""
+    looked_up = []
+
+    def sender_of(tid):
+        looked_up.append(tid)
+        return SNS.lower()
+
+    inbox.check_inbox(FakeClient(), "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_pair()), sender_of=sender_of)
+    assert "thr-ok" not in looked_up
+
+
+def test_non_alarm_mail_is_completely_unaffected():
+    """The regression guard: ordinary human mail must route exactly as before."""
+    client = FakeClient()
+    threads = [
+        {"id": "thr-1", "from": "Jonathan <jjackson@dimagi.com>", "subject": "re: bednet",
+         "messageCount": 3},
+        {"id": "thr-2", "from": "x@y.com", "subject": "hi", "messageCount": 1},
+    ]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: "x@y.com")
+    assert res["new"] == ["thr-1", "thr-2"]
+    assert res["coalesced"] == []
