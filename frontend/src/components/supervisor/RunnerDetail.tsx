@@ -3,6 +3,7 @@ import { pauseRunner, unpauseRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
+import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -184,7 +185,14 @@ export function RunnerDetail({
           box it is instead — "nothing here" is indistinguishable from a broken
           page, and naming the owner makes "ask them to declare it" a next step. */}
       {runner.can_manage ? (
-        <RunnerDrills runnerId={runner.id} />
+        <>
+          {/* Owner-gated exactly like drills: POST /credential resolves through
+              _runner_visibility_q, so rendering this for anyone else would hand
+              out a form that 404s. Cloud-only — laptop runners use the ambient
+              login emdash already holds and never read this bundle. */}
+          {runner.kind === 'cloud' && <RunnerCredentials runnerId={runner.id} />}
+          <RunnerDrills runnerId={runner.id} />
+        </>
       ) : (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
           Read-only — this runner was paired by {runner.paired_by_email ?? 'someone else'}, who
