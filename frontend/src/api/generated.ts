@@ -6491,6 +6491,16 @@ export interface components {
             /** Source */
             readonly source: string;
             /**
+             * Actor
+             * @default
+             */
+            readonly actor: string;
+            /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            /**
              * Runner Id
              * Format: uuid
              */
@@ -6518,9 +6528,22 @@ export interface components {
         };
         /**
          * AgentRunnerRuleIn
-         * @description One rule of the wholesale-replace body. `source` is typed as the routable
-         *     literal so an unknown source is a 422 here rather than a rule that silently
-         *     never matches anything — and so the generated TypeScript carries the union.
+         * @description One rule of the wholesale-replace body — a source, an optional actor, and
+         *     the ORDERED runners that may take that work.
+         *
+         *     `source` is typed as the routable literal so an unknown source is a 422 here
+         *     rather than a rule that silently never matches anything — and so the generated
+         *     TypeScript carries the union.
+         *
+         *     `runners` reuses the default list's row schema, and its ORDER is the rule's
+         *     rank order. A rule names several runners because the operator's own boxes are
+         *     two macOS accounts alternated as each runs out of tokens: "either of mine,
+         *     never cloud" cannot be said with one runner (spec 2026-09-05). Per-runner
+         *     `enabled` lives on the row, which is why this schema has no rule-level
+         *     `enabled` — a change from the pre-actor shape, safe because canopy-web's own
+         *     frontend is the only caller and no rules exist in production yet.
+         *
+         *     `strict` is rule-level and written to every row.
          */
         readonly AgentRunnerRuleIn: {
             /**
@@ -6529,20 +6552,17 @@ export interface components {
              */
             readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
             /**
-             * Runner Id
-             * Format: uuid
+             * Actor
+             * @default
              */
-            readonly runner_id: string;
+            readonly actor: string;
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][];
             /**
              * Strict
              * @default false
              */
             readonly strict: boolean;
-            /**
-             * Enabled
-             * @default true
-             */
-            readonly enabled: boolean;
         };
         /**
          * AgentRunnerRulesIn
