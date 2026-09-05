@@ -40,11 +40,54 @@ ok()   { printf '[bootstrap-agents] OK: %s\n' "$*"; }
 warn() { printf '[bootstrap-agents] WARN: %s\n' "$*" >&2; }
 fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
 
-# gogcli's own account -> OAuth-client map (verified against a live ~/.config/gogcli
-# aka macOS "Library/Application Support/gogcli" config.json, `account_clients`
-# key): ace and echo keep dedicated clients; ada/eva/hal share the fleet's `canopy`
-# app. See docs/architecture/shared-gog-gdrive.md.
+# FALLBACK ONLY — the authoritative value is each agent's own `config/agent.json`
+# (`gog_client`), read by gog_client_for() below. This table exists solely for the
+# window before an agent's repo is on disk: step 2 writes the account->client map
+# BEFORE step 3 clones anything, so on a genuinely fresh box there is nothing to
+# read yet.
+#
+# It used to BE the source of truth, transcribed from one machine's live
+# ~/.config/gogcli/config.json, and it drifted: it said ace->ace and echo->echo
+# while both repos declare `canopy`. A 2026-09-05 rebuild therefore imported those
+# two agents' gmail tokens under a client nothing reads, and fetched their OAuth
+# client credential from the wrong 1Password vault — ace's readiness drill came
+# back "HEALTHY for /ace:run but BROKEN for /ace:turn". ACE's own CLAUDE.md names
+# config/agent.json as "the SINGLE source"; this now honours that.
+# See tests/test_gog_client_comes_from_the_agent.py.
 declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=canopy )
+
+# The agent's OWN declaration wins. Falls back to the table, then to the slug, and
+# NEVER to empty — an empty client points gog at the wrong OAuth app silently.
+gog_client_for() {
+  local slug="$1"
+  local cfg="${AGENT_ROOT:-/opt/agents}/${slug}/config/agent.json"
+  local declared=""
+  if [[ -f "$cfg" ]]; then
+    declared="$(GOG_CFG="$cfg" python3 -c 'import json,os;print((json.load(open(os.environ["GOG_CFG"])).get("gog_client") or "").strip())' 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${declared:-${GOG_CLIENT[$slug]:-$slug}}"
+}
+
+# Merge ONE account->client entry into gog's config.json. Called again per agent
+# once its clone lands, because step 2 could only ever have written the fallback.
+upsert_account_client() {
+  local email="$1" client="$2"
+  command -v gog >/dev/null 2>&1 || return 0
+  local dir; dir="$(gog_config_dir)"
+  mkdir -p "$dir"
+  UAC_CFG="$dir/config.json" UAC_EMAIL="$email" UAC_CLIENT="$client" python3 -c '
+import json, os
+path = os.environ["UAC_CFG"]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data.setdefault("account_clients", {})[os.environ["UAC_EMAIL"]] = os.environ["UAC_CLIENT"]
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+'
+}
 
 # ── gog's own XDG resolution on Linux (mirrors canopy's agent_email.py
 # _default_gog_config_dir — $GOG_HOME override, else $XDG_CONFIG_HOME/gogcli, else
@@ -186,7 +229,7 @@ step2_gog_config() {
   local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
   local pairs=()
   for slug in "${slugs[@]}"; do
-    local client="${GOG_CLIENT[$slug]:-$slug}"
+    local client; client="$(gog_client_for "$slug")"
     pairs+=("${slug}@dimagi-ai.com=${client}")
   done
   python3 - "$cfg" "${pairs[@]}" <<'PY'
@@ -363,7 +406,6 @@ run_agent_provisioner() {
 bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
-  local client="${GOG_CLIENT[$slug]:-$slug}"
   local account="${slug}@dimagi-ai.com"
   local vault; vault="$(vault_name "$slug")"
 
@@ -374,6 +416,14 @@ bootstrap_one_agent() {
     FAILED_AGENTS+=("$slug")
     return
   fi
+
+  # NOW the agent's own config/agent.json is on disk, so its declared gog_client
+  # is readable for the first time. Step 2 ran before any clone existed and could
+  # only write the fallback, so re-assert the authoritative value here — otherwise
+  # config.json keeps saying `ace` while the token below is imported under
+  # `canopy`, and the two disagree forever.
+  local client; client="$(gog_client_for "$slug")"
+  upsert_account_client "$account" "$client"
   ok "$slug: repo at $dest"
 
   # Provision the agent's env the 1Password-NATIVE way: `op inject` resolves the
