@@ -54,6 +54,11 @@ const SchedulesSection = lazy(() =>
 const AgentSyncsSection = lazy(() =>
   import('./pages/agents/AgentSyncsSection').then((m) => ({ default: m.AgentSyncsSection })),
 )
+const AgentCredentialsSection = lazy(() =>
+  import('./pages/agents/AgentCredentialsSection').then((m) => ({
+    default: m.AgentCredentialsSection,
+  })),
+)
 const AgentWorkProductsSection = lazy(() =>
   import('./pages/agents/AgentWorkProductsSection').then((m) => ({ default: m.AgentWorkProductsSection })),
 )
@@ -220,6 +225,7 @@ export const router = createBrowserRouter(guarded([
           { path: 'items', element: <LazySection><ItemsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'syncs', element: <LazySection><AgentSyncsSection /></LazySection> },
+          { path: 'credentials', element: <LazySection><AgentCredentialsSection /></LazySection> },
           { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },
           { path: 'skills', element: <LazySection><AgentSkillsSection /></LazySection> },
         ],

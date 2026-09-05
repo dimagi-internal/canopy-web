@@ -247,6 +247,40 @@ export async function putAgentRunners(
 // Per-source overrides on top of the default ordered list — one rule per source.
 // A separate endpoint from putAgentRunners on purpose: both live in one table,
 // and each write is scoped server-side so neither clobbers the other's rows.
+export type AgentCredentialStatusOut = Schemas['AgentCredentialStatusOut']
+
+/** Which declared refs are set — booleans and timestamps, never values. */
+export async function getAgentCredentialStatus(slug: string): Promise<AgentCredentialStatusOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/credentials/status', {
+    params: { path: { slug } },
+  })
+  return Array.from(unwrap(res, 'getAgentCredentialStatus'))
+}
+
+/** Upsert named secrets. NON-CLOBBERING — omitted refs are untouched, so a
+ *  single-field edit cannot wipe the rest. Returns the masked status; there is
+ *  deliberately no route that reads a value back into a browser. */
+export async function setAgentCredentials(
+  slug: string,
+  values: Record<string, string>,
+): Promise<AgentCredentialStatusOut[]> {
+  const res = await apiV2.PUT('/api/agents/{slug}/credentials', {
+    params: { path: { slug } },
+    body: { values },
+  })
+  return Array.from(unwrap(res, 'setAgentCredentials'))
+}
+
+export async function deleteAgentCredential(
+  slug: string,
+  name: string,
+): Promise<AgentCredentialStatusOut[]> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/credentials/{name}', {
+    params: { path: { slug, name } },
+  })
+  return Array.from(unwrap(res, 'deleteAgentCredential'))
+}
+
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))
