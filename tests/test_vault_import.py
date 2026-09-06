@@ -186,3 +186,28 @@ def test_a_non_member_cannot_set_a_vault_or_import(client):
         "/api/agents/secret/vault", data={"vault": "V"}, content_type="application/json",
     ).status_code == 404
     assert client.post("/api/agents/secret/credentials/import").status_code == 404
+
+
+def test_runtime_sources_survives_a_plugin_reupsert(fleet):
+    """The registry fields are written only when PRESENT. An agent plugin
+    re-upserts itself on every sync with these omitted, and a plain default would
+    clobber the source map back to empty on each heartbeat — which would silently
+    turn every subsequent import into a 45-way skip."""
+    from apps.agents import services as svc
+    from apps.agents.schemas import AgentIn
+
+    svc.upsert_agent(AgentIn(slug="ace", name="ACE"), workspace=fleet["agent"].workspace)
+    fleet["agent"].refresh_from_db()
+    assert fleet["agent"].runtime_sources == SOURCES
+
+
+def test_runtime_sources_can_be_pushed_with_the_agent(fleet):
+    from apps.agents import services as svc
+    from apps.agents.schemas import AgentIn
+
+    svc.upsert_agent(
+        AgentIn(slug="ace", name="ACE", runtime_sources={"x": {"op": "op://V/i/f"}}),
+        workspace=fleet["agent"].workspace,
+    )
+    fleet["agent"].refresh_from_db()
+    assert fleet["agent"].runtime_sources == {"x": {"op": "op://V/i/f"}}
