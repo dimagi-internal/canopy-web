@@ -21,33 +21,45 @@ export type CredRow = components['schemas']['AgentCredentialStatusOut']
 // and what nothing accounts for. Whether a secret actually WORKS is a question
 // only the box can answer, and a readiness drill is what answers it.
 
-export interface CredentialSummary {
-  /** Refs the agent declares (orphans excluded). */
-  declaredCount: number
-  /** Declared and stored in canopy-web. */
-  storedHere: string[]
-  /** Declared, not stored here — expected to resolve from 1Password on the box. */
-  fromVault: string[]
-  /** Stored but no longer declared: a live secret nothing accounts for. */
-  orphans: string[]
-  /** The agent declares nothing, which is NOT the same as provisioned. */
-  undeclared: boolean
+/** What the screen is FOR, in the operator's terms rather than the store's.
+ *
+ *  The first version listed all 45 declared refs as equal rows, each with an
+ *  empty marker and a "paste to set" box. Every one of those rows was fine —
+ *  they resolve from 1Password on the box, which is the intended arrangement —
+ *  but forty-five empty inputs read as forty-five things to type. The one row
+ *  that genuinely needed a human sat at the top looking like all the others.
+ *  Jonathan's reaction on 2026-09-06 was "I'm very confused by this screen",
+ *  which is the correct reaction to it.
+ *
+ *  So: separate what needs a person from what is merely true. */
+export interface CredentialSections {
+  /** Stored here but no longer declared — a live secret nothing accounts for. */
+  orphans: CredRow[]
+  /** Declared and stored in canopy-web: what this page actually manages. */
+  storedHere: CredRow[]
+  /** Declared, resolved from the vault on the box. Correct, and not a to-do. */
+  fromVault: CredRow[]
 }
 
-export function summarize(rows: readonly CredRow[]): CredentialSummary {
-  const declared = rows.filter((r) => r.declared)
+export function sections(rows: readonly CredRow[]): CredentialSections {
+  const byName = (a: CredRow, b: CredRow) => a.name.localeCompare(b.name)
   return {
-    declaredCount: declared.length,
-    storedHere: declared.filter((r) => r.set).map((r) => r.name),
-    fromVault: declared.filter((r) => !r.set).map((r) => r.name),
-    orphans: rows.filter((r) => !r.declared).map((r) => r.name),
-    undeclared: declared.length === 0,
+    orphans: rows.filter((r) => !r.declared).sort(byName),
+    storedHere: rows.filter((r) => r.declared && r.set).sort(byName),
+    fromVault: rows.filter((r) => r.declared && !r.set).sort(byName),
   }
 }
 
-/** Stored-here first (what this page actually manages), then vault-resolved,
- *  then orphans last — they need showing, but they are noise up top. */
-export function groupRefs(rows: readonly CredRow[]): CredRow[] {
-  const rank = (r: CredRow) => (!r.declared ? 2 : r.set ? 0 : 1)
-  return [...rows].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+/** One line saying whether anything is wanted from the reader.
+ *  Deliberately not a count of what canopy-web holds: "stores 0 of 45" is a fact
+ *  about the store, and the reader wants a fact about their afternoon. */
+export function headline(rows: readonly CredRow[]): string {
+  const s = sections(rows)
+  if (s.orphans.length > 0) {
+    return `${s.orphans.length} stored secret(s) nothing declares any more — worth removing.`
+  }
+  if (s.storedHere.length === 0 && s.fromVault.length > 0) {
+    return `Nothing here needs you. All ${s.fromVault.length} of this agent's secrets resolve from 1Password on the box.`
+  }
+  return `${s.storedHere.length} stored here; ${s.fromVault.length} resolve from 1Password on the box.`
 }
