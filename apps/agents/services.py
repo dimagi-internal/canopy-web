@@ -52,7 +52,8 @@ def upsert_agent(data, *, workspace) -> Agent:
     # ONLY when explicitly provided. The plugin re-upserts agents on every sync
     # with these fields absent (None) — a plain default would clobber runtime
     # config back to empty on each heartbeat. Configure once, keep it.
-    for field in ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets", "runner_preference"):
+    for field in ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
+                  "runtime_sources", "runner_preference"):
         value = getattr(data, field, None)
         if value is not None:
             defaults[field] = value

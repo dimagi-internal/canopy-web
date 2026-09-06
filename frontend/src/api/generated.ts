@@ -6490,6 +6490,10 @@ export interface components {
             readonly runtime_engine?: ("emdash" | "cloud_p" | "any") | null;
             /** Runtime Secrets */
             readonly runtime_secrets?: readonly string[] | null;
+            /** Runtime Sources */
+            readonly runtime_sources?: {
+                readonly [key: string]: unknown;
+            } | null;
             /** Runner Preference */
             readonly runner_preference?: readonly string[] | null;
         };

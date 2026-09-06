@@ -34,6 +34,11 @@ class AgentIn(StrictModel):
     repo_ref: str | None = Field(default=None, max_length=120)
     runtime_engine: Literal["emdash", "cloud_p", "any"] | None = None
     runtime_secrets: list[str] | None = None
+    # WHERE each declared secret's value lives, mirrored from runtime.yaml:
+    # {"gog-token": {"op": "op://Agent-Ace/gog-token/credential"}}. Without it
+    # the vault importer can only guess a convention, and a guess here resolves
+    # to the WRONG credential rather than failing (ace#2060).
+    runtime_sources: dict | None = None
     # Ordered runner-kind preference, e.g. ["cloud","emdash"]. None = leave unchanged.
     runner_preference: list[str] | None = None
 
