@@ -95,7 +95,6 @@ def test_a_missing_file_falls_back_rather_than_failing(tmp_path):
 def test_the_fallback_is_the_table_not_the_agents_declaration():
     """Guards the 2026-09-05 regression from coming back. config/agent.json's
     gog_client is intent; the token is fact. Nothing here may read that file."""
-    body = SCRIPT.read_text()
     fn = _fn("token_client")
     assert "agent.json" not in fn, "token_client must not consult the agent's declaration"
     assert "gog_client" not in fn
