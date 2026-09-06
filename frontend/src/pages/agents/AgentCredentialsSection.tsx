@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   deleteAgentCredential,
   getAgentCredentialStatus,
   setAgentCredentials,
+  startGoogleMint,
   type AgentCredentialStatusOut,
 } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { groupRefs, summarize } from '@/pages/agents/agentCredentials'
+import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
@@ -26,6 +28,8 @@ export function AgentCredentialsSection() {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [params] = useSearchParams()
+  const outcome = mintOutcome(params.get('google'))
 
   useEffect(() => {
     let cancelled = false
@@ -59,6 +63,20 @@ export function AgentCredentialsSection() {
     }
   }
 
+  const connectMailbox = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      // A TOP-LEVEL navigation, deliberately. Following the redirect inside
+      // fetch() lands on Google's HTML with nothing shown to the user; only
+      // leaving the page can render a consent screen.
+      window.location.assign(await startGoogleMint(agent.slug))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start the Google sign-in')
+      setBusy(false)
+    }
+  }
+
   const remove = async (name: string) => {
     setBusy(true)
     setError(null)
@@ -86,6 +104,37 @@ export function AgentCredentialsSection() {
   return (
     <div className="max-w-4xl px-6 py-8" data-testid="agent-credentials">
       <WorkbenchSubHeader title="Credentials" count={rows.length} />
+
+      {outcome && (
+        <p
+          className={`mb-3 text-[13px] ${outcome.tone === 'ok' ? 'text-success' : 'text-destructive'}`}
+          data-testid="google-mint-outcome"
+        >
+          {outcome.text}
+        </p>
+      )}
+
+      {declaresMailbox(rows) && (
+        // The whole point of the feature: a mailbox used to need a terminal, a
+        // loopback listener and a hand-written vault item. The token this writes
+        // is the same shape a hand-minted one has, in the same slot.
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+          <div className="text-[13px] text-foreground">
+            Google mailbox
+            <span className="ml-2 text-[12px] text-muted-foreground">
+              sign in as this agent to mint its <code className="font-mono text-[11px]">gog-token</code>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void connectMailbox()}
+            disabled={busy}
+            className="ml-auto rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
+          >
+            Connect Google mailbox
+          </button>
+        </div>
+      )}
 
       {s.undeclared ? (
         // Zero refs is UNDECLARED, not provisioned — and it is the state every

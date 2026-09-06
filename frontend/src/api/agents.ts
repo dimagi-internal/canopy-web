@@ -281,6 +281,18 @@ export async function deleteAgentCredential(
   return Array.from(unwrap(res, 'deleteAgentCredential'))
 }
 
+/** Start the browser mint for this agent's Google mailbox.
+ *
+ *  Returns the URL instead of navigating, because the caller must do a TOP-LEVEL
+ *  navigation: a 302 followed inside fetch() resolves on Google's HTML and shows
+ *  the user nothing at all. */
+export async function startGoogleMint(slug: string): Promise<string> {
+  const res = await apiV2.GET('/api/agents/{slug}/google/authorize', {
+    params: { path: { slug } },
+  })
+  return (unwrap(res, 'startGoogleMint') as { url: string }).url
+}
+
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))

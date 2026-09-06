@@ -145,6 +145,8 @@ from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
+from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
+from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
 from apps.workspaces.api import router as workspaces_router  # noqa: E402
 from apps.timeline.api import router as timeline_router  # noqa: E402
@@ -185,6 +187,12 @@ api.add_router("/sessions", sessions_router)
 # apps.api.tenancy.WorkspaceResolveMiddleware, which also sets request.workspace_slug.
 api.add_router("/agents", agents_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
+api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
+# The mint's callback is NOT agent-scoped: Google requires every redirect URI
+# to be registered exactly, so one fixed path serves the whole fleet and the
+# agent rides in signed state. A per-agent URI would mean a console edit per
+# new agent — the barrier this feature exists to remove.
+api.add_router("/oauth", google_oauth_router)
 api.add_router("/agents", schedules_router)  # recurring turns, under the agents namespace
 # Items — the supervisor's queue (the dual of Turn). The collection is
 # agent-scoped ("whose queue?"), the resource is not (an item id is global).

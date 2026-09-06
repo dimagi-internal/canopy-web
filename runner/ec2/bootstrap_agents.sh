@@ -203,6 +203,47 @@ except Exception:
   printf '%s\n' "${declared:-${GOG_CLIENT[$slug]:-$slug}}"
 }
 
+# Materialize a gog OAuth client's id+secret to ~/.config/gogcli/credentials-<client>.json.
+#
+# gog refreshes a token by presenting the client_id+client_secret of the app the
+# token was minted for, so this file is what makes a token usable rather than
+# merely present. Which vault holds it depends on the client, not on the agent:
+#
+#   canopy      the shared fleet DESKTOP client (loopback redirect; ada/eva/hal)
+#   canopy-web  canopy-web's WEB client — the only kind Google lets run a browser
+#               redirect, and therefore the only one the "Connect Google mailbox"
+#               button can mint with. Tokens from that button declare it.
+#   <other>     an agent with its own client (echo) keeps it in its own vault.
+#
+# Never fails the bootstrap: a missing client file means gmail won't authorize,
+# which the warning says, and every other part of the agent still provisions.
+ensure_client_creds() {  # <client> <agent-vault> <slug>
+  local client="$1" agent_vault="$2" slug="$3"
+  [[ -n "$client" ]] || return 0
+  command -v op >/dev/null 2>&1 || return 0
+
+  local client_vault client_item
+  case "$client" in
+    canopy)     client_vault="Canopy-Shared"; client_item="gog-oauth-client" ;;
+    canopy-web) client_vault="Canopy-Shared"; client_item="gog-oauth-client-web" ;;
+    *)          client_vault="$agent_vault";  client_item="gog-oauth-client" ;;
+  esac
+
+  local gog_dir; gog_dir="$(gog_config_dir)"
+  local client_file="$gog_dir/credentials-${client}.json"
+  [[ -f "$client_file" ]] && return 0
+
+  mkdir -p "$gog_dir"
+  if op read "op://${client_vault}/${client_item}/credential" >"$client_file" 2>/dev/null \
+     && [[ -s "$client_file" ]]; then
+    chmod 0600 "$client_file"
+    ok "$slug: gog client creds ($client) -> $client_file"
+  else
+    rm -f "$client_file"
+    warn "$slug: op read op://${client_vault}/${client_item}/credential failed — gmail may not authorize as $client"
+  fi
+}
+
 vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
   local slug="$1"
   printf 'Agent-%s\n' "${slug^}"
@@ -549,23 +590,10 @@ bootstrap_one_agent() {
   install_required_plugins "$slug" "$dest"
   run_agent_provisioner "$slug" "$dest"
 
-  # The gog OAuth-client credential FILE (not an env var): a single 1Password
-  # field materialized with native `op read` (no second injector). The shared
-  # `canopy` client's item lives in Canopy-Shared; an agent with its OWN client
-  # (echo, ace) keeps it in that agent's vault.
-  local gog_dir; gog_dir="$(gog_config_dir)"
-  local client_file="$gog_dir/credentials-${client}.json"
-  local client_vault; [[ "$client" == "canopy" ]] && client_vault="Canopy-Shared" || client_vault="$vault"
-  if command -v op >/dev/null 2>&1 && [[ ! -f "$client_file" ]]; then
-    mkdir -p "$gog_dir"
-    if op read "op://${client_vault}/gog-oauth-client/credential" >"$client_file" 2>/dev/null && [[ -s "$client_file" ]]; then
-      chmod 0600 "$client_file"
-      ok "$slug: gog client creds -> $client_file"
-    else
-      rm -f "$client_file"
-      warn "$slug: op read op://${client_vault}/gog-oauth-client/credential failed — gmail may not authorize"
-    fi
-  fi
+  # The gog OAuth-client credential FILE — see ensure_client_creds. Materialized
+  # from the FALLBACK client name here, because the token that names the real one
+  # has not been fetched yet; the call is repeated after the import below.
+  ensure_client_creds "$client" "$vault" "$slug"
 
   if ! command -v gog >/dev/null 2>&1; then
     warn "$slug: gog unavailable — skipping gmail token import"
@@ -588,6 +616,12 @@ bootstrap_one_agent() {
         local tclient; tclient="$(token_client "$tokfile" "$slug")"
         if [[ -n "$tclient" && "$tclient" != "$client" ]]; then
           warn "$slug: token declares client '$tclient', map said '$client' — using the token"
+          # And it needs that client's id+secret on disk to refresh with. The
+          # materialization above could only have used the fallback name, so a
+          # token minted under a client the table doesn't know — every token from
+          # canopy-web's browser mint — would import and then fail to refresh,
+          # with the client file for a DIFFERENT app sitting right next to it.
+          ensure_client_creds "$tclient" "$vault" "$slug"
         fi
         upsert_account_client "$account" "$tclient"
       else
