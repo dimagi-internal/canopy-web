@@ -1941,6 +1941,48 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/google/authorize": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Start the Google mint for this agent's mailbox
+         * @description Returns the URL rather than redirecting, so the caller opens it itself.
+         *
+         *     A 302 out of an XHR is invisible — the browser follows it, the fetch resolves
+         *     on Google's HTML, and nothing happens on screen. Handing back the URL lets the
+         *     page do a top-level navigation, which is the only thing that can show a
+         *     consent screen.
+         */
+        readonly get: operations["apps_agents_oauth_api_start_google_mint"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/oauth/google/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Google returns here; the token is stored */
+        readonly get: operations["apps_agents_oauth_api_google_callback"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/schedules/week": {
         readonly parameters: {
             readonly query?: never;
@@ -7703,6 +7745,16 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /**
+         * GoogleMintStartOut
+         * @description Where to send the browser to consent. Declared rather than left implicit:
+         *     an undeclared response reaches the typed client as `undefined`, and the only
+         *     way to consume it is a cast — which silently survives the route changing.
+         */
+        readonly GoogleMintStartOut: {
+            /** Url */
+            readonly url: string;
+        };
         /** ScheduleOut */
         readonly ScheduleOut: {
             /** Id */
@@ -12664,6 +12716,52 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["RunSummary"];
                 };
+            };
+        };
+    };
+    readonly apps_agents_oauth_api_start_google_mint: {
+        readonly parameters: {
+            readonly query?: {
+                readonly login_hint?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GoogleMintStartOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_oauth_api_google_callback: {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string;
+                readonly state?: string;
+                readonly error?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
