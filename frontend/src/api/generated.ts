@@ -7745,6 +7745,16 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /**
+         * GoogleMintStartOut
+         * @description Where to send the browser to consent. Declared rather than left implicit:
+         *     an undeclared response reaches the typed client as `undefined`, and the only
+         *     way to consume it is a cast — which silently survives the route changing.
+         */
+        readonly GoogleMintStartOut: {
+            /** Url */
+            readonly url: string;
+        };
         /** ScheduleOut */
         readonly ScheduleOut: {
             /** Id */
@@ -12727,7 +12737,9 @@ export interface operations {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    readonly "application/json": components["schemas"]["GoogleMintStartOut"];
+                };
             };
         };
     };

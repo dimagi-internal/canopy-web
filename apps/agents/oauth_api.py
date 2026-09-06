@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import google_oauth, services
+from .schemas import GoogleMintStartOut
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -33,8 +34,9 @@ def _agent_or_404(request: HttpRequest, slug: str):
     return _get_agent_or_404(request, slug)
 
 
-@router.get("/{slug}/google/authorize", summary="Start the Google mint for this agent's mailbox")
-def start_google_mint(request: HttpRequest, slug: str, login_hint: str = ""):
+@router.get("/{slug}/google/authorize", response=GoogleMintStartOut,
+            summary="Start the Google mint for this agent's mailbox")
+def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> GoogleMintStartOut:
     """Returns the URL rather than redirecting, so the caller opens it itself.
 
     A 302 out of an XHR is invisible — the browser follows it, the fetch resolves
@@ -51,7 +53,9 @@ def start_google_mint(request: HttpRequest, slug: str, login_hint: str = ""):
     # constraint — whoever is signing in can still choose another account, and the
     # token records whichever mailbox actually consented.
     hint = login_hint or f"{agent.slug}@dimagi-ai.com"
-    return {"url": google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint)}
+    return GoogleMintStartOut(
+        url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint)
+    )
 
 
 oauth_router = Router(auth=session_auth, tags=["agents"])

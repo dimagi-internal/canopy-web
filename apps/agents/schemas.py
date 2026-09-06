@@ -454,6 +454,14 @@ class CommandResultOut(StrictModel):
 
 
 # ---- shared ----
+class GoogleMintStartOut(StrictModel):
+    """Where to send the browser to consent. Declared rather than left implicit:
+    an undeclared response reaches the typed client as `undefined`, and the only
+    way to consume it is a cast — which silently survives the route changing."""
+
+    url: str
+
+
 class CountOut(StrictModel):
     created: int = 0
     replaced: int = 0

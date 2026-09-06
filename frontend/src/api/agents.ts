@@ -290,7 +290,7 @@ export async function startGoogleMint(slug: string): Promise<string> {
   const res = await apiV2.GET('/api/agents/{slug}/google/authorize', {
     params: { path: { slug } },
   })
-  return (unwrap(res, 'startGoogleMint') as { url: string }).url
+  return unwrap(res, 'startGoogleMint').url
 }
 
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
