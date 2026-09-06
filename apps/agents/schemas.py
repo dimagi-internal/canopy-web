@@ -479,6 +479,12 @@ class AgentVaultIn(StrictModel):
 class AgentVaultOut(StrictModel):
     vault: str = ""
     key_set: bool = False
+    # How many declared refs canopy-web can actually LOCATE. Without this an
+    # import that returns "45 skipped" is unexplainable from the UI: the cause is
+    # always that runtime.yaml's source map never reached this deployment, and
+    # nothing on the screen could say so.
+    declared: int = 0
+    locatable: int = 0
 
 
 class AgentImportOut(StrictModel):

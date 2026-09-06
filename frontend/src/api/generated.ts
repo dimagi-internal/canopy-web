@@ -7382,6 +7382,16 @@ export interface components {
              * @default false
              */
             readonly key_set: boolean;
+            /**
+             * Declared
+             * @default 0
+             */
+            readonly declared: number;
+            /**
+             * Locatable
+             * @default 0
+             */
+            readonly locatable: number;
         };
         /**
          * AgentVaultIn
