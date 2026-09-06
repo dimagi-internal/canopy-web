@@ -523,3 +523,70 @@ def caller_runs_agent(user, agent) -> bool:
     return RunnerAssignment.objects.filter(
         agent=agent, enabled=True, runner__paired_by=user,
     ).exclude(runner__status=Runner.RETIRED).exists()
+
+
+# ---- 1Password vault + import (spec 2026-09-06) -------------------------------
+
+def set_agent_vault(agent, *, vault=None, service_key=None):
+    """Set the agent's vault name and/or its service-account token.
+
+    Non-clobbering on the KEY specifically: renaming a vault must not silently
+    wipe the credential that reads it, which is the shape of every other
+    credential write here."""
+    from apps.agents.schemas import AgentVaultOut
+    from apps.common.encryption import encrypt_secret
+
+    fields = []
+    if vault is not None:
+        agent.op_vault = vault.strip()
+        fields.append("op_vault")
+    if service_key and service_key.strip():
+        agent.op_sa_token_enc = encrypt_secret(service_key.strip())
+        fields.append("op_sa_token_enc")
+    if fields:
+        agent.save(update_fields=[*fields, "updated_at"])
+    return AgentVaultOut(vault=agent.op_vault, key_set=bool(agent.op_sa_token_enc))
+
+
+def import_agent_credentials(agent, *, user=None):
+    """Resolve every declared ref from the agent's vault and store the values.
+
+    Reports rather than raises. A vault missing one item is the normal state of a
+    half-provisioned agent; failing the whole import over it would make such an
+    agent unprovisionable AND hide which ref is the problem — the one fact worth
+    knowing here.
+    """
+    from apps.agents import vault_import
+    from apps.agents.schemas import AgentImportOut
+    from apps.common.encryption import decrypt_secret
+
+    declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
+    items = vault_import.plan_import(declared, agent.runtime_sources or {})
+    values, failures = vault_import.resolve_items(
+        items, token=decrypt_secret(agent.op_sa_token_enc),
+    )
+    if values:
+        set_agent_credentials(agent, values, user=user)
+
+    try:
+        from apps.events import services as events
+
+        events.record(
+            [{
+                "source": "agents.credentials",
+                "kind": "agent.credentials.imported",
+                "level": "info",
+                "key": f"{agent.slug}:import",
+                "summary": f"{len(values)} imported, {len(failures)} failed for {agent.slug}",
+                "payload": {"agent": agent.slug, "imported": len(values), "failed": len(failures)},
+            }],
+            workspace=agent.workspace,
+        )
+    except Exception:  # noqa: BLE001 - an audit hiccup must not undo a good import
+        pass
+
+    return AgentImportOut(
+        imported=sorted(values),
+        skipped=[{"name": i.name, "reason": i.reason} for i in items if i.kind == "skip"],
+        failures=failures,
+    )

@@ -293,6 +293,32 @@ export async function startGoogleMint(slug: string): Promise<string> {
   return unwrap(res, 'startGoogleMint').url
 }
 
+export async function getAgentVault(slug: string) {
+  const res = await apiV2.GET('/api/agents/{slug}/vault', { params: { path: { slug } } })
+  return unwrap(res, 'getAgentVault')
+}
+
+/** Set the vault name and/or its service key. NON-CLOBBERING on the key:
+ *  omitting it leaves the stored one alone, so renaming a vault cannot silently
+ *  de-provision the agent. */
+export async function setAgentVault(slug: string, body: { vault?: string; service_key?: string }) {
+  const res = await apiV2.PUT('/api/agents/{slug}/vault', {
+    params: { path: { slug } },
+    body,
+  })
+  return unwrap(res, 'setAgentVault')
+}
+
+/** Populate this agent's secrets from its 1Password vault. Partial success is
+ *  the designed outcome — the result reports what could NOT be read, which is
+ *  the most useful thing this screen can say. */
+export async function importAgentCredentials(slug: string) {
+  const res = await apiV2.POST('/api/agents/{slug}/credentials/import', {
+    params: { path: { slug } },
+  })
+  return unwrap(res, 'importAgentCredentials')
+}
+
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))

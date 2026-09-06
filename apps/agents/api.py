@@ -25,7 +25,10 @@ from .schemas import (
     AgentRunnerRulesIn,
     AgentRunnerRowIn,
     AgentRunnersIn,
+    AgentImportOut,
     AgentRuntimeOut,
+    AgentVaultIn,
+    AgentVaultOut,
     AgentSkillCatalogIn,
     AgentSkillOut,
     AgentSyncIn,
@@ -666,6 +669,44 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
         pass
     return AgentCredentialsResolveOut(values=values)
+
+
+@router.get("/{slug}/vault", response=AgentVaultOut,
+            summary="This agent's 1Password vault (masked — never the key)")
+def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
+    agent = _get_agent_or_404(request, slug)
+    return AgentVaultOut(vault=agent.op_vault, key_set=bool(agent.op_sa_token_enc))
+
+
+@router.put("/{slug}/vault", response=AgentVaultOut,
+            summary="Set the vault + its service-account token (write-only)")
+def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
+    """The key is scoped to ONE agent's vault by design.
+
+    A single fleet-wide token would be simpler to operate and would make
+    canopy-web worth attacking for every agent's secrets at once; this bounds a
+    compromise to the one agent whose key was taken (Jonathan, 2026-09-06)."""
+    agent = _get_agent_or_404(request, slug)
+    return services.set_agent_vault(
+        agent, vault=payload.vault, service_key=payload.service_key,
+    )
+
+
+@router.post("/{slug}/credentials/import", response=AgentImportOut,
+             summary="Populate this agent's secrets from its 1Password vault")
+def import_agent_credentials(request: HttpRequest, slug: str) -> AgentImportOut:
+    """Reads the vault as the agent's own service account and stores the values.
+
+    Partial success is the DESIGNED outcome: a half-provisioned vault is the
+    normal state of a new agent, so one missing ref reports itself and the other
+    forty-four still land."""
+    agent = _get_agent_or_404(request, slug)
+    if not agent.op_sa_token_enc:
+        raise HttpError(422, "set this agent's 1Password vault and service key first")
+    try:
+        return services.import_agent_credentials(agent, user=request.user)
+    except FileNotFoundError as exc:
+        raise HttpError(503, "the 1Password CLI is not available in this deployment") from exc
 
 
 # Registered AFTER the literal `status`/`resolve` paths on purpose: Django

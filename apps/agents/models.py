@@ -73,6 +73,33 @@ class Agent(models.Model):
     # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
     # AgentIn during the deprecation window.
     runner_preference = models.JSONField(default=list, blank=True)
+    # WHERE each declared secret's value comes from, mirrored from the agent
+    # repo's runtime.yaml: {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.
+    #
+    # runtime_secrets says an agent NEEDS `gog-token`; this says that value lives
+    # at op://Agent-Ace/gog-token/credential. Without it an importer can only
+    # GUESS a convention, and a guess here is not safe: deriving
+    # op://Agent-Ace/<name>/credential for ACE's gog-oauth-client resolves
+    # cleanly to a DIFFERENT OAuth app in a different GCP project than the one it
+    # uses. A convention that silently returns the wrong credential is worse than
+    # one that fails (ace#2060).
+    runtime_sources = models.JSONField(
+        default=dict, blank=True,
+        help_text='Per-ref value source from runtime.yaml: {"name": {"op": "op://..."}} '
+                  'or {"name": {"value": "literal"}}. Never holds a secret VALUE for an '
+                  "op-backed ref — only where to find it.",
+    )
+    # The agent's own 1Password vault + a service-account token scoped to it.
+    # Per-agent rather than fleet-wide on purpose: a single key that can read
+    # every vault makes canopy-web worth attacking for all of them at once,
+    # where this bounds a compromise to one agent (Jonathan, 2026-09-06).
+    op_vault = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="1Password vault holding this agent's secrets, e.g. Agent-Ace.",
+    )
+    op_sa_token_enc = models.TextField(blank=True, default="")
+
+
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at
     # preflight (canopy agent-core/turn.md § Turn mode). Operational STATE, so
     # it lives here — on the board the human operates from — not as a committed
