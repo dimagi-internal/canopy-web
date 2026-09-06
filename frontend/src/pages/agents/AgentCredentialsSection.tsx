@@ -10,6 +10,7 @@ import {
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { headline, sections } from '@/pages/agents/agentCredentials'
 import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
+import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
@@ -49,6 +50,12 @@ export function AgentCredentialsSection() {
       cancelled = true
     }
   }, [agent.slug])
+
+  const reload = () => {
+    getAgentCredentialStatus(agent.slug)
+      .then(setRows)
+      .catch(() => {})
+  }
 
   const save = async (name: string) => {
     const value = (draft[name] ?? '').trim()
@@ -187,6 +194,8 @@ export function AgentCredentialsSection() {
           <p className="mb-4 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
             {headline(rows)}
           </p>
+
+          <AgentVaultSection slug={agent.slug} onImported={reload} />
 
           {declaresMailbox(rows) && (
             <section className="mb-5" data-testid="needs-you">

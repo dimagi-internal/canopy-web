@@ -462,6 +462,32 @@ class GoogleMintStartOut(StrictModel):
     url: str
 
 
+class AgentVaultIn(StrictModel):
+    """Non-clobbering, like every other credential write here: a blank/omitted
+    service_key leaves the stored one alone, so editing the vault name does not
+    silently wipe the key."""
+
+    vault: str | None = None
+    service_key: str | None = None
+
+
+class AgentVaultOut(StrictModel):
+    vault: str = ""
+    key_set: bool = False
+
+
+class AgentImportOut(StrictModel):
+    """What an import actually did — reported, never assumed.
+
+    `failures` matters as much as `imported`: a ref that no longer resolves is
+    the single most useful thing this screen can tell anyone, and an
+    all-or-nothing import would hide it behind one error."""
+
+    imported: list[str] = []
+    skipped: list[dict] = []
+    failures: list[dict] = []
+
+
 class CountOut(StrictModel):
     created: int = 0
     replaced: int = 0

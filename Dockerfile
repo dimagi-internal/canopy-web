@@ -21,10 +21,28 @@ FROM python:3.12-slim
 
 # Install Node.js for the optional Claude Code CLI backend
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates unzip \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# The 1Password CLI — how an agent's secrets are imported from its vault
+# (apps/agents/vault_import.py). A static binary rather than the official Python
+# SDK on purpose: the SDK has no cp314 wheel, so it would install against this
+# image's 3.12 and fail against a local 3.14 checkout, breaking tests for a
+# reason unrelated to what they test. This is also the exact tool
+# runner/ec2/bootstrap_agents.sh runs on the box, so an op:// ref containing
+# spaces, a UUID item name, or a document filename resolves identically in both
+# places instead of nearly identically.
+ARG OP_CLI_VERSION=2.30.3
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    curl -fsSL -o /tmp/op.zip \
+      "https://cache.agilebits.com/dist/1P/op2/pkg/v${OP_CLI_VERSION}/op_linux_${arch}_v${OP_CLI_VERSION}.zip"; \
+    unzip -o /tmp/op.zip op -d /usr/local/bin; \
+    rm -f /tmp/op.zip; \
+    chmod +x /usr/local/bin/op; \
+    op --version
 
 RUN npm install -g @anthropic-ai/claude-code
 

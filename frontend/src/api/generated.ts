@@ -1821,6 +1821,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/vault": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** This agent's 1Password vault (masked — never the key) */
+        readonly get: operations["apps_agents_api_get_agent_vault"];
+        /**
+         * Set the vault + its service-account token (write-only)
+         * @description The key is scoped to ONE agent's vault by design.
+         *
+         *     A single fleet-wide token would be simpler to operate and would make
+         *     canopy-web worth attacking for every agent's secrets at once; this bounds a
+         *     compromise to the one agent whose key was taken (Jonathan, 2026-09-06).
+         */
+        readonly put: operations["apps_agents_api_set_agent_vault"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/import": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Populate this agent's secrets from its 1Password vault
+         * @description Reads the vault as the agent's own service account and stores the values.
+         *
+         *     Partial success is the DESIGNED outcome: a half-provisioned vault is the
+         *     normal state of a new agent, so one missing ref reports itself and the other
+         *     forty-four still land.
+         */
+        readonly post: operations["apps_agents_api_import_agent_credentials"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -7317,6 +7366,60 @@ export interface components {
                 readonly [key: string]: string;
             };
         };
+        /** AgentVaultOut */
+        readonly AgentVaultOut: {
+            /**
+             * Vault
+             * @default
+             */
+            readonly vault: string;
+            /**
+             * Key Set
+             * @default false
+             */
+            readonly key_set: boolean;
+        };
+        /**
+         * AgentVaultIn
+         * @description Non-clobbering, like every other credential write here: a blank/omitted
+         *     service_key leaves the stored one alone, so editing the vault name does not
+         *     silently wipe the key.
+         */
+        readonly AgentVaultIn: {
+            /** Vault */
+            readonly vault?: string | null;
+            /** Service Key */
+            readonly service_key?: string | null;
+        };
+        /**
+         * AgentImportOut
+         * @description What an import actually did — reported, never assumed.
+         *
+         *     `failures` matters as much as `imported`: a ref that no longer resolves is
+         *     the single most useful thing this screen can tell anyone, and an
+         *     all-or-nothing import would hide it behind one error.
+         */
+        readonly AgentImportOut: {
+            /**
+             * Imported
+             * @default []
+             */
+            readonly imported: readonly string[];
+            /**
+             * Skipped
+             * @default []
+             */
+            readonly skipped: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Failures
+             * @default []
+             */
+            readonly failures: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
         /** Page[RunSummary] */
         readonly Page_RunSummary_: {
             /** Items */
@@ -12513,6 +12616,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentCredentialsResolveOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_get_agent_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentVaultOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_set_agent_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentVaultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentVaultOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_import_agent_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentImportOut"];
                 };
             };
         };
