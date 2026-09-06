@@ -534,7 +534,6 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
     Non-clobbering on the KEY specifically: renaming a vault must not silently
     wipe the credential that reads it, which is the shape of every other
     credential write here."""
-    from apps.agents.schemas import AgentVaultOut
     from apps.common.encryption import encrypt_secret
 
     fields = []
