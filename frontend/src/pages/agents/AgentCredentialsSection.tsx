@@ -7,7 +7,7 @@ import {
   type AgentCredentialStatusOut,
 } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { blockers, groupRefs } from '@/pages/agents/agentCredentials'
+import { groupRefs, summarize } from '@/pages/agents/agentCredentials'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
@@ -80,14 +80,14 @@ export function AgentCredentialsSection() {
     )
   }
 
-  const b = blockers(rows)
+  const s = summarize(rows)
   const ordered = groupRefs(rows)
 
   return (
     <div className="max-w-4xl px-6 py-8" data-testid="agent-credentials">
       <WorkbenchSubHeader title="Credentials" count={rows.length} />
 
-      {b.undeclared ? (
+      {s.undeclared ? (
         // Zero refs is UNDECLARED, not provisioned — and it is the state every
         // agent is in before someone writes a runtime.yaml. Saying "ready" here
         // would assert a box can run it, which nobody has established.
@@ -98,28 +98,21 @@ export function AgentCredentialsSection() {
         </p>
       ) : (
         <>
-          {b.missing.length > 0 ? (
-            <p
-              className="mb-3 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[13px] text-warning"
-              data-testid="agent-credentials-blockers"
-            >
-              ⚠ {b.missing.length} declared {b.missing.length === 1 ? 'secret is' : 'secrets are'} not
-              set — this agent cannot run until they are.
-            </p>
-          ) : (
-            <p className="mb-3 text-[13px] text-success" data-testid="agent-credentials-ready">
-              ✓ Every declared secret is set.
-            </p>
-          )}
-
-          {b.stillInVault.length > 0 && (
-            // Not a blocker — resolution falls back to 1Password — but it is
-            // exactly what stops "no vault access needed" from being true yet.
-            <p className="mb-3 text-[12px] text-muted-foreground" data-testid="agent-credentials-vault">
-              {b.stillInVault.length} still resolve from 1Password. Setting them here is what removes
-              the vault from the path.
-            </p>
-          )}
+          {/* Reports; does not judge. canopy-web holds only the secrets that need
+              to be here — the rest live in 1Password and are resolved on the box
+              with the runner's service-account token. Framing those as missing
+              made this page report "45 blockers, this agent cannot run" about a
+              healthy ACE, which teaches people to ignore it; the one genuinely
+              dead credential then hides among the false alarms. Whether a secret
+              WORKS is a question only the box can answer — a readiness drill is
+              what answers it. */}
+          <p className="mb-3 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
+            canopy-web stores {s.storedHere.length} of {s.declaredCount} declared secrets.
+            {s.fromVault.length > 0 && (
+              <> The other {s.fromVault.length} resolve from 1Password on the box, using the
+              runner’s service-account token.</>
+            )}
+          </p>
 
           <div className="space-y-2">
             {ordered.map((r) => (
