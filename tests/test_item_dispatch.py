@@ -206,3 +206,36 @@ def test_no_reply_means_no_delimiters(ada, hal):
     item = _item(ada, dispatch=[{"target_agent": "hal", "prompt": "FINDING: x"}])
     turn = dispatch(item, actor_workspace_slugs={ada.workspace_id})[0]
     assert HUMAN_REPLY_OPEN not in turn.prompt
+
+
+def test_the_cards_title_rides_along_so_the_session_can_be_named_after_it(ada):
+    """The runner names the emdash session from `origin_ref`, and the card's title
+    is the most deliberate description of the work anyone wrote. Without this the
+    name falls back down the ladder to the slash command, so every board dispatch
+    reads `c-turn-<disc>` regardless of what it is for."""
+    item = _item(ada, title="Retry the backoff on 429", dispatch=[{"prompt": "/ada:turn"}])
+
+    turns = dispatch(item, actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert turns[0].origin_ref["item_title"] == "Retry the backoff on 429"
+
+
+def test_an_explicit_item_title_in_the_spec_is_not_overwritten(ada):
+    """A producer that already named the work keeps its own words — this only
+    fills a gap."""
+    item = _item(ada, title="Card title",
+                 dispatch=[{"prompt": "/ada:turn", "origin_ref": {"item_title": "Chosen name"}}])
+
+    turns = dispatch(item, actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert turns[0].origin_ref["item_title"] == "Chosen name"
+
+
+def test_carrying_the_title_does_not_disturb_the_specs_own_provenance(ada):
+    item = _item(ada, title="Retry the backoff",
+                 dispatch=[{"prompt": "/ada:turn", "origin_ref": {"evidence": "http://x/1"}}])
+
+    turns = dispatch(item, actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+
+    assert turns[0].origin_ref["evidence"] == "http://x/1"
+    assert turns[0].origin_ref["item_title"] == "Retry the backoff"

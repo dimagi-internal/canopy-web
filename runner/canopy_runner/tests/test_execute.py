@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from canopy_runner import cdp_control, dialog, emdash, execute
+from canopy_runner import cdp_control, dialog, emdash, execute, session_naming
 from canopy_runner.client import ClientError
 
 
@@ -334,26 +334,29 @@ def test_a_project_turn_drives_the_repo_and_carries_its_tenant(monkeypatch):
     assert kw["project"] == "canopy-web" and kw["workspace"] == "canopy"
 
 
-def test_task_name_is_readable_subject_plus_stamp():
-    import datetime as dt
-    now = dt.datetime(2026, 7, 14, 15, 32)
-    # keyless turn -> thread key is '{agent}:{turn_id}', so the discriminator comes
-    # from the turn id (last 4 of 'halt1') rather than a shared 'main'.
+def test_task_name_delegates_to_the_one_format_owner():
+    """`session_naming` owns the shape; this is only the seam. The FORMAT cases
+    (the ladder, truncation, the c- marker) live in tests/test_session_naming.py —
+    asserting them here too would mean two places to update for one change."""
+    from canopy_runner import session_naming
+
     t = _turn(id="t-1", origin="email", origin_ref={"subject": "Re: Bednet demo!!"})
-    assert execute._task_name("hal", t, now=now) == "hal-re-bednet-demo-alt1-0714-1532"
-    # no subject -> agent + stamp
-    assert execute._task_name("hal", _turn(id="t-1", origin="manual", origin_ref={}), now=now) == "hal-manual-alt1-0714-1532"
+    assert execute._task_name("hal", t) == session_naming.build_task_name("hal", t)
+    assert execute._task_name("hal", t).startswith("c-")
 
 
-def test_task_name_distinguishes_threads_with_same_subject():
-    """The observed bug: two DIFFERENT threads with the same subject in the same minute
-    got the same name. The thread discriminator must keep them distinct."""
-    import datetime as dt
-    now = dt.datetime(2026, 7, 14, 15, 14)
-    t1 = _turn(origin="email", origin_ref={"subject": "Security alert", "thread_id": "19f4c06eeb986355"})
-    t2 = _turn(origin="email", origin_ref={"subject": "Security alert", "thread_id": "19f425675a9855a4"})
-    n1 = execute._task_name("hal", t1, now=now)
-    n2 = execute._task_name("hal", t2, now=now)
-    assert n1 == "hal-security-alert-6355-0714-1514"
-    assert n2 == "hal-security-alert-55a4-0714-1514"
-    assert n1 != n2
+def test_the_naming_modules_thread_key_matches_executes():
+    """session_naming carries its own copy of _thread_key (execute imports it, so
+    the dependency cannot run the other way). If the two ever disagree, a turn gets
+    one discriminator when it is named and another when its session is resolved —
+    reuse would open a different session than the one it recorded. Pin them here.
+
+    Both branches: an explicit thread_key (continue-this-session) and the keyless
+    fresh-per-turn fallback, which is the one that derives from the turn id.
+    """
+    for turn in (
+        _turn(id="t-1", origin_ref={"thread_key": "phone:jj:hal"}),
+        _turn(id="t-1", origin_ref={"thread_id": "19f4c06eeb986355"}),
+        _turn(id="t-1", origin_ref={}),
+    ):
+        assert session_naming._thread_key(turn, "hal") == execute._thread_key(turn)

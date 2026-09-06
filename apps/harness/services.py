@@ -1278,7 +1278,12 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
             origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=key,
             prompt=schedule.prompt,
-            origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat()},
+            # `schedule_name` is carried for the emdash session NAME. Without it the
+            # runner names a cron turn after the prompt's slash command, so every
+            # schedule an agent has reads `c-turn-<disc>` in the sidebar; with it
+            # they read `c-weekly-manager-report`, which is what the human called it.
+            origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat(),
+                        "schedule_name": schedule.name},
             routing=schedule.routing,
         )
         if created and (schedule.last_slot is None or slot > schedule.last_slot):
@@ -1309,7 +1314,8 @@ def run_schedule_now(schedule) -> Turn:
             origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=f"sched:{schedule.id}:manual:{uuid.uuid4()}",
             prompt=schedule.prompt,
-            origin_ref={"schedule_id": schedule.id, "manual": True},
+            origin_ref={"schedule_id": schedule.id, "manual": True,
+                        "schedule_name": schedule.name},
             routing=schedule.routing,
         )
     return turn
@@ -2209,7 +2215,8 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
         "dispatch": [{
             "prompt": schedule.prompt,
             "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
-            "origin_ref": {"schedule_id": schedule.id, "manual": True},
+            "origin_ref": {"schedule_id": schedule.id, "manual": True,
+                           "schedule_name": schedule.name},
             "routing": schedule.routing,
         }],
         "idempotency_key": f"sched-nag:{schedule.id}:{turn.id}",

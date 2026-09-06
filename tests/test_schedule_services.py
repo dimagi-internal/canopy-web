@@ -37,7 +37,8 @@ def test_fire_creates_a_cron_turn_and_advances_last_slot(schedule):
     assert turn.origin == Turn.ORIGIN_CANOPY_SCHEDULER
     assert turn.status == Turn.QUEUED
     assert turn.prompt == "/echo:manager-report"
-    assert turn.origin_ref == {"schedule_id": schedule.id, "slot": SLOT_A.isoformat()}
+    assert turn.origin_ref == {"schedule_id": schedule.id, "slot": SLOT_A.isoformat(),
+                               "schedule_name": "Weekly manager report"}
     assert turn.idempotency_key == f"sched:{schedule.id}:{SLOT_A.isoformat()}"
     schedule.refresh_from_db()
     assert schedule.last_slot == SLOT_A
@@ -261,3 +262,15 @@ def test_run_now_supersedes_an_open_slot_so_the_work_never_runs_twice(schedule):
     assert services.latest_occurrence_turn(schedule).pk == manual.pk
     schedule.refresh_from_db()
     assert schedule.last_slot == SLOT_A  # cadence untouched — the next slot still fires
+
+
+def test_the_schedules_name_rides_along_for_the_session_name(schedule):
+    """The runner names the emdash session from `origin_ref`. `schedule_id` is a
+    number it cannot resolve (it is Django-free and never queries), so without the
+    name here every scheduled turn falls down the naming ladder to its slash
+    command and an agent's schedules become indistinguishable in the sidebar."""
+    fired, _ = services.fire_schedule(schedule, SLOT_A)
+    manual = services.run_schedule_now(schedule)
+
+    assert fired.origin_ref["schedule_name"] == "Weekly manager report"
+    assert manual.origin_ref["schedule_name"] == "Weekly manager report"
