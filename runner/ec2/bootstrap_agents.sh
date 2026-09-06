@@ -155,6 +155,54 @@ agent_repo_url() {  # slug -> clone url; registry pointer, else the org conventi
   printf '%s\n' "${url:-https://github.com/${AGENT_REPO_ORG:-dimagi-internal}/${slug}}"
 }
 
+# THE authoritative account->client answer: the token names its own client.
+#
+# A gog token is JSON carrying {email, client, services, scopes, refresh_token},
+# and `client` is the OAuth app it was minted for. A token works ONLY with that
+# client, so nothing else can be authoritative — not this file's table, and not
+# the agent's config/agent.json, which states INTENT. Making that declaration
+# authoritative on 2026-09-05 pointed echo at `canopy`, whose client had no token
+# for it, and broke a working mailbox (canopy-web#661, reverted in #662).
+#
+# The table below survives only as the FIRST-BOOT fallback: step 2 writes the map
+# before step 3 has fetched any token, so there is a window with nothing to read.
+# Never returns empty — an empty client points gog at the wrong app silently.
+# Merge ONE account->client entry into gog's config.json, once the token has
+# told us the truth. Step 2 writes the whole map before any token exists.
+upsert_account_client() {
+  local email="$1" client="$2"
+  [[ -n "$email" && -n "$client" ]] || return 0
+  command -v gog >/dev/null 2>&1 || return 0
+  local dir; dir="$(gog_config_dir)"
+  mkdir -p "$dir"
+  UAC_CFG="$dir/config.json" UAC_EMAIL="$email" UAC_CLIENT="$client" python3 -c '
+import json, os
+path = os.environ["UAC_CFG"]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data.setdefault("account_clients", {})[os.environ["UAC_EMAIL"]] = os.environ["UAC_CLIENT"]
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+'
+}
+
+token_client() {  # <token-file> <slug>
+  local tokfile="$1" slug="$2" declared=""
+  if [[ -s "$tokfile" ]]; then
+    declared="$(TOKF="$tokfile" python3 -c '
+import json, os
+try:
+    print((json.load(open(os.environ["TOKF"])).get("client") or "").strip())
+except Exception:
+    pass
+' 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${declared:-${GOG_CLIENT[$slug]:-$slug}}"
+}
+
 vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
   local slug="$1"
   printf 'Agent-%s\n' "${slug^}"
@@ -535,6 +583,13 @@ bootstrap_one_agent() {
       local importerr
       if importerr="$(gog auth tokens import "$tokfile" 2>&1 >/dev/null)"; then
         ok "$slug: gmail token imported"
+        # The token has just told us which client it belongs to. Step 2 could
+        # only have written the fallback, so correct the map from the fact.
+        local tclient; tclient="$(token_client "$tokfile" "$slug")"
+        if [[ -n "$tclient" && "$tclient" != "$client" ]]; then
+          warn "$slug: token declares client '$tclient', map said '$client' — using the token"
+        fi
+        upsert_account_client "$account" "$tclient"
       else
         warn "$slug: gog auth tokens import failed: ${importerr:-(no output)}"
         [[ -n "${GOG_KEYRING_PASSWORD:-}" ]] || \
