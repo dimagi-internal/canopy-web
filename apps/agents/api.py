@@ -675,7 +675,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
             summary="This agent's 1Password vault (masked — never the key)")
 def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
     agent = _get_agent_or_404(request, slug)
-    return AgentVaultOut(vault=agent.op_vault, key_set=bool(agent.op_sa_token_enc))
+    return services.agent_vault_status(agent)
 
 
 @router.put("/{slug}/vault", response=AgentVaultOut,

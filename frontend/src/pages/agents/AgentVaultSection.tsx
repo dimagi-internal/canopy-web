@@ -21,6 +21,8 @@ interface Result {
 export function AgentVaultSection({ slug, onImported }: { slug: string; onImported: () => void }) {
   const [vault, setVault] = useState('')
   const [keySet, setKeySet] = useState(false)
+  const [declared, setDeclared] = useState(0)
+  const [locatable, setLocatable] = useState(0)
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,6 +35,8 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
         if (off) return
         setVault(v.vault ?? '')
         setKeySet(Boolean(v.key_set))
+        setDeclared(v.declared ?? 0)
+        setLocatable(v.locatable ?? 0)
       })
       .catch(() => {})
     return () => {
@@ -51,6 +55,8 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
         ...(key.trim() ? { service_key: key.trim() } : {}),
       })
       setKeySet(Boolean(v.key_set))
+      setDeclared(v.declared ?? 0)
+      setLocatable(v.locatable ?? 0)
       setKey('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save')
@@ -126,6 +132,17 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
           A service account scoped to this one vault. canopy-web reads it only to import; the key is
           encrypted at rest and never returned to a browser.
         </p>
+
+        {declared > 0 && locatable < declared && (
+          // Says WHY an import would skip. Both causes render as "45 skipped"
+          // and have completely different fixes — an empty vault vs. a source
+          // map that never reached this deployment.
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="locatable-note">
+            {locatable === 0
+              ? `This deployment has no source map for ${declared} refs — nothing to import until the agent's runtime.yaml is pushed here.`
+              : `${locatable} of ${declared} refs say where their value lives; the rest would be skipped.`}
+          </p>
+        )}
 
         {result && (
           // Failures are shown as prominently as successes on purpose: a ref

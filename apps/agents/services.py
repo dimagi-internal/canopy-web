@@ -534,7 +534,6 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
     Non-clobbering on the KEY specifically: renaming a vault must not silently
     wipe the credential that reads it, which is the shape of every other
     credential write here."""
-    from apps.agents.schemas import AgentVaultOut
     from apps.common.encryption import encrypt_secret
 
     fields = []
@@ -546,7 +545,27 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
         fields.append("op_sa_token_enc")
     if fields:
         agent.save(update_fields=[*fields, "updated_at"])
-    return AgentVaultOut(vault=agent.op_vault, key_set=bool(agent.op_sa_token_enc))
+    return agent_vault_status(agent)
+
+
+def agent_vault_status(agent):
+    """Vault config plus how much of the agent is actually locatable.
+
+    `locatable` is the number of declared refs that carry a source. It is the
+    difference between "the import found nothing" and "this deployment was never
+    told where anything lives" — the same failure with two completely different
+    fixes."""
+    from apps.agents import vault_import
+    from apps.agents.schemas import AgentVaultOut
+
+    declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
+    plan = vault_import.plan_import(declared, agent.runtime_sources or {})
+    return AgentVaultOut(
+        vault=agent.op_vault,
+        key_set=bool(agent.op_sa_token_enc),
+        declared=len(declared),
+        locatable=sum(1 for i in plan if i.kind in ("op", "value")),
+    )
 
 
 def import_agent_credentials(agent, *, user=None):

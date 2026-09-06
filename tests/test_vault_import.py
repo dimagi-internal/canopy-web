@@ -211,3 +211,19 @@ def test_runtime_sources_can_be_pushed_with_the_agent(fleet):
     )
     fleet["agent"].refresh_from_db()
     assert fleet["agent"].runtime_sources == {"x": {"op": "op://V/i/f"}}
+
+
+def test_vault_status_says_how_much_is_locatable(fleet):
+    """An import that returns "45 skipped" has two completely different causes —
+    the vault is empty, or this deployment was never told where anything lives —
+    and nothing on the screen could tell them apart."""
+    v = fleet["client"].get("/api/agents/ace/vault").json()
+    assert v["declared"] == len(DECLARED)
+    # local_only and the undeclared-source ref are not locatable.
+    assert v["locatable"] == 3
+
+
+def test_an_agent_with_no_source_map_reports_zero_locatable(fleet):
+    Agent.objects.filter(slug="ace").update(runtime_sources={})
+    v = fleet["client"].get("/api/agents/ace/vault").json()
+    assert v["declared"] > 0 and v["locatable"] == 0
