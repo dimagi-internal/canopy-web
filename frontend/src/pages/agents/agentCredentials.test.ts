@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { blockers, groupRefs, type CredRow } from './agentCredentials'
+import { groupRefs, summarize, type CredRow } from './agentCredentials'
 
-// The question this screen exists to answer is "what is stopping this agent from
-// running". On 2026-09-05 that question cost an SSH to a box and a `gog auth
-// list`: ACE's mailbox had been dead since May and nothing surfaced it.
+// canopy-web deliberately does NOT hold most of an agent's secrets — 1Password
+// does, reached on the box with the runner's service-account token. So this
+// screen reports what canopy-web holds; it does not judge whether the agent can
+// run, which is a question only the box can answer.
 
 const row = (over: Partial<CredRow>): CredRow => ({
   name: 'x',
@@ -15,65 +16,52 @@ const row = (over: Partial<CredRow>): CredRow => ({
   ...over,
 })
 
-describe('blockers', () => {
-  it('names the declared refs that are not set', () => {
-    const b = blockers([
+describe('summarize', () => {
+  it('splits declared refs into stored-here and expected-from-the-vault', () => {
+    const s = summarize([
       row({ name: 'canopy-pat', set: true, source: 'canopy-web' }),
+      row({ name: 'ace-hq-api-key' }),
       row({ name: 'nova-api-key' }),
-      row({ name: 'gog-token' }),
     ])
-    expect(b.missing).toEqual(['nova-api-key', 'gog-token'])
+    expect(s.storedHere).toEqual(['canopy-pat'])
+    expect(s.fromVault).toEqual(['ace-hq-api-key', 'nova-api-key'])
+    expect(s.declaredCount).toBe(3)
   })
 
-  it('ignores an UNDECLARED ref — an orphan is not a blocker', () => {
-    // It still needs showing (a live secret nothing accounts for), but it can
-    // never be the reason a turn won't run: nothing asks for it.
-    const b = blockers([row({ name: 'retired', declared: false, set: true, source: 'canopy-web' })])
-    expect(b.missing).toEqual([])
-    expect(b.orphans).toEqual(['retired'])
+  it('does not treat vault-resolved refs as a deficit', () => {
+    // The state every agent is in and mostly stays in. Reporting it as missing
+    // made the page cry wolf on a healthy ACE — 45 "blockers" on an agent that
+    // runs fine — which is how the one real dead credential gets ignored.
+    const s = summarize([row({ name: 'a' }), row({ name: 'b' })])
+    expect(s.fromVault).toEqual(['a', 'b'])
+    expect('selfContained' in s).toBe(false)
+    expect('missing' in s).toBe(false)
   })
 
-  it('is ready only when every declared ref is set', () => {
-    expect(blockers([row({ set: true, source: 'canopy-web' })]).ready).toBe(true)
-    expect(blockers([row({ set: false })]).ready).toBe(false)
-  })
-
-  it('an agent that declares nothing is not "ready" — it is undeclared', () => {
-    // Zero refs and zero blockers is not the same as provisioned. Reporting
-    // "ready" would say the box can run it, which nobody has established.
-    const b = blockers([])
-    expect(b.ready).toBe(false)
-    expect(b.undeclared).toBe(true)
-  })
-
-  it('counts values still coming from 1Password as a migration residual', () => {
-    // Not a blocker — resolution falls back — but it IS the thing that stops
-    // "no vault access needed" from being true yet.
-    const b = blockers([
-      row({ name: 'a', set: true, source: 'canopy-web' }),
-      row({ name: 'b', set: true, source: '1password' }),
+  it('surfaces orphans and excludes them from the declared count', () => {
+    const s = summarize([
+      row({ name: 'declared', set: true, source: 'canopy-web' }),
+      row({ name: 'retired', declared: false, set: true, source: 'canopy-web' }),
     ])
-    expect(b.ready).toBe(true)
-    expect(b.stillInVault).toEqual(['b'])
+    expect(s.orphans).toEqual(['retired'])
+    expect(s.declaredCount).toBe(1)
+  })
+
+  it('an agent declaring nothing is undeclared, not provisioned', () => {
+    const s = summarize([])
+    expect(s.undeclared).toBe(true)
+    expect(s.declaredCount).toBe(0)
   })
 })
 
 describe('groupRefs', () => {
-  it('sorts unset-and-required to the top', () => {
-    const g = groupRefs([
-      row({ name: 'set-one', set: true, source: 'canopy-web' }),
-      row({ name: 'missing-one' }),
-    ])
-    expect(g.map((r) => r.name)).toEqual(['missing-one', 'set-one'])
-  })
-
-  it('puts orphans last — they are noise relative to a blocker', () => {
+  it('puts what this page manages first, then vault-resolved, then orphans', () => {
     const g = groupRefs([
       row({ name: 'orphan', declared: false, set: true, source: 'canopy-web' }),
-      row({ name: 'set-one', set: true, source: 'canopy-web' }),
-      row({ name: 'missing-one' }),
+      row({ name: 'vault' }),
+      row({ name: 'here', set: true, source: 'canopy-web' }),
     ])
-    expect(g.map((r) => r.name)).toEqual(['missing-one', 'set-one', 'orphan'])
+    expect(g.map((r) => r.name)).toEqual(['here', 'vault', 'orphan'])
   })
 
   it('does not mutate the input', () => {

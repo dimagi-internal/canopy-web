@@ -1,7 +1,7 @@
 # Agent credentials in canopy-web — creating an agent without 1Password or the box
 
 **Date:** 2026-09-05
-**Status:** Design — approved in direction, not yet built
+**Status:** Shipped (#666, #667) — scope AMENDED 2026-09-06, see below
 **Builds on:** `2026-07-20-agent-runtime-registry-design.md` (the registry + reconciler;
 its **secret store** half is what this replaces for the agent layer)
 **Depends on:** #663 (the box reads its roster from canopy-web), `echo/runtime.yaml`,
@@ -31,6 +31,44 @@ ACE's own config warns against, and nothing surfaced that until a drill ran thre
 weeks later. Nobody could see the state of a credential without SSH-ing to a box and
 running `gog auth list`. **Credentials that only exist in a vault and a keyring are
 credentials nobody is watching.**
+
+## AMENDED 2026-09-06 — canopy-web is not the vault
+
+> *"I don't want to store all the passwords on canopy-web, just the ones we need
+> and a service token for 1pass."* — Jonathan
+
+The original decision below ("canopy-web becomes the agent secret store") is
+**too broad and is superseded.** Copying all 45 of ACE's secrets into canopy-web
+creates a second copy of every credential, free to drift from the vault, in a
+system that thereby becomes worth attacking. 1Password already does rotation,
+sharing and audit; canopy-web should not re-do it.
+
+**The corrected split:**
+
+| Lives in | What |
+|---|---|
+| **1Password** | Substantially everything — it stays the vault |
+| **canopy-web (runner)** | The **1Password service-account token** (`RunnerCredential.op_sa_token`), which is the key that lets a box resolve the rest. Already shipped, with a browser form as of #665 |
+| **canopy-web (agent)** | Only secrets that genuinely need to be there — canopy's own PAT, and anything canopy-web itself mints |
+
+This turns out to require *less* building, not more: the runner-level SA token
+already existed and the box already fetches it from canopy-web
+(`cloud_runner.py:1601`). What was wrong was the **framing**, not the mechanism.
+
+**Consequence for the status screen (#667, corrected):** a ref resolving from
+1Password is the NORMAL, intended state — not a migration residual and not a
+deficit. The first draft measured `selfContained` ("every declared secret is
+stored here") and rendered it as success, which rewards exactly the duplication
+this amendment rejects. Worse, it reported *"45 blockers — this agent cannot
+run"* about an agent running perfectly well. A screen that cries wolf is how the
+one genuinely dead credential goes unnoticed, which is the failure the screen
+exists to prevent. It now reports what canopy-web holds and says the rest come
+from the vault; whether a secret WORKS is a question only the box can answer, and
+a readiness drill is what answers it.
+
+**What still gets simpler for a new agent:** the person standing one up needs no
+box access, and needs vault access only to put that agent's secrets somewhere
+1Password already governs — not to hand-provision a machine.
 
 ## Decisions
 
