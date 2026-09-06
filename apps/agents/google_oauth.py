@@ -41,12 +41,30 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.core import signing
 
-# The scope set is READ FROM THE LIVE FLEET, not designed here: echo's and eva's
-# working tokens carry exactly these. An earlier draft added calendar and slides
-# on the assumption they were wanted; no token in the fleet has ever had them,
-# and a minted token that differs from the fleet's is a new thing to debug rather
-# than a replacement for the old one.
-FLEET_SCOPES: tuple[str, ...] = (
+# What to ASK Google for. The authority is what agents DECLARE they need, not
+# what the incumbent tokens happen to carry — a distinction that cost a wrong
+# reading on 2026-09-06.
+#
+# The live tokens (op://Agent-Echo, op://Agent-Eva) carry gmail, docs, drive,
+# forms and sheets, so a first version requested exactly those, reasoning that a
+# token unlike the fleet's is a new thing to debug. That inverted the evidence.
+# Those tokens are a record of what was minted, not of what is required, and
+# ace's config/agent.json says so in as many words:
+#
+#     gog_services: [gmail, calendar, drive, docs, slides, sheets, forms]
+#     "ACE needs `slides` … and `calendar`, neither of which is in canopy's
+#      fleet default."
+#
+# So the fleet default is KNOWN INSUFFICIENT for at least one agent already, and
+# minting from it would hand ACE a token that authorizes cleanly and then fails
+# its first slides call — the same shape of silent breakage this feature exists
+# to end. Ask for the union instead.
+#
+# Over-requesting is close to free and under-requesting is not: an unused grant
+# costs a line on the consent screen, while a missing one is a live agent failing
+# mid-run, and re-minting means re-consenting. `services_for` derives the truth
+# from what Google actually GRANTED, so the token never overstates itself.
+_BASE_SCOPES: tuple[str, ...] = (
     "openid",
     "email",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -59,6 +77,16 @@ FLEET_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/gmail.settings.sharing",
     "https://www.googleapis.com/auth/spreadsheets",
 )
+
+# Declared by an agent, absent from every live token. Named separately so the
+# reason survives: these are the two that ace's own config calls out as missing
+# from the fleet default.
+_DECLARED_BEYOND_THE_FLEET: tuple[str, ...] = (
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/presentations",
+)
+
+FLEET_SCOPES: tuple[str, ...] = _BASE_SCOPES + _DECLARED_BEYOND_THE_FLEET
 
 # gog's short service names, keyed by the scope-path prefix that implies them.
 # Ordered longest-prefix-first is unnecessary here because no key is a prefix of

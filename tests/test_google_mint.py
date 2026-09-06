@@ -38,11 +38,33 @@ LIVE_FLEET_SCOPES = [
 ]
 
 
-def test_the_requested_scopes_are_the_ones_the_fleet_actually_uses():
-    """Asking for MORE than the fleet uses is not free: every extra scope is one
-    more thing on the consent screen and one more way a re-mint diverges from the
-    token it replaces."""
-    assert set(g.FLEET_SCOPES) == set(LIVE_FLEET_SCOPES)
+# ace/config/agent.json, verbatim — the DECLARATION of what its mailbox must be
+# able to do, alongside the note that two of them are missing from the fleet
+# default. This is the authority on scope, not the incumbent tokens.
+ACE_DECLARED_SERVICES = ["gmail", "calendar", "drive", "docs", "slides", "sheets", "forms"]
+
+
+def test_the_request_covers_every_service_an_agent_declares():
+    """The correction that matters. A first version requested exactly what the
+    live tokens carry — but those record what was MINTED, not what is needed, and
+    ace's config says the fleet default is insufficient for it. Minting from that
+    set hands ACE a token that authorizes cleanly and fails its first slides
+    call: the silent breakage this feature exists to end, reintroduced by the
+    feature itself."""
+    granted = g.services_for(g.FLEET_SCOPES)
+    assert set(ACE_DECLARED_SERVICES) <= set(granted), (
+        f"declared but not requested: {sorted(set(ACE_DECLARED_SERVICES) - set(granted))}"
+    )
+
+
+def test_the_request_is_a_superset_of_what_the_live_fleet_already_has():
+    """A re-mint must not take capability AWAY from a working mailbox."""
+    assert set(LIVE_FLEET_SCOPES) <= set(g.FLEET_SCOPES)
+
+
+def test_calendar_and_slides_are_asked_for_because_an_agent_declares_them():
+    assert "https://www.googleapis.com/auth/calendar" in g.FLEET_SCOPES
+    assert "https://www.googleapis.com/auth/presentations" in g.FLEET_SCOPES
 
 
 def test_services_are_derived_from_the_granted_scopes_not_declared():
