@@ -120,12 +120,20 @@ def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
         # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
         # through untouched and is not double-marked.
         brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=item.agent.slug)
+        # Carry the card's title so the runner can NAME the emdash session after the
+        # work rather than after its slash command — `c-retry-the-backoff-on-429`
+        # instead of `c-turn`, which is what every board dispatch would otherwise
+        # read as. `setdefault`: a producer that already chose a name keeps it, and
+        # the spec's own provenance keys are untouched (copied, not mutated — the
+        # spec is frozen and shared with the Item's stored JSON).
+        origin_ref = dict(spec.origin_ref)
+        origin_ref.setdefault("item_title", item.title)
         turn, _created = services.enqueue_turn(
             agent=target,
             origin=spec.origin,
             idempotency_key=f"item-{item.id}-{i}",
             prompt=_with_reply(brief, item),
-            origin_ref=spec.origin_ref,
+            origin_ref=origin_ref,
             routing=spec.routing,
         )
         if turn.raised_from_id is None:

@@ -18,14 +18,12 @@ the turn; a duplicate is worse than a retry, because it orphans the live context
 """
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import pathlib
-import re
 import time
 from pathlib import Path
 
-from . import cdp_control, chat_bridge, dialog, emdash, hooks, readiness, transcript
+from . import cdp_control, chat_bridge, dialog, emdash, hooks, readiness, session_naming, transcript
 from .client import ClientError
 from .tail import TailReader
 
@@ -74,10 +72,6 @@ def _thread_key(turn: dict) -> str:
     return explicit or f"{_target(turn)}:{turn.get('id') or ''}"
 
 
-def _slug(text: str, n: int = 28) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:n].strip("-")
-
-
 def _preview(line: str, n: int = 120) -> str:
     """Truncate a composer line for the log/event trail. It is the human's own
     half-typed words, so it is bounded rather than dropped — enough to recognise
@@ -86,18 +80,14 @@ def _preview(line: str, n: int = 120) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def _task_name(agent: str, turn: dict, now=None) -> str:
-    """A HUMAN-READABLE, per-thread-UNIQUE emdash task name: agent + subject slug +
-    a short thread discriminator + MMDD-HHMM, e.g. 'hal-security-alert-6355-0714-1514'.
-    The discriminator (last chars of the thread key) is what stops two DIFFERENT threads
-    with the same subject in the same minute from colliding onto one name. Recorded in the
-    SessionLink, so reuse opens this exact name — legible, not a bare hash."""
-    stamp = (now or dt.datetime.now()).strftime("%m%d-%H%M")
-    ref = turn.get("origin_ref") or {}
-    label = _slug(ref.get("subject") or "") or _slug(turn.get("origin") or "")
-    disc = re.sub(r"[^a-z0-9]", "", _thread_key(turn).lower())[-4:]
-    bits = [agent] + ([label] if label else []) + [b for b in (disc, stamp) if b]
-    return "-".join(bits)
+def _task_name(agent: str, turn: dict) -> str:
+    """The emdash task name for this turn — see `session_naming` for the format.
+
+    Kept as a named seam rather than inlining the call: the two create sites below
+    must never name the same turn differently, and this is where `_thread_key`'s
+    definition and the naming module's copy of it are held together.
+    """
+    return session_naming.build_task_name(agent, turn)
 
 
 def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt):
