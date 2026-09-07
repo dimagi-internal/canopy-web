@@ -39,6 +39,19 @@ def _fn(name: str) -> str:
     return "\n".join(lines[start:end + 1])
 
 
+# The per-agent pass is spread over several functions — bootstrap_one_agent
+# delegates the gmail half to refresh_gmail_token and the verdict to
+# verify_mailbox, so that the credentials-only pass (update_runner.sh's timer)
+# runs exactly the same code rather than a second copy of it.
+#
+# These assertions are about the PASS, not about which function happens to hold
+# a line today, so they read the concatenation. Pinning them to one function
+# name made a pure refactor look like a regression.
+def _agent_pass() -> str:
+    return "\n".join(_fn(n) for n in
+                     ("bootstrap_one_agent", "refresh_gmail_token", "verify_mailbox"))
+
+
 def _created_at(tmp_path, body) -> int:
     f = tmp_path / "tok.json"
     f.write_text(body if isinstance(body, str) else json.dumps(body))
@@ -89,7 +102,7 @@ def test_a_missing_file_is_zero_not_a_failure(tmp_path):
 def test_the_import_compares_both_stores_before_choosing():
     """Guards the regression directly: reading only the vault is what stranded a
     freshly minted token."""
-    body = _fn("bootstrap_one_agent")
+    body = _agent_pass()
     assert "fetch_canopy_web_token" in body, "canopy-web's copy must be considered"
     assert "token_created_at" in body, "the choice must be by age, not by source"
     # Not "canopy-web always wins" — that would lose a fresh vault rotation to a
@@ -124,5 +137,5 @@ def test_it_degrades_toward_the_vault_when_ages_are_unknowable():
     exactly today's behaviour. That direction is the safe one (a stale token
     stays put); the reverse would import canopy-web's copy over a good vault
     rotation. Stated in the script so it stays deliberate rather than lucky."""
-    body = _fn("bootstrap_one_agent")
+    body = _agent_pass()
     assert "wage > vage" in body, "the vault must be the else-branch, not canopy-web"

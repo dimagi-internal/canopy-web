@@ -14,20 +14,18 @@ from apps.workspaces import services as wsvc
 from . import services
 from .schemas import (
     AgentCommandApplyIn,
+    AgentCredentialsIn,
+    AgentCredentialsResolveOut,
+    AgentCredentialStatusOut,
     AgentDetailOut,
     AgentIn,
     AgentOut,
     AgentRunnerOut,
-    AgentCredentialStatusOut,
-    AgentCredentialsIn,
-    AgentCredentialsResolveOut,
+    AgentRunnerRowIn,
     AgentRunnerRuleOut,
     AgentRunnerRulesIn,
-    AgentRunnerRowIn,
     AgentRunnersIn,
     AgentRuntimeOut,
-    AgentVaultIn,
-    AgentVaultOut,
     AgentSkillCatalogIn,
     AgentSkillOut,
     AgentSyncIn,
@@ -40,8 +38,12 @@ from .schemas import (
     AgentTaskSyncIn,
     AgentTurnIn,
     AgentTurnOut,
+    AgentVaultIn,
+    AgentVaultOut,
     AgentWorkProductBatchIn,
     AgentWorkProductOut,
+    BootstrapReportIn,
+    BootstrapReportOut,
     CommandResultOut,
     CountOut,
     RunnerPreferenceIn,
@@ -705,3 +707,49 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = _get_agent_or_404(request, slug)
     services.delete_agent_credential(agent, name)
     return services.agent_credential_status(agent)
+
+
+@router.get("/{slug}/readiness", response=list[BootstrapReportOut],
+            summary="What each BOX reports it could actually materialize")
+def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]:
+    """The counterpart to `credentials/status`, and the difference is the point.
+
+    `status` answers "is the credential stored here". This answers "could the
+    box USE it" — and on 2026-09-07 those disagreed for a whole day: canopy-web
+    held a valid gog-token while every gmail call on the box failed, because the
+    OAuth client id+secret it needs alongside had not materialized. Nothing
+    outside journald could see that.
+    """
+    agent = _get_agent_or_404(request, slug)
+    return [
+        BootstrapReportOut(
+            runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
+            mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
+            detail=r.detail, reported_at=r.reported_at,
+        )
+        for r in services.bootstrap_reports(agent)
+    ]
+
+
+@router.post("/{slug}/bootstrap-report", response=BootstrapReportOut,
+             summary="A box reports what it materialized for this agent")
+def post_bootstrap_report(request: HttpRequest, slug: str,
+                          payload: BootstrapReportIn) -> BootstrapReportOut:
+    """Same gate as `credentials/resolve`: only a caller pairing a live runner
+    this agent routes to may report for it. A readiness signal anyone could
+    write is a readiness signal nobody can trust — and this one is meant to be
+    trusted over the control plane's own record of what it stored.
+    """
+    agent = _get_agent_or_404(request, slug)
+    if not services.caller_runs_agent(request.user, agent):
+        raise HttpError(403, "no live runner you pair is assigned to this agent")
+    r = services.record_bootstrap_report(
+        agent, runner_name=payload.runner_name,
+        client_creds_ok=payload.client_creds_ok, mailbox_ok=payload.mailbox_ok,
+        gog_client=payload.gog_client, detail=payload.detail,
+    )
+    return BootstrapReportOut(
+        runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
+        mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
+        detail=r.detail, reported_at=r.reported_at,
+    )

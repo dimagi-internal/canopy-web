@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
+
 # framework→framework: agents and harness are both framework tier, and the
 # source vocabulary has ONE definition (harness owns Turn.origin).
 from apps.harness.schemas import RoutableSource
@@ -545,3 +547,26 @@ class AgentCredentialsResolveOut(StrictModel):
     # them, and the box then behaves exactly as it does today.
     shared_op_vault: str = ""
     shared_op_sa_token: str = ""
+
+
+class BootstrapReportIn(StrictModel):
+    """Posted BY a box at the end of its bootstrap pass, per agent.
+
+    Booleans the box OBSERVED, not configuration it read back. `mailbox_ok`
+    specifically means a gmail call was attempted and succeeded — the one thing
+    a credentials screen can never tell you (2026-09-07)."""
+
+    runner_name: str
+    client_creds_ok: bool = False
+    mailbox_ok: bool = False
+    gog_client: str = ""
+    detail: str = ""
+
+
+class BootstrapReportOut(StrictModel):
+    runner_name: str = ""
+    client_creds_ok: bool = False
+    mailbox_ok: bool = False
+    gog_client: str = ""
+    detail: str = ""
+    reported_at: datetime | None = None

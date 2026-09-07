@@ -120,6 +120,61 @@ class Agent(models.Model):
         return f"agent:{self.slug}"
 
 
+class AgentBootstrapReport(models.Model):
+    """What a BOX actually managed to materialize for an agent, as the box saw it.
+
+    The gap this closes, in one sentence: `agent_credential_status` answers
+    "is the credential stored here", and the question that actually matters is
+    "can the box USE it" — and those came apart badly on 2026-09-07.
+
+    canopy-web held a valid, freshly-minted gog-token for ACE. The status screen
+    would have shown `gog-token: set` with a green tick. On the box, the OAuth
+    client id+secret that token is useless without had failed to materialize, so
+    every gmail call returned `No auth for gmail ace@dimagi-ai.com`. Both facts
+    were true at once, and only one of them was visible anywhere but journald.
+
+    That is why this is reported BY the box rather than inferred from what is
+    stored. A control plane that reports its own intentions back to itself
+    cannot see this class of failure at all — the same reason the credentials
+    screen is not proof a mailbox is alive, and a pinned check is.
+
+    One row per (agent, runner): the answer is per-box, because two boxes
+    running the same agent can differ, and "which box" is the first thing you
+    need when one of them is broken.
+    """
+
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE,
+                              related_name="bootstrap_reports")
+    #: The box's own name for itself ($RUNNER_NAME on the runner). A string
+    #: rather than an FK because that is what bootstrap_agents.sh actually
+    #: knows about itself — runner.env carries RUNNER_NAME and no id — and
+    #: inventing a lookup would add a failure mode to a diagnostic.
+    runner_name = models.CharField(max_length=200)
+    #: Did the OAuth CLIENT credential land (credentials-<client>.json)? The
+    #: half that failed on 2026-09-07 and the half nothing was watching.
+    client_creds_ok = models.BooleanField(default=False)
+    #: Can the mailbox actually authenticate — the box ran the call, not a
+    #: guess from what is configured.
+    mailbox_ok = models.BooleanField(default=False)
+    #: Which gog client the box ended up using. A browser mint binds the token
+    #: to `canopy-web` while the repo pins `canopy`, and knowing which one is
+    #: live is most of the diagnosis.
+    gog_client = models.CharField(max_length=120, blank=True, default="")
+    #: One line, from the box. The reason, when there is one.
+    detail = models.TextField(blank=True, default="")
+    reported_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["agent_id", "runner_name"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "runner_name"],
+                                    name="uniq_bootstrap_report_per_agent_runner"),
+        ]
+
+    def __str__(self):
+        return f"bootstrap:{self.agent_id}@{self.runner_name}"
+
+
 class AgentCredential(models.Model):
     """One named secret for one agent, encrypted at rest.
 

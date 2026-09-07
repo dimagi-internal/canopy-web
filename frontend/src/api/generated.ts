@@ -1863,6 +1863,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/readiness": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What each BOX reports it could actually materialize
+         * @description The counterpart to `credentials/status`, and the difference is the point.
+         *
+         *     `status` answers "is the credential stored here". This answers "could the
+         *     box USE it" — and on 2026-09-07 those disagreed for a whole day: canopy-web
+         *     held a valid gog-token while every gmail call on the box failed, because the
+         *     OAuth client id+secret it needs alongside had not materialized. Nothing
+         *     outside journald could see that.
+         */
+        readonly get: operations["apps_agents_api_agent_readiness"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/bootstrap-report": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A box reports what it materialized for this agent
+         * @description Same gate as `credentials/resolve`: only a caller pairing a live runner
+         *     this agent routes to may report for it. A readiness signal anyone could
+         *     write is a readiness signal nobody can trust — and this one is meant to be
+         *     trusted over the control plane's own record of what it stored.
+         */
+        readonly post: operations["apps_agents_api_post_bootstrap_report"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runs/": {
         readonly parameters: {
             readonly query?: never;
@@ -7440,6 +7489,68 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /** BootstrapReportOut */
+        readonly BootstrapReportOut: {
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Client Creds Ok
+             * @default false
+             */
+            readonly client_creds_ok: boolean;
+            /**
+             * Mailbox Ok
+             * @default false
+             */
+            readonly mailbox_ok: boolean;
+            /**
+             * Gog Client
+             * @default
+             */
+            readonly gog_client: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /** Reported At */
+            readonly reported_at?: string | null;
+        };
+        /**
+         * BootstrapReportIn
+         * @description Posted BY a box at the end of its bootstrap pass, per agent.
+         *
+         *     Booleans the box OBSERVED, not configuration it read back. `mailbox_ok`
+         *     specifically means a gmail call was attempted and succeeded — the one thing
+         *     a credentials screen can never tell you (2026-09-07).
+         */
+        readonly BootstrapReportIn: {
+            /** Runner Name */
+            readonly runner_name: string;
+            /**
+             * Client Creds Ok
+             * @default false
+             */
+            readonly client_creds_ok: boolean;
+            /**
+             * Mailbox Ok
+             * @default false
+             */
+            readonly mailbox_ok: boolean;
+            /**
+             * Gog Client
+             * @default
+             */
+            readonly gog_client: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
         /** Page[RunSummary] */
         readonly Page_RunSummary_: {
             /** Items */
@@ -12737,6 +12848,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_agent_readiness: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BootstrapReportOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_post_bootstrap_report: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BootstrapReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BootstrapReportOut"];
                 };
             };
         };
