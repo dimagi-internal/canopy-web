@@ -133,3 +133,24 @@ def test_one_implementation_of_the_token_rule_not_two(tmp_path):
     assert src.count("verify_mailbox \"$slug\"") == 2
     assert src.count("refresh_gmail_token() {") == 1
     assert src.count("verify_mailbox() {") == 1
+
+
+def test_the_token_declared_client_is_recorded_for_the_verify_and_the_report():
+    """`gog_client` was empty on the first real report this system produced, and
+    that emptiness is not cosmetic — it is the same missing fact that made the
+    verify use the wrong client.
+
+    A refresh token is minted FOR one OAuth client and works only with it. The
+    GOG_CLIENT map still says `ace` while a browser mint declares `canopy-web`,
+    so falling back to the map presents the token with the wrong client's
+    credentials and Google answers `invalid_grant`. That surfaces as "refresh
+    token expired or revoked" — which is false, and sends the next reader to
+    re-mint a token that was never the problem. Seen on cloud-ec2-1 2026-09-07.
+    """
+    src = SCRIPT.read_text()
+    after_import = src.split('upsert_account_client "$account" "$tclient"', 1)[1]
+    assert 'mark GOG_CLIENT_USED "$slug"' in after_import, \
+        "the client the TOKEN declared must be recorded, not left to the stale map"
+    # And verify_mailbox must prefer it over the map fallback.
+    vm = _fn("verify_mailbox")
+    assert 'GOG_CLIENT_USED[$slug]' in vm

@@ -817,6 +817,21 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
           ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token"
         fi
         upsert_account_client "$account" "$tclient"
+        # Record WHICH client this token belongs to, for two consumers that both
+        # got it wrong without it.
+        #
+        # verify_mailbox falls back to the GOG_CLIENT map, and that map is the
+        # stale half of this whole story: it says `ace` while a browser-minted
+        # token declares `canopy-web`. Presenting a refresh token to Google with
+        # a DIFFERENT client's credentials returns `invalid_grant` — which reads
+        # as "token expired or revoked" and sends the next person to re-mint a
+        # token that was never the problem. Measured 2026-09-07 on cloud-ec2-1,
+        # where the readiness report said exactly that with gog_client empty.
+        #
+        # And the report itself: `gog_client` is the single most diagnostic field
+        # it carries, because which client is live is most of the diagnosis. It
+        # was blank on the first real report this system ever produced.
+        mark GOG_CLIENT_USED "$slug" "${tclient:-$client}"
       else
         warn "$slug: gog auth tokens import failed: ${importerr:-(no output)}"
         [[ -n "${GOG_KEYRING_PASSWORD:-}" ]] || \
