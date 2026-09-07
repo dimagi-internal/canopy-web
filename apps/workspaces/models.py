@@ -70,6 +70,28 @@ class Workspace(models.Model):
         related_name="workspaces_created",
     )
     settings = models.JSONField(default=dict, blank=True)
+    # The tenant's SHARED 1Password vault, and a service-account token scoped to
+    # it. Sibling of Agent.op_vault / op_sa_token_enc one level up: an agent's
+    # own secrets live in Agent-<Slug>, but the credentials every agent in this
+    # tenant needs — the shared gog OAuth clients, a github token — live here.
+    #
+    # Per TENANT rather than one fleet-wide constant because tenants do not
+    # share secrets: different tenants can hold different values under the same
+    # names, and the box must be TOLD which vault it is reading rather than
+    # deriving one (Jonathan, 2026-09-07). The name was hardcoded as
+    # "Canopy-Shared" in bootstrap_agents.sh, which is correct for exactly one
+    # tenant and silently wrong for the second.
+    #
+    # The token is SEPARATE from any agent key on purpose. Handing the box a key
+    # that reads both this vault and every Agent-* vault would undo the reason
+    # the per-agent split exists (Agent.op_vault, 2026-09-06): a shared-vault-only
+    # key bounds a compromise to credentials that are shared by definition.
+    shared_op_vault = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="1Password vault holding secrets every agent in this workspace "
+                  "needs, e.g. Canopy-Shared. Blank falls back to the box default.",
+    )
+    shared_op_sa_token_enc = models.TextField(blank=True, default="")
     auto_join_domains = models.JSONField(
         default=list,
         blank=True,

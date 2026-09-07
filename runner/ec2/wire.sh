@@ -7,7 +7,7 @@
 #   2. stage its credential bundle: claude token (Secrets Manager, same secret
 #      up.sh already required), op service-account token (Secrets Manager,
 #      `./secrets.sh op <file>` — optional), github token (1Password
-#      Canopy-Shared/github-token — optional)
+#      <shared vault>/github-token — optional; --shared-vault / CANOPY_SHARED_VAULT)
 #   3. retire every OTHER non-retired cloud runner with the same name (the
 #      predecessor this box replaces)
 #   4. for every agent that already has an assignment list: replace the
@@ -26,6 +26,13 @@ RUNNER_ID=""
 RUNNER_NAME="cloud-ec2-1"
 AGENTS=""     # comma-separated slug allowlist; empty = every agent with assignments
 DRILL=0
+# The TENANT's shared 1Password vault. Defaults to the historical name so an
+# existing operator's muscle memory is unchanged, but it is no longer a literal:
+# different tenants hold different values under the same item names, so a
+# constant is right for exactly one tenant (Jonathan, 2026-09-07). Matches
+# DEFAULT_SHARED_VAULT in bootstrap_agents.sh and SHARED_VAULT in
+# deploy/secrets/bootstrap_1password.sh — one name, three places that need it.
+SHARED_VAULT="${CANOPY_SHARED_VAULT:-Canopy-Shared}"
 AWS_PROFILE_="${AWS_PROFILE:-labs}"
 AWS_REGION_="${AWS_REGION:-us-east-1}"
 
@@ -38,6 +45,8 @@ usage: ./wire.sh [options]
   --runner-name <name>   Runner.name to match when discovering / retiring (default cloud-ec2-1)
   --agents <a,b,c>       only touch these agents' assignment lists (default: every
                          agent that currently has ANY runner assignment)
+  --shared-vault <name>  this tenant's shared 1Password vault (default Canopy-Shared,
+                         or $CANOPY_SHARED_VAULT)
   --drill                fire a readiness drill on the new runner, poll to completion, print the grid
   -h, --help             this
 USAGE
@@ -49,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
     --runner-name) RUNNER_NAME="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
+    --shared-vault) SHARED_VAULT="$2"; shift 2 ;;
     --drill) DRILL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
@@ -116,10 +126,10 @@ CLAUDE_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
 OP_SA_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
   secretsmanager get-secret-value --secret-id canopy/cloud-runner/op-service-account-token \
   --query SecretString --output text 2>/dev/null) || OP_SA_TOKEN=""
-GITHUB_TOKEN=$(op read "op://Canopy-Shared/github-token/credential" 2>/dev/null) || GITHUB_TOKEN=""
+GITHUB_TOKEN=$(op read "op://${SHARED_VAULT}/github-token/credential" 2>/dev/null) || GITHUB_TOKEN=""
 
 [[ -n "$OP_SA_TOKEN" ]] || echo "   (no op-service-account-token secret — bootstrap_agents.sh's \`canopy provision\` / gmail-token steps will skip)"
-[[ -n "$GITHUB_TOKEN" ]] || echo "   (no Canopy-Shared/github-token in 1Password — private per-agent clones will fail)"
+[[ -n "$GITHUB_TOKEN" ]] || echo "   (no ${SHARED_VAULT}/github-token in 1Password — private per-agent clones will fail)"
 
 CLAUDE_TOKEN="$CLAUDE_TOKEN" OP_SA_TOKEN="$OP_SA_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" python3 -c "
 import json, os

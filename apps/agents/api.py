@@ -652,6 +652,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
 
     values = services.resolve_agent_credentials(agent)
     vault, op_token = services.resolve_agent_vault(agent)
+    shared_vault, shared_token = services.resolve_shared_vault(agent)
     try:
         from apps.events import services as events
 
@@ -668,7 +669,10 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         )
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
         pass
-    return AgentCredentialsResolveOut(values=values, op_vault=vault, op_sa_token=op_token)
+    return AgentCredentialsResolveOut(
+        values=values, op_vault=vault, op_sa_token=op_token,
+        shared_op_vault=shared_vault, shared_op_sa_token=shared_token,
+    )
 
 
 @router.get("/{slug}/vault", response=AgentVaultOut,

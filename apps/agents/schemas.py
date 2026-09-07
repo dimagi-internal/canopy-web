@@ -533,3 +533,15 @@ class AgentCredentialsResolveOut(StrictModel):
     # Scoped to that vault. Falls back on the box to the runner-wide token when
     # empty, so an agent with no key of its own keeps working exactly as before.
     op_sa_token: str = ""
+    # The TENANT's shared vault + its own scoped token. A per-agent key reads
+    # Agent-<Slug> and nothing else — by design — so the shared gog OAuth clients
+    # were unreachable from inside a bootstrap pass that had already swapped to
+    # one. Measured 2026-09-07: ACE imported a browser-minted token bound to
+    # `canopy-web`, then could not read op://Canopy-Shared/gog-oauth-client-web
+    # to get the client id+secret that token is useless without.
+    #
+    # Rides this route rather than a new one for the reason above: ONE plaintext
+    # gate, one audit entry per fetch. Both blank on a tenant that has not set
+    # them, and the box then behaves exactly as it does today.
+    shared_op_vault: str = ""
+    shared_op_sa_token: str = ""
