@@ -487,18 +487,6 @@ class AgentVaultOut(StrictModel):
     locatable: int = 0
 
 
-class AgentImportOut(StrictModel):
-    """What an import actually did — reported, never assumed.
-
-    `failures` matters as much as `imported`: a ref that no longer resolves is
-    the single most useful thing this screen can tell anyone, and an
-    all-or-nothing import would hide it behind one error."""
-
-    imported: list[str] = []
-    skipped: list[dict] = []
-    failures: list[dict] = []
-
-
 class CountOut(StrictModel):
     created: int = 0
     replaced: int = 0
@@ -530,6 +518,18 @@ class AgentCredentialStatusOut(StrictModel):
 
 
 class AgentCredentialsResolveOut(StrictModel):
-    """PLAINTEXT, for a runner. The one route that returns values."""
+    """PLAINTEXT, for a runner. The one route that returns values.
+
+    It carries the 1Password vault + service token as well, because the runner is
+    what resolves this agent's secrets — canopy-web only custodies the key. Both
+    ride this route rather than a new one so there is exactly ONE plaintext gate
+    to reason about, and one audit entry per fetch."""
 
     values: dict[str, str] = Field(default_factory=dict)
+    # Which vault this agent's secrets live in. The runner used to DERIVE this as
+    # Agent-<Slug> in bash, which is fine until an agent's vault is named
+    # anything else and silently resolves nothing.
+    op_vault: str = ""
+    # Scoped to that vault. Falls back on the box to the runner-wide token when
+    # empty, so an agent with no key of its own keeps working exactly as before.
+    op_sa_token: str = ""

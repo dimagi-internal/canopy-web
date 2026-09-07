@@ -309,16 +309,6 @@ export async function setAgentVault(slug: string, body: { vault?: string; servic
   return unwrap(res, 'setAgentVault')
 }
 
-/** Populate this agent's secrets from its 1Password vault. Partial success is
- *  the designed outcome — the result reports what could NOT be read, which is
- *  the most useful thing this screen can say. */
-export async function importAgentCredentials(slug: string) {
-  const res = await apiV2.POST('/api/agents/{slug}/credentials/import', {
-    params: { path: { slug } },
-  })
-  return unwrap(res, 'importAgentCredentials')
-}
-
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))

@@ -1,32 +1,29 @@
 import { useEffect, useState } from 'react'
-import { getAgentVault, importAgentCredentials, setAgentVault } from '@/api/agents'
+import { getAgentVault, setAgentVault } from '@/api/agents'
 
 // The 1Password half of the credentials screen.
 //
-// Jonathan, 2026-09-06: "we should have 45 stored secrets for now… and then we
-// can offer a 1pass vault and a service key." Nobody is pasting 45 secrets by
-// hand, so getting to 45 stored has to be an import — and for canopy-web to
-// import, it needs vault access of its own. That is what these two fields are.
+// canopy-web CUSTODIES this pair; it does not use it. Jonathan, 2026-09-06: "the
+// service account and vault should be used on the runner… canopy-web should just
+// store what it needs or to send to the runner." An earlier version had this page
+// import all 45 secrets into canopy-web, which makes it a second copy of every
+// credential — the thing it was told twice not to become. The runner already has
+// 1Password access; what it lacked was WHICH vault per agent (it derived
+// Agent-<Slug> in bash) and a key scoped to it.
 //
-// The key is PER AGENT, not fleet-wide. One key that reads every vault is
-// simpler to operate and makes canopy-web worth attacking for every agent's
-// secrets at once; this bounds a compromise to the one agent whose key was taken.
+// The key is PER AGENT rather than fleet-wide: one key that reads every vault
+// makes canopy-web worth attacking for every agent's secrets at once, where this
+// bounds a compromise to the one agent whose key was taken.
 
-interface Result {
-  imported: string[]
-  skipped: { name?: string; reason?: string }[]
-  failures: { name?: string; ref?: string; error?: string }[]
-}
-
-export function AgentVaultSection({ slug, onImported }: { slug: string; onImported: () => void }) {
+export function AgentVaultSection({ slug }: { slug: string }) {
   const [vault, setVault] = useState('')
   const [keySet, setKeySet] = useState(false)
   const [declared, setDeclared] = useState(0)
   const [locatable, setLocatable] = useState(0)
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<Result | null>(null)
 
   useEffect(() => {
     let off = false
@@ -47,6 +44,7 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
   const save = async () => {
     setBusy(true)
     setError(null)
+    setSaved(false)
     try {
       // A blank key is OMITTED, not sent as "". Sending it would turn a rename
       // into a de-provisioning.
@@ -58,22 +56,9 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
       setDeclared(v.declared ?? 0)
       setLocatable(v.locatable ?? 0)
       setKey('')
+      setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const runImport = async () => {
-    setBusy(true)
-    setError(null)
-    setResult(null)
-    try {
-      setResult((await importAgentCredentials(slug)) as Result)
-      onImported()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed')
     } finally {
       setBusy(false)
     }
@@ -112,64 +97,31 @@ export function AgentVaultSection({ slug, onImported }: { slug: string; onImport
             type="button"
             onClick={() => void save()}
             disabled={busy}
-            className="rounded-md border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
+            className="ml-auto rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
           >
             Save
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImport()}
-            disabled={busy || !keySet}
-            title={keySet ? '' : 'Set a service key first'}
-            className="ml-auto rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
-            data-testid="import-from-1password"
-          >
-            Import secrets from 1Password
           </button>
         </div>
 
         <p className="mt-2 text-[11px] text-foreground-subtle">
-          A service account scoped to this one vault. canopy-web reads it only to import; the key is
-          encrypted at rest and never returned to a browser.
+          A service account scoped to this one vault. <strong>The runner uses it</strong> — canopy-web
+          holds it and hands it to a runner this agent routes to, and never resolves secrets itself.
+          Encrypted at rest, never returned to a browser.
         </p>
 
-        {declared > 0 && locatable < declared && (
-          // Says WHY an import would skip. Both causes render as "45 skipped"
-          // and have completely different fixes — an empty vault vs. a source
-          // map that never reached this deployment.
+        {declared > 0 && (
           <p className="mt-1 text-[11px] text-muted-foreground" data-testid="locatable-note">
             {locatable === 0
-              ? `This deployment has no source map for ${declared} refs — nothing to import until the agent's runtime.yaml is pushed here.`
-              : `${locatable} of ${declared} refs say where their value lives; the rest would be skipped.`}
+              ? `No source map for ${declared} refs — canopy-web cannot say where this agent's secrets live.`
+              : `${locatable} of ${declared} declared refs resolve from this vault on the runner.`}
           </p>
         )}
 
-        {result && (
-          // Failures are shown as prominently as successes on purpose: a ref
-          // that no longer resolves is the single most useful thing this screen
-          // can tell anyone, and it is exactly what a silent partial import hides.
-          <div className="mt-3 space-y-1 text-[12px]" data-testid="import-result">
-            <p className="text-success">Imported {result.imported.length}.</p>
-            {result.failures.length > 0 && (
-              <div className="text-destructive">
-                <p>{result.failures.length} could not be read:</p>
-                <ul className="ml-4 list-disc">
-                  {result.failures.map((f) => (
-                    <li key={f.name}>
-                      <code className="font-mono text-[11px]">{f.name}</code> — {f.error}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {result.skipped.length > 0 && (
-              <p className="text-muted-foreground">
-                {result.skipped.length} skipped ({result.skipped.map((s) => s.name).join(', ')}).
-              </p>
-            )}
-          </div>
+        {saved && !error && (
+          <p className="mt-2 text-[12px] text-success">
+            Saved. A runner picks this up on its next bootstrap.
+          </p>
         )}
-
         {error && <p className="mt-2 text-[12px] text-destructive">{error}</p>}
       </div>
     </section>
