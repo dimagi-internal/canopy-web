@@ -48,8 +48,18 @@ def _created_at(tmp_path, body) -> int:
 
 
 def test_a_real_timestamp_parses(tmp_path):
-    # eva's live token, verbatim.
-    assert _created_at(tmp_path, {"created_at": "2026-07-24T04:09:54Z"}) == 1784779794
+    """eva's live token, verbatim — and the expected value is DERIVED, not typed.
+
+    A hand-computed epoch here was wrong by exactly 86400 on the first run: it
+    added nothing the ordering tests don't already cover, and gave CI a magic
+    number to disagree with. Deriving it still tests something real, because the
+    parsing under test happens in bash + a subprocess, not here."""
+    import calendar
+    import time
+
+    stamp = "2026-07-24T04:09:54Z"
+    expected = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    assert _created_at(tmp_path, {"created_at": stamp}) == expected
 
 
 def test_the_may_token_is_older_than_the_september_mint(tmp_path):
