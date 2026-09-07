@@ -89,6 +89,14 @@ export function ChatPanel({
   const holderId = state.active_draft?.last_editor ?? null;
   const holderIsPresent =
     holderId != null && state.presence_user_ids.includes(holderId);
+  // The holder's NAME, for the composer. SendBox has ids and no roster, so
+  // without this the one place a person actually looks — the box their
+  // teammate's words are appearing in — could only say "Another teammate",
+  // while the name sat in a chip at the far corner of the screen.
+  const holderName =
+    holderId != null && holderId !== currentUserId
+      ? (state.participants.find((p) => p.user_id === holderId)?.display_name ?? null)
+      : null;
 
   // A turn is "in flight" from the moment the assistant row appears
   // (status=pending/streaming) until chat.stream_complete flips it to
@@ -146,6 +154,7 @@ export function ChatPanel({
             presenceUserIds={state.presence_user_ids}
             draftHolderId={holderId}
             draftHolderIdle={isDraftIdle(state.active_draft)}
+            currentUserId={currentUserId}
           />
         </div>
       </div>
@@ -171,6 +180,7 @@ export function ChatPanel({
         connected={connected}
         currentUserId={currentUserId}
         holderIsPresent={holderIsPresent}
+        holderName={holderName}
         isStreaming={inFlightMessage != null || awaitingReply}
         streamingMessageId={inFlightMessage?.id ?? null}
         onUpdate={onUpdateDraft}

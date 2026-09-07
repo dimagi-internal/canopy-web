@@ -526,3 +526,45 @@ async def test_an_unchanged_dialog_is_not_republished_every_report():
     await database_sync_to_async(_report)()          # same dialog, second tick
     assert await comm.receive_nothing(timeout=0.5)
     await comm.disconnect()
+
+
+async def test_presence_joined_names_the_person_who_joined():
+    """A first-time joiner must arrive with a NAME, not just an id.
+
+    Everyone already in the room built `participants` from the snapshot they
+    took when THEY connected, and the presence row renders participants
+    filtered by presence. So an id with no matching participant is invisible:
+    the newcomer simply does not appear for anyone already here, permanently,
+    until they reload.
+
+    It looked fine because SessionParticipant rows are durable — the second
+    time the same person joins, everyone's snapshot already contains them. The
+    failure is specific to a genuinely NEW participant, which is the case the
+    feature exists for. Found by the first two-browser e2e this surface had.
+    """
+    owner, teammate, session = await database_sync_to_async(_seed)()
+
+    a = await _connect(session, owner)
+    connected, _ = await a.connect()
+    assert connected
+    await a.receive_json_from(timeout=2)   # own session.state
+    await a.receive_json_from(timeout=2)   # own presence.joined
+
+    # The teammate has never touched this session — no SessionParticipant row.
+    assert not await database_sync_to_async(
+        SessionParticipant.objects.filter(session=session, user=teammate).exists
+    )()
+
+    b = await _connect(session, teammate)
+    connected_b, _ = await b.connect()
+    assert connected_b
+
+    joined = await _recv_match(a, lambda f: f.get("event") == "presence.joined")
+    assert joined["data"]["user_id"] == teammate.id
+    who = joined["data"].get("participant")
+    assert who is not None, "the joiner must be carried, or nobody can render them"
+    assert who["user_id"] == teammate.id
+    assert who["display_name"], "a nameless participant cannot be rendered"
+
+    await a.disconnect()
+    await b.disconnect()

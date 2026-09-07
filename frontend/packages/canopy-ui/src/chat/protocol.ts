@@ -195,5 +195,19 @@ export type WsEvent =
   | { event: "draft.lock_changed"; data: { draft_id: string; holder_user_id: number | null; expires_at: number | null } }
   | { event: "draft.committed"; data: { draft_id: string; user_message_id: string } }
   | { event: "draft.discarded"; data: { draft_id: string } }
-  | { event: "presence.joined"; data: { user_id: number; email?: string; display_name?: string } }
+  // `participant` carries WHO joined, so a client can add them to its
+  // participant list. Without it a first-time joiner has an id and no name,
+  // and the presence row (which renders participants filtered by presence)
+  // cannot show them at all. Optional so an older server degrades rather than
+  // breaks. The bare `email`/`display_name` below are the vestigial shape that
+  // was declared but never sent by anything.
+  | {
+      event: "presence.joined";
+      data: {
+        user_id: number;
+        participant?: Participant;
+        email?: string;
+        display_name?: string;
+      };
+    }
   | { event: "presence.left"; data: { user_id: number } };

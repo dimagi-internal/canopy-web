@@ -36,6 +36,10 @@ interface Props {
   connected: boolean;
   currentUserId: number;
   holderIsPresent: boolean;
+  /** Display name of the teammate holding the draft, when it is not you.
+   *  The composer is where their words appear, so it is where their name
+   *  belongs — it used to live only in a 28px chip in the opposite corner. */
+  holderName?: string | null;
   isStreaming: boolean;
   streamingMessageId: string | null;
   onUpdate: (body: string) => void;
@@ -75,6 +79,7 @@ export function SendBox({
   connected,
   currentUserId,
   holderIsPresent,
+  holderName,
   isStreaming,
   streamingMessageId,
   onUpdate,
@@ -178,6 +183,10 @@ export function SendBox({
 
   const body = localBody;
   const blocked = Boolean(disabledReason);
+  // Locked BY SOMEONE ELSE, as opposed to blocked for an unrelated reason.
+  // The two look identical to `disabled` and want opposite treatments: a
+  // blocked box is inert, a co-edited one is showing you live content.
+  const lockedByTeammate = !canEdit && holderIsPresent && !holderIsIdle && !blocked;
   // Sending needs a draft (`chat.send` commits the SERVER's copy, so there must
   // be one) AND a live socket. The socket check is load-bearing now that the
   // composer clears optimistically: `send()` drops every frame but chat.stop
@@ -298,8 +307,37 @@ export function SendBox({
             ))}
           </ul>
         )}
+        {/* Co-edit attribution, at the box rather than across the screen.
+            Their text arrives INSIDE this textarea, and a disabled textarea
+            renders it in muted grey — pixel-identical to a placeholder. So the
+            single most important thing multiplayer does (showing you what your
+            teammate is writing) read as an EMPTY box with a hint in it. */}
+        {lockedByTeammate && (
+          <div
+            data-testid="coedit-banner"
+            className="mb-1.5 flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs"
+          >
+            <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+            </span>
+            <span className="text-foreground">
+              <span className="font-medium">{holderName ?? "A teammate"}</span> is
+              writing — you are seeing their draft
+            </span>
+            <button
+              type="button"
+              data-testid="take-over"
+              onClick={onTakeOver}
+              className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+            >
+              take over
+            </button>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
+          data-testid="composer"
           value={body}
           disabled={!canEdit || blocked}
           onChange={(e) => handleChange(e.target.value)}
@@ -307,7 +345,18 @@ export function SendBox({
           onPaste={handlePaste}
           placeholder={placeholder}
           rows={3}
-          className="w-full resize-none rounded-md border border-input bg-transparent p-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+          className={[
+            "w-full resize-none rounded-md border bg-transparent p-2 text-sm shadow-sm",
+            "placeholder:text-muted-foreground focus-visible:outline-none",
+            "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed",
+            // A teammate's draft is CONTENT, not a disabled control. Dimming it
+            // to `text-muted-foreground` made their sentence look like the
+            // placeholder it sits next to — the one styling choice that made
+            // co-editing appear not to work at all.
+            lockedByTeammate
+              ? "border-primary/40 bg-primary/5 text-foreground"
+              : "border-input text-foreground disabled:bg-muted disabled:text-muted-foreground",
+          ].join(" ")}
         />
         <div className="mt-1 flex items-center justify-end gap-2">
           {canAttach && (
@@ -370,12 +419,13 @@ export function SendBox({
               {stopState === "requested" ? "stopping…" : "stop"}
             </Button>
           ) : null}
-          {!canEdit && holderIsPresent && !holderIsIdle ? (
-            <Button type="button" variant="outline" size="sm" onClick={onTakeOver}>
-              take over
-            </Button>
-          ) : null}
-          <Button type="button" size="sm" disabled={!canSend} onClick={handleSend}>
+          <Button
+            type="button"
+            size="sm"
+            data-testid="send"
+            disabled={!canSend}
+            onClick={handleSend}
+          >
             send
           </Button>
         </div>

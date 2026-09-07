@@ -176,16 +176,59 @@ Item.objects.create(
     body="Long since dismissed.", state=Item.DISMISSED,
 )
 
-session = SessionStore()
-session["_auth_user_id"] = str(user.pk)
-session["_auth_user_backend"] = settings.AUTHENTICATION_BACKENDS[0]
-session["_auth_user_hash"] = user.get_session_auth_hash()
-session.set_expiry(24 * 3600)
-session.save()
+# ── Multiplayer: a SECOND human, and one chat session they both open ──────────
+#
+# Presence and the co-edited draft are only meaningful between two DIFFERENT
+# users: "nobody else here", "Another teammate is editing…" and "take over" are
+# all statements about somebody who is not you. A suite with one identity can
+# open two browsers and still never exercise any of it — which is why none of
+# this had an e2e test before.
+mp_user, _ = User.objects.get_or_create(
+    username="e2e2", defaults={"email": "e2e2@dimagi.com", "first_name": "Robin",
+                               "last_name": "Sharma"})
+if ws is not None:
+    wsvc.ensure_member(ws, mp_user)
+# Give the first user a display name too, so the presence chips render distinct
+# initials rather than two identical blanks.
+if not user.first_name:
+    user.first_name, user.last_name = "Alex", "Kim"
+    user.save(update_fields=["first_name", "last_name"])
+
+# ACE, so the fleet the multiplayer tests drive matches the real one.
+Agent.objects.update_or_create(slug="ace", defaults=dict(
+    name="ACE", email="ace@dimagi-ai.com", description="AI Connect Engine.",
+    persona="Runs the Connect opportunity lifecycle.", workspace=ws))
+
+_hal = Agent.objects.get(slug="hal")
+mp_session = CanopySession.objects.create(
+    workspace=ws, agent=_hal, title="Multiplayer e2e",
+    status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_WEB,
+)
+
+
+def _mint(u):
+    st = SessionStore()
+    st["_auth_user_id"] = str(u.pk)
+    st["_auth_user_backend"] = settings.AUTHENTICATION_BACKENDS[0]
+    st["_auth_user_hash"] = u.get_session_auth_hash()
+    st.set_expiry(24 * 3600)
+    st.save()
+    return st.session_key
+
+
+session_key = _mint(user)
+mp_session_key = _mint(mp_user)
 
 os.makedirs("frontend/e2e/.auth", exist_ok=True)
 with open("frontend/e2e/.auth/session.txt", "w") as f:
-    f.write(session.session_key)
+    f.write(session_key)
+# The second identity, and the session id both browsers will open. Written as
+# files for the same reason the first key is: global-setup has no DB access.
+with open("frontend/e2e/.auth/session2.txt", "w") as f:
+    f.write(mp_session_key)
+with open("frontend/e2e/.auth/mp-session-id.txt", "w") as f:
+    f.write(str(mp_session.id))
 
 print(f"seeded: {a.tasks.count()} tasks, {a.commands.filter(status='pending').count()} pending; "
-      f"fleet-audit review {str(fleet_audit.id)[:8]}; session {session.session_key[:8]}")
+      f"fleet-audit review {str(fleet_audit.id)[:8]}; session {session_key[:8]}; "
+      f"mp session {str(mp_session.id)[:8]} + 2nd user {mp_session_key[:8]}")

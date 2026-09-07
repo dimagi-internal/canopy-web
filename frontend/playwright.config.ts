@@ -6,6 +6,9 @@ const API_PORT = process.env.E2E_API_PORT ?? '8000'
 
 export default defineConfig({
   testDir: './e2e',
+  // mp-shot is a screenshot harness for judging the multiplayer UI by eye. It
+  // asserts nothing, so running it in CI buys latency and a diff in .shots/.
+  testIgnore: /mp-shot\.spec\.ts/,
   timeout: 30_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
