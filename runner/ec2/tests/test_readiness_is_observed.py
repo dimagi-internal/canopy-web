@@ -22,10 +22,27 @@ import pytest
 # these genuinely need bash 4+. Rather than skip on macOS — which is how this
 # directory shipped a test CI was the first thing to ever execute — look for a
 # real bash 5 first (`brew install bash`) and only skip if the machine has none.
+def _has_assoc_arrays(candidate: str | None) -> bool:
+    """Probe a candidate bash. Must swallow FileNotFoundError, not just a bad
+    exit code: on Linux CI /opt/homebrew/bin/bash simply does not exist, and an
+    uncaught OSError here fails COLLECTION — every test in the file errors
+    rather than skipping, which is a worse outcome than the skip it replaced."""
+    if not candidate:
+        return False
+    try:
+        return subprocess.run(
+            [candidate, "-c", "declare -A _t=( [k]=v )"], capture_output=True
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+# `bash` from PATH first — that is what CI has (Linux ships 5.x), and on a Mac
+# with `brew install bash` it is the brew one. The explicit paths are the
+# fallback for a Mac whose PATH still leads to /bin/bash 3.2.
 BASH = next(
-    (b for b in ("/opt/homebrew/bin/bash", "/usr/local/bin/bash", shutil.which("bash"))
-     if b and subprocess.run([b, "-c", "declare -A _t=( [k]=v )"],
-                             capture_output=True).returncode == 0),
+    (b for b in (shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash")
+     if _has_assoc_arrays(b)),
     None,
 )
 pytestmark = pytest.mark.skipif(
