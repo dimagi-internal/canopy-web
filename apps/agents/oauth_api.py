@@ -11,6 +11,7 @@ imports it the same way it imports one a human minted at a terminal.
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponseRedirect
 from ninja import Router
 from ninja.errors import HttpError
@@ -66,8 +67,18 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
     from django.core import signing
 
     def done(agent, status: str):
-        base = f"/w/{agent.workspace.slug}/agents/{agent.slug}/credentials" if agent else "/"
-        return HttpResponseRedirect(f"{base}?google={status}")
+        # ROOT-RELATIVE IS WRONG HERE. This deployment is served under a path
+        # prefix (/canopy), so "/w/…" lands outside the app entirely — the mint
+        # succeeded, the token was stored, and the operator got a Resolver404
+        # that reads exactly like a failure. Reported by Jonathan on the first
+        # real sign-in, 2026-09-07.
+        #
+        # CANOPY_PUBLIC_BASE_URL already carries the prefix and is already the
+        # authority for the OAuth redirect_uri, so the round trip starts and ends
+        # against the same base rather than two derivations that can disagree.
+        root = settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
+        path = f"/w/{agent.workspace.slug}/agents/{agent.slug}/credentials" if agent else "/"
+        return HttpResponseRedirect(f"{root}{path}?google={status}")
 
     if not state:
         raise HttpError(400, "missing state")
