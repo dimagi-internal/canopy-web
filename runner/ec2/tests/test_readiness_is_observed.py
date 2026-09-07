@@ -18,6 +18,7 @@ import subprocess
 
 import pytest
 
+
 # `verify_mailbox` reads associative arrays, so unlike test_client_creds_says_why
 # these genuinely need bash 4+. Rather than skip on macOS — which is how this
 # directory shipped a test CI was the first thing to ever execute — look for a
