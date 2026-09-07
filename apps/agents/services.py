@@ -610,3 +610,33 @@ def resolve_shared_vault(agent) -> tuple[str, str]:
         return "", ""
     token = decrypt_secret(ws.shared_op_sa_token_enc) if ws.shared_op_sa_token_enc else ""
     return ws.shared_op_vault, token
+
+
+# ---- what the BOX observed (spec 2026-09-07) ---------------------------------
+
+def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
+                            gog_client="", detail=""):
+    """Upsert one box's view of this agent. Latest wins — this is current state,
+    not a log: the question it answers is "can this agent run RIGHT NOW", and a
+    history of that would bury the answer under every prior boot."""
+    from apps.agents.models import AgentBootstrapReport
+
+    row, _ = AgentBootstrapReport.objects.update_or_create(
+        agent=agent, runner_name=runner_name.strip(),
+        defaults={
+            "client_creds_ok": bool(client_creds_ok),
+            "mailbox_ok": bool(mailbox_ok),
+            "gog_client": (gog_client or "").strip(),
+            "detail": (detail or "").strip()[:2000],
+        },
+    )
+    return row
+
+
+def bootstrap_reports(agent) -> list:
+    """Every box's view of this agent, newest first."""
+    from apps.agents.models import AgentBootstrapReport
+
+    return list(
+        AgentBootstrapReport.objects.filter(agent=agent).order_by("-reported_at")
+    )

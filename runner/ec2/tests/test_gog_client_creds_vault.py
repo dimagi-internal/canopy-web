@@ -39,6 +39,19 @@ def _fn(name: str) -> str:
     return "\n".join(lines[start:end + 1])
 
 
+# The per-agent pass is spread over several functions — bootstrap_one_agent
+# delegates the gmail half to refresh_gmail_token and the verdict to
+# verify_mailbox, so that the credentials-only pass (update_runner.sh's timer)
+# runs exactly the same code rather than a second copy of it.
+#
+# These assertions are about the PASS, not about which function happens to hold
+# a line today, so they read the concatenation. Pinning them to one function
+# name made a pure refactor look like a regression.
+def _agent_pass() -> str:
+    return "\n".join(_fn(n) for n in
+                     ("bootstrap_one_agent", "refresh_gmail_token", "verify_mailbox"))
+
+
 def _op_ref(client: str, agent_vault: str, tmp: pathlib.Path) -> str:
     """Run ensure_client_creds with `op` and gog_config_dir stubbed, and report the
     op:// reference it reached for. Stubbing `op` is the point: the decision under
@@ -116,7 +129,7 @@ def test_the_token_declared_client_is_materialized_after_import():
     """The regression this whole file guards. bootstrap_one_agent must call
     ensure_client_creds a SECOND time with the client the token declared —
     the first call can only have used the fallback table."""
-    body = _fn("bootstrap_one_agent")
+    body = _agent_pass()
     assert body.count("ensure_client_creds") >= 2, \
         "a token declaring an unmapped client would import and never refresh"
     after_token = body.split('token_client "$tokfile"', 1)[1]

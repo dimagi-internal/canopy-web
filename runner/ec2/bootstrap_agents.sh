@@ -224,8 +224,72 @@ except Exception:
 #
 # Never fails the bootstrap: a missing client file means gmail won't authorize,
 # which the warning says, and every other part of the agent still provisions.
+# What this pass actually achieved, per agent — the values POSTed by
+# report_bootstrap below. Set as the facts are learned rather than inferred at
+# the end: "the mailbox works" is only knowable by having made a call.
+# Record one readiness fact. A function, not a bare `ARR[$slug]=v`, because an
+# assignment to an UNDECLARED name makes bash treat it as an INDEXED array and
+# evaluate the subscript arithmetically — so `CLIENT_CREDS_OK[ace]=1` dies with
+# `ace: unbound variable` under `set -u` wherever the global is not in scope.
+# That is not hypothetical: it made ensure_client_creds unusable in isolation and
+# broke four tests the moment they ran on a bash that could execute them.
+# `declare -gA` is idempotent and preserves an existing array's contents.
+mark() {  # <array-name> <slug> <value>
+  declare -gA "$1"
+  printf -v "$1[$2]" '%s' "$3"
+}
+
+declare -A CLIENT_CREDS_OK=()
+declare -A MAILBOX_OK=()
+declare -A GOG_CLIENT_USED=()
+declare -A BOOTSTRAP_DETAIL=()
+
+# Tell canopy-web what this box could actually materialize for <slug>.
+#
+# The control plane otherwise knows only what it STORED, and on 2026-09-07 that
+# was not the same thing for a whole day: a valid gog-token sat in canopy-web
+# while every gmail call on this box failed, because the OAuth client id+secret
+# it is useless without had not materialized. The credentials screen showed a
+# green tick throughout. Nothing outside journald could see the difference.
+#
+# Best-effort by construction: a box that cannot reach the control plane must
+# still finish bootstrapping. A missing report reads as "no box has said", which
+# is honest — unlike a stale PASS, which is what the old silence amounted to.
+report_bootstrap() {  # <slug>
+  local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+  # Idempotent, and preserves an existing array. Present so this function works
+  # in isolation: READING ARR[$slug] on an undeclared name has the same
+  # arithmetic-subscript hazard as writing it.
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  [[ -n "$base" && -n "$tok" ]] || return 0
+  local rn="${RUNNER_NAME:-$(hostname)}"
+  SLUG="$slug" RN="$rn" \
+  CC="${CLIENT_CREDS_OK[$slug]:-0}" MB="${MAILBOX_OK[$slug]:-0}" \
+  GC="${GOG_CLIENT_USED[$slug]:-}" DT="${BOOTSTRAP_DETAIL[$slug]:-}" \
+  python3 -c '
+import json, os
+print(json.dumps({
+    "runner_name": os.environ["RN"],
+    "client_creds_ok": os.environ["CC"] == "1",
+    "mailbox_ok": os.environ["MB"] == "1",
+    "gog_client": os.environ.get("GC", ""),
+    "detail": os.environ.get("DT", ""),
+}))' > /tmp/.bootstrap-report.$$ 2>/dev/null || return 0
+  curl -fsSL --max-time 20 -X POST \
+    -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+    --data @/tmp/.bootstrap-report.$$ \
+    "${base%/}/api/agents/${slug}/bootstrap-report" >/dev/null 2>&1 \
+    && ok "$slug: readiness reported to canopy-web" \
+    || warn "$slug: could not report readiness to canopy-web (bootstrap itself is unaffected)"
+  rm -f /tmp/.bootstrap-report.$$
+}
+
 ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-token]
   local client="$1" agent_vault="$2" slug="$3"
+  # Idempotent, and preserves an existing array. Present so this function works
+  # in isolation: READING ARR[$slug] on an undeclared name has the same
+  # arithmetic-subscript hazard as writing it.
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
   # The tenant's shared vault and its OWN key, from canopy-web. Blank on a
   # deployment that has not configured one, which falls back to the historical
   # constant and today's (agent) key — i.e. exactly current behaviour.
@@ -256,7 +320,10 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
 
   local gog_dir; gog_dir="$(gog_config_dir)"
   local client_file="$gog_dir/credentials-${client}.json"
-  [[ -f "$client_file" ]] && return 0
+  # Already present counts as OK — this function is a materializer, and the
+  # question the report answers is "does the box have it", not "did this pass
+  # fetch it".
+  if [[ -f "$client_file" ]]; then mark CLIENT_CREDS_OK "$slug" 1; return 0; fi
 
   mkdir -p "$gog_dir"
   # Capture op's stderr rather than discarding it — the same lesson the token
@@ -282,9 +349,12 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   if readerr="$(${openv[@]+"${openv[@]}"} op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
      && [[ -s "$client_file" ]]; then
     chmod 0600 "$client_file"
+    mark CLIENT_CREDS_OK "$slug" 1
     ok "$slug: gog client creds ($client) -> $client_file"
   else
     rm -f "$client_file"
+    mark CLIENT_CREDS_OK "$slug" 0
+    mark BOOTSTRAP_DETAIL "$slug" "op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
     warn "$slug: op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
     if (( is_shared )); then
       if [[ -n "$shared_token" ]]; then
@@ -688,6 +758,108 @@ run_agent_provisioner() {
   fi
 }
 
+# Bring the gmail token up to date for one agent. Extracted so the
+# credentials-only pass runs EXACTLY this, rather than a second copy that can
+# drift from it — the drift between two implementations of one rule is the
+# original sin behind most of this file's history.
+refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <shared-token>
+  local slug="$1" account="$2" client="$3" vault="$4" shared_vault="$5" shared_token="$6"
+  # Idempotent, and preserves an existing array. Present so this function works
+  # in isolation: READING ARR[$slug] on an undeclared name has the same
+  # arithmetic-subscript hazard as writing it.
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  if ! command -v gog >/dev/null 2>&1; then
+    warn "$slug: gog unavailable — skipping gmail token import"
+  elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
+    mark MAILBOX_OK "$slug" 1; mark GOG_CLIENT_USED "$slug" "$client"
+    ok "$slug: gmail token already live (account=$account client=$client)"
+  else
+    log "$slug: gmail token not live — taking the NEWEST of the vault and canopy-web"
+    local tokfile; tokfile="$(mktemp)"
+    local vaultfile webfile; vaultfile="$(mktemp)"; webfile="$(mktemp)"
+    op read "op://${vault}/gog-token/credential" >"$vaultfile" 2>/dev/null || : >"$vaultfile"
+    fetch_canopy_web_token "$slug" "$webfile"
+
+    # Both 0 (no python3, unparseable dates, or neither store has one) falls to
+    # the vault copy — today's behaviour. Degrading toward the OLD path is the
+    # right direction: it can leave a stale token in place, where degrading the
+    # other way would import canopy-web's copy over a good vault rotation.
+    local vage wage; vage="$(token_created_at "$vaultfile")"; wage="$(token_created_at "$webfile")"
+    if (( wage > vage )); then
+      cp "$webfile" "$tokfile"
+      ok "$slug: using canopy-web's token (newer: $wage > $vage)"
+    else
+      cp "$vaultfile" "$tokfile"
+      (( vage > 0 )) && log "$slug: using the vault's token (canopy-web has none newer)"
+    fi
+    rm -f "$vaultfile" "$webfile"
+
+    if [[ -s "$tokfile" ]]; then
+      # Capture stderr instead of discarding it. Swallowing it here is what hid a
+      # fleet-wide failure for weeks: the `file` keyring backend wants a password
+      # it can only PROMPT for, so on this TTY-less box EVERY import died with
+      # "no TTY available ... set GOG_KEYRING_PASSWORD" and all anyone ever saw
+      # was a bare "import failed".
+      local importerr
+      if importerr="$(gog auth tokens import "$tokfile" 2>&1 >/dev/null)"; then
+        ok "$slug: gmail token imported"
+        mark MAILBOX_OK "$slug" 0  # imported != usable; the call below decides
+        # The token has just told us which client it belongs to. Step 2 could
+        # only have written the fallback, so correct the map from the fact.
+        local tclient; tclient="$(token_client "$tokfile" "$slug")"
+        if [[ -n "$tclient" && "$tclient" != "$client" ]]; then
+          warn "$slug: token declares client '$tclient', map said '$client' — using the token"
+          # And it needs that client's id+secret on disk to refresh with. The
+          # materialization above could only have used the fallback name, so a
+          # token minted under a client the table doesn't know — every token from
+          # canopy-web's browser mint — would import and then fail to refresh,
+          # with the client file for a DIFFERENT app sitting right next to it.
+          ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token"
+        fi
+        upsert_account_client "$account" "$tclient"
+      else
+        warn "$slug: gog auth tokens import failed: ${importerr:-(no output)}"
+        [[ -n "${GOG_KEYRING_PASSWORD:-}" ]] || \
+          warn "$slug: GOG_KEYRING_PASSWORD is unset — stage it with ./secrets.sh gog"
+      fi
+    else
+      warn "$slug: no gog token anywhere — neither op://${vault}/gog-token/credential nor canopy-web has one for $slug"
+    fi
+    shred -u "$tokfile" 2>/dev/null || rm -f "$tokfile"  # never leave the token on disk, even on failure
+  fi
+}
+
+# Whether the mailbox actually works, decided by MAKING THE CALL.
+#
+# Everything upstream can succeed and still leave a mailbox that cannot
+# authenticate: on 2026-09-07 a valid token imported cleanly and then had no
+# OAuth client to use it with, and `gog gmail search` returned the same error as
+# holding no token at all. Configuration that looks right is not the question,
+# which is why this is the only thing the readiness report treats as the verdict.
+verify_mailbox() {  # <slug> <account> <fallback-client>
+  local slug="$1" account="$2" client="$3"
+  # Idempotent, and preserves an existing array. Present so this function works
+  # in isolation: READING ARR[$slug] on an undeclared name has the same
+  # arithmetic-subscript hazard as writing it.
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  # The mailbox verdict is a CALL, never an inference. Everything above can
+  # succeed and still leave a mailbox that cannot authenticate — that is exactly
+  # what happened on 2026-09-07, when a valid token imported cleanly and then had
+  # no OAuth client to use. Configuration that looks right is not the question.
+  if command -v gog >/dev/null 2>&1 && [[ "${MAILBOX_OK[$slug]:-0}" != "1" ]]; then
+    local vclient="${GOG_CLIENT_USED[$slug]:-$client}"
+    local mberr
+    if mberr="$(gog gmail search --account "$account" --client "$vclient" in:inbox --max 1 2>&1 >/dev/null)"; then
+      mark MAILBOX_OK "$slug" 1; mark GOG_CLIENT_USED "$slug" "$vclient"
+      ok "$slug: mailbox verified live (account=$account client=$vclient)"
+    else
+      mark MAILBOX_OK "$slug" 0
+      mark BOOTSTRAP_DETAIL "$slug" "${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }gmail check failed: $(printf '%s' "$mberr" | head -1)"
+      warn "$slug: mailbox NOT live (account=$account client=$vclient): $(printf '%s' "$mberr" | head -1)"
+    fi
+  fi
+}
+
 bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
@@ -709,6 +881,18 @@ bootstrap_one_agent() {
   export OP_SERVICE_ACCOUNT_TOKEN
 
   log "── agent $slug ──"
+
+  # The expensive, disruptive half — skipped on a credentials-only pass. Cloning
+  # and re-provisioning under a live agent is how a working box gets broken, and
+  # none of it is needed to materialize a credential.
+  if (( CREDENTIALS_ONLY )); then
+    ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
+    refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
+    verify_mailbox "$slug" "$account" "$client"
+    report_bootstrap "$slug"
+    READY_AGENTS+=("$slug")
+    return
+  fi
 
   local repo_url; repo_url="$(agent_repo_url "$slug")"
   if ! clone_or_pull "${repo_url%.git}.git" "$dest"; then
@@ -747,64 +931,10 @@ bootstrap_one_agent() {
   # has not been fetched yet; the call is repeated after the import below.
   ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
 
-  if ! command -v gog >/dev/null 2>&1; then
-    warn "$slug: gog unavailable — skipping gmail token import"
-  elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
-    ok "$slug: gmail token already live (account=$account client=$client)"
-  else
-    log "$slug: gmail token not live — taking the NEWEST of the vault and canopy-web"
-    local tokfile; tokfile="$(mktemp)"
-    local vaultfile webfile; vaultfile="$(mktemp)"; webfile="$(mktemp)"
-    op read "op://${vault}/gog-token/credential" >"$vaultfile" 2>/dev/null || : >"$vaultfile"
-    fetch_canopy_web_token "$slug" "$webfile"
+  refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
+  verify_mailbox "$slug" "$account" "$client"
 
-    # Both 0 (no python3, unparseable dates, or neither store has one) falls to
-    # the vault copy — today's behaviour. Degrading toward the OLD path is the
-    # right direction: it can leave a stale token in place, where degrading the
-    # other way would import canopy-web's copy over a good vault rotation.
-    local vage wage; vage="$(token_created_at "$vaultfile")"; wage="$(token_created_at "$webfile")"
-    if (( wage > vage )); then
-      cp "$webfile" "$tokfile"
-      ok "$slug: using canopy-web's token (newer: $wage > $vage)"
-    else
-      cp "$vaultfile" "$tokfile"
-      (( vage > 0 )) && log "$slug: using the vault's token (canopy-web has none newer)"
-    fi
-    rm -f "$vaultfile" "$webfile"
-
-    if [[ -s "$tokfile" ]]; then
-      # Capture stderr instead of discarding it. Swallowing it here is what hid a
-      # fleet-wide failure for weeks: the `file` keyring backend wants a password
-      # it can only PROMPT for, so on this TTY-less box EVERY import died with
-      # "no TTY available ... set GOG_KEYRING_PASSWORD" and all anyone ever saw
-      # was a bare "import failed".
-      local importerr
-      if importerr="$(gog auth tokens import "$tokfile" 2>&1 >/dev/null)"; then
-        ok "$slug: gmail token imported"
-        # The token has just told us which client it belongs to. Step 2 could
-        # only have written the fallback, so correct the map from the fact.
-        local tclient; tclient="$(token_client "$tokfile" "$slug")"
-        if [[ -n "$tclient" && "$tclient" != "$client" ]]; then
-          warn "$slug: token declares client '$tclient', map said '$client' — using the token"
-          # And it needs that client's id+secret on disk to refresh with. The
-          # materialization above could only have used the fallback name, so a
-          # token minted under a client the table doesn't know — every token from
-          # canopy-web's browser mint — would import and then fail to refresh,
-          # with the client file for a DIFFERENT app sitting right next to it.
-          ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token"
-        fi
-        upsert_account_client "$account" "$tclient"
-      else
-        warn "$slug: gog auth tokens import failed: ${importerr:-(no output)}"
-        [[ -n "${GOG_KEYRING_PASSWORD:-}" ]] || \
-          warn "$slug: GOG_KEYRING_PASSWORD is unset — stage it with ./secrets.sh gog"
-      fi
-    else
-      warn "$slug: no gog token anywhere — neither op://${vault}/gog-token/credential nor canopy-web has one for $slug"
-    fi
-    shred -u "$tokfile" 2>/dev/null || rm -f "$tokfile"  # never leave the token on disk, even on failure
-  fi
-
+  report_bootstrap "$slug"
   READY_AGENTS+=("$slug")
 }
 
@@ -915,7 +1045,28 @@ step5_summary() {
   return 0
 }
 
+# --credentials-only: the cheap, idempotent half. Everything here short-circuits
+# when already satisfied, which is what makes it safe to run on a timer — and
+# running it on a timer is the only path a CONFIG change has to this box, since
+# nothing else ever restarts the service. See update_runner.sh.
+#
+# Deliberately NOT a full bootstrap: cloning repos, `op inject` and plugin
+# installs are slow, and re-running them under a live agent is a way to break a
+# box that was working.
+CREDENTIALS_ONLY=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --credentials-only) CREDENTIALS_ONLY=1 ;;
+  esac
+done
+
 main() {
+  if (( CREDENTIALS_ONLY )); then
+    log "credentials-only pass (client creds + gmail token + readiness report)"
+    step2_gog_config
+    step3_agents
+    return 0
+  fi
   step1_tooling
   step2_gog_config
   step3_agents

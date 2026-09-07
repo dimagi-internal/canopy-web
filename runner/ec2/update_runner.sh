@@ -263,10 +263,37 @@ case "$V" in
     install_from_git "$EXPECTED"
     ;;
   *)
-    # current | busy | unknown all mean "do nothing", and all exit 0. This runs on
+    # current | busy | unknown all mean "no new CODE", and all exit 0. This runs on
     # a timer: a non-zero exit for the ordinary case fills the journal with false
     # failures and trains everyone to ignore the one that matters.
-    log "$V — nothing to do."
+    log "$V — no code change."
     ;;
 esac
+
+# --- credentials, every tick ------------------------------------------------
+#
+# Code is not the only thing that goes stale. bootstrap_agents.sh runs on service
+# START, and the only thing that starts the service is this script installing new
+# code — so a CONFIG change (a credential set in canopy-web, a vault rotation, a
+# 1Password grant that was missing) had no path to the box at all. It would sit
+# unread until someone happened to ship unrelated code, which is not a mechanism.
+#
+# That is the second half of the 2026-09-07 outage: the fix landed, the operator
+# set the credential, and nothing would have picked it up.
+#
+# `--credentials-only` skips the expensive, disruptive half of a bootstrap (clone,
+# op inject, plugin installs) and re-runs the cheap idempotent half — client creds
+# and the gmail token — both of which short-circuit when already satisfied. It
+# also re-reports readiness, so the control plane's answer refreshes on its own
+# rather than dating from the last deploy.
+#
+# Skipped while a turn is in flight, for the same reason an install is: this
+# touches the credential store the running turn is using.
+if [ "$V" = "busy" ]; then
+  log "busy — skipping the credentials refresh too."
+elif [ -x "$REPO_DIR/runner/ec2/bootstrap_agents.sh" ]; then
+  log "refreshing credentials (config changes reach the box here, not via a deploy)"
+  ( set +e; "$REPO_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
+    || log "credentials refresh returned non-zero — the box is otherwise untouched."
+fi
 exit 0
