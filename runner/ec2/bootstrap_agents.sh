@@ -67,10 +67,12 @@ declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=ca
 # ── gog's own XDG resolution on Linux (mirrors canopy's agent_email.py
 # _default_gog_config_dir — $GOG_HOME override, else $XDG_CONFIG_HOME/gogcli, else
 # ~/.config/gogcli; there is no macOS branch on this box). ──────────────────────
-# The shared vault's name when a tenant has not declared one. Was compiled into
-# ensure_client_creds, which is correct for exactly one tenant; canopy-web now
-# serves it per workspace and this is only the fallback.
-DEFAULT_SHARED_VAULT="${DEFAULT_SHARED_VAULT:-Canopy-Shared}"
+# The shared vault's name when canopy-web serves none for this tenant. Was
+# compiled into ensure_client_creds, which is correct for exactly one tenant;
+# canopy-web now serves it per workspace and this is only the fallback.
+# $CANOPY_SHARED_VAULT is the same override wire.sh and
+# deploy/secrets/bootstrap_1password.sh take — one name across all three.
+DEFAULT_SHARED_VAULT="${CANOPY_SHARED_VAULT:-Canopy-Shared}"
 
 gog_config_dir() {
   if [[ -n "${GOG_HOME:-}" ]]; then

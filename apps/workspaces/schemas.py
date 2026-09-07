@@ -90,3 +90,21 @@ class InvitePreviewOut(StrictModel):
     workspace_slug: str | None = None
     workspace_display_name: str | None = None
     role: str | None = None
+
+
+class SharedVaultIn(StrictModel):
+    """Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
+    service_key leaves the stored one alone, so renaming the vault does not
+    silently wipe the credential that reads it."""
+
+    vault: str | None = None
+    service_key: str | None = None
+
+
+class SharedVaultOut(StrictModel):
+    """Masked. `key_set` is a boolean on purpose — this route never returns the
+    key, and the only reader of the value is a runner that could actually run an
+    agent in this workspace (GET /api/agents/{slug}/credentials/resolve)."""
+
+    vault: str = ""
+    key_set: bool = False

@@ -20,7 +20,10 @@
 set -euo pipefail
 
 ACCOUNT="${OP_ACCOUNT:-dimagi.1password.com}"
-SHARED_VAULT="Canopy-Shared"
+# Overridable for the same reason bootstrap_agents.sh and wire.sh take it:
+# tenants hold different values under the same item names, so the vault is a
+# tenant fact, not a constant (Jonathan, 2026-09-07).
+SHARED_VAULT="${CANOPY_SHARED_VAULT:-Canopy-Shared}"
 
 # Per-agent items we scaffold as empty placeholders so `op://` references resolve
 # immediately (the reconciler treats an empty field as "not provisioned yet" and
