@@ -235,3 +235,42 @@ def _pat_for(user) -> str:
 
     raw, _ = PersonalToken.create_for_user(user=user, label="test")
     return raw
+
+
+# --- the explicit-only runner ---------------------------------------------------
+
+def test_a_disabled_assignment_still_gets_credentials(fleet):
+    """The explicit-only runner. Jonathan, 2026-09-06: "I don't want it to fire
+    ace commands as a fall back, only if we explicit trigger it."
+
+    `enabled=False` takes a runner out of the automatic rotation, but
+    claim_next_turn checks `pinned_runner` BEFORE any assignment lookup, so a
+    pinned turn still lands there. Refusing it credentials would let the turn
+    arrive and then fail at the far end of a long round trip, which reads as a
+    broken agent rather than a routing rule."""
+    from apps.harness.models import RunnerAssignment
+
+    RunnerAssignment.objects.filter(agent=fleet["agent"]).update(enabled=False)
+    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+
+    res = Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
+    )
+    assert res.status_code == 200
+    assert res.json()["op_vault"] == "Agent-Ace"
+
+
+def test_no_assignment_at_all_is_still_refused(fleet):
+    """Disabling loosens automatic ROUTING, not trust. A runner this agent's work
+    can never be directed at — pinned or otherwise — gets nothing."""
+    from apps.harness.models import RunnerAssignment
+
+    RunnerAssignment.objects.filter(agent=fleet["agent"]).delete()
+    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+
+    res = Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
+    )
+    assert res.status_code == 403
