@@ -311,3 +311,36 @@ def test_a_non_member_cannot_start_a_mint(client):
     Agent.objects.create(slug="secret", name="S", workspace=ws, runtime_secrets=["gog-token"])
     client.force_login(get_user_model().objects.create_user(username="x", email="x@dimagi.com"))
     assert client.get("/api/agents/secret/google/authorize").status_code == 404
+
+
+@pytest.mark.django_db
+def test_the_return_trip_keeps_the_deployment_path_prefix(fleet, monkeypatch, settings):
+    """The mint worked and the operator saw Resolver404.
+
+    canopy-web is served under /canopy in production, so a root-relative redirect
+    lands outside the app. The token was stored, `?google=ok` was set, and the
+    page still read as a failure — the worst shape of bug on a screen whose whole
+    job is telling you whether a credential is healthy."""
+    settings.CANOPY_PUBLIC_BASE_URL = "https://labs.connect.dimagi.com/canopy"
+    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
+
+    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
+    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
+
+    assert res["Location"] == (
+        "https://labs.connect.dimagi.com/canopy"
+        "/w/connect/agents/ace/credentials?google=ok"
+    )
+
+
+@pytest.mark.django_db
+def test_a_failed_mint_returns_to_the_same_prefixed_page(fleet, monkeypatch, settings):
+    """Every exit uses the same builder — a failure that 404s is how an operator
+    concludes the whole feature is broken."""
+    settings.CANOPY_PUBLIC_BASE_URL = "https://labs.connect.dimagi.com/canopy"
+    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response(refresh=""))
+
+    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
+    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
+    assert res["Location"].startswith("https://labs.connect.dimagi.com/canopy/w/connect/")
+    assert res["Location"].endswith("?google=no-refresh-token")
