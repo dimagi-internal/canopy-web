@@ -7360,6 +7360,16 @@ export interface components {
              * @default
              */
             readonly op_sa_token: string;
+            /**
+             * Shared Op Vault
+             * @default
+             */
+            readonly shared_op_vault: string;
+            /**
+             * Shared Op Sa Token
+             * @default
+             */
+            readonly shared_op_sa_token: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {

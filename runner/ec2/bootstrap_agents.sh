@@ -67,6 +67,11 @@ declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=ca
 # ── gog's own XDG resolution on Linux (mirrors canopy's agent_email.py
 # _default_gog_config_dir — $GOG_HOME override, else $XDG_CONFIG_HOME/gogcli, else
 # ~/.config/gogcli; there is no macOS branch on this box). ──────────────────────
+# The shared vault's name when a tenant has not declared one. Was compiled into
+# ensure_client_creds, which is correct for exactly one tenant; canopy-web now
+# serves it per workspace and this is only the fallback.
+DEFAULT_SHARED_VAULT="${DEFAULT_SHARED_VAULT:-Canopy-Shared}"
+
 gog_config_dir() {
   if [[ -n "${GOG_HOME:-}" ]]; then
     printf '%s\n' "${GOG_HOME/#\~/$HOME}"
@@ -217,8 +222,13 @@ except Exception:
 #
 # Never fails the bootstrap: a missing client file means gmail won't authorize,
 # which the warning says, and every other part of the agent still provisions.
-ensure_client_creds() {  # <client> <agent-vault> <slug>
+ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-token]
   local client="$1" agent_vault="$2" slug="$3"
+  # The tenant's shared vault and its OWN key, from canopy-web. Blank on a
+  # deployment that has not configured one, which falls back to the historical
+  # constant and today's (agent) key — i.e. exactly current behaviour.
+  local shared_vault="${4:-}" shared_token="${5:-}"
+  [[ -n "$shared_vault" ]] || shared_vault="${DEFAULT_SHARED_VAULT:-Canopy-Shared}"
   [[ -n "$client" ]] || return 0
   if ! command -v op >/dev/null 2>&1; then
     warn "$slug: op unavailable — cannot materialize gog client creds for $client"
@@ -235,10 +245,10 @@ ensure_client_creds() {  # <client> <agent-vault> <slug>
   # failed — so ACE imported a browser-minted token bound to `canopy-web` and then
   # had no client id+secret to use it with. Every gmail call died on
   # `No auth for gmail ace@dimagi-ai.com` with a perfectly good token beside it.
-  local client_vault client_item
+  local client_vault client_item is_shared=0
   case "$client" in
-    canopy)     client_vault="Canopy-Shared"; client_item="gog-oauth-client" ;;
-    canopy-web) client_vault="Canopy-Shared"; client_item="gog-oauth-client-web" ;;
+    canopy)     client_vault="$shared_vault"; client_item="gog-oauth-client";     is_shared=1 ;;
+    canopy-web) client_vault="$shared_vault"; client_item="gog-oauth-client-web"; is_shared=1 ;;
     *)          client_vault="$agent_vault";  client_item="gog-oauth-client" ;;
   esac
 
@@ -253,16 +263,34 @@ ensure_client_creds() {  # <client> <agent-vault> <slug>
   # 2026-09-07 outage above was indistinguishable from a missing item, a revoked
   # key, a throttle, or an outage. Five diagnostic round trips to a cloud box
   # recovered one line op had already written and this function threw away.
+  # A shared vault needs the SHARED key. The caller has already exported this
+  # agent's per-agent key, and that key reads Agent-<Slug> and nothing else —
+  # so using it here is the 2026-09-07 outage. Scoped to this one command
+  # rather than exported, so nothing downstream inherits a broader credential.
+  local -a openv=()
+  if (( is_shared )) && [[ -n "$shared_token" ]]; then
+    openv=(env "OP_SERVICE_ACCOUNT_TOKEN=$shared_token")
+  fi
+
+  # `${openv[@]+"${openv[@]}"}` and not `"${openv[@]}"`: expanding an EMPTY
+  # array under `set -u` is an unbound-variable error on bash 3.2, which turns
+  # the per-agent path — the common one — into a silent failed read. Caught by
+  # the tests in this directory, which run on 3.2 deliberately.
   local readerr
-  if readerr="$(op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
+  if readerr="$(${openv[@]+"${openv[@]}"} op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
      && [[ -s "$client_file" ]]; then
     chmod 0600 "$client_file"
     ok "$slug: gog client creds ($client) -> $client_file"
   else
     rm -f "$client_file"
     warn "$slug: op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
-    [[ "$client_vault" == "Canopy-Shared" ]] && \
-      warn "$slug: $client is a SHARED client — this needs a key that can read Canopy-Shared, which a per-agent vault key cannot"
+    if (( is_shared )); then
+      if [[ -n "$shared_token" ]]; then
+        warn "$slug: $client is a SHARED client, read with this tenant's shared-vault key — check that key can read $client_vault"
+      else
+        warn "$slug: $client is a SHARED client and this tenant has NO shared-vault key, so the read used the per-agent key — which reads $agent_vault and nothing else. Set the workspace's shared_op_vault + token in canopy-web."
+      fi
+    fi
     warn "$slug: gmail will not authorize as $client until this resolves"
   fi
 }
@@ -336,20 +364,26 @@ vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} tit
 # only plaintext gate in the system — bearer-only, caller must pair a live runner
 # this agent routes to, every read audited. A second route would be a second gate
 # to keep correct.
-agent_vault_config() {  # <slug> -> "<vault>\t<token>"
+# Four fields, not two: this agent's own vault+key, and its TENANT's shared
+# vault+key. The shared pair is separate because a per-agent key reads
+# Agent-<Slug> and nothing else by design, so it cannot reach the shared gog
+# OAuth clients — see ensure_client_creds. All four are blank-safe; a
+# deployment that serves none behaves exactly as it did before this existed.
+agent_vault_config() {  # <slug> -> "<vault>\t<token>\t<shared-vault>\t<shared-token>"
   local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
-  [[ -n "$base" && -n "$tok" ]] || { printf '\t\n'; return 0; }
+  [[ -n "$base" && -n "$tok" ]] || { printf '\t\t\t\n'; return 0; }
   local body
   body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
-          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)" || { printf '\t\n'; return 0; }
+          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)" || { printf '\t\t\t\n'; return 0; }
   BODY="$body" python3 -c '
 import json, os
 try:
     d = json.loads(os.environ["BODY"])
 except Exception:
     d = {}
-print("%s\t%s" % (d.get("op_vault") or "", d.get("op_sa_token") or ""))
-' 2>/dev/null || printf '\t\n'
+print("%s\t%s\t%s\t%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
+                           d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or ""))
+' 2>/dev/null || printf '\t\t\t\n'
 }
 
 FAILED_AGENTS=()
@@ -660,9 +694,9 @@ bootstrap_one_agent() {
   # Vault + key from canopy-web when it has them; otherwise the derived name and
   # the runner-wide token, so an agent nobody has configured behaves exactly as
   # it did before this existed.
-  local vault op_token cfg
+  local vault op_token shared_vault shared_token cfg
   cfg="$(agent_vault_config "$slug")"
-  vault="${cfg%%$'\t'*}"; op_token="${cfg#*$'\t'}"
+  IFS=$'\t' read -r vault op_token shared_vault shared_token <<<"$cfg"
   if [[ -n "$vault" ]]; then
     ok "$slug: vault $vault (from canopy-web)"
   else
@@ -709,7 +743,7 @@ bootstrap_one_agent() {
   # The gog OAuth-client credential FILE — see ensure_client_creds. Materialized
   # from the FALLBACK client name here, because the token that names the real one
   # has not been fetched yet; the call is repeated after the import below.
-  ensure_client_creds "$client" "$vault" "$slug"
+  ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
 
   if ! command -v gog >/dev/null 2>&1; then
     warn "$slug: gog unavailable — skipping gmail token import"
@@ -755,7 +789,7 @@ bootstrap_one_agent() {
           # token minted under a client the table doesn't know — every token from
           # canopy-web's browser mint — would import and then fail to refresh,
           # with the client file for a DIFFERENT app sitting right next to it.
-          ensure_client_creds "$tclient" "$vault" "$slug"
+          ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token"
         fi
         upsert_account_client "$account" "$tclient"
       else
