@@ -51,12 +51,6 @@ export function AgentCredentialsSection() {
     }
   }, [agent.slug])
 
-  const reload = () => {
-    getAgentCredentialStatus(agent.slug)
-      .then(setRows)
-      .catch(() => {})
-  }
-
   const save = async (name: string) => {
     const value = (draft[name] ?? '').trim()
     if (!value) return
@@ -195,7 +189,7 @@ export function AgentCredentialsSection() {
             {headline(rows)}
           </p>
 
-          <AgentVaultSection slug={agent.slug} onImported={reload} />
+          <AgentVaultSection slug={agent.slug} />
 
           {declaresMailbox(rows) && (
             <section className="mb-5" data-testid="needs-you">

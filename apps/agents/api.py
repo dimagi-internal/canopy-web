@@ -25,7 +25,6 @@ from .schemas import (
     AgentRunnerRulesIn,
     AgentRunnerRowIn,
     AgentRunnersIn,
-    AgentImportOut,
     AgentRuntimeOut,
     AgentVaultIn,
     AgentVaultOut,
@@ -652,6 +651,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         raise HttpError(403, "no live runner you pair is assigned to this agent")
 
     values = services.resolve_agent_credentials(agent)
+    vault, op_token = services.resolve_agent_vault(agent)
     try:
         from apps.events import services as events
 
@@ -668,7 +668,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         )
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
         pass
-    return AgentCredentialsResolveOut(values=values)
+    return AgentCredentialsResolveOut(values=values, op_vault=vault, op_sa_token=op_token)
 
 
 @router.get("/{slug}/vault", response=AgentVaultOut,
@@ -690,23 +690,6 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )
-
-
-@router.post("/{slug}/credentials/import", response=AgentImportOut,
-             summary="Populate this agent's secrets from its 1Password vault")
-def import_agent_credentials(request: HttpRequest, slug: str) -> AgentImportOut:
-    """Reads the vault as the agent's own service account and stores the values.
-
-    Partial success is the DESIGNED outcome: a half-provisioned vault is the
-    normal state of a new agent, so one missing ref reports itself and the other
-    forty-four still land."""
-    agent = _get_agent_or_404(request, slug)
-    if not agent.op_sa_token_enc:
-        raise HttpError(422, "set this agent's 1Password vault and service key first")
-    try:
-        return services.import_agent_credentials(agent, user=request.user)
-    except FileNotFoundError as exc:
-        raise HttpError(503, "the 1Password CLI is not available in this deployment") from exc
 
 
 # Registered AFTER the literal `status`/`resolve` paths on purpose: Django

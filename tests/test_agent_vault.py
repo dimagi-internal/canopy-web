@@ -1,21 +1,28 @@
-"""Importing an agent's secrets from its own 1Password vault.
+"""The vault an agent's secrets live in — custodied here, RESOLVED on the runner.
 
-The goal (Jonathan, 2026-09-05): *someone could plausibly create a completely new
-agent without direct access to the cloud box or 1Password.* The browser mint took
-the box out of the mailbox path; this takes the vault out of everything else.
+Jonathan, 2026-09-06: *the service account and vault should be used on the
+runner… canopy-web should just store what it needs or to send to the runner.*
 
-The per-agent key was Jonathan's explicit choice on 2026-09-06 over a single
-fleet-wide token. One key that reads every vault is simpler to operate and makes
-canopy-web worth attacking for every agent's secrets at once; a scoped key bounds
-a compromise to one agent.
+A first version made canopy-web the resolver — it held the key, shelled out to
+`op`, and stored all 45 values. That turns canopy-web into a second copy of every
+credential, free to drift from the vault and worth attacking for the whole set.
+The runner already has 1Password access and already resolves secrets there; what
+it lacked was WHICH vault per agent (it derived `Agent-<Slug>` in bash) and a key
+scoped to it.
+
+So: canopy-web stores the pair and hands it to the runner over the one route that
+already carries a plaintext gate. The per-agent scoping was Jonathan's explicit
+choice over a fleet-wide token — one key that reads every vault makes canopy-web
+worth attacking for every agent at once.
 """
 from __future__ import annotations
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import Client
 
 from apps.agents import vault_import as vi
-from apps.agents.models import Agent, AgentCredential
+from apps.agents.models import Agent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -63,50 +70,6 @@ def test_a_ref_with_no_declared_source_is_skipped_not_guessed():
 
 # --- resolving -----------------------------------------------------------------
 
-def test_one_bad_ref_does_not_abandon_the_others():
-    """A vault missing one item is the normal state of a half-provisioned agent.
-    All-or-nothing would make such an agent unprovisionable."""
-    def reader(ref, *, token):
-        if "gog-token" in ref:
-            raise RuntimeError("isn't an item in the vault")
-        return "value-for-" + ref.rsplit("/", 2)[1]
-
-    values, failures = vi.resolve_items(vi.plan_import(DECLARED, SOURCES), token="t", reader=reader)
-    assert values["canopy-pat"] == "value-for-canopy-pat"
-    assert values["ace-hq-base-url"] == "https://www.commcarehq.org"
-    assert [f["name"] for f in failures] == ["gog-token"]
-    assert "isn't an item" in failures[0]["error"]
-
-
-def test_an_empty_read_is_a_failure_not_a_value():
-    """Storing "" would show the ref as SET while it resolves to nothing — the
-    provisioned-looking-but-dead state this whole effort exists to surface."""
-    values, failures = vi.resolve_items(
-        vi.plan_import(["canopy-pat"], SOURCES), token="t", reader=lambda ref, *, token: "",
-    )
-    assert values == {}
-    assert failures[0]["error"] == "resolved empty"
-
-
-def test_the_service_key_never_reaches_a_command_line(monkeypatch):
-    """argv is world-readable via /proc. The token goes in the environment."""
-    seen = {}
-
-    class Res:
-        returncode, stdout, stderr = 0, "v", ""
-
-    def fake_run(cmd, **kw):
-        seen["cmd"], seen["env"] = cmd, kw.get("env", {})
-        return Res()
-
-    monkeypatch.setattr(vi.subprocess, "run", fake_run)
-    vi.op_read("op://V/i/f", token="ops_supersecret")
-    assert "ops_supersecret" not in " ".join(seen["cmd"])
-    assert seen["env"]["OP_SERVICE_ACCOUNT_TOKEN"] == "ops_supersecret"
-
-
-# --- through the API -----------------------------------------------------------
-
 @pytest.fixture
 def fleet(client):
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
@@ -116,12 +79,20 @@ def fleet(client):
         slug="ace", name="ACE", workspace=ws,
         runtime_secrets=DECLARED, runtime_sources=SOURCES,
     )
+    # A live runner this agent routes to — the gate `resolve` checks. Without the
+    # ASSIGNMENT a paired runner gets nothing, which is the point: plaintext
+    # follows routing, not ownership.
+    from django.utils import timezone
+
+    from apps.harness.models import Runner, RunnerAssignment
+
+    runner = Runner.objects.create(
+        name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities={},
+    )
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     client.force_login(jj)
     return {"client": client, "agent": agent, "user": jj}
-
-
-def _set_vault(client, **body):
-    return client.put("/api/agents/ace/vault", data=body, content_type="application/json")
 
 
 def test_the_service_key_is_encrypted_and_never_read_back(fleet):
@@ -144,37 +115,6 @@ def test_renaming_the_vault_does_not_wipe_the_key(fleet):
     assert fleet["agent"].op_sa_token_enc
 
 
-def test_import_refuses_before_a_key_is_set(fleet):
-    assert fleet["client"].post("/api/agents/ace/credentials/import").status_code == 422
-
-
-def test_import_stores_values_and_reports_what_it_could_not_get(fleet, monkeypatch):
-    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
-
-    def reader(ref, *, token):
-        if "gog-token" in ref:
-            raise RuntimeError("stale ref")
-        return "resolved"
-
-    monkeypatch.setattr(vi, "op_read", reader)
-    res = fleet["client"].post("/api/agents/ace/credentials/import")
-    assert res.status_code == 200
-    body = res.json()
-
-    assert "canopy-pat" in body["imported"]
-    assert "ace-hq-base-url" in body["imported"]
-    assert [f["name"] for f in body["failures"]] == ["gog-token"]
-    assert {s["name"] for s in body["skipped"]} == {"ace-web-pat-token", "undeclared-source"}
-    assert AgentCredential.objects.filter(agent=fleet["agent"], name="canopy-pat").exists()
-
-
-def test_an_import_never_returns_a_value_to_the_browser(fleet, monkeypatch):
-    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
-    monkeypatch.setattr(vi, "op_read", lambda ref, *, token: "SUPERSECRET")
-    res = fleet["client"].post("/api/agents/ace/credentials/import")
-    assert "SUPERSECRET" not in res.content.decode()
-
-
 def test_a_non_member_cannot_set_a_vault_or_import(client):
     owner = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     ws = Workspace.objects.create(slug="p", display_name="P", created_by=owner)
@@ -185,7 +125,6 @@ def test_a_non_member_cannot_set_a_vault_or_import(client):
     assert client.put(
         "/api/agents/secret/vault", data={"vault": "V"}, content_type="application/json",
     ).status_code == 404
-    assert client.post("/api/agents/secret/credentials/import").status_code == 404
 
 
 def test_runtime_sources_survives_a_plugin_reupsert(fleet):
@@ -227,3 +166,72 @@ def test_an_agent_with_no_source_map_reports_zero_locatable(fleet):
     Agent.objects.filter(slug="ace").update(runtime_sources={})
     v = fleet["client"].get("/api/agents/ace/vault").json()
     assert v["declared"] > 0 and v["locatable"] == 0
+
+
+# --- the runner is what resolves -----------------------------------------------
+
+def test_a_runner_gets_the_vault_and_key_with_the_values(fleet):
+    """One route, one gate. The runner needs the vault config and any stored
+    value in the same breath, and a second plaintext route would be a second
+    boundary to keep correct."""
+    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+    _put(fleet["client"], {"gog-token": "minted-in-the-browser"})
+
+    res = Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["op_vault"] == "Agent-Ace"
+    assert body["op_sa_token"] == "ops_tok"
+    assert body["values"]["gog-token"] == "minted-in-the-browser"
+
+
+def test_the_browser_never_sees_the_service_key(fleet):
+    """`resolve` is bearer-only; the vault status route reports key_set and never
+    the key itself."""
+    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+
+    assert "ops_tok" not in fleet["client"].get("/api/agents/ace/vault").content.decode()
+    denied = fleet["client"].get("/api/agents/ace/credentials/resolve")
+    assert denied.status_code in (401, 403)
+    assert "ops_tok" not in denied.content.decode()
+
+
+def test_an_agent_with_no_key_resolves_to_empty_not_an_error(fleet):
+    """The box falls back to the runner-wide token, so an unconfigured agent must
+    keep working exactly as it did before any of this existed."""
+    res = Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
+    )
+    assert res.status_code == 200
+    assert res.json()["op_sa_token"] == ""
+
+
+def test_canopy_web_stores_nothing_it_was_not_given(fleet):
+    """The whole correction. There is no path here that populates credentials
+    from the vault — what canopy-web holds is only what someone or something
+    explicitly wrote to it (the browser mint, a paste)."""
+    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+    rows = fleet["client"].get("/api/agents/ace/credentials/status").json()
+    assert [r["name"] for r in rows if r["set"]] == []
+
+
+def _set_vault(client, **body):
+    return client.put("/api/agents/ace/vault", data=body, content_type="application/json")
+
+
+def _put(client, values):
+    return client.put(
+        "/api/agents/ace/credentials",
+        data={"values": values}, content_type="application/json",
+    )
+
+
+def _pat_for(user) -> str:
+    from apps.tokens.models import PersonalToken
+
+    raw, _ = PersonalToken.create_for_user(user=user, label="test")
+    return raw

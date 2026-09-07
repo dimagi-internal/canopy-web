@@ -249,6 +249,34 @@ vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} tit
   printf 'Agent-%s\n' "${slug^}"
 }
 
+# Ask canopy-web which vault this agent's secrets live in, and for a service
+# token scoped to it. Prints "<vault>\t<token>"; either half may be empty.
+#
+# canopy-web is the CUSTODIAN of this pair, not the consumer: it stores the vault
+# name and the key, and the RUNNER does the resolving (Jonathan, 2026-09-06 —
+# "the service account and vault should be used on the runner"). That keeps
+# canopy-web from becoming a second copy of every agent's credentials.
+#
+# Both halves ride /credentials/resolve because that route already carries the
+# only plaintext gate in the system — bearer-only, caller must pair a live runner
+# this agent routes to, every read audited. A second route would be a second gate
+# to keep correct.
+agent_vault_config() {  # <slug> -> "<vault>\t<token>"
+  local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+  [[ -n "$base" && -n "$tok" ]] || { printf '\t\n'; return 0; }
+  local body
+  body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)" || { printf '\t\n'; return 0; }
+  BODY="$body" python3 -c '
+import json, os
+try:
+    d = json.loads(os.environ["BODY"])
+except Exception:
+    d = {}
+print("%s\t%s" % (d.get("op_vault") or "", d.get("op_sa_token") or ""))
+' 2>/dev/null || printf '\t\n'
+}
+
 FAILED_AGENTS=()
 READY_AGENTS=()
 
@@ -554,7 +582,20 @@ bootstrap_one_agent() {
   local dest="$AGENT_ROOT/$slug"
   local client="${GOG_CLIENT[$slug]:-$slug}"
   local account="${slug}@dimagi-ai.com"
-  local vault; vault="$(vault_name "$slug")"
+  # Vault + key from canopy-web when it has them; otherwise the derived name and
+  # the runner-wide token, so an agent nobody has configured behaves exactly as
+  # it did before this existed.
+  local vault op_token cfg
+  cfg="$(agent_vault_config "$slug")"
+  vault="${cfg%%$'\t'*}"; op_token="${cfg#*$'\t'}"
+  if [[ -n "$vault" ]]; then
+    ok "$slug: vault $vault (from canopy-web)"
+  else
+    vault="$(vault_name "$slug")"
+  fi
+  # Scoped key wins over the runner-wide one for THIS agent's reads only.
+  local OP_SERVICE_ACCOUNT_TOKEN="${op_token:-${OP_SERVICE_ACCOUNT_TOKEN:-}}"
+  export OP_SERVICE_ACCOUNT_TOKEN
 
   log "── agent $slug ──"
 

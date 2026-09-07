@@ -1846,30 +1846,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/credentials/import": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Populate this agent's secrets from its 1Password vault
-         * @description Reads the vault as the agent's own service account and stores the values.
-         *
-         *     Partial success is the DESIGNED outcome: a half-provisioned vault is the
-         *     normal state of a new agent, so one missing ref reports itself and the other
-         *     forty-four still land.
-         */
-        readonly post: operations["apps_agents_api_import_agent_credentials"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/credentials/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -7363,12 +7339,27 @@ export interface components {
         /**
          * AgentCredentialsResolveOut
          * @description PLAINTEXT, for a runner. The one route that returns values.
+         *
+         *     It carries the 1Password vault + service token as well, because the runner is
+         *     what resolves this agent's secrets — canopy-web only custodies the key. Both
+         *     ride this route rather than a new one so there is exactly ONE plaintext gate
+         *     to reason about, and one audit entry per fetch.
          */
         readonly AgentCredentialsResolveOut: {
             /** Values */
             readonly values?: {
                 readonly [key: string]: string;
             };
+            /**
+             * Op Vault
+             * @default
+             */
+            readonly op_vault: string;
+            /**
+             * Op Sa Token
+             * @default
+             */
+            readonly op_sa_token: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {
@@ -7404,35 +7395,6 @@ export interface components {
             readonly vault?: string | null;
             /** Service Key */
             readonly service_key?: string | null;
-        };
-        /**
-         * AgentImportOut
-         * @description What an import actually did — reported, never assumed.
-         *
-         *     `failures` matters as much as `imported`: a ref that no longer resolves is
-         *     the single most useful thing this screen can tell anyone, and an
-         *     all-or-nothing import would hide it behind one error.
-         */
-        readonly AgentImportOut: {
-            /**
-             * Imported
-             * @default []
-             */
-            readonly imported: readonly string[];
-            /**
-             * Skipped
-             * @default []
-             */
-            readonly skipped: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /**
-             * Failures
-             * @default []
-             */
-            readonly failures: readonly {
-                readonly [key: string]: unknown;
-            }[];
         };
         /** Page[RunSummary] */
         readonly Page_RunSummary_: {
@@ -12678,28 +12640,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentVaultOut"];
-                };
-            };
-        };
-    };
-    readonly apps_agents_api_import_agent_credentials: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentImportOut"];
                 };
             };
         };

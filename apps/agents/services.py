@@ -568,45 +568,9 @@ def agent_vault_status(agent):
     )
 
 
-def import_agent_credentials(agent, *, user=None):
-    """Resolve every declared ref from the agent's vault and store the values.
-
-    Reports rather than raises. A vault missing one item is the normal state of a
-    half-provisioned agent; failing the whole import over it would make such an
-    agent unprovisionable AND hide which ref is the problem — the one fact worth
-    knowing here.
-    """
-    from apps.agents import vault_import
-    from apps.agents.schemas import AgentImportOut
+def resolve_agent_vault(agent) -> tuple[str, str]:
+    """PLAINTEXT vault config, for a runner. Empty token when none is set."""
     from apps.common.encryption import decrypt_secret
 
-    declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
-    items = vault_import.plan_import(declared, agent.runtime_sources or {})
-    values, failures = vault_import.resolve_items(
-        items, token=decrypt_secret(agent.op_sa_token_enc),
-    )
-    if values:
-        set_agent_credentials(agent, values, user=user)
-
-    try:
-        from apps.events import services as events
-
-        events.record(
-            [{
-                "source": "agents.credentials",
-                "kind": "agent.credentials.imported",
-                "level": "info",
-                "key": f"{agent.slug}:import",
-                "summary": f"{len(values)} imported, {len(failures)} failed for {agent.slug}",
-                "payload": {"agent": agent.slug, "imported": len(values), "failed": len(failures)},
-            }],
-            workspace=agent.workspace,
-        )
-    except Exception:  # noqa: BLE001 - an audit hiccup must not undo a good import
-        pass
-
-    return AgentImportOut(
-        imported=sorted(values),
-        skipped=[{"name": i.name, "reason": i.reason} for i in items if i.kind == "skip"],
-        failures=failures,
-    )
+    token = decrypt_secret(agent.op_sa_token_enc) if agent.op_sa_token_enc else ""
+    return agent.op_vault, token
