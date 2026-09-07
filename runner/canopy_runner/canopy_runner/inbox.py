@@ -10,10 +10,13 @@ session (continuity) or a fresh one.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import subprocess
 import time
+from typing import NamedTuple
 
 # UNREAD only — the "new email" signal. Critically NOT "all recent threads":
 # every matched thread becomes a turn → a claude session, so an over-broad query
@@ -24,6 +27,22 @@ DEFAULT_QUERY = "in:inbox is:unread newer_than:14d"
 #: A CloudWatch/SNS alarm notification subject: `ALARM: "<name>" in <region>`, and its
 #: matching `OK: "<name>" in <region>`. The quoted alarm name is what pairs the two.
 _ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
+
+#: An alarm announcing its OWN CREATION, in the body of an otherwise ordinary `OK:`.
+#:
+#: CloudWatch emails every alarm carrying `OKActions` the moment it is created, and the
+#: subject is indistinguishable from a real recovery — same `OK: "<name>" in <region>`
+#: shape, same SNS sender. Only the body separates them, and it is unambiguous: a real
+#: recovery always names a concrete prior state (`ALARM -> OK`, `INSUFFICIENT_DATA -> OK`),
+#: while a creation has no prior state at all.
+#:
+#: So every monitoring PR that adds an alerting alarm used to dispatch a full agent
+#: session on a non-event. Measured on hal twice in two days —
+#: `labs-jj-web-cpu-high-actionable` (2026-09-06, connect-labs#1463) and
+#: `labs-jj-web-worker-kill-rate-actionable` (2026-09-07, connect-labs#1537, emailed
+#: 8 minutes after that PR merged). See #688.
+_ALARM_CREATION = re.compile(r"^\s*-?\s*State Change:\s*N/A\s*->\s*OK\s*$",
+                             re.MULTILINE)
 
 
 def alarm_key(thread: dict) -> tuple[str, str] | None:
@@ -89,11 +108,54 @@ def search_threads(mailbox: str, gog_client: str, query: str = DEFAULT_QUERY,
         raise InboxError(f"non-JSON from gog gmail search: {(r.stdout or '')[:150]!r}") from exc
 
 
-def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
-                  runner=subprocess.run) -> str | None:
-    """Return the From value of a thread's NEWEST message, lowercased — or None if it
-    can't be determined (gog missing/failed/timed-out, or an unparseable thread). None
-    is the fail-open signal: the caller enqueues rather than risk dropping a real reply."""
+class ThreadFacts(NamedTuple):
+    """What one `gog gmail thread get` tells us about a thread's NEWEST message.
+
+    Both fields fail OPEN — `newest_from=None` and `is_alarm_creation=False` are the
+    "we don't know" values, and every caller treats them as "enqueue normally".
+    """
+
+    #: The newest message's `From`, lowercased, or None if undeterminable.
+    newest_from: str | None = None
+    #: True only when the body positively identifies an alarm announcing its own
+    #: creation (see `_ALARM_CREATION`). Never a guess.
+    is_alarm_creation: bool = False
+
+
+def _decoded_body(msg: dict) -> str:
+    """The newest message's text body, or "" when it can't be decoded.
+
+    `gog gmail thread get --json` hands back the raw Gmail payload, so the body is
+    base64url in `payload.body.data` for a `text/plain` mail and in a part for a
+    multipart one. Anything unexpected returns "" — which reads as "not a creation
+    notice" and enqueues, the fail-open direction.
+    """
+    payload = msg.get("payload") or {}
+    chunks = [payload] + list(payload.get("parts") or [])
+    out = []
+    for p in chunks:
+        if (p.get("mimeType") or "").startswith("text/") or p is payload:
+            data = (p.get("body") or {}).get("data")
+            if not data:
+                continue
+            try:
+                out.append(base64.urlsafe_b64decode(data + "==").decode("utf-8", "replace"))
+            except (binascii.Error, ValueError):
+                continue
+    return "\n".join(out)
+
+
+def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
+                 runner=subprocess.run) -> ThreadFacts:
+    """ONE `gog gmail thread get`, every fact the enqueue decision needs.
+
+    This subprocess is the expensive call in this module, and it already returns the
+    whole message — headers AND body. It used to be spent on the `From` header alone
+    and the rest discarded, which is why the alarm-creation check in #688 was believed
+    to cost a body read it does not: the read is already paid for, only the parse is
+    new. Keep it that way — anything else the hot path needs from a thread belongs
+    here, not in a second fetch.
+    """
     try:
         r = runner(
             ["gog", "gmail", "thread", "get", thread_id, "--account", mailbox,
@@ -101,21 +163,32 @@ def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
             capture_output=True, text=True, timeout=45,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+        return ThreadFacts()
     if r.returncode != 0:
-        return None
+        return ThreadFacts()
     try:
         data = json.loads(r.stdout or "{}")
     except ValueError:
-        return None
+        return ThreadFacts()
     msgs = data.get("messages") or (data.get("thread") or {}).get("messages") or []
     if not msgs:
-        return None
-    headers = (msgs[-1].get("payload") or {}).get("headers") or []
-    for h in headers:
+        return ThreadFacts()
+    newest = msgs[-1]
+    sender = None
+    for h in (newest.get("payload") or {}).get("headers") or []:
         if h.get("name", "").lower() == "from":
-            return (h.get("value") or "").lower()
-    return None
+            sender = (h.get("value") or "").lower()
+            break
+    return ThreadFacts(newest_from=sender,
+                       is_alarm_creation=bool(_ALARM_CREATION.search(_decoded_body(newest))))
+
+
+def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
+                  runner=subprocess.run) -> str | None:
+    """Return the From value of a thread's NEWEST message, lowercased — or None if it
+    can't be determined (gog missing/failed/timed-out, or an unparseable thread). None
+    is the fail-open signal: the caller enqueues rather than risk dropping a real reply."""
+    return thread_facts(mailbox, gog_client, thread_id, runner=runner).newest_from
 
 
 #: Thread states this runner has already turned into a turn, as
@@ -174,12 +247,16 @@ _alarm_enqueued: dict[tuple[str, str], float] = {}
 
 def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 query: str = DEFAULT_QUERY, max_threads: int = 15, runner=subprocess.run,
-                sender_of=None, discovered_by: str = "poll", clock=time.time) -> dict:
+                sender_of=None, facts_of=None, discovered_by: str = "poll",
+                clock=time.time) -> dict:
     """Enqueue an email-origin turn for each new thread state. Returns
     {"new": [thread_ids that became a NEW turn], "seen": [ids already tracked],
     "skipped": [ids whose newest message is the agent's own reply],
     "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
-    recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S]} — the split matters
+    recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S],
+    "created": [SNS `OK:` ids that are an alarm announcing its OWN creation — a
+    non-event, in its own bucket because there is no incident to fold it into]}
+    — the split matters
     for logging: re-polling the same unread mail is idempotent server-side, so it must
     read as "nothing new", not as fresh work.
 
@@ -189,17 +266,25 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     unread WITHOUT a new inbound message (a human nudge, a Gmail label reshuffle), the
     watcher would see a fresh (thread, count) and fire a turn whose "trigger" is the
     agent's own last reply. So: if the newest message in a thread is from the agent
-    itself, it has already had the last word — skip it. `sender_of(thread_id) -> str|None`
-    is injectable for tests; it defaults to a live `newest_sender` lookup and fails open
-    (None -> enqueue) so an unreadable thread never silently drops a real reply."""
-    if sender_of is None:
-        def sender_of(tid: str) -> str | None:
-            return newest_sender(mailbox, gog_client, tid, runner=runner)
+    itself, it has already had the last word — skip it. `facts_of(thread_id) ->
+    ThreadFacts` is injectable for tests; it defaults to a live `thread_facts` lookup
+    and fails open (unknown -> enqueue) so an unreadable thread never silently drops a
+    real reply. `sender_of(thread_id) -> str|None` is the narrower legacy seam, kept
+    because existing callers and tests inject it; supplying it opts out of every fact
+    that needs the body, so a `sender_of`-injected call behaves exactly as before."""
+    if facts_of is None:
+        if sender_of is not None:
+            def facts_of(tid: str) -> ThreadFacts:
+                return ThreadFacts(newest_from=sender_of(tid))
+        else:
+            def facts_of(tid: str) -> ThreadFacts:
+                return thread_facts(mailbox, gog_client, tid, runner=runner)
     threads = search_threads(mailbox, gog_client, query, max_threads, runner=runner)
     new: list[str] = []
     seen: list[str] = []
     skipped: list[str] = []
     coalesced: list[str] = []
+    created: list[str] = []
     box = mailbox.lower()
     # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
     # (the subjects differ), so one alarm transition used to enqueue two turns — and the
@@ -248,7 +333,18 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # marks the whole storm read.
             _seen_state[(box, tid)] = count
             continue
-        latest = sender_of(tid)
+        facts = facts_of(tid)
+        # An alarm announcing its OWN creation. This is the one check that needs the
+        # body, and it is deliberately placed AFTER the two cheap guards above and on
+        # the SAME fetch as the sender — so it costs no subprocess this path was not
+        # already paying for (see `thread_facts`). Narrow on purpose: only an `OK:`
+        # from SNS (`alarm_key`) whose body says `N/A -> OK`. A real recovery names a
+        # concrete prior state and still fires. #688.
+        if key and key[0] == "OK" and facts.is_alarm_creation:
+            created.append(tid)
+            _seen_state[(box, tid)] = count
+            continue
+        latest = facts.newest_from
         if latest and box in latest:
             skipped.append(tid)
             # Remember it, so a thread the agent already answered does not cost a
@@ -277,4 +373,5 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         if key and key[0] == "ALARM":
             _alarm_enqueued[(box, key[1])] = clock()
         (new if (res or {}).get("_created") else seen).append(tid)
-    return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced}
+    return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced,
+            "created": created}
