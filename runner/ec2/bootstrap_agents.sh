@@ -244,6 +244,58 @@ ensure_client_creds() {  # <client> <agent-vault> <slug>
   fi
 }
 
+# A gog token can now arrive from TWO places, and the box must not silently
+# prefer the stale one.
+#
+#   op://<vault>/gog-token/credential   the vault copy, minted at a terminal
+#   canopy-web /credentials/resolve     minted in a browser ("Connect Google
+#                                       mailbox"), which is the whole point of
+#                                       provisioning an agent without 1Password
+#
+# canopy-web CANNOT write back to the vault — its service account is read-only,
+# deliberately — so a browser mint lands in canopy-web only, and a box that reads
+# the vault alone keeps the old token forever. Measured 2026-09-07: a token
+# minted at 13:34Z was invisible to this box, which still held one from
+# 2026-05-01 under a client whose mailbox had been dead for four months.
+#
+# NEWEST WINS, decided by the token's own `created_at`. Not "prefer canopy-web",
+# which would make a fresh vault rotation lose to a stale browser mint; not
+# "prefer the vault", which loses every browser mint. The token already declares
+# its own client and its own age — the same reason `token_client` reads it rather
+# than consulting a table (canopy-web#673).
+token_created_at() {  # <file> -> epoch seconds, 0 when absent/unparseable
+  local f="$1"
+  [[ -s "$f" ]] || { printf '0\n'; return 0; }
+  TOKF="$f" python3 -c '
+import json, os, calendar, time
+try:
+    v = (json.load(open(os.environ["TOKF"])).get("created_at") or "").strip()
+    print(int(calendar.timegm(time.strptime(v, "%Y-%m-%dT%H:%M:%SZ"))) if v else 0)
+except Exception:
+    print(0)
+' 2>/dev/null || printf '0\n'
+}
+
+# Write canopy-web's stored gog-token for <slug> to <outfile>. Empty file when
+# canopy-web has none, which is the normal case for an agent nobody has minted.
+fetch_canopy_web_token() {  # <slug> <outfile>
+  local slug="$1" out="$2" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+  : >"$out"
+  [[ -n "$base" && -n "$tok" ]] || return 0
+  local body
+  body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)" || return 0
+  BODY="$body" OUT="$out" python3 -c '
+import json, os
+try:
+    v = json.loads(os.environ["BODY"]).get("values", {}).get("gog-token")
+except Exception:
+    v = None
+if v:
+    open(os.environ["OUT"], "w").write(v)
+' 2>/dev/null || true
+}
+
 vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
   local slug="$1"
   printf 'Agent-%s\n' "${slug^}"
@@ -641,9 +693,27 @@ bootstrap_one_agent() {
   elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
     ok "$slug: gmail token already live (account=$account client=$client)"
   else
-    log "$slug: gmail token not live — importing from op://${vault}/gog-token/credential"
+    log "$slug: gmail token not live — taking the NEWEST of the vault and canopy-web"
     local tokfile; tokfile="$(mktemp)"
-    if op read "op://${vault}/gog-token/credential" >"$tokfile" 2>/dev/null && [[ -s "$tokfile" ]]; then
+    local vaultfile webfile; vaultfile="$(mktemp)"; webfile="$(mktemp)"
+    op read "op://${vault}/gog-token/credential" >"$vaultfile" 2>/dev/null || : >"$vaultfile"
+    fetch_canopy_web_token "$slug" "$webfile"
+
+    # Both 0 (no python3, unparseable dates, or neither store has one) falls to
+    # the vault copy — today's behaviour. Degrading toward the OLD path is the
+    # right direction: it can leave a stale token in place, where degrading the
+    # other way would import canopy-web's copy over a good vault rotation.
+    local vage wage; vage="$(token_created_at "$vaultfile")"; wage="$(token_created_at "$webfile")"
+    if (( wage > vage )); then
+      cp "$webfile" "$tokfile"
+      ok "$slug: using canopy-web's token (newer: $wage > $vage)"
+    else
+      cp "$vaultfile" "$tokfile"
+      (( vage > 0 )) && log "$slug: using the vault's token (canopy-web has none newer)"
+    fi
+    rm -f "$vaultfile" "$webfile"
+
+    if [[ -s "$tokfile" ]]; then
       # Capture stderr instead of discarding it. Swallowing it here is what hid a
       # fleet-wide failure for weeks: the `file` keyring backend wants a password
       # it can only PROMPT for, so on this TTY-less box EVERY import died with
@@ -671,7 +741,7 @@ bootstrap_one_agent() {
           warn "$slug: GOG_KEYRING_PASSWORD is unset — stage it with ./secrets.sh gog"
       fi
     else
-      warn "$slug: op read op://${vault}/gog-token/credential failed — is the item staged for this vault?"
+      warn "$slug: no gog token anywhere — neither op://${vault}/gog-token/credential nor canopy-web has one for $slug"
     fi
     shred -u "$tokfile" 2>/dev/null || rm -f "$tokfile"  # never leave the token on disk, even on failure
   fi
