@@ -48,7 +48,26 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await database_sync_to_async(presence.touch)(session.id, user.id)
         await database_sync_to_async(chat_services.attach_session)(session)
         await self.send_json(await self._snapshot())
-        await self._broadcast({"type": "presence.joined", "user_id": user.id})
+        # Carry WHO joined, not just their id.
+        #
+        # Everyone already in the room built their participant list from the
+        # snapshot they took when THEY connected. A person joining this session
+        # for the first time is therefore absent from it, and the presence row
+        # renders `participants.filter(p => present.includes(p.user_id))` — so a
+        # newcomer was invisible to everyone already here, permanently, until
+        # they happened to reload. The id alone can never fix that: there is no
+        # name to render it with.
+        #
+        # It looked like it worked because a SessionParticipant row is durable —
+        # the second time the same person joins, everyone's snapshot already has
+        # them. So it failed only for a genuinely new participant, which is
+        # exactly the case the feature exists for. Caught by the first
+        # two-browser e2e this surface ever had.
+        await self._broadcast({
+            "type": "presence.joined",
+            "user_id": user.id,
+            "participant": await database_sync_to_async(self._participant_dto)(session, user),
+        })
 
     async def disconnect(self, code):
         group = getattr(self, "group", None)
@@ -295,12 +314,25 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def presence_joined(self, message):
-        await self.send_json({"event": "presence.joined", "data": {"user_id": message["user_id"]}})
+        data = {"user_id": message["user_id"]}
+        # Optional so an older publisher on the same channel layer still works
+        # during a rolling deploy: the client falls back to id-only behaviour.
+        if message.get("participant"):
+            data["participant"] = message["participant"]
+        await self.send_json({"event": "presence.joined", "data": data})
 
     async def presence_left(self, message):
         await self.send_json({"event": "presence.left", "data": {"user_id": message["user_id"]}})
 
     # -- helpers --
+
+    @staticmethod
+    def _participant_dto(session, user):
+        """The joining user as the same DTO the snapshot uses, so a client can
+        append it to `participants` without a second shape to reconcile."""
+        sp = participants.ensure_participant(session, user)
+        return serializers.participant_dto(sp)
+
     async def _broadcast(self, message):
         await self.channel_layer.group_send(self.group, message)
 

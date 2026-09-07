@@ -42,6 +42,9 @@ scripts/qa/screenshots/
 # e2e
 e2e.sqlite3
 frontend/e2e/.auth/
+# Screenshots from e2e/mp-shot.spec.ts — a local harness for judging the
+# multiplayer UI by eye, regenerated on demand.
+frontend/e2e/.shots/
 frontend/test-results/
 frontend/playwright-report/
 

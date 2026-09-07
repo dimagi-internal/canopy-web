@@ -370,7 +370,23 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     case "presence.joined": {
       const ids = new Set(prev.presence_user_ids);
       ids.add(frame.data.user_id);
-      return { ...prev, presence_user_ids: [...ids] };
+      // Adopt the joiner into `participants` too. The presence ROW renders
+      // participants filtered by presence, so an id with no matching
+      // participant is invisible — which is what made a first-time joiner
+      // unseeable by everyone already in the room until they reloaded.
+      // `participant` is optional (an older server may not send it); without
+      // it this degrades to exactly the previous behaviour rather than
+      // inventing a nameless entry.
+      const joined = frame.data.participant;
+      const known = joined
+        ? prev.participants.some((p) => p.user_id === joined.user_id)
+        : true;
+      return {
+        ...prev,
+        presence_user_ids: [...ids],
+        participants:
+          joined && !known ? [...prev.participants, joined] : prev.participants,
+      };
     }
 
     case "presence.left":
