@@ -1,4 +1,5 @@
 """Deterministic inbox trigger — gmail threads → email-origin turns."""
+import base64
 import json
 from types import SimpleNamespace
 
@@ -48,7 +49,7 @@ def test_idempotency_key_includes_message_count():
 
 def test_empty_inbox_enqueues_nothing():
     client = FakeClient()
-    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": []}
+    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "created": []}
     assert client.enqueued == []
 
 
@@ -358,3 +359,151 @@ def test_a_human_subject_that_looks_like_a_refire_is_never_suppressed():
                             runner=_runner(human), sender_of=lambda tid: "jjackson@dimagi.com",
                             clock=_clock(60))
     assert res["new"] == ["thr-human"]
+
+
+# --- An alarm announcing its OWN CREATION is not an incident (#688) ----------------
+#
+# CloudWatch emails every alarm carrying `OKActions` the moment it is created, under a
+# subject indistinguishable from a real recovery. Only the body separates them. Bodies
+# below are the real 2026-09-07 `labs-jj-web-worker-kill-rate-actionable` notice, which
+# burned a full hal session, and its real-recovery counterpart.
+
+_CREATION_OK = 'OK: "labs-jj-web-worker-kill-rate-actionable" in US East (N. Virginia)'
+
+_CREATION_BODY = (
+    "You are receiving this email because your Amazon CloudWatch Alarm "
+    '"labs-jj-web-worker-kill-rate-actionable" in the US East (N. Virginia) region has '
+    "transitioned to OK state on Monday 07 September, 2026 15:12:35 UTC, because "
+    '"arn:aws:cloudwatch:us-east-1:858923557655:alarm:'
+    'labs-jj-web-worker-kill-rate-actionable was created and its alarm rule evaluates '
+    'to OK".\r\n\r\nAlarm Details:\r\n'
+    "- Name:                       labs-jj-web-worker-kill-rate-actionable\r\n"
+    "- State Change:               N/A -> OK\r\n"
+    "- Timestamp:                  Monday 07 September, 2026 15:12:35 UTC\r\n"
+)
+
+_RECOVERY_BODY = (
+    "You are receiving this email because your Amazon CloudWatch Alarm "
+    '"labs-jj-web-cpu-high" ... has transitioned to OK state.\r\n\r\nAlarm Details:\r\n'
+    "- Name:                       labs-jj-web-cpu-high\r\n"
+    "- State Change:               ALARM -> OK\r\n"
+)
+
+
+def _b64(s: str) -> str:
+    return base64.urlsafe_b64encode(s.encode()).decode().rstrip("=")
+
+
+def _thread_get_payload(body: str, frm: str = SNS, *, parts=False) -> str:
+    """The shape `gog gmail thread get --json` actually returns."""
+    payload = {"mimeType": "text/plain", "headers": [{"name": "From", "value": frm}]}
+    if parts:
+        payload["mimeType"] = "multipart/alternative"
+        payload["body"] = {}
+        payload["parts"] = [{"mimeType": "text/plain", "body": {"data": _b64(body)}}]
+    else:
+        payload["body"] = {"data": _b64(body), "size": len(body)}
+    return json.dumps({"messages": [{"payload": payload}]})
+
+
+def _dual_runner(threads, body, frm=SNS, *, parts=False):
+    """`gog gmail search` -> the thread list; `gog gmail thread get` -> one message.
+
+    Exercises the REAL `thread_facts` path rather than the `facts_of` seam, so these
+    tests would still catch a regression in the base64 decode or the marker regex.
+    """
+    search = json.dumps({"threads": threads})
+    got = _thread_get_payload(body, frm, parts=parts)
+
+    def run(cmd, capture_output, text, timeout):
+        out = got if "thread" in cmd else search
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    return run
+
+
+def test_alarm_creation_notice_does_not_fire_a_turn():
+    """The bug in #688: `labs-jj-web-worker-kill-rate-actionable` had never fired, so
+    there was no `ALARM:` to pair with and the notice enqueued a full session."""
+    client = FakeClient()
+    threads = [{"id": "thr-created", "from": SNS, "subject": _CREATION_OK,
+                "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _CREATION_BODY))
+    assert res["created"] == ["thr-created"]
+    assert res["new"] == []
+    assert client.enqueued == []
+
+
+def test_creation_notice_is_detected_inside_a_multipart_body():
+    client = FakeClient()
+    threads = [{"id": "thr-created", "from": SNS, "subject": _CREATION_OK,
+                "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _CREATION_BODY, parts=True))
+    assert res["created"] == ["thr-created"]
+
+
+def test_a_real_recovery_still_fires():
+    """The load-bearing half: suppression must be narrow. A genuine `OK:` names a
+    concrete prior state and is the only signal there is, so it still becomes a turn."""
+    client = FakeClient()
+    threads = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _RECOVERY_BODY))
+    assert res["new"] == ["thr-ok"]
+    assert res["created"] == []
+
+
+def test_creation_body_on_a_non_sns_sender_is_never_suppressed():
+    """`alarm_key` gates this on the SNS sender, like every other alarm rule here."""
+    client = FakeClient()
+    human = "Jonathan <jjackson@dimagi.com>"
+    threads = [{"id": "thr-human", "from": human, "subject": _CREATION_OK,
+                "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _CREATION_BODY, frm=human))
+    assert res["new"] == ["thr-human"]
+    assert res["created"] == []
+
+
+def test_creation_marker_in_an_ALARM_subject_is_not_suppressed():
+    """Only an `OK:` can be a creation notice. An `ALARM:` is always an incident."""
+    client = FakeClient()
+    threads = [{"id": "thr-alarm", "from": SNS, "subject": _ALARM, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _CREATION_BODY))
+    assert res["new"] == ["thr-alarm"]
+    assert res["created"] == []
+
+
+def test_thread_facts_returns_sender_and_creation_flag_from_one_fetch():
+    facts = inbox.thread_facts(
+        "hal@dimagi-ai.com", "canopy", "thr-created",
+        runner=_dual_runner([], _CREATION_BODY))
+    assert facts.newest_from == SNS.lower()
+    assert facts.is_alarm_creation is True
+
+
+def test_thread_facts_fails_open_on_an_undecodable_body():
+    """Unknown must read as 'not a creation notice' — i.e. enqueue."""
+    def run(cmd, capture_output, text, timeout):
+        payload = json.dumps({"messages": [{"payload": {
+            "mimeType": "text/plain",
+            "headers": [{"name": "From", "value": SNS}],
+            "body": {"data": "!!!not base64!!!"}}}]})
+        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+    facts = inbox.thread_facts("hal@dimagi-ai.com", "canopy", "t", runner=run)
+    assert facts.newest_from == SNS.lower()
+    assert facts.is_alarm_creation is False
+
+
+def test_sender_of_injection_opts_out_of_body_facts():
+    """The legacy seam is unchanged: callers injecting `sender_of` get exactly the old
+    behaviour, body-derived facts included (i.e. excluded)."""
+    client = FakeClient()
+    threads = [{"id": "thr-created", "from": SNS, "subject": _CREATION_OK,
+                "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(threads), sender_of=lambda tid: SNS.lower())
+    assert res["new"] == ["thr-created"]
+    assert res["created"] == []
