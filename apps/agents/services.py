@@ -521,8 +521,24 @@ def caller_runs_agent(user, agent) -> bool:
     """
     from apps.harness.models import Runner, RunnerAssignment
 
+    # ASSIGNED, not necessarily ENABLED. `enabled=False` removes a runner from
+    # the automatic rotation — it stops being a fallback — but it does NOT stop
+    # work being directed there: `claim_next_turn` checks `pinned_runner` first
+    # and returns before any assignment lookup ("a pin trumps everything below
+    # it"). That combination IS the explicit-only runner Jonathan asked for on
+    # 2026-09-06: "I don't want it to fire ace commands as a fall back, only if
+    # we explicit trigger it."
+    #
+    # So requiring `enabled=True` here contradicted the claim path: a pinned turn
+    # would land on the box, which would then be refused the very secrets it
+    # needs to run the agent — a failure at the far end of a long round trip,
+    # reading as a broken agent rather than a routing rule.
+    #
+    # The trust boundary is unchanged in substance: an assignment row at all
+    # means this agent's work may be directed at this runner, and the caller must
+    # still PAIR it. Disabling governs automatic routing, not trust.
     return RunnerAssignment.objects.filter(
-        agent=agent, enabled=True, runner__paired_by=user,
+        agent=agent, runner__paired_by=user,
     ).exclude(runner__status=Runner.RETIRED).exists()
 
 
