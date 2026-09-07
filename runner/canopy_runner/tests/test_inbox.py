@@ -131,8 +131,15 @@ def _alarm_pair():
 def _clear_seen_state():
     """`_seen_state` is module-global and these tests reuse thread ids."""
     inbox._seen_state.clear()
+    inbox._alarm_enqueued.clear()
     yield
     inbox._seen_state.clear()
+    inbox._alarm_enqueued.clear()
+
+
+def _clock(t):
+    """A frozen wall clock; `t` is seconds, origin arbitrary."""
+    return lambda: float(t)
 
 
 def test_alarm_key_parses_both_states():
@@ -234,3 +241,120 @@ def test_non_alarm_mail_is_completely_unaffected():
                             runner=_runner(threads), sender_of=lambda tid: "x@y.com")
     assert res["new"] == ["thr-1", "thr-2"]
     assert res["coalesced"] == []
+
+
+# --- one incident, one turn: the REPEAT and the LATE recovery ---------------------
+#
+# From hal, 2026-09-07. `labs-jj-web-cpu-high-actionable` transitioned to ALARM at
+# 12:23:56, 12:29:21 and 12:34:21 UTC for ONE incident, and its `OK:` landed at 12:48
+# — 24 minutes after the `ALARM:`, by which time that thread had been read and closed
+# out. Result: three turns on the ALARM thread plus a fourth on the OK thread.
+
+def _alarm_thread(count):
+    """The SAME Gmail thread, re-fired: CloudWatch threads by subject, so a repeat is a
+    bumped messageCount, which was a fresh idempotency key."""
+    return [{"id": "thr-alarm", "from": SNS, "subject": _ALARM, "messageCount": count}]
+
+
+def test_refired_alarm_on_the_same_thread_does_not_enqueue_again():
+    client = FakeClient()
+    first = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                              runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                              clock=_clock(0))
+    assert first["new"] == ["thr-alarm"]
+
+    # +5m21s and +10m25s, the real spacing of the two re-fires.
+    for t, count in ((321, 2), (625, 3)):
+        res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                                runner=_runner(_alarm_thread(count)),
+                                sender_of=lambda tid: SNS.lower(), clock=_clock(t))
+        assert res["new"] == [], f"re-fire at +{t}s enqueued a second turn"
+        assert res["coalesced"] == ["thr-alarm"]
+
+    assert len(client.enqueued) == 1, "one incident must produce exactly one turn"
+
+
+def test_alarm_refiring_after_the_window_is_a_new_incident():
+    """The suppression is bounded on purpose — a sustained condition must re-notify."""
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(_alarm_thread(2)), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(inbox.ALARM_REPEAT_WINDOW_S + 1))
+    assert res["new"] == ["thr-alarm"]
+    assert len(client.enqueued) == 2
+
+
+def test_a_coalesced_refire_does_not_extend_its_own_suppression():
+    """Otherwise an alarm flapping for an hour is reported once and then held down for
+    the whole hour by its own repeats — silence that looks like health."""
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    # A re-fire near the end of the window, coalesced...
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(2)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(inbox.ALARM_REPEAT_WINDOW_S - 60))
+    # ...must not push the window out: just past the ORIGINAL window, we notify again.
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(_alarm_thread(3)), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(inbox.ALARM_REPEAT_WINDOW_S + 1))
+    assert res["new"] == ["thr-alarm"]
+
+
+def test_ok_is_coalesced_even_when_its_alarm_was_an_earlier_batch():
+    """#670 paired them only within one poll, so a recovery arriving after its `ALARM:`
+    had been read fell straight through and spawned a turn with nothing to do."""
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(24 * 60))          # the real 24-minute gap
+    assert res["new"] == []
+    assert res["coalesced"] == ["thr-ok"]
+    assert len(client.enqueued) == 1
+
+
+def test_ok_with_no_recent_alarm_still_enqueues():
+    """The fail-open direction: an `OK:` we cannot pair with anything is not suppressed.
+    Covers the alarm-creation `N/A -> OK` notification, which has no `ALARM:` at all."""
+    client = FakeClient()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(0))
+    assert res["new"] == ["thr-ok"]
+
+
+def test_a_different_alarm_is_never_suppressed_by_an_unrelated_incident():
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    other = [{"id": "thr-other", "from": SNS,
+              "subject": 'ALARM: "labs-jj-rds-connections-high" in US East (N. Virginia)',
+              "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(other), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(60))
+    assert res["new"] == ["thr-other"]
+
+
+def test_a_human_subject_that_looks_like_a_refire_is_never_suppressed():
+    """`alarm_key` gates all of this on the SNS sender; a person is never coalesced."""
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    human = [{"id": "thr-human", "from": "Jonathan <jjackson@dimagi.com>",
+              "subject": _ALARM, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(human), sender_of=lambda tid: "jjackson@dimagi.com",
+                            clock=_clock(60))
+    assert res["new"] == ["thr-human"]

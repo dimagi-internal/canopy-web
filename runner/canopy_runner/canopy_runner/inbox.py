@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 
 # UNREAD only — the "new email" signal. Critically NOT "all recent threads":
 # every matched thread becomes a turn → a claude session, so an over-broad query
@@ -42,6 +43,26 @@ def alarm_key(thread: dict) -> tuple[str, str] | None:
         return None
     m = _ALARM_SUBJECT.match(thread.get("subject") or "")
     return (m.group(1).upper(), m.group(2)) if m else None
+
+
+def _alarm_incident_is_owned(box: str, key: tuple[str, str], alarming: set[str],
+                             now: float) -> bool:
+    """Does a turn already own this alarm notification's incident?
+
+    ``key`` is an `alarm_key()` result, so this is only ever asked about a genuine SNS
+    CloudWatch notification — everything else short-circuits before here and enqueues
+    normally. Returning True suppresses a turn, so every branch is written to fail toward
+    enqueueing when it does not KNOW.
+    """
+    state, name = key
+    last = _alarm_enqueued.get((box, name))
+    if state == "OK":
+        # #670's rule (its `ALARM:` is unread in this same batch) OR the same alarm fired
+        # recently enough that this is plainly its recovery.
+        return name in alarming or (last is not None and now - last < OK_PAIRING_WINDOW_S)
+    # A repeat `ALARM:` inside the window is the same incident re-notifying. The FIRST one
+    # always enqueues — there is no entry to compare against until we have enqueued once.
+    return last is not None and now - last < ALARM_REPEAT_WINDOW_S
 
 
 class InboxError(Exception):
@@ -111,14 +132,54 @@ def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
 #: "already tracked".
 _seen_state: dict[tuple[str, str], int] = {}
 
+#: A re-fired `ALARM:` for the same alarm name inside this window is the SAME incident.
+#:
+#: CloudWatch re-evaluates a metric alarm roughly every 60s over a SLIDING window, so a
+#: condition sitting near its threshold flips ALARM->OK->ALARM every few minutes for as
+#: long as it lasts. Each flip is a fresh notification, and because Gmail threads by
+#: subject they all land on ONE thread with a bumped `messageCount` — which is a new
+#: idempotency key, so each one enqueued another turn.
+#:
+#: Measured on hal, 2026-09-07: `labs-jj-web-cpu-high-actionable` transitioned to ALARM at
+#: 12:23:56, 12:29:21 and 12:34:21 UTC for a single incident, dispatching THREE turns onto
+#: one thread. The third had nothing left to find — the first had already diagnosed it,
+#: shipped the fix and closed the storm out.
+#:
+#: 15 minutes covers the observed re-fire spacing (~5 min) with margin. It is deliberately
+#: NOT open-ended: a genuinely sustained incident re-notifies after the window, which is
+#: the right behaviour — one look per quarter hour, not one per flip.
+ALARM_REPEAT_WINDOW_S = 15 * 60
+
+#: How long after an `ALARM:` its matching `OK:` is still that incident's recovery.
+#:
+#: Much longer than the repeat window, because the two are not the same judgment. An `OK:`
+#: is never work ON ITS OWN — its `ALARM:` owns the incident, and the agent-side rule is
+#: explicit that the `OK:` turn's whole job is to discover it should stand down. So the
+#: only question is "did this alarm recently fire", and a generous answer is the safe one.
+#:
+#: #670 answered it with "is the `ALARM:` in THIS batch", which holds only while both are
+#: unread in the same poll. On 2026-09-07 the `OK:` landed 24 minutes after its `ALARM:`,
+#: by which time the `ALARM:` thread had been read and closed out — so the batch was empty
+#: of it, the `OK:` enqueued a turn, and that session spent 65 events reading the turn
+#: procedure before stalling with nothing to do.
+OK_PAIRING_WINDOW_S = 2 * 60 * 60
+
+#: ``{(mailbox, alarm_name): wall-clock time we last ENQUEUED a turn for it}``. Written
+#: only on a real enqueue, never when coalescing — so a flapping alarm is quiet for one
+#: window and then genuinely re-notifies, rather than being suppressed forever by its own
+#: repeats. Process-local for the same reason as `_seen_state`: losing it on restart costs
+#: one redundant turn, never a dropped incident. That is the fail-open direction.
+_alarm_enqueued: dict[tuple[str, str], float] = {}
+
 
 def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 query: str = DEFAULT_QUERY, max_threads: int = 15, runner=subprocess.run,
-                sender_of=None, discovered_by: str = "poll") -> dict:
+                sender_of=None, discovered_by: str = "poll", clock=time.time) -> dict:
     """Enqueue an email-origin turn for each new thread state. Returns
     {"new": [thread_ids that became a NEW turn], "seen": [ids already tracked],
     "skipped": [ids whose newest message is the agent's own reply],
-    "coalesced": [SNS `OK:` ids folded into their `ALARM:` turn]} — the split matters
+    "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
+    recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S]} — the split matters
     for logging: re-polling the same unread mail is idempotent server-side, so it must
     read as "nothing new", not as fresh work.
 
@@ -167,8 +228,17 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             continue
         # Coalesce BEFORE `sender_of`, which is a `gog gmail thread get` subprocess —
         # the same cost-ordering reason the idempotency check sits above.
+        #
+        # Two ways one incident still reached us as several turns after #670, both
+        # measured on hal 2026-09-07 and both fixed by remembering WHEN we last enqueued
+        # for an alarm name rather than only looking inside the current batch:
+        #
+        #   * a re-fired `ALARM:` — the flip lands on the SAME Gmail thread with a bumped
+        #     messageCount, which is a new idempotency key, so it enqueued again;
+        #   * an `OK:` whose `ALARM:` was in an EARLIER batch — `alarming` is per-poll, so
+        #     a recovery arriving after its `ALARM:` was read fell straight through it.
         key = alarm_key(t)
-        if key and key[0] == "OK" and key[1] in alarming:
+        if key and _alarm_incident_is_owned(box, key, alarming, clock()):
             coalesced.append(tid)
             # Remember it so the next poll doesn't re-evaluate the same state. NOTE:
             # `_seen_state` is process-local (see its docstring), so a runner restart
@@ -200,5 +270,11 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             prompt=f"/{agent}:turn --thread {tid}",
         )
         _seen_state[(box, tid)] = count
+        # Stamp the incident only on a real enqueue, so the window is measured from the
+        # turn that owns it. Deliberately NOT refreshed when coalescing: a re-fire must
+        # not extend its own suppression, or an alarm flapping for an hour would be
+        # reported once and then silently held down for the whole hour.
+        if key and key[0] == "ALARM":
+            _alarm_enqueued[(box, key[1])] = clock()
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced}
