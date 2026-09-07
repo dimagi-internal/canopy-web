@@ -220,8 +220,21 @@ except Exception:
 ensure_client_creds() {  # <client> <agent-vault> <slug>
   local client="$1" agent_vault="$2" slug="$3"
   [[ -n "$client" ]] || return 0
-  command -v op >/dev/null 2>&1 || return 0
+  if ! command -v op >/dev/null 2>&1; then
+    warn "$slug: op unavailable — cannot materialize gog client creds for $client"
+    return 0
+  fi
 
+  # NOTE the vault split, and that it crosses the per-agent key boundary:
+  # bootstrap_one_agent exports a SCOPED OP_SERVICE_ACCOUNT_TOKEN that canopy-web
+  # issues per agent, and a per-agent key can read op://Agent-<Slug> and nothing
+  # else. Both shared clients live in Canopy-Shared, so those two arms need a key
+  # this function may not hold. Measured 2026-09-07 on cloud-ec2-1: inside ONE
+  # bootstrap pass, seconds apart, op://Agent-Ace reads succeeded (op inject, the
+  # gog-token read, credentials-ace.json) while op://Canopy-Shared/gog-oauth-client-web
+  # failed — so ACE imported a browser-minted token bound to `canopy-web` and then
+  # had no client id+secret to use it with. Every gmail call died on
+  # `No auth for gmail ace@dimagi-ai.com` with a perfectly good token beside it.
   local client_vault client_item
   case "$client" in
     canopy)     client_vault="Canopy-Shared"; client_item="gog-oauth-client" ;;
@@ -234,13 +247,23 @@ ensure_client_creds() {  # <client> <agent-vault> <slug>
   [[ -f "$client_file" ]] && return 0
 
   mkdir -p "$gog_dir"
-  if op read "op://${client_vault}/${client_item}/credential" >"$client_file" 2>/dev/null \
+  # Capture op's stderr rather than discarding it — the same lesson the token
+  # import below already learned, in the same file, twenty lines down. A bare
+  # "op read ... failed" names the path that failed and nothing about WHY, so the
+  # 2026-09-07 outage above was indistinguishable from a missing item, a revoked
+  # key, a throttle, or an outage. Five diagnostic round trips to a cloud box
+  # recovered one line op had already written and this function threw away.
+  local readerr
+  if readerr="$(op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
      && [[ -s "$client_file" ]]; then
     chmod 0600 "$client_file"
     ok "$slug: gog client creds ($client) -> $client_file"
   else
     rm -f "$client_file"
-    warn "$slug: op read op://${client_vault}/${client_item}/credential failed — gmail may not authorize as $client"
+    warn "$slug: op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
+    [[ "$client_vault" == "Canopy-Shared" ]] && \
+      warn "$slug: $client is a SHARED client — this needs a key that can read Canopy-Shared, which a per-agent vault key cannot"
+    warn "$slug: gmail will not authorize as $client until this resolves"
   fi
 }
 
