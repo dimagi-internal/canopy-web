@@ -11,6 +11,7 @@ operator-facing shape ever carries a secret.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
@@ -170,3 +171,50 @@ def test_a_stranger_cannot_drive_someone_elses_runner(client, runner):
     stranger = Client()
     stranger.force_login(other)
     assert _post(stranger, _base(runner)).status_code == 404
+
+
+# ── expiry: a dead link must stop being offered as live ────────────────────
+
+def test_a_sign_in_left_open_too_long_expires(client, runner, monkeypatch):
+    """The failure this prevents, measured 2026-09-08: a mint started at 17:56
+    was completed at 19:04 and failed with "setup-token never printed a token".
+    The authorize URL's PKCE state and the CLI process waiting on the box had
+    both expired an hour earlier; nothing said so, and the only clue was the
+    clock. An aged-out mint now says what happened."""
+    from django.utils import timezone
+
+    from apps.harness import services
+    from apps.harness.models import RunnerMint
+
+    _post(client, _base(runner))
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+
+    stale = timezone.now() + dt.timedelta(seconds=services.MINT_TTL_SECONDS + 60)
+    monkeypatch.setattr(timezone, "now", lambda: stale)
+
+    body = client.get(_base(runner)).json()
+    assert body["status"] == RunnerMint.FAILED
+    assert "expired" in body["detail"].lower()
+
+
+def test_an_expired_mint_is_not_handed_to_the_runner(client, runner, monkeypatch):
+    """Belt and braces: the runner must not pick up a code for a flow whose
+    verifier is already dead — it can only fail, slowly."""
+    from django.utils import timezone
+
+    from apps.harness import services
+
+    _post(client, _base(runner))
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+    _post(client, f"{_base(runner)}/code", {"code": "the-code"})
+
+    stale = timezone.now() + dt.timedelta(seconds=services.MINT_TTL_SECONDS + 60)
+    monkeypatch.setattr(timezone, "now", lambda: stale)
+    assert client.get(f"{_base(runner)}/claim").json()["mint"] is None
+
+
+def test_a_fresh_sign_in_is_not_expired(client, runner):
+    """The guard must not fire on the ordinary case."""
+    _post(client, _base(runner))
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+    assert client.get(_base(runner)).json()["status"] == "awaiting_code"

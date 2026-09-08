@@ -110,17 +110,19 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
     <section className="rounded-md border border-border p-3" data-testid="runner-reauth">
       <div className="flex items-baseline justify-between gap-3">
         <h4 className="text-sm font-semibold">Sign in to Claude</h4>
-        {idle && (
-          <button
-            type="button"
-            onClick={start}
-            disabled={busy}
-            data-testid="reauth-start"
-            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-          >
-            {status === 'done' || status === 'failed' ? 'Sign in again' : 'Start sign-in'}
-          </button>
-        )}
+        {/* ALWAYS offered, not only when idle. A link is good for minutes, so a
+            sign-in left half-done is the ordinary case — and with the button
+            hidden mid-flight, a stale link was a dead end with nothing to click.
+            That is exactly how a 68-minute-old link got used on 2026-09-08. */}
+        <button
+          type="button"
+          onClick={start}
+          disabled={busy}
+          data-testid="reauth-start"
+          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          {idle ? (status ? 'Sign in again' : 'Start sign-in') : 'Start again'}
+        </button>
       </div>
 
       <p className="mt-1 text-xs text-muted-foreground">
@@ -139,10 +141,11 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
       {/* A runner that never picks the request up is the common real failure —
           it is, after all, a box we already suspect is unhealthy. Say that,
           rather than spinning: the operator's next move is a different one. */}
-      {status === 'requested' && waitedOut && (
+      {waitingOnRunner && waitedOut && (
         <p className="mt-2 text-sm text-destructive" data-testid="reauth-stalled">
-          The runner hasn&rsquo;t picked this up. It may be offline &mdash; check it is
-          running, then start again.
+          {status === 'requested'
+            ? 'The runner hasn\u2019t picked this up. It may be offline \u2014 check it is running, then start again.'
+            : 'The runner is taking longer than expected to finish. If it does not resolve, start again.'}
         </p>
       )}
 
@@ -159,7 +162,8 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
           </a>
           <p className="text-xs text-muted-foreground">
             Sign in as the account whose subscription this runner uses, then copy the
-            code it shows you and paste it here.
+            code it shows you and paste it here. <strong>Do it now</strong> &mdash; the
+            link is only good for a few minutes.
           </p>
           <div className="flex gap-2">
             <input
