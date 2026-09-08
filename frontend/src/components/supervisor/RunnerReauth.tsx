@@ -30,6 +30,16 @@ import {
 const WAIT_LIMIT_MS = 90_000
 const POLL_MS = 3_000
 
+/* Outcomes are NOT persisted across visits.
+ *
+ * The newest mint is kept forever, so rendering its outcome unconditionally
+ * turned a sign-in abandoned at 14:39 into a red error greeting the next
+ * visitor an hour later, above a perfectly healthy box. A time window was the
+ * first fix and it was still too clever: what an operator wants here is the
+ * CURRENT state and a way in — not a verdict on an attempt they have no memory
+ * of. So an outcome shows only when it happened in front of you, in this visit.
+ */
+
 export function RunnerReauth({ runnerId, onSignedIn }: {
   runnerId: string
   /** Lets the parent refresh its masked credential status once a token lands. */
@@ -41,6 +51,9 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   const [error, setError] = useState<string | null>(null)
   const [waitedOut, setWaitedOut] = useState(false)
   const startedWaiting = useRef<number | null>(null)
+  /** Set when the operator starts or submits here — never by a poll. It is what
+   *  separates "this failed in front of me" from "this row is old". */
+  const actedThisVisit = useRef(false)
   const status = mint?.status
 
   const refresh = useCallback(async () => {
@@ -104,6 +117,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   }
 
   const start = () => run(async () => {
+    actedThisVisit.current = true
     setCode('')
     setWaitedOut(false)
     startedWaiting.current = null
@@ -111,6 +125,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   })
 
   const submit = () => run(async () => {
+    actedThisVisit.current = true
     const m = await submitRunnerMintCode(runnerId, code)
     setCode('')
     onSignedIn?.()
@@ -120,7 +135,11 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   // Narrowed through `mint` itself rather than a hoisted `mint?.status`: the
   // optional chain reads fine but does not narrow, so every `mint.` below then
   // needs a non-null assertion. `tsc -b` catches that; `tsc --noEmit` does not.
-  const idle = !mint || status === 'done' || status === 'failed'
+  const settled = status === 'done' || status === 'failed'
+  // Did this outcome happen while the operator was watching? Only then is it
+  // theirs to read. A page opened cold shows the live state and a button.
+  const outcomeIsFresh = settled && actedThisVisit.current
+  const idle = !mint || settled
 
   return (
     <section className="rounded-md border border-border p-3" data-testid="runner-reauth">
@@ -137,7 +156,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
           data-testid="reauth-start"
           className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
         >
-          {idle ? (status ? 'Sign in again' : 'Start sign-in') : 'Start again'}
+          {!idle ? 'Start again' : outcomeIsFresh ? 'Sign in again' : 'Start sign-in'}
         </button>
       </div>
 
@@ -208,13 +227,13 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
         </p>
       )}
 
-      {status === 'done' && (
+      {status === 'done' && outcomeIsFresh && (
         <p className="mt-2 text-sm text-emerald-600" data-testid="reauth-done">
           Signed in. The runner is using the new token.
         </p>
       )}
 
-      {mint !== null && mint.status === 'failed' && (
+      {mint !== null && mint.status === 'failed' && outcomeIsFresh && (
         <p className="mt-2 text-sm text-destructive" data-testid="reauth-failed">
           {mint.detail || 'The sign-in did not complete.'}
         </p>
