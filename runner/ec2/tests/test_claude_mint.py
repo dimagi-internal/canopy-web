@@ -88,3 +88,49 @@ def test_an_api_key_is_not_a_setup_token(cm):
 def test_no_token_while_the_flow_is_still_running(cm, raw):
     """The authorize-URL screen must not read as a completed mint."""
     assert cm.extract_token(raw) is None
+
+
+# ── the truncation that shipped, and why the fixture missed it ─────────────
+#
+# The first live run stored an 80-character URL — exactly the terminal width.
+# `_pump` returns on the FIRST match, and on a real box the visible copy's first
+# WRAPPED line lands in the buffer before the OSC-8 payload carrying the whole
+# URL does. The human got "Invalid OAuth Request / Missing redirect_uri".
+#
+# The fixture could not catch it: it holds the COMPLETE output, and the parser
+# was only ever asked about a finished buffer. A stream is not a buffer.
+
+_TRUNCATED = (
+    b"https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88"
+)
+
+
+def test_a_wrapped_first_line_is_not_an_answer(cm):
+    """80 chars, cut mid-client_id. It parses as a URL and is useless as one."""
+    assert cm.extract_authorize_url(_TRUNCATED) is None
+
+
+def test_a_url_missing_any_required_parameter_is_rejected(cm, raw):
+    """Acceptance is semantic, not "does it look like a URL" — the flow needs
+    every one of these, and a partial read can drop any of them."""
+    full = cm.extract_authorize_url(raw)
+    assert full is not None
+    for param in ("client_id", "response_type", "redirect_uri",
+                  "code_challenge", "code_challenge_method", "state"):
+        assert f"{param}=" in full
+        # Chop the URL just before this parameter and it must stop being valid.
+        assert cm.extract_authorize_url(full[:full.index(f"{param}=")].encode()) is None
+
+
+def test_the_url_is_recovered_progressively_not_just_from_a_finished_buffer(cm, raw):
+    """Feed the capture one chunk at a time, as a pty actually delivers it. The
+    parser must answer None until the whole URL is present, then the full one —
+    never a prefix of it."""
+    seen = None
+    for end in range(0, len(raw) + 1, 64):
+        got = cm.extract_authorize_url(raw[:end])
+        if got is not None:
+            seen = got
+            for param in ("redirect_uri", "code_challenge_method", "state"):
+                assert f"{param}=" in got, f"answered a URL missing {param}"
+    assert seen == cm.extract_authorize_url(raw)
