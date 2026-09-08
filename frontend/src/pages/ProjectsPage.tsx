@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { type Project, projectsApi } from '@/api/projects'
+import { relativeAge } from '@/lib/relativeAge'
 import {
   type Insight,
   insightsApi,
@@ -26,16 +27,13 @@ const HYGIENE_ACTIONS: Array<{ key: string; label: string }> = [
   { key: 'canopy:pm-scout', label: 'pm-scout' },
 ]
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const minutes = Math.floor(diff / 60000)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}
+// This page had its own third copy of "how long ago", and it was the one that
+// fell back to `toLocaleDateString()` past a week — which is how the freshness
+// line read "Refreshed 5/30/2026": an ambiguous absolute date, in a US format,
+// sitting among relative times everywhere else, hiding the fact that it was 101
+// days old. `relativeAge` keeps climbing (d → w → mo → y) so the age stays
+// legible instead of turning into a date the reader has to subtract.
+const relativeTime = (iso: string): string => relativeAge(iso)
 
 // A project is considered stale (and dropped behind the "Show stale" toggle)
 // if its DB status is `stale` or `archived`, OR if its most recent summary is
@@ -162,9 +160,14 @@ function PrivateBadge() {
 function TopThreeHero({
   insights,
   onActivate,
+  knownSlugs,
 }: {
   insights: Insight[]
   onActivate: (slug: string) => void
+  /** Slugs the CURRENT workspace actually has a project for. Insights are
+   *  user-scoped by design (cross-portfolio) while projects are tenant-scoped,
+   *  so a row here can name a project this workspace cannot open. */
+  knownSlugs: ReadonlySet<string>
 }) {
   const top = rankInsights(insights, 3)
   const newest = newestInsightTimestamp(insights)
@@ -215,21 +218,49 @@ function TopThreeHero({
         {top.map((insight) => {
           const category = parseInsightCategory(insight.content)
           const body = parseInsightBody(insight.content)
-          return (
+          // `onActivate` expands a tile in THIS page's grid, so it can only do
+          // anything for a project this workspace has. Standing in a workspace
+          // with no projects, every row still rendered a hover state and an
+          // "Open →" that silently did nothing. A row we cannot open says so
+          // instead of pretending.
+          const openable = knownSlugs.has(insight.project_slug)
+          const inner = (
+            <>
+              <CategoryBadge category={category} />
+              <span className="text-[11px] text-muted-foreground shrink-0 sm:w-32 sm:truncate">
+                {insight.project_name}
+              </span>
+              {/* Two lines, not one: this is the day's top item and the single
+                  clamped line cut mid-sentence, usually inside the clause that
+                  says what to do. */}
+              <span className="text-xs text-foreground-secondary line-clamp-2 flex-1 min-w-0">{body}</span>
+              <span
+                className={`text-[11px] shrink-0 ${
+                  openable ? 'text-muted-foreground group-hover:text-primary transition-colors' : 'text-muted-foreground'
+                }`}
+              >
+                {openable ? 'Open →' : 'other workspace'}
+              </span>
+            </>
+          )
+          const shared =
+            'w-full flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 text-left border rounded-lg px-3 py-2'
+          return openable ? (
             <button
               key={insight.id}
               onClick={() => onActivate(insight.project_slug)}
-              className="w-full flex items-center gap-3 text-left bg-background/40 hover:bg-background/70 border border-border hover:border-input rounded-lg px-3 py-2 transition-colors group"
+              className={`${shared} min-h-11 sm:min-h-0 bg-background/40 hover:bg-background/70 border-border hover:border-input transition-colors group`}
             >
-              <CategoryBadge category={category} />
-              <span className="text-[11px] text-muted-foreground shrink-0 w-32 truncate">
-                {insight.project_name}
-              </span>
-              <span className="text-xs text-foreground-secondary truncate flex-1">{body}</span>
-              <span className="text-[11px] text-muted-foreground group-hover:text-primary transition-colors shrink-0">
-                Open →
-              </span>
+              {inner}
             </button>
+          ) : (
+            <div
+              key={insight.id}
+              title={`${insight.project_name} is not in this workspace — open it from the workspace that has it, or from /insights.`}
+              className={`${shared} bg-background/20 border-border/60`}
+            >
+              {inner}
+            </div>
           )
         })}
       </div>
@@ -658,7 +689,28 @@ export function ProjectsPage() {
         </span>
       </div>
 
-      <TopThreeHero insights={allInsights} onActivate={expand} />
+      <TopThreeHero
+        insights={allInsights}
+        onActivate={expand}
+        knownSlugs={new Set(projects.map((p) => p.slug))}
+      />
+
+      {/* The landing page had no empty state, so a workspace with no projects
+          rendered "0 projects" as a badge directly above a hero full of project
+          rows — the front door contradicting itself, with nothing saying why.
+          Insights are user-scoped on purpose (they span the portfolio); projects
+          are tenant-scoped. That is the sentence the reader needed. */}
+      {!loading && projects.length === 0 && (
+        <div className="mb-6 rounded-xl border border-border bg-card px-5 py-6">
+          <h2 className="text-sm font-semibold text-foreground">No projects in this workspace</h2>
+          <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted-foreground">
+            Projects belong to a workspace; insights are yours and span all of them, which is why
+            the list above can name work that lives elsewhere. Switch workspace in the header to
+            reach those, or run <code className="rounded bg-muted px-1 py-0.5 text-foreground-secondary">canopy:portfolio-review</code>{' '}
+            to seed this one.
+          </p>
+        </div>
+      )}
 
       <LayoutGroup>
         {/* Stack of expanded cards at the top */}

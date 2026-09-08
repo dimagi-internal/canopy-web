@@ -4,6 +4,11 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "../lib/cn"
 
 const buttonVariants = cva(
+  // Every size variant sets a fixed height (default h-8, sm h-7, xs h-6), all of
+  // them below the 44px touch minimum. Rather than teach each variant about
+  // touch, the floor lives here once and lifts off at `sm`, where a pointer is
+  // precise and the density is the point.
+  "min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 " +
   "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {

@@ -181,7 +181,7 @@ function FilterRow({ label, value, options, onChange }: {
     <label className="flex items-center gap-1">
       <span className="text-muted-foreground">{label}</span>
       <select
-        className="rounded border border-input bg-input px-1.5 py-1 text-foreground"
+        className="min-h-11 rounded border border-input bg-input px-1.5 py-1 text-foreground sm:min-h-0"
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
       >

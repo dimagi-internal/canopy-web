@@ -89,7 +89,7 @@ function UserMenu() {
         type="button"
         onClick={() => setOpen(!open)}
         aria-label="Account menu"
-        className="flex items-center gap-2 rounded-full border border-border bg-card pl-1 pr-3 py-1 hover:bg-muted"
+        className="flex min-h-11 items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-3 hover:bg-muted sm:min-h-0"
       >
         {auth.user.avatar_url ? (
           <img src={auth.user.avatar_url} alt="" className="h-6 w-6 rounded-full" />
@@ -189,7 +189,7 @@ function WorkspaceSwitcher() {
   return (
     <select
       aria-label="Workspace"
-      className="bg-input border border-input text-foreground text-[13px] rounded px-2 py-1"
+      className="min-h-11 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
       value={active ?? ''}
       onChange={(e) => navigate(`/w/${e.target.value}/agents`)}
     >
@@ -271,7 +271,7 @@ function AppShell() {
       <header className="border-b border-border bg-background relative">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           {isAuthed ? (
-            <Link to="/" className="text-lg font-semibold text-foreground shrink-0">Canopy<span className="text-primary">.</span></Link>
+            <Link to="/" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0">Canopy<span className="text-primary">.</span></Link>
           ) : (
             <span className="text-lg font-semibold text-foreground shrink-0">Canopy<span className="text-primary">.</span></span>
           )}
@@ -325,7 +325,7 @@ function AppShell() {
               onClick={() => setMobileOpen((o) => !o)}
               aria-label="Toggle navigation menu"
               aria-expanded={mobileOpen}
-              className="md:hidden -mr-1 p-2 rounded text-foreground-secondary hover:text-foreground-secondary hover:bg-card"
+              className="-mr-1 flex min-h-11 min-w-11 items-center justify-center rounded text-foreground-secondary hover:bg-card hover:text-foreground-secondary md:hidden"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 {mobileOpen ? (
@@ -393,7 +393,11 @@ function AppShell() {
         // persistent left rail + wide main. The page owns its own scroll.
         <main className="h-[calc(100vh-53px)]"><Outlet /></main>
       ) : (
-        <main className="mx-auto max-w-7xl px-6 py-8"><Outlet /></main>
+        // `px-6` unconditionally, on top of the `p-6` several pages set for
+        // themselves, spent 96px of a 375px screen on padding — a quarter of the
+        // width, before any content. The gutter now scales with the viewport;
+        // the header above already did this.
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8"><Outlet /></main>
       )}
     </div>
   )

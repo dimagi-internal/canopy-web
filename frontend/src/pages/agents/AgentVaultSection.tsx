@@ -79,7 +79,7 @@ export function AgentVaultSection({ slug }: { slug: string }) {
             value={vault}
             onChange={(e) => setVault(e.target.value)}
             placeholder="Agent-Ace"
-            className="w-44 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground"
+            className="min-h-11 w-full sm:min-h-0 sm:w-44 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground"
           />
           <label className="text-[12px] text-muted-foreground" htmlFor="vault-key">
             Service key
@@ -91,19 +91,19 @@ export function AgentVaultSection({ slug }: { slug: string }) {
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder={keySet ? 'set — paste to rotate' : 'paste to set'}
-            className="w-52 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground"
+            className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground sm:min-h-0 sm:w-52"
           />
           <button
             type="button"
             onClick={() => void save()}
             disabled={busy}
-            className="ml-auto rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
+            className="ml-auto min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
           >
             Save
           </button>
         </div>
 
-        <p className="mt-2 text-[11px] text-foreground-subtle">
+        <p className="mt-2 text-[11px] text-muted-foreground">
           A service account scoped to this one vault. <strong>The runner uses it</strong> — canopy-web
           holds it and hands it to a runner this agent routes to, and never resolves secrets itself.
           Encrypted at rest, never returned to a browser.

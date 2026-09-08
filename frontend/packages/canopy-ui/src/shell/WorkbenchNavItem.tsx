@@ -12,8 +12,10 @@ export function workbenchNavItemClass({
     variant === 'neutral'
       ? 'bg-accent border-transparent text-foreground font-medium'
       : 'bg-primary/10 border-primary/30 text-primary font-medium'
+  // `min-h-11` below `sm` is the 44px touch minimum; from `sm` up the rail keeps
+  // its original density, where the pointer is precise and vertical space is dear.
   return cn(
-    'flex items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors',
+    'flex min-h-11 items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors sm:min-h-0',
     active
       ? activeClass
       : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground',

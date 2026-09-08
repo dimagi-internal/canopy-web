@@ -161,7 +161,16 @@ export default function SupervisorPage(): JSX.Element {
     setSearchParams(value === 'inbox' ? {} : { tab: value })
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4" data-testid="supervisor-page">
+    // `max-w-2xl` (672px) is the right measure for the Inbox, whose cards are
+    // prose you read. It was applied to the whole page, so on a 1440 laptop —
+    // one of this surface's three declared consumers, alongside the phone PWA
+    // and the menubar — the runner and session tables also sat in a 672px column
+    // with the right half of the window empty. Prose keeps its measure; the
+    // tables get the room from `lg` up.
+    <div
+      className={`mx-auto flex w-full flex-col gap-4 p-4 ${tab === 'inbox' ? 'max-w-2xl' : 'max-w-2xl lg:max-w-5xl'}`}
+      data-testid="supervisor-page"
+    >
       <header>
         <h1 className="text-lg font-semibold text-foreground">Supervisor</h1>
         <p className="mt-0.5 text-[12px] text-muted-foreground">Your fleet, and what it needs from you.</p>

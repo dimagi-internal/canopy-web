@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import {
@@ -16,6 +16,7 @@ import { listRunners, type RunnerOut } from '@/api/harness'
 import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
+import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeIntent, closeResultMessage } from './closeAction'
 import {
@@ -30,6 +31,37 @@ import {
 type PendingTarget =
   | { kind: 'agent'; agent: AgentOut }
   | { kind: 'project'; project: ProjectSlug }
+
+/** An independent on/off filter — deliberately shaped unlike the sort segments
+ *  beside it, so the row does not read as four options where you pick one. */
+function FilterToggle({
+  checked,
+  onChange,
+  testId,
+  children,
+}: {
+  checked: boolean
+  onChange: () => void
+  testId?: string
+  children: ReactNode
+}) {
+  return (
+    <label
+      className={`inline-flex min-h-11 cursor-pointer items-center gap-1.5 sm:min-h-0 ${
+        checked ? 'text-foreground' : 'text-muted-foreground hover:text-foreground-secondary'
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        data-testid={testId}
+        className="h-3.5 w-3.5 shrink-0 accent-primary"
+      />
+      {children}
+    </label>
+  )
+}
 
 /**
  * Reusable, CROSS-WORKSPACE chat session surface: a findable list of your chat
@@ -357,50 +389,46 @@ export function ChatSessionsPanel({
           held back, the sort row would never render and its own reveal toggle
           would be unreachable — a chat you cannot get back to. */}
       {(sessions.length > 1 || showArchived || parked.length > 0 || showOffline) && (
-        <div className="flex items-center gap-1 pb-2 text-xs">
-          <span className="mr-1 text-muted-foreground">Sort</span>
-          {(['time', 'project'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setSort(m)}
-              aria-pressed={sort === m}
-              className={
-                sort === m
-                  ? 'rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
-                  : 'rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
-              }
-            >
-              {m === 'time' ? 'Recent' : 'Project'}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowArchived((v) => !v)}
-            aria-pressed={showArchived}
-            className={
-              showArchived
-                ? 'ml-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
-                : 'ml-2 rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
-            }
-          >
-            Show archived
-          </button>
-          {(parked.length > 0 || showOffline) && (
-            <button
-              type="button"
-              onClick={() => setShowOffline((v) => !v)}
-              aria-pressed={showOffline}
-              data-testid="toggle-offline"
-              className={
-                showOffline
-                  ? 'rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary'
-                  : 'rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-muted'
-              }
-            >
-              Show offline
-            </button>
-          )}
+        // Four identical pills in a row, but the first two are a choose-ONE sort
+        // and the last two are independent switches — a difference carried only
+        // by the word "Sort" at the far left, which governs half the row. The
+        // sort is now one segmented control with a shared border (visibly one
+        // widget, one choice); the filters are checkboxes that say on or off.
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Sort</span>
+            <div className="inline-flex overflow-hidden rounded-md border border-border" role="group">
+              {(['time', 'project'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setSort(m)}
+                  aria-pressed={sort === m}
+                  className={`min-h-11 px-2.5 py-0.5 sm:min-h-0 ${
+                    sort === m
+                      ? 'bg-primary/10 font-medium text-primary'
+                      : 'text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {m === 'time' ? 'Recent' : 'Project'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <FilterToggle checked={showArchived} onChange={() => setShowArchived((v) => !v)}>
+              Show archived
+            </FilterToggle>
+            {(parked.length > 0 || showOffline) && (
+              <FilterToggle
+                checked={showOffline}
+                onChange={() => setShowOffline((v) => !v)}
+                testId="toggle-offline"
+              >
+                Show offline
+              </FilterToggle>
+            )}
+          </div>
         </div>
       )}
 
@@ -442,8 +470,11 @@ export function ChatSessionsPanel({
                     }`}
                   >
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {s.title?.trim() || 'Untitled chat'}
+                      <div
+                        className="truncate text-sm font-medium text-foreground"
+                        title={s.title?.trim() || undefined}
+                      >
+                        {sessionDisplayTitle(s.title) || 'Untitled chat'}
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
                         {label} · {s.workspace}
@@ -474,8 +505,17 @@ export function ChatSessionsPanel({
                           running
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                          idle
+                        </span>
                       )}
+                      {/* The age used to REPLACE the status, so one slot held two
+                          different kinds of fact — five rows read "running" and
+                          the sixth read "6h ago", and the column could not be
+                          scanned without reading each value to learn which
+                          question it was answering. Status always; age alongside. */}
+                      <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
                       {s.runner_name && (
                         <span className="text-muted-foreground">
                           {s.runner_name}
@@ -512,9 +552,13 @@ export function ChatSessionsPanel({
           type="button"
           onClick={() => setShowOffline(true)}
           data-testid="parked-summary"
-          className="self-start py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+          // It always revealed them on click; it just did not look like it could.
+          // Set smaller and dimmer than the rows it withholds, with no border or
+          // underline, it read as a caption explaining an absence rather than a
+          // control that undoes it — while hiding 10 of 16 chats.
+          className="mt-1 min-h-11 self-start rounded-md border border-dashed border-border px-2 py-1.5 text-xs text-foreground-secondary transition-colors hover:border-input hover:bg-muted hover:text-foreground sm:min-h-0"
         >
-          {parkedSummary(parked)}
+          {parkedSummary(parked)} <span className="text-primary">· Show them</span>
         </button>
       )}
     </div>

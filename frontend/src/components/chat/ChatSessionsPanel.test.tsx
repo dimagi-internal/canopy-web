@@ -318,7 +318,12 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
 
     expect(await screen.findByText('Live one')).toBeTruthy()
     expect(screen.queryByText('Parked one')).toBeNull()
-    expect(screen.getByTestId('parked-summary').textContent).toBe('1 hidden — runner paused')
+    const summary = screen.getByTestId('parked-summary')
+    expect(summary.textContent).toContain('1 hidden — runner paused')
+    // …and it has to LOOK like the control it always was. Set as dim caption
+    // text it read as an explanation of an absence rather than the way to undo
+    // it, while withholding most of the list.
+    expect(summary.textContent).toContain('Show them')
   })
 
   it('reveals them dimmed, with the reason on the row, when Show offline is on', async () => {

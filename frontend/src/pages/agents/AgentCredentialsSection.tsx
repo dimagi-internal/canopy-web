@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { headline, sections } from '@/pages/agents/agentCredentials'
+import { relativeAge } from '@/lib/relativeAge'
 import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
@@ -122,9 +123,9 @@ export function AgentCredentialsSection() {
         </span>
       )}
       {r.set && (
-        <span className="text-[11px] text-foreground-subtle">
+        <span className="text-[11px] text-muted-foreground">
           {r.source}
-          {r.updated_at ? ` · ${new Date(r.updated_at).toLocaleDateString()}` : ''}
+          {r.updated_at ? ` · ${relativeAge(r.updated_at)}` : ''}
           {r.updated_by_email ? ` · ${r.updated_by_email}` : ''}
         </span>
       )}
@@ -136,23 +137,33 @@ export function AgentCredentialsSection() {
         onChange={(e) => setDraft((d) => ({ ...d, [r.name]: e.target.value }))}
         placeholder={r.set ? 'rotate…' : 'store here instead'}
         aria-label={`Value for ${r.name}`}
-        className="ml-auto w-56 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground"
+        className="ml-auto min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0 sm:w-56"
       />
       <button
         type="button"
         onClick={() => void save(r.name)}
         disabled={busy || !(draft[r.name] ?? '').trim()}
-        className="rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
+        className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
       >
         Save
       </button>
       {r.set && (
+        // Destroys a secret nothing else holds — canopy-web is the store, so
+        // there is no undo and no second copy to restore from. It was a 20×24
+        // target whose only description was the glyph: `title` now names the
+        // consequence the way the chat list's close button does, the hit area
+        // clears 44px on touch, and it asks first.
         <button
           type="button"
-          onClick={() => void remove(r.name)}
+          onClick={() => {
+            if (window.confirm(`Delete the stored value for "${r.name}"? This cannot be undone.`)) {
+              void remove(r.name)
+            }
+          }}
           disabled={busy}
-          aria-label={`Remove ${r.name}`}
-          className="px-1 text-muted-foreground hover:text-destructive disabled:opacity-40"
+          aria-label={`Delete the stored value for ${r.name}`}
+          title={`Delete the stored value for "${r.name}" (cannot be undone)`}
+          className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40 sm:min-h-0 sm:h-7 sm:w-7"
         >
           ✕
         </button>
@@ -207,7 +218,7 @@ export function AgentCredentialsSection() {
                   type="button"
                   onClick={() => void connectMailbox()}
                   disabled={busy}
-                  className="ml-auto rounded-md bg-primary px-2 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
+                  className="ml-auto min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
                 >
                   Connect Google mailbox
                 </button>
@@ -241,7 +252,7 @@ export function AgentCredentialsSection() {
               <button
                 type="button"
                 onClick={() => setShowVault((v) => !v)}
-                className="text-[12px] text-muted-foreground underline-offset-2 hover:underline"
+                className="inline-flex min-h-11 items-center text-[12px] text-muted-foreground underline-offset-2 hover:underline sm:min-h-0"
                 data-testid="toggle-vault-refs"
                 aria-expanded={showVault}
               >
@@ -269,7 +280,7 @@ export function AgentCredentialsSection() {
         </p>
       )}
 
-      <p className="mt-4 text-[11px] text-foreground-subtle">
+      <p className="mt-4 text-[11px] text-muted-foreground">
         Values are write-only: encrypted at rest, and readable only by a runner this agent routes to.
         This page can show whether a secret is set, never what is in it.
       </p>

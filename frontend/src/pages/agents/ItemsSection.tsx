@@ -173,9 +173,18 @@ export function ItemsSection(): JSX.Element {
         </p>
       </header>
       {primary.length === 0 ? (
-        <p className="rounded-lg border border-border bg-card p-3 text-[13px] text-muted-foreground">
-          {showAll || settled.length === 0 ? 'Nothing here.' : 'Nothing waiting on you.'}
-        </p>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-[13px] text-foreground">
+            {showAll || settled.length === 0 ? 'No items yet' : 'Nothing waiting on you'}
+          </p>
+          {/* "Nothing here." is accurate but tells a first-time reader nothing
+              about what would be here, or what puts it there. */}
+          <p className="mt-1 text-[12px] leading-snug text-muted-foreground">
+            {showAll || settled.length === 0
+              ? `Items are the questions and reviews ${agent.name} raises for a human. They appear here as it works.`
+              : 'Everything raised so far has been decided. Settled items are below.'}
+          </p>
+        </div>
       ) : (
         primary.map(renderCard)
       )}
