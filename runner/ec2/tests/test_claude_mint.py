@@ -134,3 +134,38 @@ def test_the_url_is_recovered_progressively_not_just_from_a_finished_buffer(cm, 
             for param in ("redirect_uri", "code_challenge_method", "state"):
                 assert f"{param}=" in got, f"answered a URL missing {param}"
     assert seen == cm.extract_authorize_url(raw)
+
+
+# ── reporting what the CLI actually said ───────────────────────────────────
+#
+# The first two live failures were debugged by GUESSING — staleness, then a
+# mismatched session — and both theories were wrong. The runner knew exactly
+# what `setup-token` had printed and discarded it, reporting only that no token
+# appeared. These pin the fix: say what it said.
+
+def test_the_failure_reports_the_clis_own_words(cm):
+    out = b"\x1b[2mPasting code\x1b[0m\r\nInvalid authorization code. Please try again.\r\n"
+    assert "Invalid authorization code" in cm._diagnostic_tail(out)
+
+
+def test_the_tail_never_carries_a_token(cm):
+    """Diagnostic output is shown to a human on a web page — it is not a place
+    to spill the credential we just minted."""
+    out = b"Success! Your token:\r\nsk-ant-oat01-SECRETVALUE\r\ndone\r\n"
+    tail = cm._diagnostic_tail(out)
+    assert "sk-ant-oat01-SECRETVALUE" not in tail
+    assert "<redacted>" in tail
+
+
+def test_spinner_frames_do_not_crowd_out_the_message(cm):
+    """A TUI redraws constantly; without de-duplication the tail is all spinner
+    and none of the sentence that matters."""
+    noise = b"".join(b"\r\n" + f.encode() for f in "✦✳✶✻✽" * 40)
+    out = noise + b"\r\nCode expired. Start a new sign-in.\r\n"
+    tail = cm._diagnostic_tail(out)
+    assert "Code expired" in tail
+
+
+def test_the_tail_is_bounded(cm, raw):
+    """It rides in a failure detail that a human reads, not a log."""
+    assert len(cm._diagnostic_tail(raw)) <= 600
