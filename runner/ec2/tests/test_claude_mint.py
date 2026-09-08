@@ -6,10 +6,12 @@ minted). It is the fixture and not a hand-written string on purpose: the exact
 bytes — OSC-8 hyperlink wrappers, spinner frames, a URL wrapped mid-token at the
 terminal width — are what the parser has to survive, and none of them are
 guessable from the outside.
+
+These live in cloud_runner.py rather than a module of their own: the deploy
+ships that file ALONE, so a sibling module is never delivered to a box.
 """
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 
 import pytest
@@ -18,20 +20,12 @@ _HERE = pathlib.Path(__file__).resolve().parent
 _FIXTURE = _HERE / "fixtures" / "setup_token_pty.bin"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location(
-        "claude_mint", _HERE.parent / "claude_mint.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+@pytest.fixture()
+def cm(cloud_runner):
+    return cloud_runner
 
 
-@pytest.fixture(scope="module")
-def cm():
-    return _load()
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def raw() -> bytes:
     return _FIXTURE.read_bytes()
 

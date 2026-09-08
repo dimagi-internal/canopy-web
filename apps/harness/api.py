@@ -42,6 +42,11 @@ from .schemas import (
     RunnerCredentialIn,
     RunnerCredentialOut,
     RunnerCredentialStatusOut,
+    RunnerMintClaimOut,
+    RunnerMintCodeIn,
+    RunnerMintOut,
+    RunnerMintResultIn,
+    RunnerMintUrlIn,
     RunnerDrillOut,
     RunnerIn,
     RunnerOut,
@@ -385,6 +390,93 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     runner. Laptop/emdash runners never call this (they use ambient auth)."""
     runner = _runner_or_404(request, runner_id)
     return RunnerCredentialOut(**services.get_runner_credential(runner))
+
+
+@router.post("/runners/{runner_id}/mint", response=RunnerMintOut,
+             summary="Ask a runner to start a browser sign-in")
+def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
+    """Begin re-authenticating this runner's Claude subscription from a browser.
+
+    The runner picks this up on its next poll, runs the real `claude setup-token`
+    under a pty, and posts back the URL a human must open. canopy-web is only the
+    relay: it never holds the PKCE verifier and is never the OAuth client.
+
+    Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
+    closed tab, a runner restart mid-flow) must not block every later attempt.
+    """
+    runner = _runner_or_404(request, runner_id)
+    return services.start_runner_mint(runner, requested_by=request.user)
+
+
+@router.get("/runners/{runner_id}/mint", response=RunnerMintOut | None,
+            summary="The current sign-in attempt, if any")
+def get_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
+    """What the waiting human's screen renders: whether the URL is up yet, and
+    how the attempt ended. Null when no sign-in has ever been started."""
+    runner = _runner_or_404(request, runner_id)
+    return services.current_runner_mint(runner)
+
+
+@router.get("/runners/{runner_id}/mint/claim", response=RunnerMintClaimOut,
+            summary="Work the RUNNER owes on a sign-in (polled)")
+def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
+    """Polled on the runner's existing tick, and polled rather than pushed for
+    the same reason as `menu-answers`: a control frame published while the
+    runner's WS channel is down reaches a group with no consumer and is silently
+    dropped, while the runner keeps heartbeating and reads ONLINE throughout.
+
+    Returns a row only when the runner owes work — asked to start, or handed a
+    code. While the ball is with the human (`awaiting_code`) this stays null, or
+    the runner would restart the CLI under a URL somebody is already using.
+
+    Reading a code CONSUMES it: an authorization code is spent on first use, so a
+    second delivery could only fail, and a used code left in the row would be a
+    credential nobody is accounting for.
+    """
+    runner = _runner_or_404(request, runner_id)
+    mint = services.claim_runner_mint(runner)
+    if mint is None:
+        return {"mint": None, "code": ""}
+    return {"mint": mint, "code": services.take_mint_code(mint)}
+
+
+@router.post("/runners/{runner_id}/mint/url", response=RunnerMintOut,
+             summary="The runner reports the URL a human must open")
+def post_runner_mint_url(request: HttpRequest, runner_id: uuid.UUID,
+                         payload: RunnerMintUrlIn):
+    runner = _runner_or_404(request, runner_id)
+    mint = services.current_runner_mint(runner)
+    if mint is None or mint.status in mint.FINISHED:
+        raise HttpError(409, "no sign-in is in progress for this runner")
+    return services.record_mint_url(mint, payload.url)
+
+
+@router.post("/runners/{runner_id}/mint/code", response=RunnerMintOut,
+             summary="A human submits the authorization code")
+def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
+                          payload: RunnerMintCodeIn):
+    """The one secret a human handles in this flow, and it is single-use."""
+    runner = _runner_or_404(request, runner_id)
+    mint = services.current_runner_mint(runner)
+    if mint is None or mint.status != mint.AWAITING_CODE:
+        raise HttpError(409, "this runner is not waiting for a code")
+    if not payload.code.strip():
+        raise HttpError(422, "the authorization code is empty")
+    return services.submit_mint_code(mint, payload.code)
+
+
+@router.post("/runners/{runner_id}/mint/result", response=RunnerMintOut,
+             summary="The runner reports the outcome (and delivers the token)")
+def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: RunnerMintResultIn):
+    """The minted token arrives HERE, never in the browser — it goes straight
+    into the encrypted credential bundle, so the only secret that ever reaches a
+    human's screen is the single-use authorization code."""
+    runner = _runner_or_404(request, runner_id)
+    mint = services.current_runner_mint(runner)
+    if mint is None:
+        raise HttpError(409, "no sign-in is in progress for this runner")
+    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
 
 
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")

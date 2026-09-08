@@ -90,6 +90,42 @@ export async function setRunnerCredential(
   return unwrap(res, 'setRunnerCredential')
 }
 
+/** One browser-driven re-authentication of a runner's Claude subscription. */
+export type RunnerMint = components['schemas']['RunnerMintOut']
+
+/** Ask a runner to start a sign-in. It runs the real `claude setup-token` under
+ *  a pty and posts back the URL a human must open — canopy-web is only the
+ *  relay, and never holds the PKCE verifier. Supersedes any stalled attempt. */
+export async function startRunnerMint(runnerId: string): Promise<RunnerMint> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/mint', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'startRunnerMint')
+}
+
+/** The current attempt, or null when none has been started. Polled while a
+ *  sign-in is in flight: the URL appears only once the runner has the CLI up. */
+export async function getRunnerMint(runnerId: string): Promise<RunnerMint | null> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/mint', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return (unwrap(res, 'getRunnerMint') as RunnerMint | null) ?? null
+}
+
+/** Hand back the code the human copied from Claude. Single-use: the runner
+ *  consumes it once, and the minted token comes home out-of-band — it never
+ *  passes through the browser. */
+export async function submitRunnerMintCode(
+  runnerId: string,
+  code: string,
+): Promise<RunnerMint> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/mint/code', {
+    params: { path: { runner_id: runnerId } },
+    body: { code },
+  })
+  return unwrap(res, 'submitRunnerMintCode')
+}
+
 export async function listUnclaimableTurns(): Promise<UnclaimableTurn[]> {
   const res = await apiV2.GET('/api/harness/turns/unclaimable')
   // Array.from for the same Readable<T> reason as listRunners above.

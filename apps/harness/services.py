@@ -2231,6 +2231,106 @@ def runner_credential_status(runner) -> dict:
         "has_op_sa_token": bool(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
     }
+# ---- Browser-driven re-authentication (RunnerMint) ------------------------
+def start_runner_mint(runner, *, requested_by=None):
+    """Ask a runner to begin a browser sign-in, superseding any unfinished one.
+
+    Superseding rather than refusing: a mint that stalled (the operator closed
+    the tab, the runner restarted mid-flow) would otherwise block every later
+    attempt, and "try again" is the only sensible response to a stuck sign-in.
+    The old row is marked failed rather than deleted so the history stays honest.
+    """
+    from .models import RunnerMint
+
+    RunnerMint.objects.filter(runner=runner).exclude(
+        status__in=RunnerMint.FINISHED
+    ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
+    return RunnerMint.objects.create(runner=runner, requested_by=requested_by)
+
+
+def current_runner_mint(runner):
+    """The mint worth showing or acting on, or None.
+
+    Only ever the newest: an older unfinished row cannot exist (start supersedes
+    them), and a finished one is history.
+    """
+    from .models import RunnerMint
+
+    return RunnerMint.objects.filter(runner=runner).order_by("-created_at").first()
+
+
+def claim_runner_mint(runner):
+    """The mint this runner should act on right now, or None.
+
+    Returns a row only in the two states where the RUNNER owes work — it has been
+    asked to start, or a human has handed back a code. In `awaiting_code` the ball
+    is with the human, and handing that back on every poll tick would have the
+    runner restart the CLI under a URL somebody is already signing in to.
+    """
+    from .models import RunnerMint
+
+    mint = current_runner_mint(runner)
+    if mint is None or mint.status not in (RunnerMint.REQUESTED, RunnerMint.COMPLETING):
+        return None
+    return mint
+
+
+def record_mint_url(mint, url: str):
+    """The runner has the CLI running and a URL for the human."""
+    from .models import RunnerMint
+
+    mint.authorize_url = url
+    mint.status = RunnerMint.AWAITING_CODE
+    mint.save(update_fields=["authorize_url", "status", "updated_at"])
+    return mint
+
+
+def submit_mint_code(mint, code: str):
+    """A human pasted the authorization code back."""
+    from .models import RunnerMint
+
+    mint.code = code.strip()
+    mint.status = RunnerMint.COMPLETING
+    mint.save(update_fields=["code", "status", "updated_at"])
+    return mint
+
+
+def take_mint_code(mint) -> str:
+    """Hand the code to the runner exactly once, then forget it.
+
+    An authorization code is spent on first use, so a second delivery can only
+    fail — and a used code sitting in a row is a credential nobody is accounting
+    for. Read-and-clear is the whole point of this being a function.
+    """
+    code = mint.code
+    if code:
+        mint.code = ""
+        mint.save(update_fields=["code", "updated_at"])
+    return code
+
+
+def finish_runner_mint(mint, *, token: str = "", detail: str = ""):
+    """The runner reports the outcome; on success the token lands in the bundle.
+
+    The token arrives HERE rather than in the browser on purpose: the only secret
+    a human ever handles in this flow is the single-use authorization code, and
+    the long-lived credential goes straight from the box into encrypted storage.
+    """
+    from .models import RunnerMint
+
+    if token:
+        set_runner_credential(mint.runner, claude_token=token,
+                              updated_by=mint.requested_by)
+        mint.status = RunnerMint.DONE
+        mint.detail = detail or "signed in"
+    else:
+        mint.status = RunnerMint.FAILED
+        mint.detail = detail or "the runner did not complete the sign-in"
+    mint.code = ""
+    mint.save(update_fields=["status", "detail", "code", "updated_at"])
+    return mint
+
+
 # ---------------------------------------------------------------------------
 # Schedule nags — an unattended occurrence becomes a real Item (not a projection)
 # ---------------------------------------------------------------------------

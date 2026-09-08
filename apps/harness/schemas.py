@@ -804,6 +804,48 @@ class RunnerCredentialOut(Schema):
     updated_at: dt.datetime | None = None
 
 
+class RunnerMintOut(Schema):
+    """A browser-driven re-authentication, as an OPERATOR sees it.
+
+    Deliberately carries no `code`: the authorization code is the human's to type
+    once, and echoing it back to a screen serves nothing and widens where it can
+    leak. The minted token never appears in any operator-facing shape at all.
+    """
+
+    id: uuid.UUID
+    status: str
+    authorize_url: str
+    detail: str
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class RunnerMintClaimOut(Schema):
+    """What the RUNNER polls for: the work it owes, and the code when there is one.
+
+    Null `mint` is the ordinary answer — no sign-in is in progress — so this is
+    cheap to poll on the tick the runner already runs.
+    """
+
+    mint: RunnerMintOut | None = None
+    code: str = ""
+
+
+class RunnerMintUrlIn(Schema):
+    url: str
+
+
+class RunnerMintCodeIn(Schema):
+    code: str
+
+
+class RunnerMintResultIn(Schema):
+    # Empty token = the attempt failed; `detail` says why, and is shown to the
+    # human who is sitting there waiting for it.
+    token: str = ""
+    detail: str = ""
+
+
 class RunnerCredentialStatusOut(Schema):
     """Masked view — booleans, never values. The POST response + any UI."""
 
