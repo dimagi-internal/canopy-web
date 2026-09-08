@@ -1584,6 +1584,34 @@ def _reported_project(s) -> str:
     return getattr(s, "project", "") or ""
 
 
+def _agent_for_project(project: str):
+    """The agent a reported emdash PROJECT belongs to, or None.
+
+    The wholesale sweep (`POST /runners/{id}/sessions`) reports every open task a
+    runner can see and carries NO agent, so canopy had nothing to attribute the
+    work with and fell back to the RUNNER's workspace. In practice every runner is
+    registered in `dimagi` while ace/ada/echo/hal all live in `connect`, so every
+    one of their sessions was filed under a tenant that does not contain the agent
+    it is about — readable by that tenant's members, and invisible to any lister
+    scoped to the agent's own. The feed also reported `agent: null` for all of
+    them, which is the same defect seen from the other side.
+
+    `project` IS the agent's repo by convention — the mapping
+    `Session.emdash_project` already states in reverse ("an agent chat leaves
+    project blank, but its worktree is still under the agent's own repo"). So a
+    project naming an agent is that agent's work, and the tenant follows from the
+    agent rather than from whichever machine happened to run it.
+
+    Returns None for a real repo checkout that is nobody's agent (canopy-web,
+    connect-labs). Those keep the runner's workspace, which is right for them.
+    """
+    from apps.agents.models import Agent
+
+    if not project:
+        return None
+    return Agent.objects.select_related("workspace").filter(slug=project).first()
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None
 ) -> int:
@@ -1701,10 +1729,24 @@ def replace_reported_sessions(
             if binding is None and project:
                 binding = by_key.filter(emdash_project="").first()
             if binding is None:
+                # Tenant AND agent follow the project when it names an agent —
+                # not the runner. A runner is a machine serving several agents
+                # across tenants, so "whose work is this" is a question its own
+                # workspace cannot answer.
+                owner = _agent_for_project(project)
                 session = Session.objects.create(
-                    workspace=workspace,
+                    agent=owner,
+                    # A session targets an agent XOR a project
+                    # (chat_session_not_agent_and_project), so the project is
+                    # cleared when an agent owns it. Nothing is lost:
+                    # `Session.emdash_project` returns the agent's slug in that
+                    # case, so the (project, task) pair the runner resolves a
+                    # transcript by is byte-identical either way — which is also
+                    # why RunnerBinding.emdash_project, the key the 10s report
+                    # loop reuses on, does not move.
+                    project=("" if owner else project),
+                    workspace=(owner.workspace if owner else workspace),
                     origin=Session.ORIGIN_RUNNER,
-                    project=project,
                     title=s.emdash_task,
                 )
                 binding = RunnerBinding(session=session, session_key=s.emdash_task)
