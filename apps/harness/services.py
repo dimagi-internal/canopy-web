@@ -2282,6 +2282,40 @@ def list_runner_admins(runner):
 
 
 # ---- Browser-driven re-authentication (RunnerMint) ------------------------
+#: How long a sign-in may sit unfinished before it is treated as dead.
+#:
+#: An authorize URL is not durable. Its PKCE `state` and challenge expire, and
+#: the `claude setup-token` process waiting on the box expires with them — so a
+#: link that LOOKS fine can be unusable. Measured 2026-09-08: a mint started at
+#: 17:56 and completed at 19:04 failed with "setup-token never printed a token",
+#: and the only clue that anything was wrong was the clock. Ten minutes is
+#: comfortably longer than the flow takes and comfortably shorter than the point
+#: at which it silently stops working.
+MINT_TTL_SECONDS = 600
+
+
+def _expire_if_stale(mint):
+    """Fail a mint that has aged out, so a dead link stops being offered as live.
+
+    Returns the mint either way — callers want the row, not a decision about
+    whether to look at it.
+    """
+    from django.utils import timezone
+
+    from .models import RunnerMint
+
+    if mint is None or mint.status in RunnerMint.FINISHED:
+        return mint
+    if (timezone.now() - mint.updated_at).total_seconds() <= MINT_TTL_SECONDS:
+        return mint
+    mint.status = RunnerMint.FAILED
+    mint.detail = ("This sign-in expired before it was finished — the link is only "
+                   "good for a few minutes. Start another one.")
+    mint.code = ""
+    mint.save(update_fields=["status", "detail", "code", "updated_at"])
+    return mint
+
+
 def start_runner_mint(runner, *, requested_by=None):
     """Ask a runner to begin a browser sign-in, superseding any unfinished one.
 
@@ -2306,7 +2340,8 @@ def current_runner_mint(runner):
     """
     from .models import RunnerMint
 
-    return RunnerMint.objects.filter(runner=runner).order_by("-created_at").first()
+    return _expire_if_stale(
+        RunnerMint.objects.filter(runner=runner).order_by("-created_at").first())
 
 
 def claim_runner_mint(runner):
