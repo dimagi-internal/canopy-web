@@ -616,3 +616,46 @@ def test_the_reuse_key_the_report_loop_uses_does_not_move():
     assert again.pk == first.pk, "the second report forked a new binding"
     assert again.session_id == first.session_id, "the second report forked a new session"
     assert again.emdash_project == "ace"
+
+
+def test_the_feed_names_the_agent_and_keeps_project_meaningful():
+    """The feed is what a consumer builds "find the active ACE runs" on, so it
+    has to say WHOSE run each one is.
+
+    It carried no `agent` field at all, which every consumer reads as
+    `agent: null` — indistinguishable from "known to belong to nobody". The only
+    signal was `project`, and once #694 attributed these rows to their agent the
+    XOR constraint necessarily cleared that column, so a field reading it
+    directly began answering "" for every agent-owned run. Strictly less than
+    before. `emdash_project` is the value that never moved.
+    """
+    from django.test import Client
+
+    from apps.agents.models import Agent
+
+    jj = _user("jj")
+    runner_ws = _ws("dimagi", jj)
+    agent_ws = _ws("connect", jj)
+    Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
+    runner = _runner(jj, runner_ws)
+    c = Client()
+    c.force_login(jj)
+
+    assert _report(c, runner.id, [
+        {"emdash_task": "ace-kmc-metrics", "project": "ace", "status": "in_progress",
+         "last_interacted_at": "2026-09-08T05:17:00Z"},
+        {"emdash_task": "ddd", "project": "canopy-web", "status": "in_progress",
+         "last_interacted_at": "2026-09-08T05:10:00Z"},
+    ]).status_code == 200
+
+    rows = {r["emdash_task"]: r for r in c.get("/api/harness/sessions").json()}
+
+    mine = rows["ace-kmc-metrics"]
+    assert mine["agent"] == "ace", "the feed must say whose run this is"
+    assert mine["project"] == "ace", "project stays meaningful via emdash_project"
+
+    # A repo checkout that is nobody's agent: null agent is the TRUE answer here,
+    # and the project is its own.
+    theirs = rows["ddd"]
+    assert theirs["agent"] is None
+    assert theirs["project"] == "canopy-web"

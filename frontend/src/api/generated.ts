@@ -9303,6 +9303,8 @@ export interface components {
             readonly emdash_task: string;
             /** Project */
             readonly project: string;
+            /** Agent */
+            readonly agent: string | null;
             /** Status */
             readonly status: string;
             /** Last Interacted At */
