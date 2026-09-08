@@ -90,6 +90,32 @@ describe('RunnerReauth', () => {
     }
   })
 
+  it('keeps polling after the wait limit, so a late failure still lands', async () => {
+    // The bug this pins: the poll callback hit `return` before refresh() once the
+    // wait limit passed, so after 90s the page stopped looking. A mint that
+    // failed four minutes in was never fetched, and the screen sat on
+    // "Finishing the sign-in on the runner…" indefinitely while the server had
+    // said `failed` the whole time. Reported 2026-09-08.
+    vi.useFakeTimers()
+    try {
+      api.getRunnerMint.mockResolvedValue(mint({ status: 'completing' }))
+      render(<RunnerReauth runnerId="r1" />)
+      await act(async () => { await Promise.resolve() })
+
+      await act(async () => { vi.advanceTimersByTime(95_000) })
+      const callsAfterLimit = api.getRunnerMint.mock.calls.length
+
+      api.getRunnerMint.mockResolvedValue(
+        mint({ status: 'failed', detail: 'the code was rejected' }))
+      await act(async () => { vi.advanceTimersByTime(30_000) })
+
+      expect(api.getRunnerMint.mock.calls.length).toBeGreaterThan(callsAfterLimit)
+      expect(screen.getByTestId('reauth-failed').textContent).toContain('the code was rejected')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reports a failed sign-in with the runner’s reason', async () => {
     api.getRunnerMint.mockResolvedValue(
       mint({ status: 'failed', detail: 'the code had expired' }))
