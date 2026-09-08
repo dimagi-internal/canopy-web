@@ -1,4 +1,5 @@
 import { registerSW } from 'virtual:pwa-register'
+import { createHiddenGate } from './applyWhenHidden'
 
 // Adopt new service workers — but never underneath a page someone is looking at.
 //
@@ -21,24 +22,10 @@ import { registerSW } from 'virtual:pwa-register'
 // is how the Sessions surface once got stuck on a pre-feature bundle.
 const UPDATE_INTERVAL_MS = 60_000
 
-/** Apply a waiting update only when the page is HIDDEN.
- *
- *  Reloading a visible page is its own bug here: this app's sign-in flow has a
- *  box you paste a single-use code into, and a surprise reload would throw it
- *  away. Hidden means the operator has looked elsewhere, so the reload costs
- *  them nothing and they come back to a current bundle. */
-function applyWhenHidden(apply: () => void): void {
-  if (document.visibilityState === 'hidden') {
-    apply()
-    return
-  }
-  const onHide = (): void => {
-    if (document.visibilityState !== 'hidden') return
-    document.removeEventListener('visibilitychange', onHide)
-    apply()
-  }
-  document.addEventListener('visibilitychange', onHide)
-}
+// When the wait ends lives in `applyWhenHidden.ts`, and is unit-tested there —
+// it is the half of this fix with real edge cases (one update per deploy, and
+// the iOS/bfcache paths that skip `visibilitychange`).
+const applyWhenHidden = createHiddenGate()
 
 export function registerPwa(): void {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return

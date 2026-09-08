@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/assert-sw-shape.mjs",
     "gen:api": "openapi-typescript http://localhost:8000/api/openapi.json --output src/api/generated.ts --immutable",
     "gen:api:local": "openapi-typescript openapi.json --output src/api/generated.ts --immutable",
     "lint": "eslint .",
