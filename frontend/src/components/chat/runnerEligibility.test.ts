@@ -34,6 +34,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     workspace: null,
     paired_by_email: null,
     can_manage: true,
+    can_administer: true,
     ...overrides,
   };
 }

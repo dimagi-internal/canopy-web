@@ -916,6 +916,51 @@ class RunnerMint(models.Model):
         return f"mint:{self.runner_id}:{self.status}"
 
 
+class RunnerAdmin(models.Model):
+    """Someone who may ADMINISTER this runner without speaking FOR it.
+
+    `paired_by` was doing two jobs. It is the credential the box authenticates
+    with — `claim_next_turn` derives a tenant from it, so heartbeating, claiming
+    and drilling must stay bound to it — and it was also the only answer to "who
+    may fix this box". For a shared cloud runner those are different questions,
+    and conflating them means one human is a single point of failure: on
+    2026-09-08 a signed-out cloud box could not be re-authenticated by the very
+    identity it runs as, because someone else had run the pairing command.
+
+    Ownership could not simply be moved. The box authenticates with the pairer's
+    PAT, so re-pointing `paired_by` 404s its own heartbeat until that PAT is
+    rotated — a change in AWS, not here.
+
+    Neither existing tier fits either, and it is worth writing down why. Workspace
+    OWNER is too narrow (the dimagi workspace has exactly one, which is the
+    problem being fixed). Workspace MEMBER is far too wide: that workspace
+    auto-joins every `dimagi.com` address, so it would hand the fleet's Claude
+    credentials to 22 people who never asked for them — and the tenancy predicates
+    deliberately keep credentials out of the member tier for exactly that reason.
+
+    So the grant is EXPLICIT and per-runner. Authorization is one place where
+    being boring is the feature: a row here says precisely who was trusted with
+    this box, by whom, and when.
+    """
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="admins")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="+")
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # One grant per person per runner — re-granting is idempotent, not a
+        # second row that a later revoke would half-remove.
+        constraints = [
+            models.UniqueConstraint(fields=["runner", "user"], name="uniq_runner_admin"),
+        ]
+
+    def __str__(self) -> str:
+        return f"admin:{self.runner_id}:{self.user_id}"
+
+
 class RunnerAssignment(models.Model):
     """One row of an agent's ordered runner list — THE routing authority for agent
     turns (spec 2026-07-24-directed-runner-routing). An agent with no rows is

@@ -184,19 +184,23 @@ export function RunnerDetail({
           rendering the panel would produce a 404 rather than a control. Say whose
           box it is instead — "nothing here" is indistinguishable from a broken
           page, and naming the owner makes "ask them to declare it" a next step. */}
-      {runner.can_manage ? (
-        <>
-          {/* Owner-gated exactly like drills: POST /credential resolves through
-              _runner_visibility_q, so rendering this for anyone else would hand
-              out a form that 404s. Cloud-only — laptop runners use the ambient
-              login emdash already holds and never read this bundle. */}
-          {runner.kind === 'cloud' && <RunnerCredentials runnerId={runner.id} />}
-          <RunnerDrills runnerId={runner.id} />
-        </>
-      ) : (
+      {/* TWO tiers, and they gate different routes — which is the whole reason
+          they are separate flags. Administering a box (its credentials, its
+          browser sign-in) resolves through _runner_admin_or_404; speaking AS it
+          (drilling, which POSTs as the runner) stays with the pairer. Gating
+          both on can_manage meant the identity a box RUNS AS could not sign it
+          back in, because someone else had run the pairing command. */}
+      {runner.can_administer && runner.kind === 'cloud' && (
+        <RunnerCredentials runnerId={runner.id} />
+      )}
+      {runner.can_manage && <RunnerDrills runnerId={runner.id} />}
+      {!runner.can_manage && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
-          Read-only — this runner was paired by {runner.paired_by_email ?? 'someone else'}, who
-          can drill it or change what it declares.
+          {runner.can_administer
+            ? `You can sign this box in and set its credentials. Drilling it belongs to
+               ${runner.paired_by_email ?? 'whoever paired it'}, who paired it.`
+            : `Read-only — this runner was paired by ${runner.paired_by_email ?? 'someone else'},
+               who can drill it, change what it declares, or grant you administration.`}
         </p>
       )}
 
