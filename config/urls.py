@@ -33,5 +33,21 @@ urlpatterns = [
     path("api/docs/", scalar_docs, name="api_docs_scalar"),
     path("api/redoc/", redoc_docs, name="api_docs_redoc"),
     # Catch-all: serve the SPA for any non-API route (last).
-    re_path(r"^(?!api/|admin/|accounts/|health/|static/|auth/).*$", spa_view, name="spa"),
+    #
+    # `assets/` is excluded, and that exclusion is load-bearing. Those paths are
+    # content-hashed bundles, and every deploy rehashes them — so a browser
+    # holding a cached index.html (the service worker precaches it) asks for a
+    # filename that no longer exists on the server. WhiteNoise passes the miss
+    # through, and without this the catch-all answered a `.js` request with
+    # index.html at `200 text/html`. The browser cannot parse HTML as a module,
+    # so the app rendered a WHITE PAGE until a force-refresh, with no error a
+    # user could act on. Reported and reproduced 2026-09-08.
+    #
+    # A 404 is the honest answer to "that bundle is gone", and it is one the
+    # client can handle: the request fails visibly rather than half-succeeding.
+    re_path(
+        r"^(?!api/|admin/|accounts/|health/|static/|auth/|assets/).*$",
+        spa_view,
+        name="spa",
+    ),
 ]

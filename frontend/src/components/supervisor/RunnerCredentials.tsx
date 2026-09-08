@@ -100,18 +100,18 @@ export function credentialSummary(s: CredentialStatus): Summary {
       ? 'api_key'
       : 'none'
 
-  let warning: string | null = null
-  if (!s.has_claude_token) {
-    // A missing PRIMARY is a different failure from a missing fallback, and
-    // "add a fallback" would be the wrong instruction for it.
-    warning = 'No Claude credential at all — this runner cannot execute any turn.'
-  } else if (fallback === 'none') {
-    warning =
-      'Only one Claude credential is set. A usage cap will stop every agent on this box with nothing to fail over to.'
-  } else if (fallback === 'api_key') {
-    warning =
-      'The only fallback is the API key, which is metered — a cap on the primary starts billing rather than switching subscription.'
-  }
+  // ONLY the state that means this box cannot run anything. The two
+  // fallback warnings that used to live here — "only one credential is set",
+  // "the only fallback is metered" — were removed 2026-09-08: a standing banner
+  // about a deliberate configuration is a nag, and it sat above the controls
+  // every single visit, training the eye to skip the whole block. Which is
+  // exactly where the one alarm that matters has to be seen.
+  //
+  // `claudeFallback` is still computed; a caller that wants to say something
+  // about fallbacks can, at a moment when it is actually the subject.
+  const warning: string | null = s.has_claude_token
+    ? null
+    : 'No Claude credential at all — this runner cannot execute any turn.'
   return { claudeFallback: fallback, warning, unset }
 }
 
