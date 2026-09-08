@@ -1806,6 +1806,36 @@ def extract_token(raw: bytes) -> str | None:
     return m.group(0) if m else None
 
 
+#: Anything token-shaped is stripped before the CLI's own words are reported.
+#: The transcript is diagnostic, not a place to spill a credential.
+_TOKENISH = re.compile(r"sk-ant-[A-Za-z0-9_\-]+")
+
+
+def _diagnostic_tail(raw: bytes, limit: int = 600) -> str:
+    """The last thing `setup-token` actually said, fit to be shown to a human.
+
+    This exists because the first two live failures were debugged by GUESSING.
+    The runner knew exactly what the CLI printed — "invalid code", "expired", a
+    prompt still waiting — and threw it away, reporting only that no token had
+    appeared. Two wrong theories and two wasted sign-in attempts later: report
+    what it said.
+    """
+    text = strip_terminal(raw)
+    text = _TOKENISH.sub("<redacted>", text)
+    # Collapse the TUI's redraw frames — spinner rows carry no information and
+    # would otherwise be the entire tail.
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    seen, keep = set(), []
+    for ln in reversed(lines):
+        if ln in seen:
+            continue
+        seen.add(ln)
+        keep.append(ln)
+        if sum(len(k) for k in keep) > limit:
+            break
+    return " | ".join(reversed(keep))[:limit]
+
+
 class MintTimeout(RuntimeError):
     """The CLI never reached the expected step. Always fatal to the attempt:
     a half-driven TUI is not a state worth resuming."""
@@ -1863,10 +1893,11 @@ class MintSession:
             raise MintTimeout("this mint session is not running")
         os.write(self._fd, code.strip().encode() + b"\r")
         token = self._pump(timeout, extract_token)
+        tail = _diagnostic_tail(self._buf)
         self.close()
         if token is None:
-            raise MintTimeout("setup-token never printed a token — the code may "
-                              "have been wrong, expired, or already used")
+            raise MintTimeout(
+                "setup-token never printed a token. What it said: " + (tail or "(nothing)"))
         return token
 
     def close(self) -> None:
@@ -1977,7 +2008,9 @@ def _drain_mint(runner_id: str) -> None:
             try:
                 token = _MINT_SESSION.submit_code(code)
             except Exception as exc:  # noqa: BLE001
-                _api("POST", f"/runners/{runner_id}/mint/result", {"detail": str(exc)})
+                # str(exc) now carries the CLI's own words — that is the point.
+                _api("POST", f"/runners/{runner_id}/mint/result",
+                     {"detail": str(exc)[:900]})
             else:
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
