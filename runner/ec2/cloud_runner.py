@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import signal
 import socket
 import shutil
@@ -849,14 +850,24 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     an ordinary bug and spend real money doing it).
     """
     attempted: list[str] = []
+    saw_dead_credential = False
     while True:
         ok, text, session_id = _execute_once(
             prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
             resume_session_id=resume_session_id)
         attempted.append(_claude_cred_label())
-        if ok or not _is_usage_cap(text):
+        capped, dead = _is_usage_cap(text), _is_auth_required(text)
+        if ok or not (capped or dead):
             return ok, text, session_id
-        _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
+        if dead:
+            # An unusable credential either way, so it advances the same as a cap
+            # — but the REASON is carried to the terminal message below, because
+            # "wait for the reset" is wrong advice for a token that has none.
+            saw_dead_credential = True
+            _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is not signed in")
+            _notify_auth_required(_claude_cred_label(), turn_id)
+        else:
+            _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
         if not _advance_claude_credential(turn_id=turn_id):
             # Before giving up: re-read the bundle. An operator who just ran
             # `canopy runner credential` to rescue a stuck box should not also
@@ -871,10 +882,20 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # bare cap message names a reset time but never says the fleet has
             # run out of credentials entirely, which is the thing a human has to
             # act on.
-            return ok, (f"{text}\n\n[runner] every Claude credential on this box is "
-                        f"exhausted (tried: {', '.join(attempted)}). Turns will keep "
-                        f"failing until a cap resets or a new credential is set "
-                        f"(`canopy runner credential`)."), session_id
+            if saw_dead_credential:
+                # Deliberately does NOT mention waiting: this is the state that
+                # never clears on its own, and telling an operator a cap will
+                # reset is how a box sits dead for a day.
+                note = (f"[runner] this box is not signed in to Claude (tried: "
+                        f"{', '.join(attempted)}). This will NOT clear on its own — "
+                        f"someone has to re-authenticate the subscription and set the "
+                        f"token (`canopy runner credential`).")
+            else:
+                note = (f"[runner] every Claude credential on this box is exhausted "
+                        f"(tried: {', '.join(attempted)}). Turns will keep failing "
+                        f"until a cap resets or a new credential is set "
+                        f"(`canopy runner credential`).")
+            return ok, f"{text}\n\n{note}", session_id
         # `--resume` is deliberately dropped on the retry: the failed attempt may
         # have written a partial session, and resuming it under a different
         # credential is not a state we want to debug at 2am.
@@ -1458,22 +1479,60 @@ _CLAUDE_CRED_I = 0
 _CLAUDE_CRED_RUNNER_ID = ""   # set at staging; lets an exhausted cascade re-read
 _CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
-#: Substrings that mean "this credential is capped", not "this turn failed".
-#: Matched case-insensitively against the turn's final text.
+#: A usage cap, matched by SHAPE rather than by phrase.
+#:
+#: Anthropic ships session (5-hour), daily and weekly caps and words each one a
+#: little differently — "hit your session limit", "reached your weekly usage
+#: limit" — and adds to the set over time. The original list enumerated the
+#: phrasings it knew, which is precisely how the session cap went unmatched
+#: until 2026-09-08: a turn on cloud-ec2-1 re-queued three times against the
+#: same capped credential and reported a bare failure. So match the shape a cap
+#: message always has — a hit/reached verb, then "limit" close behind — and keep
+#: an explicit list only for the phrasings that never say "limit".
+_USAGE_CAP_RE = re.compile(
+    r"\b(?:hit|reached)\b[^.\n]{0,40}?\blimits?\b"
+    r"|\blimits?\s+reached\b",
+    re.IGNORECASE,
+)
+
 _USAGE_CAP_MARKERS = (
-    "hit your weekly limit",
-    "hit your usage limit",
-    "usage limit reached",
     "out of usage",
     "rate limit exceeded",
     "insufficient credit",
     "credit balance is too low",
 )
 
+#: Substrings that mean "this credential is DEAD and a human must sign in".
+#:
+#: A cap and an expired token both stop the box, and the runner used to have a
+#: name for only one of them. The difference is the whole point: a cap fixes
+#: itself when the clock runs out, a subscription token never does. Read out of
+#: the shipped `claude` binary; deliberately narrow, because turn text is AGENT
+#: output and an agent that merely writes about `/login` must not mark the fleet
+#: dead. Unlike the caps there is no shape to match here — these are fixed
+#: sentences, not a family that grows a new adjective each release.
+_AUTH_REQUIRED_MARKERS = (
+    "not logged in",
+    "please run /login",
+    "auth token expired or invalid",
+    "refresh token expired",
+    "invalid api key",
+)
+
 
 def _is_usage_cap(text: str) -> bool:
     low = (text or "").lower()
-    return any(m in low for m in _USAGE_CAP_MARKERS)
+    return bool(_USAGE_CAP_RE.search(low)) or any(m in low for m in _USAGE_CAP_MARKERS)
+
+
+def _is_auth_required(text: str) -> bool:
+    """True when the credential needs a human to sign in again.
+
+    Checked ALONGSIDE `_is_usage_cap`, never instead of it — the two states are
+    disjoint and want opposite responses (wait vs. fetch a person).
+    """
+    low = (text or "").lower()
+    return any(m in low for m in _AUTH_REQUIRED_MARKERS)
 
 
 def _claude_cred_label() -> str:
@@ -1537,6 +1596,39 @@ def _notify_api_key_fallback(label: str, turn_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
         _log(f"warn: could not notify about API-key fallback ({exc}) — metered billing "
              "has started and nobody has been told")
+
+
+def _notify_auth_required(label: str, turn_id: str) -> None:
+    """Tell canopy-web that a credential needs a human to sign in again.
+
+    The sibling of `_notify_api_key_fallback`, and the more urgent of the two:
+    a fallback means money is being spent, this means nothing is running at all
+    and no amount of waiting will change that. Best-effort like its sibling, and
+    logged when it fails for the same reason — the entire point is that a person
+    finds out.
+    """
+    body = {
+        "items": [{
+            "source": "runner.credential",
+            "kind": "claude_auth_required",
+            "level": "error",
+            "summary": (f"The Claude credential ({label}) on "
+                        f"{RUNNER_NAME or 'this runner'} is no longer signed in. "
+                        f"Turns will keep failing until someone re-authenticates it "
+                        f"— this does NOT reset on its own like a usage cap."),
+            # One row per runner per day: a dead token is a STATE a human acts on
+            # once, not a stream of one row per failed turn.
+            "key": f"auth-required:{RUNNER_NAME}",
+        }],
+    }
+    try:
+        status, _ = _api("POST", "/", body, prefix="/api/events")
+        if status not in (200, 201):
+            _log(f"warn: auth-required notify returned {status} — a human may not know "
+                 "that this box needs to be signed in again")
+    except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
+        _log(f"warn: could not notify about the dead credential ({exc}) — the box is "
+             "unauthenticated and nobody has been told")
 
 
 def _reload_claude_credentials() -> bool:
