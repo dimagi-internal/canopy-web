@@ -560,6 +560,11 @@ class BootstrapReportIn(StrictModel):
     client_creds_ok: bool = False
     mailbox_ok: bool = False
     gog_client: str = ""
+    #: The client the agent's turns present, and whether the mailbox works under
+    #: it. `turn_ready` is None from a box that did not check — never False,
+    #: which would report a healthy agent as broken.
+    turn_client: str = ""
+    turn_ready: bool | None = None
     detail: str = ""
 
 
@@ -568,5 +573,7 @@ class BootstrapReportOut(StrictModel):
     client_creds_ok: bool = False
     mailbox_ok: bool = False
     gog_client: str = ""
+    turn_client: str = ""
+    turn_ready: bool | None = None
     detail: str = ""
     reported_at: datetime | None = None

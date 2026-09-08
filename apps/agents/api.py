@@ -719,12 +719,19 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
     held a valid gog-token while every gmail call on the box failed, because the
     OAuth client id+secret it needs alongside had not materialized. Nothing
     outside journald could see that.
+
+    `mailbox_ok` alone repeated the same shape one layer up on 2026-09-08: it
+    was TRUE for a day while every ACE email turn blocked at preflight, because
+    the box verifies the client whose token AUTHENTICATES while a turn presents
+    the client its config DECLARES. Read `turn_ready` for "can this agent run a
+    turn"; `mailbox_ok` only says some client works.
     """
     agent = _get_agent_or_404(request, slug)
     return [
         BootstrapReportOut(
             runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
             mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
+            turn_client=r.turn_client, turn_ready=r.turn_ready,
             detail=r.detail, reported_at=r.reported_at,
         )
         for r in services.bootstrap_reports(agent)
@@ -747,9 +754,11 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
         agent, runner_name=payload.runner_name,
         client_creds_ok=payload.client_creds_ok, mailbox_ok=payload.mailbox_ok,
         gog_client=payload.gog_client, detail=payload.detail,
+        turn_client=payload.turn_client, turn_ready=payload.turn_ready,
     )
     return BootstrapReportOut(
         runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
         mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
+        turn_client=r.turn_client, turn_ready=r.turn_ready,
         detail=r.detail, reported_at=r.reported_at,
     )
