@@ -100,6 +100,9 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
     return m
   })
 
+  // Narrowed through `mint` itself rather than a hoisted `mint?.status`: the
+  // optional chain reads fine but does not narrow, so every `mint.` below then
+  // needs a non-null assertion. `tsc -b` catches that; `tsc --noEmit` does not.
   const status = mint?.status
   const idle = !mint || status === 'done' || status === 'failed'
 
@@ -143,7 +146,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
         </p>
       )}
 
-      {status === 'awaiting_code' && (
+      {mint !== null && mint.status === 'awaiting_code' && (
         <div className="mt-2 flex flex-col gap-2" data-testid="reauth-awaiting-code">
           <a
             href={mint.authorize_url}
@@ -191,7 +194,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
         </p>
       )}
 
-      {status === 'failed' && (
+      {mint !== null && mint.status === 'failed' && (
         <p className="mt-2 text-sm text-destructive" data-testid="reauth-failed">
           {mint.detail || 'The sign-in did not complete.'}
         </p>
