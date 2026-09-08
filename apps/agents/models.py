@@ -160,6 +160,26 @@ class AgentBootstrapReport(models.Model):
     #: to `canopy-web` while the repo pins `canopy`, and knowing which one is
     #: live is most of the diagnosis.
     gog_client = models.CharField(max_length=120, blank=True, default="")
+    #: The client the agent's TURNS will actually present — what
+    #: `config/agent.json.gog_client` declares, which for the whole fleet is the
+    #: shared `canopy` app. Distinct from `gog_client` above on purpose: that
+    #: one is whichever client the box's token happened to be minted under.
+    turn_client = models.CharField(max_length=120, blank=True, default="")
+    #: Can the mailbox authenticate under `turn_client` — the client the CONSUMER
+    #: uses, not the one the verifier picked. Null means the box did not check
+    #: (an older box, or gog absent), which must not read as False.
+    #:
+    #: This exists because `mailbox_ok` was TRUE for a full day while every ACE
+    #: email turn blocked at preflight (2026-09-08). Both halves were internally
+    #: consistent and they disagreed: bootstrap probes the client whose token
+    #: AUTHENTICATES (deliberately — see the GOG_CLIENT note in
+    #: bootstrap_agents.sh), while `/ace:turn` presents the client its config
+    #: DECLARES. ACE's token was minted in a browser and so bound to
+    #: `canopy-web`; its turns ask for `canopy`; the box had no such token, and
+    #: the readiness report said the mailbox was live the whole time.
+    #:
+    #: A check that passes under a client the consumer never uses is not a check.
+    turn_ready = models.BooleanField(null=True, blank=True, default=None)
     #: One line, from the box. The reason, when there is one.
     detail = models.TextField(blank=True, default="")
     reported_at = models.DateTimeField(auto_now=True)

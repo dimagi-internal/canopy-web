@@ -154,3 +154,107 @@ def test_the_token_declared_client_is_recorded_for_the_verify_and_the_report():
     # And verify_mailbox must prefer it over the map fallback.
     vm = _fn("verify_mailbox")
     assert 'GOG_CLIENT_USED[$slug]' in vm
+
+
+# ── verify_turn_client: the client the CONSUMER presents ─────────────────────
+#
+# The 2026-09-08 sequel. `verify_mailbox` above answers "does SOME client work",
+# which is the right question for the mailbox and the wrong one for readiness.
+# ACE reported `mailbox_ok: true / gog_client: canopy-web` for a day while every
+# email turn aborted with `No auth for gmail ace@dimagi-ai.com`, because
+# `/ace:turn` presents the client `config/agent.json` DECLARES (`canopy`) and the
+# box only ever had tokens under `ace` and `canopy-web`.
+
+
+def _verify_turn(tmp_path, *, declared="canopy", mailbox_ok="0", live_client="",
+                 turn_exit=0, turn_stderr="", agent_json=None):
+    """Run verify_turn_client against a stubbed `gog`, returning its stdout."""
+    stub = tmp_path / "bin"
+    stub.mkdir(exist_ok=True)
+    g = stub / "gog"
+    g.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf %s {shlex.quote(turn_stderr)} >&2\n"
+        f"exit {turn_exit}\n"
+    )
+    g.chmod(0o755)
+
+    root = tmp_path / "agents"
+    if agent_json is not None:
+        cfg = root / "ace" / "config"
+        cfg.mkdir(parents=True)
+        (cfg / "agent.json").write_text(agent_json)
+
+    script = f"""
+set -uo pipefail
+export PATH="{stub}:/usr/bin:/bin"
+AGENT_ROOT="{root}"
+FLEET_GOG_CLIENT="{declared}"
+declare -A MAILBOX_OK=( [ace]={mailbox_ok} )
+declare -A GOG_CLIENT_USED=( [ace]={shlex.quote(live_client)} )
+declare -A BOOTSTRAP_DETAIL=() TURN_CLIENT=() TURN_READY=()
+ok()   {{ echo "OK: $*"; }}
+warn() {{ echo "WARN: $*"; }}
+{_fn("mark")}
+{_fn("turn_client_for")}
+{_fn("verify_turn_client")}
+verify_turn_client "ace" "ace@dimagi-ai.com"
+echo "TURN_CLIENT=${{TURN_CLIENT[ace]:-unset}}"
+echo "TURN_READY=${{TURN_READY[ace]-unset}}"
+echo "DETAIL=${{BOOTSTRAP_DETAIL[ace]:-}}"
+"""
+    return subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60).stdout
+
+
+def test_a_green_mailbox_under_the_wrong_client_is_reported_not_turn_ready(tmp_path):
+    """THE regression. mailbox_ok=1 under canopy-web, turns need canopy: not ready."""
+    out = _verify_turn(tmp_path, mailbox_ok="1", live_client="canopy-web",
+                       turn_exit=4, turn_stderr="No auth for gmail ace@dimagi-ai.com.")
+    assert "TURN_READY=0" in out
+    assert "TURN_CLIENT=canopy" in out
+    # The warning must name BOTH clients — otherwise "the mailbox is fine" and
+    # "turns are dead" read as a contradiction instead of a diagnosis.
+    assert "canopy-web" in out and "'canopy'" in out
+
+
+def test_no_second_call_when_the_live_client_already_is_the_turn_client(tmp_path):
+    """Common case short-circuits: verify_mailbox already proved this exact client."""
+    out = _verify_turn(tmp_path, mailbox_ok="1", live_client="canopy",
+                       turn_exit=99, turn_stderr="should never run")
+    # turn_exit=99 would fail if a call were made — passing proves none was.
+    assert "TURN_READY=1" in out
+    assert "turns can read the mailbox" in out
+
+
+def test_the_agents_own_declaration_wins_over_the_fleet_default(tmp_path):
+    """`config/agent.json` is the source of what a turn presents."""
+    out = _verify_turn(tmp_path, declared="canopy", agent_json='{"gog_client": "echo"}')
+    assert "TURN_CLIENT=echo" in out
+
+
+def test_falls_back_to_the_fleet_client_when_the_repo_is_absent(tmp_path):
+    """A cloud box need not have the agent's repo; the fleet client is the answer."""
+    out = _verify_turn(tmp_path, declared="canopy", agent_json=None)
+    assert "TURN_CLIENT=canopy" in out
+
+
+def test_turn_ready_stays_unset_when_gog_is_absent(tmp_path):
+    """Not checked is NOT broken — the tri-state must survive to the report."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    script = f"""
+set -uo pipefail
+export PATH="{empty}"
+AGENT_ROOT="{tmp_path}/nope"
+FLEET_GOG_CLIENT="canopy"
+declare -A MAILBOX_OK=() GOG_CLIENT_USED=() BOOTSTRAP_DETAIL=() TURN_CLIENT=() TURN_READY=()
+ok()   {{ echo "OK: $*"; }}
+warn() {{ echo "WARN: $*"; }}
+{_fn("mark")}
+{_fn("turn_client_for")}
+{_fn("verify_turn_client")}
+verify_turn_client "ace" "ace@dimagi-ai.com"
+echo "TURN_READY=${{TURN_READY[ace]-unset}}"
+"""
+    out = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60).stdout
+    assert "TURN_READY=unset" in out

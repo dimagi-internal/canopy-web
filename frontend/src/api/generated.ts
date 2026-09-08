@@ -1879,6 +1879,12 @@ export interface paths {
          *     held a valid gog-token while every gmail call on the box failed, because the
          *     OAuth client id+secret it needs alongside had not materialized. Nothing
          *     outside journald could see that.
+         *
+         *     `mailbox_ok` alone repeated the same shape one layer up on 2026-09-08: it
+         *     was TRUE for a day while every ACE email turn blocked at preflight, because
+         *     the box verifies the client whose token AUTHENTICATES while a turn presents
+         *     the client its config DECLARES. Read `turn_ready` for "can this agent run a
+         *     turn"; `mailbox_ok` only says some client works.
          */
         readonly get: operations["apps_agents_api_agent_readiness"];
         readonly put?: never;
@@ -7512,6 +7518,13 @@ export interface components {
              */
             readonly gog_client: string;
             /**
+             * Turn Client
+             * @default
+             */
+            readonly turn_client: string;
+            /** Turn Ready */
+            readonly turn_ready?: boolean | null;
+            /**
              * Detail
              * @default
              */
@@ -7545,6 +7558,13 @@ export interface components {
              * @default
              */
             readonly gog_client: string;
+            /**
+             * Turn Client
+             * @default
+             */
+            readonly turn_client: string;
+            /** Turn Ready */
+            readonly turn_ready?: boolean | null;
             /**
              * Detail
              * @default

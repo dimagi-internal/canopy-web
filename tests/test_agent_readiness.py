@@ -116,3 +116,86 @@ def test_an_agent_no_box_has_reported_is_empty_not_healthy(fleet):
     """Absence must read as 'nobody has said', never as a pass. Silence being
     indistinguishable from health is the failure mode this replaces."""
     assert fleet["client"].get("/api/agents/ace/readiness").json() == []
+
+
+# ── The client the TURN uses, vs the client whose token happens to be live ────
+#
+# The 2026-09-08 sequel to the failure this module opens with, one layer up.
+# `mailbox_ok` was TRUE for a full day while every ACE email turn aborted at
+# preflight with `No auth for gmail ace@dimagi-ai.com`. Nothing was broken in a
+# way either half could see: bootstrap verifies the client whose token
+# AUTHENTICATES (correctly — an OAuth token only works with the client it was
+# minted for), while `/ace:turn` presents the client `config/agent.json`
+# DECLARES. ACE's token came from a browser mint, so it was bound to
+# `canopy-web`; its turns ask for `canopy`.
+#
+# A check that passes under a client the consumer never uses is not a check.
+
+
+def test_mailbox_ok_does_not_imply_turns_work(fleet):
+    """The exact shape of the outage: a green mailbox and dead turns, together."""
+    r = _post(fleet["user"], {
+        "runner_name": "cloud-ec2-1", "client_creds_ok": True,
+        "mailbox_ok": True, "gog_client": "canopy-web",
+        "turn_client": "canopy", "turn_ready": False,
+    })
+    assert r.status_code == 200, r.content
+    body = r.json()
+    # Both are reported, and they disagree — which is the readable diagnosis
+    # that did not exist before: "the mailbox is fine AND turns are dead".
+    assert body["mailbox_ok"] is True
+    assert body["turn_ready"] is False
+    assert body["gog_client"] == "canopy-web"
+    assert body["turn_client"] == "canopy"
+
+
+def test_turn_ready_is_null_when_the_box_did_not_check(fleet):
+    """None must never collapse to False.
+
+    An older box, or one without `gog`, reports nothing here. Rendering that as
+    "turns are broken" would page someone about a healthy agent — the same
+    false-negative trade this file's opening docstring is about, inverted.
+    """
+    r = _post(fleet["user"], {
+        "runner_name": "cloud-ec2-1", "client_creds_ok": True,
+        "mailbox_ok": True, "gog_client": "canopy",
+    })
+    assert r.status_code == 200, r.content
+    assert r.json()["turn_ready"] is None
+
+    readiness = fleet["client"].get("/api/agents/ace/readiness")
+    assert readiness.status_code == 200
+    assert readiness.json()[0]["turn_ready"] is None
+
+
+def test_readiness_surfaces_the_turn_client(fleet):
+    """The GET is what an operator reads; the fields must survive the round trip."""
+    _post(fleet["user"], {
+        "runner_name": "cloud-ec2-1", "client_creds_ok": True,
+        "mailbox_ok": True, "gog_client": "canopy-web",
+        "turn_client": "canopy", "turn_ready": False,
+    })
+    rows = fleet["client"].get("/api/agents/ace/readiness").json()
+    assert len(rows) == 1
+    assert rows[0]["turn_client"] == "canopy"
+    assert rows[0]["turn_ready"] is False
+
+
+def test_a_later_report_can_clear_the_alarm(fleet):
+    """Upsert semantics: once a canopy-client token lands, turn_ready flips true.
+
+    Latest-wins is what makes this current state rather than a log, and an alarm
+    that cannot clear is one people learn to ignore.
+    """
+    _post(fleet["user"], {
+        "runner_name": "cloud-ec2-1", "client_creds_ok": True, "mailbox_ok": True,
+        "gog_client": "canopy-web", "turn_client": "canopy", "turn_ready": False,
+    })
+    _post(fleet["user"], {
+        "runner_name": "cloud-ec2-1", "client_creds_ok": True, "mailbox_ok": True,
+        "gog_client": "canopy", "turn_client": "canopy", "turn_ready": True,
+    })
+    rows = fleet["client"].get("/api/agents/ace/readiness").json()
+    assert len(rows) == 1, "one row per (agent, runner) — this is state, not history"
+    assert rows[0]["turn_ready"] is True
+    assert rows[0]["gog_client"] == "canopy"

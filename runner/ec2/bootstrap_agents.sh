@@ -64,6 +64,37 @@ fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
 # some file names.
 declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=canopy )
 
+# The client an agent's TURNS present, which is NOT necessarily the one whose
+# token is live. `/ace:turn` and every sibling read `config/agent.json.gog_client`
+# — the shared fleet app — and present THAT to gog. The map above tracks where
+# each token actually lives, deliberately (see the note); these two are allowed
+# to disagree, and when they do the agent's turns are dead while its mailbox
+# verifies green.
+#
+# That is not hypothetical. On 2026-09-08 ACE reported `mailbox_ok: true,
+# gog_client: canopy-web` for a full day while every inbound email turn aborted
+# at preflight with `No auth for gmail ace@dimagi-ai.com` — the box had tokens
+# under `ace` and `canopy-web`, and `/ace:turn` asked for `canopy`. Both halves
+# were internally consistent. Nothing compared them.
+FLEET_GOG_CLIENT="${FLEET_GOG_CLIENT:-canopy}"
+
+# What this agent's turns will ask for. Prefer the agent's own declaration when
+# the repo is on the box; fall back to the fleet client, which is what all five
+# agents declare today.
+turn_client_for() {  # <slug> -> client name
+  local slug="$1" cfg="$AGENT_ROOT/$slug/config/agent.json" declared=""
+  if [[ -r "$cfg" ]]; then
+    declared="$(CFG="$cfg" python3 -c '
+import json, os
+try:
+    print((json.load(open(os.environ["CFG"])).get("gog_client") or "").strip())
+except Exception:
+    pass
+' 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${declared:-$FLEET_GOG_CLIENT}"
+}
+
 # ── gog's own XDG resolution on Linux (mirrors canopy's agent_email.py
 # _default_gog_config_dir — $GOG_HOME override, else $XDG_CONFIG_HOME/gogcli, else
 # ~/.config/gogcli; there is no macOS branch on this box). ──────────────────────
@@ -242,6 +273,10 @@ mark() {  # <array-name> <slug> <value>
 declare -A CLIENT_CREDS_OK=()
 declare -A MAILBOX_OK=()
 declare -A GOG_CLIENT_USED=()
+declare -A TURN_CLIENT=()
+# Tri-state: unset = not checked. NEVER default to 0 — a box that could not
+# check must not report the agent as broken.
+declare -A TURN_READY=()
 declare -A BOOTSTRAP_DETAIL=()
 
 # Tell canopy-web what this box could actually materialize for <slug>.
@@ -260,12 +295,13 @@ report_bootstrap() {  # <slug>
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
   [[ -n "$base" && -n "$tok" ]] || return 0
   local rn="${RUNNER_NAME:-$(hostname)}"
   SLUG="$slug" RN="$rn" \
   CC="${CLIENT_CREDS_OK[$slug]:-0}" MB="${MAILBOX_OK[$slug]:-0}" \
   GC="${GOG_CLIENT_USED[$slug]:-}" DT="${BOOTSTRAP_DETAIL[$slug]:-}" \
+  TC="${TURN_CLIENT[$slug]:-}" TR="${TURN_READY[$slug]-unset}" \
   python3 -c '
 import json, os
 print(json.dumps({
@@ -273,6 +309,11 @@ print(json.dumps({
     "client_creds_ok": os.environ["CC"] == "1",
     "mailbox_ok": os.environ["MB"] == "1",
     "gog_client": os.environ.get("GC", ""),
+    "turn_client": os.environ.get("TC", ""),
+    # Tri-state on the wire. "unset" -> null: the box did not check, which is
+    # NOT the same as "checked and broken" and must not be reported as False.
+    "turn_ready": (None if os.environ.get("TR") == "unset"
+                   else os.environ.get("TR") == "1"),
     "detail": os.environ.get("DT", ""),
 }))' > /tmp/.bootstrap-report.$$ 2>/dev/null || return 0
   curl -fsSL --max-time 20 -X POST \
@@ -289,7 +330,7 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
   # The tenant's shared vault and its OWN key, from canopy-web. Blank on a
   # deployment that has not configured one, which falls back to the historical
   # constant and today's (agent) key — i.e. exactly current behaviour.
@@ -767,7 +808,7 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
   if ! command -v gog >/dev/null 2>&1; then
     warn "$slug: gog unavailable — skipping gmail token import"
   elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
@@ -856,7 +897,7 @@ verify_mailbox() {  # <slug> <account> <fallback-client>
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
   # The mailbox verdict is a CALL, never an inference. Everything above can
   # succeed and still leave a mailbox that cannot authenticate — that is exactly
   # what happened on 2026-09-07, when a valid token imported cleanly and then had
@@ -872,6 +913,46 @@ verify_mailbox() {  # <slug> <account> <fallback-client>
       mark BOOTSTRAP_DETAIL "$slug" "${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }gmail check failed: $(printf '%s' "$mberr" | head -1)"
       warn "$slug: mailbox NOT live (account=$account client=$vclient): $(printf '%s' "$mberr" | head -1)"
     fi
+  fi
+}
+
+# Whether the mailbox works for the client the agent's TURNS present — the only
+# question a turn's success actually depends on.
+#
+# `verify_mailbox` above answers "does SOME client work", and that is the right
+# question for the mailbox. It is the WRONG question for readiness, and the two
+# were conflated until 2026-09-08, when `mailbox_ok: true / gog_client:
+# canopy-web` stood for a day next to an inbox no turn could open. The verifier
+# had picked the client whose token authenticates; the consumer presents the one
+# its config declares; nothing ever compared them.
+#
+# Cheap when they agree — the common case short-circuits without a second call.
+verify_turn_client() {  # <slug> <account>
+  local slug="$1" account="$2"
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  command -v gog >/dev/null 2>&1 || return 0   # unset stays unset: "not checked"
+  local tclient; tclient="$(turn_client_for "$slug")"
+  [[ -n "$tclient" ]] || return 0
+  mark TURN_CLIENT "$slug" "$tclient"
+
+  # Already proven under this exact client by verify_mailbox — no second call.
+  if [[ "${MAILBOX_OK[$slug]:-0}" == "1" && "${GOG_CLIENT_USED[$slug]:-}" == "$tclient" ]]; then
+    mark TURN_READY "$slug" 1
+    ok "$slug: turns can read the mailbox (client=$tclient)"
+    return 0
+  fi
+
+  local terr
+  if terr="$(gog gmail search --account "$account" --client "$tclient" in:inbox --max 1 2>&1 >/dev/null)"; then
+    mark TURN_READY "$slug" 1
+    ok "$slug: turns can read the mailbox (client=$tclient)"
+  else
+    mark TURN_READY "$slug" 0
+    # Loud, and it names BOTH clients: "the mailbox is fine" and "turns are dead"
+    # are simultaneously true here, and a warning that omits either one reads as
+    # a contradiction rather than a diagnosis.
+    warn "$slug: TURNS CANNOT READ THE MAILBOX — account=$account needs a token under client '$tclient' (config/agent.json), but the live token is under '${GOG_CLIENT_USED[$slug]:-none}'. Mint one for '$tclient' and store it as this agent's gog-token: $(printf '%s' "$terr" | head -1)"
+    mark BOOTSTRAP_DETAIL "$slug" "${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }turns need client '$tclient', live token is '${GOG_CLIENT_USED[$slug]:-none}'"
   fi
 }
 
@@ -904,6 +985,7 @@ bootstrap_one_agent() {
     ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
     refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
     verify_mailbox "$slug" "$account" "$client"
+    verify_turn_client "$slug" "$account"
     report_bootstrap "$slug"
     READY_AGENTS+=("$slug")
     return
@@ -948,6 +1030,7 @@ bootstrap_one_agent() {
 
   refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
   verify_mailbox "$slug" "$account" "$client"
+  verify_turn_client "$slug" "$account"
 
   report_bootstrap "$slug"
   READY_AGENTS+=("$slug")
