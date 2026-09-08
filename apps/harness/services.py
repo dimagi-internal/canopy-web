@@ -1962,6 +1962,7 @@ class SessionView:
     id: str
     emdash_task: str
     project: str
+    agent: "str | None"
     status: str
     last_interacted_at: object
     recent_messages: list
@@ -1997,7 +1998,7 @@ def list_visible_sessions(user) -> list[SessionView]:
             session__status=Session.ACTIVE,
             live_seen_at__gte=stale_cutoff(),
         )
-        .select_related("runner", "session")
+        .select_related("runner", "session", "session__agent")
         .order_by("-last_interacted_at")
     )
     out = []
@@ -2008,7 +2009,13 @@ def list_visible_sessions(user) -> list[SessionView]:
             SessionView(
                 id=str(b.session_id),
                 emdash_task=b.session_key,
-                project=b.session.project,
+                # `emdash_project`, not the raw column: a session targets an
+                # agent XOR a project, so an agent-owned row has project="" and
+                # reading it directly answered "" for every ACE run. The derived
+                # value is the one that never moved — and it is the same half of
+                # the identity a runner resolves a transcript by.
+                project=b.session.emdash_project,
+                agent=(b.session.agent.slug if b.session.agent_id else None),
                 status=b.status,
                 last_interacted_at=b.last_interacted_at,
                 recent_messages=b.tail,

@@ -300,7 +300,13 @@ class ReportSessionsIn(Schema):
 class EmdashSessionOut(Schema):
     id: uuid.UUID
     emdash_task: str
+    #: `SessionView.project` carries `emdash_project`, so this stays meaningful
+    #: for an agent-owned row whose stored column the XOR necessarily cleared.
     project: str
+    #: Whose work this is. Absent until now, which every consumer doing
+    #: `.get("agent")` read as `agent: null` — indistinguishable from "known to
+    #: belong to nobody" — leaving `project` as the only thing to guess from.
+    agent: str | None
     status: str
     last_interacted_at: dt.datetime | None
     recent_messages: list
