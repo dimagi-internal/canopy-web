@@ -57,15 +57,18 @@ from __future__ import annotations
 
 import json
 import os
+import fcntl
 import pathlib
 import pty
 import re
 import select
 import signal
+import struct
 import socket
 import shutil
 import subprocess
 import sys
+import termios
 import threading
 import time
 import urllib.error
@@ -1767,14 +1770,34 @@ def strip_terminal(raw: bytes) -> str:
     return text.decode("utf-8", "replace").replace("\r", "\n")
 
 
+#: Every parameter the authorize request needs to be usable. Acceptance is
+#: SEMANTIC rather than "does it look like a URL", because the failure this
+#: prevents parses perfectly as one: the first live run stored 80 characters —
+#: exactly the terminal width — because `_pump` answers on the first match and
+#: the visible copy's first WRAPPED line reaches the buffer before the OSC-8
+#: payload carrying the whole URL. The human got "Invalid OAuth Request /
+#: Missing redirect_uri parameter". A fixture of the finished output cannot
+#: catch that; a stream is not a buffer.
+_REQUIRED_AUTHORIZE_PARAMS = (
+    "client_id=", "response_type=", "redirect_uri=",
+    "code_challenge=", "code_challenge_method=", "state=",
+)
+
+
 def extract_authorize_url(raw: bytes) -> str | None:
-    """The URL to put in front of a human, or None if it has not rendered yet."""
-    # The TUI prints the URL twice — once inside the hyperlink escape and once as
-    # visible text that it WRAPS at the terminal width. Longest wins: the wrapped
-    # copy is truncated, and a truncated authorize URL fails on an invalid-request
-    # page rather than anything that looks like our bug.
-    found = _AUTHORIZE.findall(strip_terminal(raw))
-    return max(found, key=len) if found else None
+    """A COMPLETE URL to put in front of a human, or None if it is not all here.
+
+    None means "not yet", and the caller keeps reading — so a partial render can
+    only ever delay the answer, never corrupt it.
+    """
+    # The TUI prints the URL twice — inside the hyperlink escape, and as visible
+    # text it wraps at the terminal width. Longest first, then completeness: the
+    # wrapped copy is a truncation, and a truncated authorize URL fails on an
+    # invalid-request page rather than on anything that looks like our bug.
+    for url in sorted(_AUTHORIZE.findall(strip_terminal(raw)), key=len, reverse=True):
+        if all(p in url for p in _REQUIRED_AUTHORIZE_PARAMS):
+            return url
+    return None
 
 
 def extract_token(raw: bytes) -> str | None:
@@ -1814,6 +1837,16 @@ class MintSession:
         # printed either way, so the launch is simply neutralised.
         env["BROWSER"] = "/usr/bin/true"
         pid, fd = pty.fork()
+        if pid != 0:
+            # A pty defaults to 80 columns, which is what made the TUI wrap the
+            # authorize URL and hand us an 80-char prefix. Belt to the parser's
+            # braces: a wide terminal means the visible copy is not chopped at
+            # all, so the two defences fail independently rather than together.
+            try:
+                fcntl.ioctl(fd, termios.TIOCSWINSZ,
+                            struct.pack("HHHH", 50, 400, 0, 0))
+            except OSError:
+                pass  # a narrower terminal still works — the parser gates it
         if pid == 0:  # pragma: no cover — the child never returns
             os.execvpe(self._argv[0], list(self._argv), env)
             os._exit(1)
