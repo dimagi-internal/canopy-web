@@ -2615,6 +2615,128 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/mint": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The current sign-in attempt, if any
+         * @description What the waiting human's screen renders: whether the URL is up yet, and
+         *     how the attempt ended. Null when no sign-in has ever been started.
+         */
+        readonly get: operations["apps_harness_api_get_runner_mint"];
+        readonly put?: never;
+        /**
+         * Ask a runner to start a browser sign-in
+         * @description Begin re-authenticating this runner's Claude subscription from a browser.
+         *
+         *     The runner picks this up on its next poll, runs the real `claude setup-token`
+         *     under a pty, and posts back the URL a human must open. canopy-web is only the
+         *     relay: it never holds the PKCE verifier and is never the OAuth client.
+         *
+         *     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
+         *     closed tab, a runner restart mid-flow) must not block every later attempt.
+         */
+        readonly post: operations["apps_harness_api_start_runner_mint"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/mint/claim": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Work the RUNNER owes on a sign-in (polled)
+         * @description Polled on the runner's existing tick, and polled rather than pushed for
+         *     the same reason as `menu-answers`: a control frame published while the
+         *     runner's WS channel is down reaches a group with no consumer and is silently
+         *     dropped, while the runner keeps heartbeating and reads ONLINE throughout.
+         *
+         *     Returns a row only when the runner owes work — asked to start, or handed a
+         *     code. While the ball is with the human (`awaiting_code`) this stays null, or
+         *     the runner would restart the CLI under a URL somebody is already using.
+         *
+         *     Reading a code CONSUMES it: an authorization code is spent on first use, so a
+         *     second delivery could only fail, and a used code left in the row would be a
+         *     credential nobody is accounting for.
+         */
+        readonly get: operations["apps_harness_api_claim_runner_mint"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/mint/url": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** The runner reports the URL a human must open */
+        readonly post: operations["apps_harness_api_post_runner_mint_url"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/mint/code": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A human submits the authorization code
+         * @description The one secret a human handles in this flow, and it is single-use.
+         */
+        readonly post: operations["apps_harness_api_post_runner_mint_code"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/mint/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The runner reports the outcome (and delivers the token)
+         * @description The minted token arrives HERE, never in the browser — it goes straight
+         *     into the encrypted credential bundle, so the only secret that ever reaches a
+         *     human's screen is the single-use authorization code.
+         */
+        readonly post: operations["apps_harness_api_post_runner_mint_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -8800,6 +8922,75 @@ export interface components {
             /** Updated At */
             readonly updated_at?: string | null;
         };
+        /**
+         * RunnerMintOut
+         * @description A browser-driven re-authentication, as an OPERATOR sees it.
+         *
+         *     Deliberately carries no `code`: the authorization code is the human's to type
+         *     once, and echoing it back to a screen serves nothing and widens where it can
+         *     leak. The minted token never appears in any operator-facing shape at all.
+         */
+        readonly RunnerMintOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Authorize Url */
+            readonly authorize_url: string;
+            /** Detail */
+            readonly detail: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /**
+         * RunnerMintClaimOut
+         * @description What the RUNNER polls for: the work it owes, and the code when there is one.
+         *
+         *     Null `mint` is the ordinary answer — no sign-in is in progress — so this is
+         *     cheap to poll on the tick the runner already runs.
+         */
+        readonly RunnerMintClaimOut: {
+            readonly mint?: components["schemas"]["RunnerMintOut"] | null;
+            /**
+             * Code
+             * @default
+             */
+            readonly code: string;
+        };
+        /** RunnerMintUrlIn */
+        readonly RunnerMintUrlIn: {
+            /** Url */
+            readonly url: string;
+        };
+        /** RunnerMintCodeIn */
+        readonly RunnerMintCodeIn: {
+            /** Code */
+            readonly code: string;
+        };
+        /** RunnerMintResultIn */
+        readonly RunnerMintResultIn: {
+            /**
+             * Token
+             * @default
+             */
+            readonly token: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
         /** RunnerCapabilitiesIn */
         readonly RunnerCapabilitiesIn: {
             /** Capabilities */
@@ -13982,6 +14173,150 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_get_runner_mint: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintOut"] | null;
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_start_runner_mint: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_claim_runner_mint: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintClaimOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_post_runner_mint_url: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerMintUrlIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_post_runner_mint_code: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerMintCodeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_post_runner_mint_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerMintResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerMintOut"];
                 };
             };
         };

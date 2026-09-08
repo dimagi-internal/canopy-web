@@ -4,6 +4,7 @@ import {
   setRunnerCredential,
   type CredentialStatus,
 } from '@/api/harness'
+import { RunnerReauth } from './RunnerReauth'
 
 export type { CredentialStatus }
 
@@ -182,6 +183,12 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
           ⚠ {summary.warning}
         </p>
       )}
+
+      {/* Above the paste-a-token fields on purpose: getting the token used to be
+          the hard part (a terminal on the box), and pasting one was the easy
+          part that already had a form. This is the hard part, now a link and a
+          code box. The fields below stay for a token minted elsewhere. */}
+      <RunnerReauth runnerId={runnerId} onSignedIn={load} />
 
       {SLOTS.map((slot) => {
         const isSet = status?.[slot.statusKey] ?? false
