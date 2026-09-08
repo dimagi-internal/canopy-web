@@ -2737,6 +2737,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/admins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who may administer this runner
+         * @description Visible to anyone who can already administer the box — the answer to
+         *     "who else can fix this", which is the question a stuck box raises.
+         */
+        readonly get: operations["apps_harness_api_list_runner_admins"];
+        readonly put?: never;
+        /**
+         * Grant someone administration of this runner (pairer only)
+         * @description Granting stays with the PAIRER, not with grantees.
+         *
+         *     Deliberate: an administrator can change what the box runs on, but letting
+         *     them mint more administrators makes the grant self-propagating, and then the
+         *     explicit list stops being a list of people the owner actually trusted.
+         */
+        readonly post: operations["apps_harness_api_grant_runner_admin"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/admins/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Revoke administration (pairer only) */
+        readonly delete: operations["apps_harness_api_revoke_runner_admin"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -8813,6 +8859,11 @@ export interface components {
              * @default true
              */
             readonly can_manage: boolean;
+            /**
+             * Can Administer
+             * @default true
+             */
+            readonly can_administer: boolean;
             readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
         };
         /** RunnerIn */
@@ -8990,6 +9041,31 @@ export interface components {
              * @default
              */
             readonly detail: string;
+        };
+        /**
+         * RunnerAdminOut
+         * @description One explicit grant. No secret here — who, by whom, when.
+         */
+        readonly RunnerAdminOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * Granted By Email
+             * @default
+             */
+            readonly granted_by_email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** RunnerAdminIn */
+        readonly RunnerAdminIn: {
+            /** Email */
+            readonly email: string;
         };
         /** RunnerCapabilitiesIn */
         readonly RunnerCapabilitiesIn: {
@@ -14318,6 +14394,75 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["RunnerMintOut"];
                 };
+            };
+        };
+    };
+    readonly apps_harness_api_list_runner_admins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerAdminOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_grant_runner_admin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerAdminIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerAdminOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_revoke_runner_admin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

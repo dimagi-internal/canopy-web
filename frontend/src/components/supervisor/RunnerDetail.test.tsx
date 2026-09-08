@@ -50,6 +50,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     workspace: 'dimagi',
     paired_by_email: 'jjackson@dimagi.com',
     can_manage: true,
+    can_administer: true,
     drill_rollup: null,
     ...overrides,
   } as RunnerOut
@@ -73,6 +74,34 @@ describe('RunnerDetail', () => {
     // Drilling POSTs as the runner's owner; the drill LIST is owner-gated too, so
     // rendering the panel would only produce a 404 error message.
     expect(screen.queryByTestId('runner-drills')).toBeNull()
+  })
+
+  it('shows the credentials block to an administrator who did not pair it', () => {
+    // The defect this fixes: both were gated on can_manage, so the identity a
+    // cloud box RUNS AS could not sign it back in — the pairing command had been
+    // run by someone else. Administering and speaking-AS are different routes.
+    render(
+      <RunnerDetail
+        runner={runner({ can_manage: false, can_administer: true, kind: 'cloud' })}
+        agents={agents}
+        onBack={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('runner-credentials')).toBeTruthy()
+    expect(screen.queryByTestId('runner-drills')).toBeNull()
+  })
+
+  it('withholds credentials from a member with no grant', () => {
+    // Membership is not administration: this workspace auto-joins a whole email
+    // domain, so following membership would hand out the fleet's credentials.
+    render(
+      <RunnerDetail
+        runner={runner({ can_manage: false, can_administer: false, kind: 'cloud' })}
+        agents={agents}
+        onBack={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('runner-credentials')).toBeNull()
   })
 
   it('says whose runner it is instead of just removing the controls', () => {

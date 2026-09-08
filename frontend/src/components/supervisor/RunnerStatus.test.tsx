@@ -31,6 +31,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     workspace: 'dimagi',
     paired_by_email: 'jjackson@dimagi.com',
     can_manage: true,
+    can_administer: true,
     drill_rollup: null,
     ...overrides,
   } as RunnerOut

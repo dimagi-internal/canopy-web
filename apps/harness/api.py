@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.auth.models import User
 from django.db import models, transaction
 from django.db.models import Q
 from django.http import HttpRequest, StreamingHttpResponse
@@ -41,6 +42,8 @@ from .schemas import (
     RunnerCapabilitiesIn,
     RunnerCredentialIn,
     RunnerCredentialOut,
+    RunnerAdminIn,
+    RunnerAdminOut,
     RunnerCredentialStatusOut,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
@@ -221,6 +224,33 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     return wq & _runner_owned_q(request)
 
 
+def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
+    """Resolve a runner this caller may ADMINISTER — a wider tier than acting AS
+    it, and deliberately not the same predicate.
+
+    Reached from the operator-facing routes only: setting credentials, and the
+    browser sign-in. Everything that speaks FOR the runner — heartbeat, claim,
+    drills, the runner's own credential fetch and its half of a mint — keeps
+    `_runner_or_404`, because those act with the pairer's memberships.
+
+    Starts from what the caller can SEE (the tenant), then requires the explicit
+    grant on top. Both legs matter: the tenant leg stops a grant in one workspace
+    reaching a runner in another, and the grant leg stops the 22 auto-joined
+    members of a `dimagi.com` workspace inheriting its credentials.
+    """
+    runner = (
+        Runner.objects.exclude(status=Runner.RETIRED)
+        .filter(_runner_read_q(request))
+        .filter(pk=runner_id)
+        .first()
+    )
+    # 404 rather than 403, matching _runner_or_404: the harness must not leak
+    # which runners exist to someone who may not act on them.
+    if runner is None or not services.can_administer_runner(request.user, runner):
+        raise HttpError(404, "runner not found")
+    return runner
+
+
 def _runner_or_404(
     request: HttpRequest, runner_id: uuid.UUID, *, include_retired: bool = False
 ) -> Runner:
@@ -354,7 +384,7 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     read-only GitHub token, the 1Password SA token. Owner-gated exactly
     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
     at rest; the response is masked (booleans, never values)."""
-    runner = _runner_or_404(request, runner_id)
+    runner = _runner_admin_or_404(request, runner_id)
     services.set_runner_credential(
         runner,
         claude_token=payload.claude_token,
@@ -377,7 +407,7 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
     Exists because the only way to read this used to be a no-op POST — and that
     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
     says when a credential was last actually rotated."""
-    runner = _runner_or_404(request, runner_id)
+    runner = _runner_admin_or_404(request, runner_id)
     return services.runner_credential_status(runner)
 
 
@@ -404,7 +434,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
     closed tab, a runner restart mid-flow) must not block every later attempt.
     """
-    runner = _runner_or_404(request, runner_id)
+    runner = _runner_admin_or_404(request, runner_id)
     return services.start_runner_mint(runner, requested_by=request.user)
 
 
@@ -413,7 +443,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
 def get_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     """What the waiting human's screen renders: whether the URL is up yet, and
     how the attempt ended. Null when no sign-in has ever been started."""
-    runner = _runner_or_404(request, runner_id)
+    runner = _runner_admin_or_404(request, runner_id)
     return services.current_runner_mint(runner)
 
 
@@ -456,7 +486,7 @@ def post_runner_mint_url(request: HttpRequest, runner_id: uuid.UUID,
 def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
                           payload: RunnerMintCodeIn):
     """The one secret a human handles in this flow, and it is single-use."""
-    runner = _runner_or_404(request, runner_id)
+    runner = _runner_admin_or_404(request, runner_id)
     mint = services.current_runner_mint(runner)
     if mint is None or mint.status != mint.AWAITING_CODE:
         raise HttpError(409, "this runner is not waiting for a code")
@@ -477,6 +507,58 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
     return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
+
+
+def _admin_row(a) -> dict:
+    return {"user_id": a.user_id, "email": a.user.email,
+            "granted_by_email": a.granted_by.email if a.granted_by else "",
+            "created_at": a.created_at}
+
+
+@router.get("/runners/{runner_id}/admins", response=list[RunnerAdminOut],
+            summary="Who may administer this runner")
+def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
+    """Visible to anyone who can already administer the box — the answer to
+    "who else can fix this", which is the question a stuck box raises."""
+    runner = _runner_admin_or_404(request, runner_id)
+    return [_admin_row(a) for a in services.list_runner_admins(runner)]
+
+
+@router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
+             summary="Grant someone administration of this runner (pairer only)")
+def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
+    """Granting stays with the PAIRER, not with grantees.
+
+    Deliberate: an administrator can change what the box runs on, but letting
+    them mint more administrators makes the grant self-propagating, and then the
+    explicit list stops being a list of people the owner actually trusted.
+    """
+    runner = _runner_or_404(request, runner_id)
+    user = User.objects.filter(email__iexact=payload.email.strip()).first()
+    if user is None:
+        # No leak either way: the caller already owns this runner, and "no such
+        # account" is the only useful thing to say about a typo'd address.
+        raise HttpError(404, f"no account with email {payload.email!r}")
+    # Same tenant leg the admin resolver enforces, checked here so the failure
+    # is a clear 422 at grant time rather than a mystifying 404 the first time
+    # the grantee tries to use it.
+    wsvc.auto_join_workspaces(user)
+    if runner.workspace_id and not wsvc.is_member(user, runner.workspace_id):
+        raise HttpError(
+            422,
+            f"{user.email} is not a member of the workspace this runner belongs to",
+        )
+    return _admin_row(services.grant_runner_admin(runner, user, granted_by=request.user))
+
+
+@router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
+               summary="Revoke administration (pairer only)")
+def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
+    runner = _runner_or_404(request, runner_id)
+    user = User.objects.filter(pk=user_id).first()
+    if user is None or not services.revoke_runner_admin(runner, user):
+        raise HttpError(404, "no such grant on this runner")
+    return Status(204, None)
 
 
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
@@ -500,6 +582,10 @@ def list_runners(request: HttpRequest):
         # Resolved here rather than in the schema because it is a property of the
         # (caller, runner) PAIR, and a Ninja resolver only sees the row.
         r.can_manage = r.paired_by_id in (request.user.id, None)
+        # Administration is a WIDER tier than acting as the runner, so it gets
+        # its own flag rather than overloading can_manage — the credentials block
+        # and the drill panel are gated by different routes.
+        r.can_administer = services.can_administer_runner(request.user, r)
     return rows
 
 

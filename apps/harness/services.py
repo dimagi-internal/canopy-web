@@ -2231,6 +2231,56 @@ def runner_credential_status(runner) -> dict:
         "has_op_sa_token": bool(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
     }
+# ---- Runner administrators (administer a box without speaking for it) -----
+def can_administer_runner(user, runner) -> bool:
+    """May this person change what this box RUNS ON — its credentials, its
+    sign-in — as opposed to speaking as it?
+
+    The pairer always can: they own the credential the box authenticates with,
+    so withholding administration from them would be theatre. Anyone else needs
+    an explicit grant, because the alternatives are a workspace with one owner
+    (too narrow — that IS the single point of failure) or every auto-joined
+    member (far too wide for credentials).
+    """
+    from .models import RunnerAdmin
+
+    if runner.paired_by_id in (getattr(user, "id", None), None):
+        return True
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return RunnerAdmin.objects.filter(runner=runner, user=user).exists()
+
+
+def grant_runner_admin(runner, user, *, granted_by=None):
+    """Idempotent: re-granting returns the existing row rather than a second one
+    that a later revoke would only half-remove."""
+    from .models import RunnerAdmin
+
+    admin, _ = RunnerAdmin.objects.get_or_create(
+        runner=runner, user=user, defaults={"granted_by": granted_by})
+    return admin
+
+
+def revoke_runner_admin(runner, user) -> bool:
+    """True when a grant was actually removed. The pairer is not stored as a
+    grant, so this can never revoke them — losing the last administrator of a box
+    is not a state this should be able to produce."""
+    from .models import RunnerAdmin
+
+    deleted, _ = RunnerAdmin.objects.filter(runner=runner, user=user).delete()
+    return bool(deleted)
+
+
+def list_runner_admins(runner):
+    from .models import RunnerAdmin
+
+    return list(
+        RunnerAdmin.objects.filter(runner=runner)
+        .select_related("user", "granted_by")
+        .order_by("created_at")
+    )
+
+
 # ---- Browser-driven re-authentication (RunnerMint) ------------------------
 def start_runner_mint(runner, *, requested_by=None):
     """Ask a runner to begin a browser sign-in, superseding any unfinished one.

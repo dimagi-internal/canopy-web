@@ -135,6 +135,11 @@ class RunnerOut(Schema):
     # legitimately contain a runner the caller may not act on, and only the list
     # sets this per row.
     can_manage: bool = True
+    # Whether the caller may ADMINISTER this box (credentials, browser sign-in)
+    # as distinct from speaking AS it (drills, pause, claim). Separate flags
+    # because they gate different routes: reporting one for the other is how a
+    # UI ends up rendering a control that 404s.
+    can_administer: bool = True
     # None when this runner has never been drilled (not "zero of zero pass") —
     # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
     drill_rollup: DrillRollup | None = None
@@ -802,6 +807,19 @@ class RunnerCredentialOut(Schema):
     github_token: str = ""
     op_sa_token: str = ""
     updated_at: dt.datetime | None = None
+
+
+class RunnerAdminOut(Schema):
+    """One explicit grant. No secret here — who, by whom, when."""
+
+    user_id: int
+    email: str
+    granted_by_email: str = ""
+    created_at: dt.datetime
+
+
+class RunnerAdminIn(Schema):
+    email: str
 
 
 class RunnerMintOut(Schema):
