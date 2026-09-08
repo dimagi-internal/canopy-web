@@ -1,34 +1,5 @@
 import type { RouteRule } from 'canopy-ui/presence'
 
-// Human labels for an Agent Workspace's nested sections (see router.tsx's
-// `/w/:workspace/agents/:slug` children). Falls back to the raw segment for
-// any section added to the router but not listed here.
-const AGENT_SECTION_LABELS: Record<string, string> = {
-  inbox: 'Inbox',
-  overview: 'Overview',
-  tasks: 'Tasks',
-  turns: 'Turns',
-  items: 'Items',
-  schedules: 'Schedules',
-  syncs: 'Syncs',
-  'work-products': 'Work products',
-  skills: 'Skills',
-}
-
-// Human labels for the single-segment tenant surfaces caught by the generic
-// rule at the bottom of the tenant block below.
-const TENANT_RESOURCE_LABELS: Record<string, string> = {
-  members: 'Members',
-  timeline: 'Timeline',
-  shareouts: 'Shareouts',
-  walkthroughs: 'Walkthroughs',
-  agents: 'Agents',
-  schedules: 'Schedules',
-  chat: 'Chats',
-  activity: 'Activity',
-  ddd: 'DDD',
-}
-
 /**
  * Workspace segment for pages that are NOT tenant-scoped.
  *
@@ -42,28 +13,32 @@ const TENANT_RESOURCE_LABELS: Record<string, string> = {
  */
 const GLOBAL_SENTINEL = '~global'
 
-const GLOBAL_RESOURCE_LABELS: Record<string, string> = {
-  system: 'System',
-  insights: 'Insights',
-  sessions: 'Sessions',
-  supervisor: 'Supervisor',
-  schedules: 'Schedules',
-  activity: 'Activity',
-  settings: 'Settings',
-}
-
 /**
  * canopy-web's route table for presence grouping.
  *
- * Built from `frontend/src/router.tsx`'s actual route list (2026-07-27), not
- * a guess — see task-8-brief.md's Step 6, which drafted a shape that didn't
- * match this repo's real routes (no `/w/:workspace/agents/:slug` nested
- * sections in the draft, no chat-list vs. chat-session distinction, no DDD
- * routes at all).
+ * A route with no rule here yields `pageKeyFor(...) === null`, which opens no
+ * socket and renders no badge (see `usePresence` and `PresenceBadge`). That is
+ * the mechanism this list is built on: **presence is opt-in, page by page.**
  *
- * Order matters — the first match wins, so more specific patterns (a chat
- * session, an agent's nested section, a DDD run) must be listed before the
- * looser single-segment catch-alls that would otherwise absorb them.
+ * The bar is COLLISION, not company. A surface earns presence when two people
+ * can act on the same object at the same time and silently clobber each other
+ * — a co-edited draft, a scene's text, a narrative under review. It does not
+ * earn presence merely because two people can be reading it: the badge used to
+ * cover nearly every route, so "who else is on Timeline" was noise sitting in
+ * the header of pages where nobody could collide with anyone.
+ *
+ * Deliberately NOT here, though each once had a rule:
+ *   - the workspace index, members, timeline, walkthroughs, inbound, and the
+ *     agents / chat / DDD LIST pages — read surfaces
+ *   - `/w/:ws/agents/:slug` — deciding an Item is a single atomic action and
+ *     the ledger shows who decided it afterwards, so a collision is visible
+ *     rather than silent
+ *   - a shareouts period, `/walkthrough/:id` — published artifacts, read-only
+ *   - `/supervisor`, `/insights`, `/sessions`, `/activity`, `/schedules`,
+ *     `/system`, `/settings` — personal or read-only dashboards
+ *
+ * Order matters — the first match wins, so more specific patterns (a DDD run
+ * before its narrative) must come first.
  *
  * `/invite/:token` has no rule here on purpose: a pending invitee has no
  * workspace membership yet, so pageKeyFor returns null and no badge renders
@@ -72,40 +47,18 @@ const GLOBAL_RESOURCE_LABELS: Record<string, string> = {
 export const canopyPresenceRules: RouteRule[] = [
   // --- Tenant-scoped (/w/:workspace/...) --------------------------------
 
-  // Each chat session is its own roster — two people in different chats are
-  // not "on the same page" just because both are chatting.
+  // Live multiplayer chat: a co-edited draft plus a streamed reply, so two
+  // people typing into the same session genuinely need to see each other.
+  // Each session is its own roster — two people in different chats are not
+  // "on the same page" just because both are chatting.
   {
     pattern: /^\/w\/([^/]+)\/chat\/([^/]+)/,
     build: (m) => ({ workspace: m[1], resource: `session:${m[2]}`, subLocation: 'Chat' }),
   },
 
-  // Agent Workspace: every nested section (inbox, overview, tasks, turns,
-  // items, schedules, syncs, work-products, skills — see router.tsx's
-  // `/w/:workspace/agents/:slug` children) is a VIEW of the same agent, not
-  // a distinct object. Collapse them onto one `agent:<slug>` roster, exactly
-  // as ace-web collapses a run's steps onto one run key. The section name
-  // survives only as `subLocation`, for the expanded viewer list — not the
-  // grouping key.
-  {
-    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)\/([a-z-]+)/,
-    build: (m) => ({
-      workspace: m[1],
-      resource: `agent:${m[2]}`,
-      subLocation: AGENT_SECTION_LABELS[m[3]] ?? m[3],
-    }),
-  },
-  // Same agent, no section segment yet (mid-redirect to its default `inbox`
-  // section — see router.tsx's `index: <Navigate to="inbox" />` — or a bare
-  // link). Same collapsed key, generic subLocation.
-  {
-    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)/,
-    build: (m) => ({ workspace: m[1], resource: `agent:${m[2]}`, subLocation: 'Agent' }),
-  },
-
   // DDD: a specific run (`/ddd/:narrative/:runId`) is its own roster — a
   // distinct rendered/edited state, like a chat session. The narrative page
-  // with no run id (`/ddd/:narrative`) is a separate "editor" roster; the
-  // bare list (`/ddd`) is separate again.
+  // with no run id (`/ddd/:narrative`) is a separate "editor" roster.
   {
     pattern: /^\/w\/([^/]+)\/ddd\/([^/]+)\/([^/]+)/,
     build: (m) => ({ workspace: m[1], resource: `ddd:${m[2]}:${m[3]}`, subLocation: 'Run' }),
@@ -115,49 +68,13 @@ export const canopyPresenceRules: RouteRule[] = [
     build: (m) => ({ workspace: m[1], resource: `ddd:${m[2]}`, subLocation: 'Narrative' }),
   },
 
-  // A specific shareouts period (`/shareouts/:period`) is its own roster —
-  // distinct content per period, like a chat session or a DDD run.
-  {
-    pattern: /^\/w\/([^/]+)\/shareouts\/([^/]+)/,
-    build: (m) => ({ workspace: m[1], resource: `shareouts:${m[2]}`, subLocation: 'Shareouts' }),
-  },
-
-  // Workspace index (the Projects dashboard) — no further path segment.
-  {
-    pattern: /^\/w\/([^/]+)\/?$/,
-    build: (m) => ({ workspace: m[1], resource: 'projects', subLocation: 'Projects' }),
-  },
-
-  // Every other single-segment tenant surface (members, timeline,
-  // walkthroughs, the agents LIST, schedules, the chat LIST, activity, the
-  // ddd LIST): resource == the path segment, one roster per surface.
-  {
-    pattern: /^\/w\/([^/]+)\/([a-z-]+)/,
-    build: (m) => ({
-      workspace: m[1],
-      resource: m[2],
-      subLocation: TENANT_RESOURCE_LABELS[m[2]] ?? m[2],
-    }),
-  },
-
   // --- Global (not tenant-scoped) ---------------------------------------
 
-  {
-    pattern: /^\/walkthrough\/([^/]+)/,
-    build: (m) => ({ workspace: GLOBAL_SENTINEL, resource: `walkthrough:${m[1]}`, subLocation: 'Walkthrough' }),
-  },
+  // The narrative review surface: a reviewer edits the scene's own text in
+  // place, so two reviewers on one narrative is exactly the silent-clobber
+  // case presence exists to warn about.
   {
     pattern: /^\/review\/([^/]+)/,
     build: (m) => ({ workspace: GLOBAL_SENTINEL, resource: `review:${m[1]}`, subLocation: 'Review' }),
-  },
-  // The remaining top-level personal/global pages (see router.tsx's
-  // non-tenant routes): one roster per page.
-  {
-    pattern: /^\/(system|insights|sessions|supervisor|schedules|activity|settings)\b/,
-    build: (m) => ({
-      workspace: GLOBAL_SENTINEL,
-      resource: m[1],
-      subLocation: GLOBAL_RESOURCE_LABELS[m[1]] ?? m[1],
-    }),
   },
 ]
