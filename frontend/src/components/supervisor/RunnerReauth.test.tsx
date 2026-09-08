@@ -24,7 +24,7 @@ const URL_ = 'https://claude.com/cai/oauth/authorize?code=true&client_id=x&state
 function mint(over: Partial<RunnerMint> = {}): RunnerMint {
   return {
     id: 'm1', status: 'requested', authorize_url: '', detail: '',
-    created_at: '2026-09-08T00:00:00Z', updated_at: '2026-09-08T00:00:00Z',
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     ...over,
   } as RunnerMint
 }
@@ -34,6 +34,18 @@ beforeEach(() => {
   api.getRunnerMint.mockResolvedValue(null)
 })
 afterEach(cleanup)
+
+/** Establish PRESENCE: an outcome is only shown to an operator who started the
+ *  sign-in in this visit, so every test that asserts on one has to click first.
+ *  That is the rule under test, not incidental setup. */
+async function startHere() {
+  api.startRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
+  // Flush the initial load by draining microtasks rather than waitFor: one of
+  // these tests runs under fake timers, where waitFor can never advance and
+  // would hang the whole file.
+  await act(async () => { await Promise.resolve() })
+  await act(async () => { fireEvent.click(screen.getByTestId('reauth-start')) })
+}
 
 describe('RunnerReauth', () => {
   it('offers a single button when nothing is in flight', async () => {
@@ -98,9 +110,10 @@ describe('RunnerReauth', () => {
     // said `failed` the whole time. Reported 2026-09-08.
     vi.useFakeTimers()
     try {
-      api.getRunnerMint.mockResolvedValue(mint({ status: 'completing' }))
+      api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
       render(<RunnerReauth runnerId="r1" />)
-      await act(async () => { await Promise.resolve() })
+      await startHere()
+      api.getRunnerMint.mockResolvedValue(mint({ status: 'completing' }))
 
       await act(async () => { vi.advanceTimersByTime(95_000) })
       const callsAfterLimit = api.getRunnerMint.mock.calls.length
@@ -117,19 +130,55 @@ describe('RunnerReauth', () => {
   })
 
   it('reports a failed sign-in with the runner’s reason', async () => {
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
+    render(<RunnerReauth runnerId="r1" />)
+    await startHere()
     api.getRunnerMint.mockResolvedValue(
       mint({ status: 'failed', detail: 'the code had expired' }))
-    render(<RunnerReauth runnerId="r1" />)
+    // Arrives on the poll tick (POLL_MS = 3s), not synchronously.
     await waitFor(() => expect(screen.getByTestId('reauth-failed').textContent)
-      .toContain('the code had expired'))
+      .toContain('the code had expired'), { timeout: 4000 })
     // and offers a retry rather than a dead end
     expect(screen.getByTestId('reauth-start')).toBeTruthy()
   })
 
+  it('does not greet you with the outcome of an attempt nobody remembers', async () => {
+    // Observed 2026-09-08: a mint abandoned at 14:39 was still showing "This
+    // sign-in expired before it was finished" in red, on a fresh page load an
+    // hour later, above a perfectly healthy box. Opening the page cold should
+    // show the CURRENT state and a way in — not a verdict on someone else's
+    // attempt. Age is irrelevant; presence is the test.
+    api.getRunnerMint.mockResolvedValue(mint({
+      status: 'failed',
+      detail: 'This sign-in expired before it was finished',
+    }))
+    render(<RunnerReauth runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('reauth-start')).toBeTruthy())
+    expect(screen.queryByTestId('reauth-failed')).toBeNull()
+    // …and it offers a plain start, not "again" for something they never did.
+    expect(screen.getByTestId('reauth-start').textContent).toContain('Start sign-in')
+  })
+
+  it('still shows an outcome you were actually present for', async () => {
+    // The diagnostic path: you clicked, it failed, you get to read why. This is
+    // what the whole runner-side error reporting exists to deliver, so the
+    // suppression above must not swallow it.
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
+    render(<RunnerReauth runnerId="r1" />)
+    await startHere()
+    api.getRunnerMint.mockResolvedValue(
+      mint({ status: 'failed', detail: 'the code was rejected' }))
+    await waitFor(() => expect(screen.getByTestId('reauth-failed').textContent)
+      .toContain('the code was rejected'), { timeout: 4000 })
+  })
+
   it('never renders a token', async () => {
-    api.getRunnerMint.mockResolvedValue(mint({ status: 'done', detail: 'signed in' }))
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
     const { container } = render(<RunnerReauth runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('reauth-done')).toBeTruthy())
+    await startHere()
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'done', detail: 'signed in' }))
+    await waitFor(() => expect(screen.getByTestId('reauth-done')).toBeTruthy(),
+      { timeout: 4000 })
     expect(container.textContent).not.toContain('sk-ant-')
   })
 })
