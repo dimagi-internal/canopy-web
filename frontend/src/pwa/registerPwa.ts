@@ -1,23 +1,55 @@
 import { registerSW } from 'virtual:pwa-register'
 
-// Always auto-update.
+// Adopt new service workers — but never underneath a page someone is looking at.
 //
-// `registerType: 'autoUpdate'` (vite.config.ts) makes the app adopt a new service
-// worker + reload — but ONLY checks for one on page load. A long-lived open client
-// (the installed PWA, the menubar WKWebView, a tab left open for days) therefore
-// never notices a new deploy and serves a stale bundle forever. That is exactly how
-// the Sessions surface got stuck on a pre-feature bundle.
+// The old arrangement was `registerType: 'autoUpdate'` plus a 60s poll calling
+// registration.update(). autoUpdate forces skipWaiting + clientsClaim, so any of
+// those ticks could activate a new SW MID-LOAD or mid-use. On activation
+// cleanupOutdatedCaches() deletes the previous precache, and the live page — which
+// was served the OLD index.html by navigateFallback — then asks for asset hashes
+// that are gone from the cache and 404 on the server, because every deploy rehashes
+// them. The modules fail and the app paints a WHITE PAGE. A manual reload fixes it,
+// since by then the new SW serves the new shell.
 //
-// So we poll: check for a new SW on an interval AND whenever the app regains focus
-// (menubar reopened, tab refocused). When update() finds one, autoUpdate skips
-// waiting and reloads on its own — no prompt, no manual hard-refresh.
+// That is the reported bug: white on first load, fine after a refresh, and constant
+// on a day with six deploys — the 60s poll turned a per-load race into a per-minute
+// one.
+//
+// So: 'prompt' in vite.config.ts leaves the new SW WAITING, and we choose the
+// moment. The polling below is kept — a long-lived client (installed PWA, menubar
+// WKWebView, a tab open for days) otherwise never discovers a deploy at all, which
+// is how the Sessions surface once got stuck on a pre-feature bundle.
 const UPDATE_INTERVAL_MS = 60_000
+
+/** Apply a waiting update only when the page is HIDDEN.
+ *
+ *  Reloading a visible page is its own bug here: this app's sign-in flow has a
+ *  box you paste a single-use code into, and a surprise reload would throw it
+ *  away. Hidden means the operator has looked elsewhere, so the reload costs
+ *  them nothing and they come back to a current bundle. */
+function applyWhenHidden(apply: () => void): void {
+  if (document.visibilityState === 'hidden') {
+    apply()
+    return
+  }
+  const onHide = (): void => {
+    if (document.visibilityState !== 'hidden') return
+    document.removeEventListener('visibilitychange', onHide)
+    apply()
+  }
+  document.addEventListener('visibilitychange', onHide)
+}
 
 export function registerPwa(): void {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
-  registerSW({
+  const updateSW = registerSW({
     immediate: true,
+    // Fired once a new SW is installed and waiting. Nothing has been swapped
+    // yet — the running page keeps the precache it was built against.
+    onNeedRefresh() {
+      applyWhenHidden(() => void updateSW(true))
+    },
     onRegisteredSW(swUrl, registration) {
       if (!registration) return
 

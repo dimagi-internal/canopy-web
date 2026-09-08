@@ -30,7 +30,12 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // NOT 'autoUpdate'. That preset forces skipWaiting + clientsClaim and
+      // overrides the workbox options below, which is the race documented there:
+      // a new SW activating underneath a page that was already served the old
+      // shell, then deleting the precache out from under it. 'prompt' leaves the
+      // new SW waiting; src/pwa/register.ts applies it at a safe moment.
+      registerType: 'prompt',
       // The deployment is path-prefixed (/canopy/ on labs). scope and start_url
       // MUST follow it — a manifest scoped to "/" installs an app that opens the
       // wrong site. `base` is this file's own base option, computed above.
@@ -56,6 +61,28 @@ export default defineConfig({
         // Cache the shell so the app opens instantly and survives a labs outage
         // (this is also what makes the menubar's WKWebView resilient in Phase 5).
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // A new SW must NOT take over a page that has already been served the
+        // old shell. registerType 'autoUpdate' turns both of these on, and the
+        // three defaults together are a race:
+        //
+        //   1. navigation is served the OLD precached index.html
+        //      (navigateFallback -> createHandlerBoundToURL('index.html'))
+        //   2. the new SW installs and, under skipWaiting, activates MID-LOAD
+        //   3. cleanupOutdatedCaches() deletes the old precache
+        //   4. clientsClaim() takes over the page
+        //   5. that page now asks for the OLD asset hashes — gone from the cache
+        //      and 404 on the server, because every deploy rehashes them
+        //   6. the modules fail and the app paints a WHITE PAGE; a reload fixes
+        //      it, because by then the new SW serves the new index.html
+        //
+        // Which is exactly the report: white on first load, fine after a manual
+        // refresh, and it went from rare to constant on a day with six deploys.
+        //
+        // With both false the new SW waits. The loading page keeps the precache
+        // it was built against and renders; the update applies on the next
+        // navigation. Still automatic — just never underneath a live page.
+        skipWaiting: false,
+        clientsClaim: false,
         // vite-plugin-pwa's generated SW only caches — it has no push listener.
         // Without this, a push payload arrives and nothing happens (no error,
         // no notification). importScripts (not injectManifest) keeps the
