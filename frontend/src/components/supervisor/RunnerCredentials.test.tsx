@@ -71,7 +71,8 @@ describe('credentialSummary', () => {
   it('warns when the only Claude credential is the primary', () => {
     const s = credentialSummary(ONE_CLAUDE)
     expect(s.claudeFallback).toBe('none')
-    expect(s.warning).toMatch(/cap/i)
+    // A single credential is a CHOICE, not a fault — no banner for it.
+    expect(s.warning).toBeNull()
   })
 
   it('clears once a secondary subscription is set', () => {
@@ -85,7 +86,8 @@ describe('credentialSummary', () => {
     // notifies a human rather than quietly spending money.
     const s = credentialSummary({ ...ONE_CLAUDE, has_claude_api_key: true })
     expect(s.claudeFallback).toBe('api_key')
-    expect(s.warning).toMatch(/metered|billed|spend/i)
+    // Likewise a metered-only fallback: worth knowing, not worth a standing banner.
+    expect(s.warning).toBeNull()
   })
 
   it('says nothing is set at all rather than warning about a fallback', () => {

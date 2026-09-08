@@ -18,6 +18,13 @@ PUBLIC_PATH_PREFIXES = (
     "/admin/",               # Django admin has its own auth
     "/health/",              # health check for Cloud Run
     "/static/",              # static assets
+    # The built SPA's content-hashed bundles — the same class of thing as
+    # /static/, and already referenced by the login page's own HTML, so gating
+    # them protects nothing. Gating them DID break things: an expired session
+    # turned every <script> request into a 302 to Google, so the browser was
+    # handed a sign-in page where it expected a module and rendered a white
+    # page. Reproduced 2026-09-08.
+    "/assets/",              # built SPA bundles
     "/api/csrf/",            # bootstraps CSRF cookie before login
     "/api/openapi.json",      # openapi-typescript fetches the schema
     "/api/docs/",             # Scalar HTML
