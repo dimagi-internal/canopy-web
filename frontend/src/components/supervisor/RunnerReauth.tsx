@@ -41,6 +41,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   const [error, setError] = useState<string | null>(null)
   const [waitedOut, setWaitedOut] = useState(false)
   const startedWaiting = useRef<number | null>(null)
+  const status = mint?.status
 
   const refresh = useCallback(async () => {
     try {
@@ -62,17 +63,33 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
       setWaitedOut(false)
       return
     }
-    startedWaiting.current ??= Date.now()
+    // Each PHASE gets its own budget: "the runner has not started" and "the
+    // runner is finishing" are different waits, and sharing one clock made the
+    // second inherit however long the first took.
+    startedWaiting.current = Date.now()
+  }, [waitingOnRunner, status])
+
+  useEffect(() => {
+    if (!waitingOnRunner) return
     const t = window.setInterval(() => {
+      // waitedOut is a thing we SAY, never a reason to stop looking. It used to
+      // `return` before the refresh, so after 90s the page stopped polling for
+      // good — and a mint that failed four minutes in was never fetched. The
+      // screen sat on "Finishing the sign-in on the runner…" forever while the
+      // server had said `failed` the whole time. Reported 2026-09-08.
       if (Date.now() - (startedWaiting.current ?? 0) > WAIT_LIMIT_MS) {
         setWaitedOut(true)
-        return
       }
       void refresh()
-      if (mint?.status === 'completing') onSignedIn?.()
     }, POLL_MS)
     return () => window.clearInterval(t)
-  }, [waitingOnRunner, refresh, mint?.status, onSignedIn])
+  }, [waitingOnRunner, refresh])
+
+  useEffect(() => {
+    // Once, on the transition — not on every tick of `completing`, which had the
+    // parent refetching its credential view every few seconds for nothing.
+    if (status === 'done') onSignedIn?.()
+  }, [status, onSignedIn])
 
   const run = async (fn: () => Promise<RunnerMint>) => {
     setBusy(true)
@@ -103,7 +120,6 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   // Narrowed through `mint` itself rather than a hoisted `mint?.status`: the
   // optional chain reads fine but does not narrow, so every `mint.` below then
   // needs a non-null assertion. `tsc -b` catches that; `tsc --noEmit` does not.
-  const status = mint?.status
   const idle = !mint || status === 'done' || status === 'failed'
 
   return (
