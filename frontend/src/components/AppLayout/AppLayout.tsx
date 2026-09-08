@@ -1,7 +1,14 @@
 import { useEffect, useState, useRef } from 'react'
 import { Outlet, Link, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { ChevronDown } from 'lucide-react'
 import { PresenceBadge, pageKeyFor, usePresence } from 'canopy-ui/presence'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from 'canopy-ui/ui'
 import { aiStatus, aiSwitch } from '@/api/ai'
 import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
@@ -9,25 +16,7 @@ import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
-
-// `tenant` items live under /w/:workspace; the rest are personal/global (root).
-const NAV_ITEMS = [
-  { path: '', label: 'Projects', tenant: true },
-  { path: 'chat', label: 'Chats', tenant: true },
-  { path: 'ddd', label: 'DDD', tenant: true },
-  { path: 'agents', label: 'Agents', tenant: true },
-  { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
-  { path: 'shareouts', label: 'Shareouts', tenant: true },
-  { path: 'timeline', label: 'Timeline', tenant: true },
-  { path: 'members', label: 'Members', tenant: true },
-  { path: 'inbound', label: 'Inbound', tenant: true },
-  { path: '/insights', label: 'Insights', tenant: false },
-  { path: '/sessions', label: 'Sessions', tenant: false },
-  { path: '/system', label: 'System', tenant: false },
-  { path: '/supervisor', label: 'Supervisor', tenant: false },
-  { path: '/schedules', label: 'Schedule', tenant: false },
-  { path: '/activity', label: 'Activity', tenant: false },
-]
+import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
 
 const BACKENDS = [
   { key: 'api' as const, label: 'API', description: 'Direct Anthropic API' },
@@ -258,16 +247,9 @@ function AppShell() {
   // would be dead links that bounce to sign-in. Show just the wordmark instead.
   const isAuthed = auth.status === 'authenticated'
 
-  // Tenant nav items resolve to /w/:active/<path>; personal/global items keep
-  // their absolute path. Tenant items are hidden until the active workspace is
-  // known (avoids linking to a broken /w//… path on first paint).
-  const navItems = isAuthed
-    ? NAV_ITEMS.flatMap((item) => {
-        if (!item.tenant) return [{ path: item.path, label: item.label }]
-        if (!active) return []
-        return [{ path: `/w/${active}${item.path ? `/${item.path}` : ''}`, label: item.label }]
-      })
-    : []
+  // See `nav.ts` for the grouping and why the header is menus rather than a
+  // flat row of links.
+  const navGroups = resolveNavGroups({ isAuthed, active })
 
   // Collapse the mobile menu whenever the route changes (e.g. tapping a link).
   useEffect(() => {
@@ -275,16 +257,10 @@ function AppShell() {
   }, [location.pathname])
 
   function navLinkClass(path: string, block: boolean) {
-    // The workspace index (/w/<slug>) is a prefix of every tenant route, so it
-    // must match exactly (else "Projects" highlights on every tenant page).
-    const isIndex = path === '/' || /^\/w\/[^/]+$/.test(path)
-    const isActive =
-      location.pathname === path ||
-      (!isIndex && location.pathname.startsWith(path + '/'))
     return clsx(
       'text-sm font-medium rounded transition-colors',
       block ? 'block px-3 py-2' : 'px-3 py-1.5',
-      isActive
+      isNavItemActive(path, location.pathname)
         ? 'text-foreground bg-card'
         : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
     )
@@ -299,29 +275,46 @@ function AppShell() {
           ) : (
             <span className="text-lg font-semibold text-foreground shrink-0">Canopy<span className="text-primary">.</span></span>
           )}
-          <div className="flex min-w-0 items-center gap-2 xl:gap-3">
-            {/* Full inline nav only once all items fit (~xl); below that it
-                collapses into the menu below.
-
-                `overflow-x-auto` because "all items fit at xl" stopped being true:
-                the nav grew to 15 items and at exactly 1280px (Tailwind's xl, and
-                Desktop Chrome's default) it ran 6px past the viewport, giving EVERY
-                page a horizontal scrollbar. Scrolling within the nav keeps that
-                contained instead of pushing the document wide, and it does not
-                regress as the next item is added — raising the breakpoint instead
-                would have hidden the whole nav on 1280–1440px laptops, which is most
-                of them. `min-w-0` is what lets this flex child shrink far enough for
-                the overflow to apply. */}
-            <nav className="hidden min-w-0 overflow-x-auto xl:flex gap-0.5">
-              {navItems.map((item) => (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`${navLinkClass(item.path, false)} shrink-0`}
-                >
-                  {item.label}
-                </Link>
-              ))}
+          <div className="flex min-w-0 items-center gap-2 md:gap-3">
+            {/* Four menu triggers, so the inline nav fits from `md` up. It was
+                15 flat links needing `xl` plus an `overflow-x-auto` — which put
+                a horizontal scrollbar on every page at 1280px (Tailwind's xl,
+                and Desktop Chrome's default width) and showed no nav at all
+                below it. Grouping is what makes the room; see `nav.ts`. */}
+            <nav className="hidden md:flex gap-0.5" aria-label="Main">
+              {navGroups.map((group) => {
+                const groupActive = isNavGroupActive(group, location.pathname)
+                return (
+                  <DropdownMenu key={group.label}>
+                    <DropdownMenuTrigger
+                      className={clsx(
+                        'flex shrink-0 items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
+                        groupActive
+                          ? 'text-foreground bg-card'
+                          : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
+                      )}
+                    >
+                      {group.label}
+                      <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="min-w-44">
+                      {group.items.map((item) => (
+                        <DropdownMenuItem
+                          key={item.href}
+                          className={clsx(
+                            'cursor-pointer',
+                            isNavItemActive(item.href, location.pathname) &&
+                              'text-foreground font-medium',
+                          )}
+                          render={<Link to={item.href} />}
+                        >
+                          {item.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )
+              })}
             </nav>
             <WorkspaceSwitcher />
             {isAuthed && <PresenceHeaderBadge key={presenceReconnectNonce} />}
@@ -332,7 +325,7 @@ function AppShell() {
               onClick={() => setMobileOpen((o) => !o)}
               aria-label="Toggle navigation menu"
               aria-expanded={mobileOpen}
-              className="xl:hidden -mr-1 p-2 rounded text-foreground-secondary hover:text-foreground-secondary hover:bg-card"
+              className="md:hidden -mr-1 p-2 rounded text-foreground-secondary hover:text-foreground-secondary hover:bg-card"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 {mobileOpen ? (
@@ -360,13 +353,27 @@ function AppShell() {
               aria-hidden="true"
               tabIndex={-1}
               onClick={() => setMobileOpen(false)}
-              className="xl:hidden fixed inset-0 top-[53px] z-30 bg-background/40 cursor-default"
+              className="md:hidden fixed inset-0 top-[53px] z-30 bg-background/40 cursor-default"
             />
-            <nav className="xl:hidden absolute left-0 right-0 top-full z-40 border-b border-border bg-background px-3 py-2 shadow-lg flex flex-col gap-1 max-h-[calc(100vh-53px)] overflow-y-auto">
-              {navItems.map((item) => (
-                <Link key={item.path} to={item.path} className={navLinkClass(item.path, true)}>
-                  {item.label}
-                </Link>
+            {/* One flat scrolling list under section headers — deliberately
+                not an accordion. The desktop grouping survives as labels, but
+                every destination stays one tap away, which is what matters on
+                a phone. */}
+            <nav
+              aria-label="Main"
+              className="md:hidden absolute left-0 right-0 top-full z-40 border-b border-border bg-background px-3 py-2 shadow-lg flex flex-col gap-1 max-h-[calc(100vh-53px)] overflow-y-auto"
+            >
+              {navGroups.map((group) => (
+                <div key={group.label} className="flex flex-col gap-0.5 pb-1">
+                  <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {group.label}
+                  </div>
+                  {group.items.map((item) => (
+                    <Link key={item.href} to={item.href} className={navLinkClass(item.href, true)}>
+                      {item.label}
+                    </Link>
+                  ))}
+                </div>
               ))}
             </nav>
           </>
