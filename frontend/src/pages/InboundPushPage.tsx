@@ -38,7 +38,14 @@ function CopyField({ label, value }: { label: string; value: string }): JSX.Elem
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="flex gap-2">
-        <code className="flex-1 overflow-x-auto rounded border border-border bg-muted px-2 py-1 text-xs">
+        {/* `whitespace-pre` is load-bearing, not cosmetic. The gcloud block is
+            five numbered steps separated by blank lines — 27 newlines in all —
+            and the browser's default `white-space: normal` collapsed every one
+            of them, rendering the page's most important element (the thing you
+            paste into a terminal) as a single unbroken run-on. `min-w-0` is what
+            lets this flex child shrink so `overflow-x-auto` actually engages
+            instead of the row pushing the page wide on a phone. */}
+        <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre rounded border border-border bg-muted px-2 py-1 text-xs">
           {value}
         </code>
         <Button
@@ -200,7 +207,7 @@ export function InboundPushPage(): JSX.Element | null {
         <CopyField label="Run these" value={commands} />
         <div className="flex flex-wrap gap-3 text-xs">
           {consoleLinks(project).map((l) => (
-            <a key={l.url} className="text-primary underline" href={l.url} target="_blank" rel="noreferrer">
+            <a key={l.url} className="inline-flex min-h-11 items-center text-primary underline sm:min-h-0" href={l.url} target="_blank" rel="noreferrer">
               {l.label}
             </a>
           ))}

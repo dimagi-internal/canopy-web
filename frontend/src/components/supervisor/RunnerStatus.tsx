@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
 import type { components } from '@/api/generated'
+import { relativeAge } from '@/lib/relativeAge'
 
 type DrillRollup = components['schemas']['DrillRollup']
 
@@ -18,13 +19,9 @@ const DOT: Record<string, string> = {
   paused: 'bg-info',
 }
 
-function relative(iso: string | null): string {
-  if (!iso) return 'never'
-  const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000)
-  if (secs < 60) return `${secs}s ago`
-  if (secs < 3600) return `${Math.round(secs / 60)}m ago`
-  return `${Math.round(secs / 3600)}h ago`
-}
+// Ladder lives in `relativeAge` (and is unit-tested there) so it cannot stop at
+// hours again — that is what produced "drilled 1087h ago" on this very row.
+const relative = (iso: string | null): string => relativeAge(iso)
 
 // Worst-signal-wins: a single failed drill outranks any number of pending
 // ones for the at-a-glance color, which in turn outranks an all-clear.
@@ -55,9 +52,10 @@ export function RunnerStatus({
           key={r.id}
           type="button"
           onClick={() => onSelect?.(r)}
-          className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2 text-left"
+          className="flex min-h-11 w-full flex-col gap-1 rounded-lg border border-border bg-card px-3 py-2 text-left sm:min-h-0"
           data-testid={`runner-${r.name}`}
         >
+          <span className="flex w-full items-center gap-2.5">
           <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[r.status] ?? 'bg-muted-foreground'}`} />
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{r.name}</span>
           {/* `paused` outranks `not ready` here for the same reason it outranks a
@@ -76,17 +74,40 @@ export function RunnerStatus({
               not ready
             </span>
           ) : null}
-          {r.host && <span className="hidden truncate text-[11px] text-foreground-subtle sm:inline">{r.host}</span>}
+          {/* The host was `text-foreground-subtle` at 11px — 1.7:1 against this
+              row, where AA asks 4.5:1 — AND `hidden sm:inline`, so on a phone it
+              was not dim but absent. Which box a runner is on is the field that
+              tells two near-identical rows apart, so it is the last thing that
+              should be decoration: it moves up the emphasis ladder, up to 12px,
+              and onto the second line rather than off the screen. */}
+          {r.host && (
+            <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">{r.host}</span>
+          )}
           {r.drill_rollup && (
             <span
               data-testid={`runner-drill-badge-${r.name}`}
-              className={`hidden shrink-0 text-[11px] sm:inline ${drillBadgeClass(r.drill_rollup)}`}
+              className={`hidden shrink-0 text-xs sm:inline ${drillBadgeClass(r.drill_rollup)}`}
             >
               drilled {relative(r.drill_rollup.last_finished_at)} —{' '}
               {r.drill_rollup.passed}/{r.drill_rollup.passed + r.drill_rollup.failed + r.drill_rollup.pending}
             </span>
           )}
-          <span className="shrink-0 text-[11px] text-muted-foreground">{relative(r.last_heartbeat_at)}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{relative(r.last_heartbeat_at)}</span>
+          </span>
+
+          {/* Phone: the two facts the wide row shows inline, on their own line
+              instead of hidden. A runner you cannot identify is the failure this
+              list exists to prevent. */}
+          {(r.host || r.drill_rollup) && (
+            <span className="flex items-baseline gap-2 pl-[18px] text-xs sm:hidden">
+              {r.host && <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>}
+              {r.drill_rollup && (
+                <span className={`shrink-0 ${drillBadgeClass(r.drill_rollup)}`}>
+                  drilled {relative(r.drill_rollup.last_finished_at)}
+                </span>
+              )}
+            </span>
+          )}
         </button>
       ))}
     </div>

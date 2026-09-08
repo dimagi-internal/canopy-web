@@ -84,7 +84,12 @@ export function ItemCard({
             disabled={busy}
             placeholder="Type an answer…"
             onChange={(e) => setAnswer(e.target.value)}
-            className="min-w-0 flex-1 min-h-11 sm:min-h-0 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary disabled:opacity-50"
+            // `flex-1` alone let the two buttons take the row and squeeze the
+            // field to 87px at 375 — about six visible characters, on the
+            // control that takes the actual answer. `basis-full` gives it the
+            // whole row on a phone and pushes the buttons below; from `sm` up
+            // the three share a line as before.
+            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto dark:placeholder:text-foreground-secondary"
             data-testid={`item-answer-${item.id}`}
           />
           <button

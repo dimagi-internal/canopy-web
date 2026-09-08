@@ -73,11 +73,11 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
         </div>
         <div className="flex items-center gap-1">
           <button type="button" onClick={() => shiftWeek(-7)}
-            className="rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted">←</button>
+            className="min-h-11 min-w-11 rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted sm:min-h-0 sm:min-w-0">←</button>
           <button type="button" onClick={() => setWeekStart(mondayOf(new Date()))}
-            className="rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted">This week</button>
+            className="min-h-11 min-w-11 rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted sm:min-h-0 sm:min-w-0">This week</button>
           <button type="button" onClick={() => shiftWeek(7)}
-            className="rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted">→</button>
+            className="min-h-11 min-w-11 rounded border border-border px-2 py-1 text-sm text-foreground hover:bg-muted sm:min-h-0 sm:min-w-0">→</button>
         </div>
       </header>
 
@@ -105,9 +105,9 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
                   <li key={i}>
                     <button type="button"
                       onClick={() => setEditing({ agentSlug: f.item.schedule.agent_slug, schedule: f.item.schedule })}
-                      className="w-full rounded bg-muted px-1.5 py-1 text-left text-xs hover:bg-primary/10">
+                      className="min-h-11 w-full rounded bg-muted px-1.5 py-1 text-left text-xs hover:bg-primary/10 sm:min-h-0">
                       <span className="font-medium text-foreground">{timeLabel(f.when)}</span>{" "}
-                      <span className="text-muted-foreground">{f.item.schedule.agent_slug}</span>
+                      <span className="text-foreground-secondary">{f.item.schedule.agent_slug}</span>
                       <div className="truncate text-foreground-secondary">{f.item.schedule.name}</div>
                     </button>
                   </li>
@@ -139,12 +139,12 @@ function FilterRow({ label, value, options, onChange }: {
     <div className="flex flex-wrap items-center gap-1">
       <span className="text-muted-foreground">{label}:</span>
       <button type="button" onClick={() => onChange(null)}
-        className={`rounded border px-1.5 py-0.5 ${value === null ? "border-primary text-primary" : "border-border text-foreground-secondary hover:bg-muted"}`}>
+        className={`min-h-11 rounded border px-2 py-0.5 sm:min-h-0 ${value === null ? "border-primary text-primary" : "border-border text-foreground-secondary hover:bg-muted"}`}>
         All
       </button>
       {options.map((o) => (
         <button key={o} type="button" onClick={() => onChange(o)}
-          className={`rounded border px-1.5 py-0.5 ${value === o ? "border-primary text-primary" : "border-border text-foreground-secondary hover:bg-muted"}`}>
+          className={`min-h-11 rounded border px-2 py-0.5 sm:min-h-0 ${value === o ? "border-primary text-primary" : "border-border text-foreground-secondary hover:bg-muted"}`}>
           {o}
         </button>
       ))}
