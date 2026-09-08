@@ -536,3 +536,83 @@ def test_a_close_survives_the_control_channel_being_down():
     # already decides what is open, so nothing else needs to ack it.
     replace_reported_sessions(runner, ws, [])
     assert client.get(f"/api/harness/runners/{runner.id}/closes").json()["closes"] == []
+
+
+def test_a_reported_session_belongs_to_the_agent_its_project_names():
+    """A runner is a MACHINE serving several agents across tenants, so its own
+    workspace cannot answer "whose work is this".
+
+    The wholesale sweep carries no agent, so canopy filed every reported session
+    under the runner's workspace with `agent = NULL`. Measured on labs
+    2026-09-08: all three runners are registered in `dimagi` while ace, ada,
+    echo and hal live in `connect` — so each of those agents' sessions sat in a
+    tenant that does not contain the agent it is about, readable by that
+    tenant's members and invisible to any lister scoped to the agent's own. The
+    feed's `agent: null` was the same defect seen from the other side.
+    """
+    from django.test import Client
+
+    from apps.agents.models import Agent
+
+    jj = _user("jj")
+    runner_ws = _ws("dimagi", jj)          # where every runner is registered
+    agent_ws = _ws("connect", jj)          # where the agents actually live
+    ace = Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
+    runner = _runner(jj, runner_ws)
+    c = Client()
+    c.force_login(jj)
+
+    assert _report(c, runner.id, [
+        {"emdash_task": "ace-kmc-metrics", "project": "ace", "status": "in_progress",
+         "last_interacted_at": "2026-09-08T05:17:00Z"},
+        # A real repo checkout that is nobody's agent stays with the runner —
+        # the rule is "the project NAMES an agent", not "everything moves".
+        {"emdash_task": "ddd", "project": "canopy-web", "status": "in_progress",
+         "last_interacted_at": "2026-09-08T05:10:00Z"},
+    ]).status_code == 200
+
+    mine = RunnerBinding.objects.get(runner=runner, session_key="ace-kmc-metrics").session
+    assert mine.agent_id == ace.id, "the project named an agent; the session is that agent's"
+    assert mine.workspace_id == agent_ws.pk, "tenant follows the agent, not the machine"
+    # XOR (chat_session_not_agent_and_project) — and nothing is lost, because
+    # `emdash_project` answers with the agent's slug instead. That value is what
+    # the runner resolves a transcript by, and what RunnerBinding caches.
+    assert mine.project == ""
+    assert mine.emdash_project == "ace"
+
+    theirs = RunnerBinding.objects.get(runner=runner, session_key="ddd").session
+    assert theirs.agent_id is None
+    assert theirs.workspace_id == runner_ws.pk
+    assert theirs.project == "canopy-web"
+
+
+def test_the_reuse_key_the_report_loop_uses_does_not_move():
+    """The 10-second report loop reuses on RunnerBinding.emdash_project, which is
+    a CACHE of session.emdash_project — identical whether the project sits on the
+    session or is derived from its agent. If re-homing moved that key, every
+    report would fail to find its own binding and fork a duplicate session on a
+    ten-second cadence, which is why it is asserted rather than assumed."""
+    from django.test import Client
+
+    from apps.agents.models import Agent
+
+    jj = _user("jj")
+    runner_ws = _ws("dimagi", jj)
+    agent_ws = _ws("connect", jj)
+    Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
+    runner = _runner(jj, runner_ws)
+    c = Client()
+    c.force_login(jj)
+
+    payload = [{"emdash_task": "ace-kmc-metrics", "project": "ace",
+                "status": "in_progress", "last_interacted_at": "2026-09-08T05:17:00Z"}]
+    assert _report(c, runner.id, payload).status_code == 200
+    first = RunnerBinding.objects.get(runner=runner, session_key="ace-kmc-metrics")
+
+    # Report the same task again, as the runner does every ~10s.
+    assert _report(c, runner.id, payload).status_code == 200
+    assert RunnerBinding.objects.filter(session_key="ace-kmc-metrics").count() == 1
+    again = RunnerBinding.objects.get(runner=runner, session_key="ace-kmc-metrics")
+    assert again.pk == first.pk, "the second report forked a new binding"
+    assert again.session_id == first.session_id, "the second report forked a new session"
+    assert again.emdash_project == "ace"
