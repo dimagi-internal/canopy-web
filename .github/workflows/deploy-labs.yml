@@ -291,12 +291,37 @@ jobs:
           # CFN's own overhead is ~10s; the rest is the ECS rollout that
           # update-service waited for anyway (measured 2026-07-26: TaskDefinition
           # 6s, Service 5m53s).
-          aws cloudformation deploy \
+          #
+          # On failure, PRINT THE STACK EVENTS. `aws cloudformation deploy` says
+          # only "Failed to create/update the stack. Run the following command to
+          # fetch the list of events" — and then exits, so the reason lives in an
+          # API call nobody in the Actions log can make. Measured 2026-09-09: a
+          # deploy failed, and reading why needed AWS credentials and a separate
+          # session, while every other deploy queued behind it. The reason was one
+          # line (an IAM action the deploy role lacked) that this would have put
+          # straight in the log.
+          if ! aws cloudformation deploy \
             --stack-name "${{ env.CFN_STACK }}" \
             --template-file deploy/aws/canopy-web.cfn.yaml \
             --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
-            --parameter-overrides ImageTag="${{ github.sha }}"
+            --parameter-overrides ImageTag="${{ github.sha }}"; then
+              echo "::group::CloudFormation stack events (most recent first)"
+              # Only the events carrying a reason — the rest is IN_PROGRESS noise.
+              aws cloudformation describe-stack-events \
+                --stack-name "${{ env.CFN_STACK }}" \
+                --max-items 40 \
+                --query 'StackEvents[?ResourceStatusReason!=`null`].{Time:Timestamp,Resource:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}' \
+                --output table || echo "(could not read stack events)"
+              echo "::endgroup::"
+              FAILED=$(aws cloudformation describe-stack-events \
+                --stack-name "${{ env.CFN_STACK }}" \
+                --max-items 40 \
+                --query 'StackEvents[?ResourceStatus==`UPDATE_FAILED`||ResourceStatus==`CREATE_FAILED`]|[0].ResourceStatusReason' \
+                --output text 2>/dev/null || true)
+              echo "::error::CloudFormation deploy failed. First failing resource said: ${FAILED:-see the stack events above}"
+              exit 1
+          fi
           echo "Rollout complete — new tasks running and healthy."
 
       - name: Deployment summary
