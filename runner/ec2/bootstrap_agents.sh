@@ -1114,9 +1114,29 @@ reinstall_cli_from_marketplace_clone() {
     warn "marketplace clone not at $clone — leaving the CLI on its VCS install"
     return
   fi
-  if grep -q 'directory = ' "$receipt" 2>/dev/null; then
-    ok "canopy CLI already installed from a directory requirement"
+  # The guard is BOTH provenance AND version. It used to be provenance alone,
+  # which made this a one-shot repair that could never update: once the receipt
+  # recorded a directory it returned early forever, so the CLI froze at whatever
+  # the clone happened to be on the day it was first re-pointed while the clone
+  # itself kept advancing underneath it. A laptop hides this because a human runs
+  # /canopy:update; nobody types that on a cloud box.
+  #
+  # Measured 2026-09-09: CLI 0.2.471 against a 0.2.479 clone, eight releases
+  # behind, and `bin/hal-email`'s engine-staleness guard refused every send —
+  # so the box could think but could not answer anyone. Found by a readiness
+  # drill, not by the box reporting it.
+  local clone_version installed_version
+  clone_version="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+                   "$clone/pyproject.toml" 2>/dev/null | head -1)"
+  installed_version="$(canopy --version 2>/dev/null \
+                       | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if grep -q 'directory = ' "$receipt" 2>/dev/null \
+     && [[ -n "$clone_version" && "$installed_version" == "$clone_version" ]]; then
+    ok "canopy CLI at $installed_version, matching the marketplace clone"
     return
+  fi
+  if [[ -n "$clone_version" && -n "$installed_version" && "$installed_version" != "$clone_version" ]]; then
+    log "canopy CLI $installed_version lags the clone's $clone_version — reinstalling"
   fi
   if uv tool install --force --reinstall "$clone" >/dev/null 2>&1; then
     ok "canopy CLI re-pointed at the marketplace clone ($clone)"
@@ -1160,9 +1180,15 @@ done
 
 main() {
   if (( CREDENTIALS_ONLY )); then
-    log "credentials-only pass (client creds + gmail token + readiness report)"
+    log "credentials-only pass (client creds + gmail token + CLI sync + readiness report)"
     step2_gog_config
     step3_agents
+    # Cheap and idempotent: a version compare, and a reinstall only on drift.
+    # It belongs here because the timer is the ONLY thing that runs regularly on
+    # this box — step4, its other caller, needs a service restart, and nothing
+    # restarts the service. A staleness check that runs only when someone
+    # reboots the box is a staleness check that does not run.
+    reinstall_cli_from_marketplace_clone
     return 0
   fi
   step1_tooling
