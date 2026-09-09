@@ -46,5 +46,15 @@ def add_cache_headers(headers, path: str, url: str) -> None:
     ``workbox-<hash>.js``) lands on "revalidate", which costs a 304 and can
     never serve something stale. Only a name that provably encodes its own
     content opts into being cached forever.
+
+    The one thing this must NOT do is downgrade a decision WhiteNoise already
+    made. It runs last (``WhiteNoise.get_static_file`` calls the hook after
+    ``add_cache_headers``), and WhiteNoise marks Django's own hashed
+    ``/static/`` files — admin and allauth, via ManifestStaticFilesStorage —
+    immutable itself. Those live outside ``/assets/`` and would otherwise be
+    rewritten to "revalidate", turning a permanent cache into a 304 on every
+    page. So an existing ``immutable`` is left alone.
     """
+    if "immutable" in headers.get("Cache-Control", ""):
+        return
     headers["Cache-Control"] = IMMUTABLE if is_hashed_asset(url) else REVALIDATE

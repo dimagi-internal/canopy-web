@@ -60,6 +60,15 @@ class TestHashedAssetDetection:
         add_cache_headers(headers, "/x", "/index.html")
         assert headers["Cache-Control"] == REVALIDATE
 
+    def test_it_leaves_whitenoises_own_immutable_verdict_alone(self):
+        # WhiteNoise marks Django's hashed /static/ files (admin, allauth via
+        # ManifestStaticFilesStorage) immutable itself, and this hook runs AFTER
+        # it. Those names are not under /assets/, so overwriting them would
+        # downgrade a permanent cache to a 304 on every page load.
+        headers = {"Cache-Control": "max-age=315360000, public, immutable"}
+        add_cache_headers(headers, "/x", "/static/admin/css/base.5f2b0f5b8e6b.css")
+        assert headers["Cache-Control"] == "max-age=315360000, public, immutable"
+
     def test_it_is_wired_into_whitenoise(self):
         assert settings.WHITENOISE_ADD_HEADERS_FUNCTION is add_cache_headers
 

@@ -6,6 +6,7 @@ import { AppLayout } from './components/AppLayout/AppLayout'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { NotFound } from './components/NotFound'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
+import { lazyRoute } from './pwa/staleChunk'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
@@ -31,47 +32,58 @@ import SupervisorPage from '@/pages/SupervisorPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
 
+/**
+ * `lazy()`, plus recovery when the chunk is gone.
+ *
+ * Every route below is fetched on first use, which can be long after the page
+ * loaded — and a deploy in between deletes the filename this page would ask for.
+ * `lazyRoute` reloads once in that case (see src/pwa/staleChunk.ts) instead of
+ * leaving the section broken behind a Try again button. Use this, not bare
+ * `lazy()`, for anything route-shaped.
+ */
+const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
+
 // Agent Workspace sections are lazy-loaded — each owns its data fetch and only
 // the active section's bundle is pulled in.
-const InboxSection = lazy(() =>
+const InboxSection = lazySection(() =>
   import('./pages/agents/InboxSection').then((m) => ({ default: m.InboxSection })),
 )
-const AgentOverviewSection = lazy(() =>
+const AgentOverviewSection = lazySection(() =>
   import('./pages/agents/AgentOverviewSection').then((m) => ({ default: m.AgentOverviewSection })),
 )
-const AgentTasksSection = lazy(() =>
+const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
-const AgentTurnsSection = lazy(() =>
+const AgentTurnsSection = lazySection(() =>
   import('./pages/agents/AgentTurnsSection').then((m) => ({ default: m.AgentTurnsSection })),
 )
-const ItemsSection = lazy(() =>
+const ItemsSection = lazySection(() =>
   import('./pages/agents/ItemsSection').then((m) => ({ default: m.ItemsSection })),
 )
-const SchedulesSection = lazy(() =>
+const SchedulesSection = lazySection(() =>
   import('./pages/agents/SchedulesSection').then((m) => ({ default: m.SchedulesSection })),
 )
-const AgentSyncsSection = lazy(() =>
+const AgentSyncsSection = lazySection(() =>
   import('./pages/agents/AgentSyncsSection').then((m) => ({ default: m.AgentSyncsSection })),
 )
-const AgentCredentialsSection = lazy(() =>
+const AgentCredentialsSection = lazySection(() =>
   import('./pages/agents/AgentCredentialsSection').then((m) => ({
     default: m.AgentCredentialsSection,
   })),
 )
-const AgentWorkProductsSection = lazy(() =>
+const AgentWorkProductsSection = lazySection(() =>
   import('./pages/agents/AgentWorkProductsSection').then((m) => ({ default: m.AgentWorkProductsSection })),
 )
-const AgentSkillsSection = lazy(() =>
+const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
 )
 
 // The standalone live-chat route is lazy — it pulls in the canopy-ui/chat kit
 // (WebSocket hook + presentational tree) and react-markdown only when opened.
-const ChatPage = lazy(() =>
+const ChatPage = lazySection(() =>
   import('./pages/ChatPage').then((m) => ({ default: m.ChatPage })),
 )
-const ChatListPage = lazy(() =>
+const ChatListPage = lazySection(() =>
   import('./pages/ChatListPage').then((m) => ({ default: m.ChatListPage })),
 )
 
