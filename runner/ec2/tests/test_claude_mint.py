@@ -169,3 +169,54 @@ def test_spinner_frames_do_not_crowd_out_the_message(cm):
 def test_the_tail_is_bounded(cm, raw):
     """It rides in a failure detail that a human reads, not a log."""
     assert len(cm._diagnostic_tail(raw)) <= 600
+
+
+# ── typing the code in ─────────────────────────────────────────────────────
+#
+# Sent as ONE chunk (`code + b"\r"`), an older CLI reads the arrival as a paste
+# and keeps the carriage return as the last CHARACTER of the pasted text rather
+# than acting on it. Nothing submits and the CLI says nothing, so the pump burns
+# its full 90s and reports "never printed a token" for what is really "never
+# asked". Measured against a live `setup-token` on claude 2.1.197: one write is
+# silent, code-settle-CR answers in 0.6s, code-settle-LF is silent. Newer CLIs
+# (2.1.266) submit either way — which is exactly why this was invisible in
+# development and cost a human four sign-in attempts.
+
+def _fake_submit(cm, monkeypatch, code="THECODE#THESTATE"):
+    """Drive submit_code with the pty and the pump stubbed, recording the
+    ordered sequence of writes and sleeps it performs."""
+    events: list = []
+    monkeypatch.setattr(cm.os, "write",
+                        lambda fd, data: (events.append(data), len(data))[1])
+    monkeypatch.setattr(cm.time, "sleep", lambda s: events.append(("sleep", s)))
+    session = cm.MintSession()
+    session._fd = 7
+    monkeypatch.setattr(session, "_pump", lambda timeout, extract: "sk-ant-oat01-ok")
+    monkeypatch.setattr(session, "close", lambda: None)
+    token = session.submit_code(code)
+    return token, events
+
+
+def test_the_return_is_a_keypress_of_its_own_not_the_tail_of_the_paste(cm, monkeypatch):
+    token, events = _fake_submit(cm, monkeypatch)
+    assert token == "sk-ant-oat01-ok"
+    assert events[0] == b"THECODE#THESTATE", "the code must go in without a return attached"
+    assert events[-1] == b"\r", "Enter must arrive as its own write"
+    assert not any(isinstance(e, bytes) and e.endswith(b"\r") and len(e) > 1
+                   for e in events), "a code with the return glued on is the bug"
+
+
+def test_the_paste_is_allowed_to_settle_before_enter(cm, monkeypatch):
+    """Without a pause the two writes can still coalesce into one read on the
+    CLI's side, which is the same failure with extra steps."""
+    _, events = _fake_submit(cm, monkeypatch)
+    kinds = [("sleep" if isinstance(e, tuple) else "write") for e in events]
+    assert kinds == ["write", "sleep", "write"], kinds
+    assert events[1][1] > 0, "a zero settle is not a settle"
+
+
+def test_the_code_is_stripped_before_it_is_typed(cm, monkeypatch):
+    """A code arrives from a browser field; trailing whitespace is the human's,
+    not the credential's."""
+    _, events = _fake_submit(cm, monkeypatch, code="  THECODE#THESTATE\n ")
+    assert events[0] == b"THECODE#THESTATE"
