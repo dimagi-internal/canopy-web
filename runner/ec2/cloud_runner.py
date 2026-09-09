@@ -397,7 +397,25 @@ def _chunk_transcript_lines(
 
 def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     """The `claude -p` argv for one invocation. Split out from `run_claude` so the
-    `--resume` wiring is unit-testable without touching subprocess."""
+    `--resume` wiring is unit-testable without touching subprocess.
+
+    A FRESH turn names its session id explicitly, and that is a safety property
+    rather than tidiness. canopy's duplicate/sibling check (`live-turns.sh`)
+    enumerates live sessions out of argv — `--session-id|--resume <uuid>` — which
+    is the only handle a process has on which session it is. A bare `claude -p`
+    matches neither, so on this box the check found NO sessions, could not even
+    see itself, and exited 2 ("could not enumerate") on every single turn.
+
+    That is the check behaving correctly — it must never render "I could not
+    look" as "nobody is there" — but it means the fleet's protection against two
+    turns working the same thread simply did not exist on a cloud runner. The
+    fix belongs here, not in the check: make the box visible, rather than teach
+    the check to guess. Found by an ACE turn on cloud-ec2-1, 2026-09-09, which
+    verified it against its own /proc/<pid>/cmdline.
+
+    Not set when resuming: `--resume` already names the session, and passing
+    both asks the CLI to be two sessions at once.
+    """
     cmd = [
         CLAUDE_BIN, "-p", prompt,
         "--output-format", "stream-json", "--verbose",
@@ -405,6 +423,8 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     ]
     if resume_session_id:
         cmd += ["--resume", resume_session_id]
+    else:
+        cmd += ["--session-id", str(uuid.uuid4())]
     return cmd
 
 
