@@ -364,7 +364,16 @@ Resources:
             # the service user) so it never needs root just to mkdir. Harmless to
             # run before credentials exist; both start empty.
             - [ install, -d, -o, ubuntu, -g, ubuntu, /opt/canopy-web, /opt/agents ]
-            - [ bash, -c, "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -" ]
+            # node 22, and the version is load-bearing rather than "latest LTS".
+            # @agentclientprotocol/claude-agent-acp declares `engines: {node: >=22}`
+            # from 0.63.0 onward, so on node 20 npm does not fail — it silently
+            # RESOLVES DOWN. Measured 2026-09-09: `npm i -g` on this box installed
+            # 0.49.0 while the registry's latest was 0.75.1, twenty-six versions
+            # back, and the ACP executor then ran without `session/prompt` steering
+            # because 0.49.0 predates it. Nothing reported a problem: the install
+            # succeeded, the executor worked, and only the absent capability in
+            # `initialize` gave it away.
+            - [ bash, -c, "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -" ]
             - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip gnupg python3-websocket" ]
             - [ bash, -c, "npm i -g @anthropic-ai/claude-code" ]
             - [ bash, -c, "curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && cd /tmp && unzip -q awscliv2.zip && ./aws/install" ]
