@@ -42,6 +42,7 @@
 - Produces:
   - `class UnmappedResourceType(Exception)`
   - `RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]]` — resource type → change action (`"Add"`/`"Modify"`/`"Remove"`) → IAM actions
+  - `BLOCKING_CHANGE_ACTIONS: tuple[str, ...]` — `("Add", "Modify")`; deletes never block
   - `def actions_for(resource_type: str, change_action: str, replacement: bool = False) -> tuple[str, ...]`
 
 - [ ] **Step 1: Write the failing test**
@@ -71,16 +72,23 @@ class TestActionsFor:
         assert actions_for("AWS::ECS::Service", "Modify") == ("ecs:UpdateService",)
         assert actions_for("AWS::ECS::Service", "Add") == ("ecs:CreateService",)
 
-    def test_a_replacement_needs_create_and_delete_as_well(self):
+    def test_a_replacement_needs_the_create_as_well_but_not_the_delete(self):
         # CFN reports Action=Modify with Replacement=True when it will create a
-        # new physical resource and delete the old one. Checking only the modify
-        # actions would wave that through.
+        # new physical resource and delete the old one. The CREATE must be
+        # checked. The DELETE must not — see the next test.
         actions = actions_for("AWS::ECS::Service", "Modify", replacement=True)
-        assert set(actions) == {
-            "ecs:CreateService",
-            "ecs:UpdateService",
-            "ecs:DeleteService",
-        }
+        assert set(actions) == {"ecs:CreateService", "ecs:UpdateService"}
+        assert "ecs:DeleteService" not in actions
+
+    def test_a_delete_never_blocks_because_cfn_tolerates_a_failed_cleanup(self):
+        # Measured on this stack 2026-09-09: TaskDefinition reported
+        # DELETE_FAILED on ecs:DeregisterTaskDefinition while the stack still
+        # reported UPDATE_COMPLETE, reason "Update successful. One or more
+        # resources could not be deleted." A delete permission is therefore
+        # never what fails a deploy — and demanding it would block EVERY deploy
+        # here, because the role does not have DeregisterTaskDefinition.
+        assert actions_for("AWS::ECS::Service", "Remove") == ()
+        assert actions_for("AWS::ECS::TaskDefinition", "Remove") == ()
 
     def test_the_target_group_actions_are_the_ones_that_failed(self):
         actions = actions_for("AWS::ElasticLoadBalancingV2::TargetGroup", "Modify")
@@ -236,15 +244,24 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
+# CloudFormation TOLERATES a failed cleanup delete, so a delete permission is
+# never what fails a deploy. Measured on this stack 2026-09-09: TaskDefinition
+# reported DELETE_FAILED on ecs:DeregisterTaskDefinition while the stack
+# reported UPDATE_COMPLETE with "Update successful. One or more resources could
+# not be deleted." Checking delete actions would block every deploy here, since
+# the role does not have DeregisterTaskDefinition. The Remove entries above stay
+# because they document what CloudFormation calls; they are simply not blocking.
+BLOCKING_CHANGE_ACTIONS = ("Add", "Modify")
+
+
 def actions_for(
     resource_type: str, change_action: str, replacement: bool = False
 ) -> tuple[str, ...]:
-    """The IAM actions CloudFormation needs for one resource change.
+    """The IAM actions whose absence would FAIL this resource change.
 
     `replacement` is CloudFormation's own word: it reports Action="Modify" with
     Replacement=True when it will create a new physical resource and delete the
-    old one. Checking only the modify actions would wave that through, so a
-    replacement is treated as all three.
+    old one. The create is checked, the delete is not.
     """
     try:
         by_action = RESOURCE_ACTIONS[resource_type]
@@ -257,18 +274,22 @@ def actions_for(
         ) from None
 
     if replacement:
-        merged: tuple[str, ...] = ()
-        for actions in by_action.values():
-            merged += actions
-        return tuple(dict.fromkeys(merged))
+        wanted: tuple[str, ...] = BLOCKING_CHANGE_ACTIONS
+    elif change_action in BLOCKING_CHANGE_ACTIONS:
+        wanted = (change_action,)
+    else:
+        return ()
 
-    return by_action.get(change_action, ())
+    merged: tuple[str, ...] = ()
+    for action in wanted:
+        merged += by_action.get(action, ())
+    return tuple(dict.fromkeys(merged))
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run python -m pytest tests/test_deploy_preflight.py -q`
-Expected: PASS (6 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -456,7 +477,7 @@ def render(findings: list[Finding]) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run python -m pytest tests/test_deploy_preflight.py -q`
-Expected: PASS (14 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -707,7 +728,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run python -m pytest tests/test_deploy_preflight.py -q`
-Expected: PASS (25 tests)
+Expected: PASS (26 tests)
 
 - [ ] **Step 5: Check lint and the whole suite still pass**
 
@@ -748,46 +769,59 @@ Replace the whole `aws cloudformation deploy` invocation (added in #723, current
           # one go, which is why the 2026-09-09 failure surfaced as a 403 five
           # minutes into a rollout. --no-execute-changeset stops after building
           # it, leaving something we can inspect.
+          #
+          # We keep `deploy` rather than calling create-change-set directly, and
+          # that is deliberate: `deploy` carries a stack's existing parameters
+          # forward for us. connect-labs/infra/README.md records a real incident
+          # on 2026-08-18 where hand-rolling the parameter list silently removed
+          # a stack's alarm-email subscription. `deploy` has no
+          # --change-set-name flag (checked against aws-cli 2.34.10), so the
+          # change set is located by comparing the newest one before and after.
+          # Safe because the workflow's concurrency group serialises deploys.
           set -o pipefail
-          CS_NAME="preflight-${{ github.sha }}-${{ github.run_attempt }}"
 
-          # --no-fail-on-empty-changeset makes this exit 0 and create nothing
-          # when there is no diff, so the empty case is detected by asking for
-          # the change set rather than by parsing output.
+          newest_change_set () {
+            aws cloudformation list-change-sets \
+              --stack-name "${{ env.CFN_STACK }}" \
+              --query 'sort_by(Summaries,&CreationTime)[-1].ChangeSetId' \
+              --output text 2>/dev/null || echo "None"
+          }
+
+          BEFORE=$(newest_change_set)
+
           aws cloudformation deploy \
             --stack-name "${{ env.CFN_STACK }}" \
             --template-file deploy/aws/canopy-web.cfn.yaml \
             --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
             --no-execute-changeset \
-            --change-set-name "$CS_NAME" \
             --parameter-overrides ImageTag="${{ github.sha }}"
 
-          if ! aws cloudformation describe-change-set \
-                 --stack-name "${{ env.CFN_STACK }}" \
-                 --change-set-name "$CS_NAME" >/dev/null 2>&1; then
-            echo "No change set — nothing to deploy."
+          AFTER=$(newest_change_set)
+          if [ "$AFTER" = "$BEFORE" ] || [ "$AFTER" = "None" ]; then
+            echo "No new change set — nothing to deploy."
             exit 0
           fi
+          echo "Change set: $AFTER"
 
           # The role this job is running as; the same principal that will
-          # execute the change set.
+          # execute the change set. get-caller-identity returns the ASSUMED-ROLE
+          # arn, which simulate-principal-policy does not accept — convert it to
+          # the role arn.
           PRINCIPAL=$(aws sts get-caller-identity --query Arn --output text \
             | sed 's|:sts:|:iam:|; s|assumed-role/\([^/]*\)/.*|role/\1|')
           echo "Preflight against: $PRINCIPAL"
 
           if ! python -m deploy.aws.preflight \
                  --stack "${{ env.CFN_STACK }}" \
-                 --change-set "$CS_NAME" \
+                 --change-set "$AFTER" \
                  --principal "$PRINCIPAL"; then
             echo "::error::Deploy preflight failed — nothing was applied. See above."
-            aws cloudformation delete-change-set \
-              --stack-name "${{ env.CFN_STACK }}" --change-set-name "$CS_NAME" || true
+            aws cloudformation delete-change-set --change-set-name "$AFTER" || true
             exit 1
           fi
 
-          aws cloudformation execute-change-set \
-            --stack-name "${{ env.CFN_STACK }}" --change-set-name "$CS_NAME"
+          aws cloudformation execute-change-set --change-set-name "$AFTER"
 
           if ! aws cloudformation wait stack-update-complete \
                  --stack-name "${{ env.CFN_STACK }}"; then
@@ -832,19 +866,25 @@ This is the step that proves the plan rather than assuming it. With `AWS_PROFILE
 
 ```bash
 export AWS_PROFILE=labs AWS_DEFAULT_REGION=us-east-1
+
+# Creating a change set MUTATES NOTHING — it is a proposal CloudFormation
+# stores until executed or deleted. It is deleted again below.
 aws cloudformation deploy \
   --stack-name canopy-web \
   --template-file deploy/aws/canopy-web.cfn.yaml \
   --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset \
-  --no-execute-changeset --change-set-name preflight-manual-test \
+  --no-execute-changeset \
   --parameter-overrides ImageTag="$(git rev-parse HEAD)"
 
+CS=$(aws cloudformation list-change-sets --stack-name canopy-web \
+       --query 'sort_by(Summaries,&CreationTime)[-1].ChangeSetId' --output text)
+echo "change set: $CS"
+
 uv run python -m deploy.aws.preflight \
-  --stack canopy-web --change-set preflight-manual-test \
+  --stack canopy-web --change-set "$CS" \
   --principal arn:aws:iam::858923557655:role/github-actions-labs-deploy
 
-aws cloudformation delete-change-set \
-  --stack-name canopy-web --change-set-name preflight-manual-test
+aws cloudformation delete-change-set --change-set-name "$CS"
 ```
 
 Expected: exit 0 with "Preflight OK" — an image-tag-only change set touches `TaskDefinition` and `Service`, both writable. **If it reports findings, stop and read them before changing the code**: a false positive here is the one failure mode that would block every deploy.
@@ -881,10 +921,24 @@ name: Infra drift
 # review of the wrong thing.
 #
 # Read-only: detect-stack-drift inspects, it does not reconcile.
+#
+# NO `schedule:` TRIGGER YET, deliberately. Measured 2026-09-09: the deploy role
+# has implicitDeny on all three actions below, so a nightly run would fail every
+# night. The grant it needs is:
+#
+#     Effect: Allow
+#     Action:
+#       - cloudformation:DetectStackDrift
+#       - cloudformation:DescribeStackDriftDetectionStatus
+#       - cloudformation:DescribeStackResourceDrifts
+#     Resource: arn:aws:cloudformation:us-east-1:858923557655:stack/canopy-web/*
+#
+# That grant belongs in the canopy-web BOOTSTRAP stack, not in another hand-edit
+# of a shared role — hand-editing it is the debt this whole spec exists to repay.
+# Enable the schedule in the same change that lands the bootstrap stack.
+# Until then this is runnable on demand, and by an admin locally.
 
 on:
-  schedule:
-    - cron: "0 8 * * *"   # 08:00 UTC daily, after the nightly contract run
   workflow_dispatch:
 
 permissions:
@@ -905,16 +959,25 @@ jobs:
       - name: Detect drift
         run: |
           set -o pipefail
-          # Only the stacks this repo owns. ace-web and the connect-labs
-          # platform stacks are detected from their own repos — each repo is
+          # canopy-web only. The deploy role's CloudFormation grants are scoped
+          # to stack/canopy-web/* and stack/ace-web/*, with nothing at all for
+          # canopy-cloud-runner — including it would guarantee a failure even
+          # after the drift grant lands. ace-web and the connect-labs platform
+          # stacks are detected from their own repos; each repo is
           # self-contained, which is the point.
-          STACKS="canopy-web canopy-cloud-runner"
+          STACKS="canopy-web"
           FAILED=0
 
           for STACK in $STACKS; do
             echo "::group::$STACK"
-            ID=$(aws cloudformation detect-stack-drift --stack-name "$STACK" \
-                   --query StackDriftDetectionId --output text)
+            if ! ID=$(aws cloudformation detect-stack-drift --stack-name "$STACK" \
+                        --query StackDriftDetectionId --output text 2>&1); then
+              echo "::error::Cannot detect drift on $STACK: $ID"
+              echo "If this is an AccessDenied, the deploy role still lacks the"
+              echo "cloudformation:DetectStackDrift grant — see the header of this file."
+              echo "::endgroup::"
+              exit 1
+            fi
 
             # Detection is asynchronous; poll until it stops being IN_PROGRESS.
             for _ in $(seq 1 60); do
@@ -957,7 +1020,7 @@ Expected: `YAML valid`
 
 ```bash
 export AWS_PROFILE=labs AWS_DEFAULT_REGION=us-east-1
-for STACK in canopy-web canopy-cloud-runner; do
+for STACK in canopy-web; do
   ID=$(aws cloudformation detect-stack-drift --stack-name "$STACK" --query StackDriftDetectionId --output text)
   sleep 20
   aws cloudformation describe-stack-drift-detection-status \
@@ -966,7 +1029,9 @@ for STACK in canopy-web canopy-cloud-runner; do
 done
 ```
 
-Expected: both `IN_SYNC`. `canopy-web` was `IN_SYNC` when measured on 2026-09-09; if it now reports `DRIFTED`, that is a real finding and should be read before the workflow is merged.
+Expected: `IN_SYNC`. `canopy-web` was `IN_SYNC` when measured on 2026-09-09; if it now reports `DRIFTED`, that is a real finding and should be read before the workflow is merged.
+
+Note the local `AWS_PROFILE=labs` credentials are admin and CAN detect drift; the CI role cannot yet. That difference is Ruling 3 and is why the workflow has no schedule.
 
 - [ ] **Step 4: Commit**
 
@@ -976,6 +1041,25 @@ git commit -m "infra: detect stack drift daily, instead of when someone thinks t
 ```
 
 ---
+
+## Rulings applied to this plan after the pre-flight scan
+
+These amend the plan as written; the ledger holds the full reasoning.
+
+1. **Delete actions never block the preflight.** CloudFormation tolerates a failed
+   cleanup delete — measured on this stack 2026-09-09, `TaskDefinition DELETE_FAILED`
+   on `ecs:DeregisterTaskDefinition` while the stack reported UPDATE_COMPLETE. Checking
+   deletes would demand an action the role lacks and block every deploy.
+2. **`aws cloudformation deploy` has no `--change-set-name` flag** (aws-cli 2.34.10).
+   The change set is located via `list-change-sets`, comparing newest-before to
+   newest-after. `deploy` is kept rather than `create-change-set` because it carries
+   stack parameters forward — hand-rolling that list caused a real incident on
+   2026-08-18 (connect-labs `infra/README.md`).
+3. **The drift workflow ships `workflow_dispatch`-only.** The deploy role has
+   implicitDeny on all three drift actions, so a schedule would fail nightly. The grant
+   belongs in the bootstrap stack, not another hand-edit.
+4. **Drift covers `canopy-web` only.** The role has no CloudFormation grant of any kind
+   for `canopy-cloud-runner`.
 
 ## Self-Review
 
