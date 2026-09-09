@@ -2,10 +2,15 @@
  * Service-worker navigate-fallback ownership — the fail-safe rule.
  *
  * A same-origin *navigation* (including every `<iframe src>` load; a `<video
- * src>` load is NOT one) is answered by the SW from the precached SPA shell
- * (`index.html`) ONLY when its path matches an ALLOWLISTed SPA route prefix and
- * does NOT match a DENYLISTed server route. Everything else goes to the network
- * and reaches Django.
+ * src>` load is NOT one) is HANDLED BY THE SW ONLY when its path matches an
+ * ALLOWLISTed SPA route prefix and does NOT match a DENYLISTed server route.
+ * Everything else goes to the network and reaches Django.
+ *
+ * "Handled" means network-first with the precached `index.html` as the OFFLINE
+ * fallback — not "served from the precache". Serving the precached shell to an
+ * online navigation is what made every visit render the previous deploy until
+ * someone hard-refreshed; see vite.config.ts for that story. The allow/deny
+ * rule below is unchanged by it.
  *
  * This inverts the historical "shell for everything except a denylist of server
  * prefixes" default, which silently swallowed any server route nobody
@@ -90,4 +95,46 @@ export function shouldServeShell(path: string): boolean {
   const allowed = NAVIGATE_FALLBACK_ALLOWLIST.some((re) => re.test(path))
   const denied = NAVIGATE_FALLBACK_DENYLIST.some((re) => re.test(path))
   return allowed && !denied
+}
+
+/**
+ * The same decision, as source for the service worker's route matcher.
+ *
+ * Navigations are served NETWORK-FIRST (see vite.config.ts) rather than from
+ * the precache, so this rule now selects which navigations the SW *handles at
+ * all* — and the precached shell is only its offline fallback. The predicate is
+ * unchanged; what changed is that a cache hit is the exception, not the rule.
+ *
+ * workbox-build serialises a `runtimeCaching.urlPattern` function with
+ * `String(fn)` and inlines the text into the generated SW, where none of this
+ * module's bindings exist. So the matcher has to be SELF-CONTAINED: the regexes
+ * are baked into the source here rather than closed over. Building that source
+ * from the same two arrays is what stops the SW and `shouldServeShell` drifting
+ * — `navigation-fallback.test.ts` runs both over the same paths.
+ *
+ * workbox matches against `pathname + search` (which is why the `/content`
+ * carve-outs end in `(?:\?.*)?$`), so the generated matcher does too.
+ */
+export function navigationMatcherSource(): string {
+  const list = (res: RegExp[]): string => `[${res.map((re) => re.toString()).join(',')}]`
+  return `if (request.mode !== 'navigate') return false
+const path = url.pathname + url.search
+if (${list(NAVIGATE_FALLBACK_DENYLIST)}.some(function (re) { return re.test(path) })) return false
+return ${list(NAVIGATE_FALLBACK_ALLOWLIST)}.some(function (re) { return re.test(path) })`
+}
+
+/**
+ * The matcher workbox will run, built from that source. vite.config.ts hands
+ * this straight to `runtimeCaching.urlPattern`; the test calls it directly to
+ * prove it agrees with `shouldServeShell` on every path.
+ */
+export function navigationMatcher(): (arg: {
+  request: { mode: string }
+  url: URL
+}) => boolean {
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('{ request, url }', navigationMatcherSource()) as (arg: {
+    request: { mode: string }
+    url: URL
+  }) => boolean
 }

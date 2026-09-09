@@ -4,10 +4,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
-import {
-  NAVIGATE_FALLBACK_ALLOWLIST,
-  NAVIGATE_FALLBACK_DENYLIST,
-} from './src/pwa/navigation-fallback'
+import { navigationMatcher } from './src/pwa/navigation-fallback'
 
 // Same override as playwright.config/backend.sh — see E2E_API_PORT there.
 const API_ORIGIN = `http://localhost:${process.env.E2E_API_PORT ?? '8000'}`
@@ -58,8 +55,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Cache the shell so the app opens instantly and survives a labs outage
-        // (this is also what makes the menubar's WKWebView resilient in Phase 5).
+        // Precache the shell so the app still opens during a labs outage (this
+        // is what makes the menubar's WKWebView resilient in Phase 5). It is the
+        // OFFLINE copy only — see the navigation route below for why serving it
+        // to an online visitor was the bug.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // A new SW must NOT take over a page that has already been served the
         // old shell. registerType 'autoUpdate' turns both of these on, and the
@@ -78,9 +77,10 @@ export default defineConfig({
         // Which is exactly the report: white on first load, fine after a manual
         // refresh, and it went from rare to constant on a day with six deploys.
         //
-        // With both false the new SW waits. The loading page keeps the precache
-        // it was built against and renders; the update applies on the next
-        // navigation. Still automatic — just never underneath a live page.
+        // With both false the new SW waits, and src/pwa/registerPwa.ts adopts it
+        // when the page is hidden. Still needed, but no longer urgent: step 1 is
+        // gone now that navigations are network-first, so a waiting SW only means
+        // a stale OFFLINE precache, not a stale page.
         skipWaiting: false,
         clientsClaim: false,
         // vite-plugin-pwa's generated SW only caches — it has no push listener.
@@ -88,19 +88,71 @@ export default defineConfig({
         // no notification). importScripts (not injectManifest) keeps the
         // plugin's own precaching intact while adding push handling.
         importScripts: ['sw-push.js'],
-        // Fail-safe navigate-fallback ownership (issue #345): the SW serves the
-        // cached SPA shell ONLY for allowlisted SPA route prefixes; every other
-        // navigation (unknown paths, Django routes, the /walkthrough/<id>/content
-        // streams) goes to the network. Inverting the old "shell for everything
-        // minus a denylist" default means a NEW server route can't be silently
-        // swallowed. The rule + both lists live in — and are unit-tested in —
-        // src/pwa/navigation-fallback.ts.
-        navigateFallbackAllowlist: NAVIGATE_FALLBACK_ALLOWLIST,
-        navigateFallbackDenylist: NAVIGATE_FALLBACK_DENYLIST,
-        // No runtimeCaching routes registered: all non-precached fetches bypass the SW and hit
-        // the network. This keeps the API uncached (stale "0 waiting" is worse than a spinner).
-        // When adding entries here, take care not to match /api/ — nothing else guards against that.
-        runtimeCaching: [],
+        // Must be set EXPLICITLY, not just omitted: vite-plugin-pwa's own
+        // defaults are `Object.assign({}, {navigateFallback: 'index.html'},
+        // yourWorkboxOptions)`, so leaving the key out silently reinstates the
+        // cache-first NavigationRoute — and it would be registered BEFORE the
+        // runtimeCaching route below, which in workbox means it wins outright.
+        // Verified by reading the emitted sw.js, not by reasoning about it.
+        navigateFallback: undefined,
+        // …and removing the NavigationRoute is not enough on its own, because
+        // the PRECACHE route answers a bare `/` too: workbox defaults
+        // `directoryIndex: 'index.html'`, so a request whose path ends in `/`
+        // is also looked up as `<path>index.html` — which IS precached. That is
+        // registered ahead of any runtimeCaching route, so `/` (the entry point
+        // this bug is reported against) kept being served the stale shell while
+        // `/supervisor` was already fixed. Measured in a browser: no `app-shell`
+        // cache was ever created because the route never ran.
+        //
+        // null turns the aliasing off. `index.html` stays precached and is still
+        // reachable by explicit lookup — which is exactly what the offline
+        // fallback below does.
+        directoryIndex: null,
+        // `navigateFallback: 'index.html'` builds a
+        // NavigationRoute around createHandlerBoundToURL('index.html'), which
+        // answers every navigation from the PRECACHE — a copy of index.html
+        // frozen at build time, naming that build's hashed assets.
+        //
+        // That is why the app kept needing a hard refresh. index.html is the one
+        // file that must be current, because it is the only thing that says which
+        // asset hashes to load; serving it from cache means a fresh visit renders
+        // the PREVIOUS deploy, and only a hard refresh (which bypasses the SW
+        // entirely) reaches the new one. #711 changed WHEN a new SW is adopted
+        // but not WHERE the HTML comes from, so the staleness survived it — and
+        // it is also the first step of the white-page race #711 describes: the
+        // page can only ask for asset hashes that have been deleted if it was
+        // handed a stale shell to begin with.
+        //
+        // So navigations are NETWORK-FIRST instead, with the precached shell
+        // demoted to the offline fallback (PrecacheFallbackPlugin). Online you
+        // always get the current build on the first paint, with no reload; the
+        // app still opens offline, and an installed PWA / the menubar WKWebView
+        // still survive a labs outage. networkTimeoutSeconds bounds a hanging
+        // network so a bad connection degrades to the cached shell rather than a
+        // spinner.
+        //
+        // Which navigations the SW handles at all is unchanged (issue #345's
+        // fail-safe rule): allowlisted SPA prefixes minus denylisted server
+        // routes, so a NEW server route still can't be silently swallowed. The
+        // rule and both lists live in — and are unit-tested in —
+        // src/pwa/navigation-fallback.ts; workbox-build inlines the matcher's
+        // source into the generated SW.
+        //
+        // This is the ONLY runtimeCaching route, and it matches navigations
+        // only. Nothing here may match /api/ — a cached "0 waiting" is worse
+        // than a spinner, and nothing else guards against it.
+        runtimeCaching: [
+          {
+            urlPattern: navigationMatcher(),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'app-shell',
+              networkTimeoutSeconds: 4,
+              expiration: { maxEntries: 32 },
+              precacheFallback: { fallbackURL: 'index.html' },
+            },
+          },
+        ],
       },
       devOptions: { enabled: false },
     }),

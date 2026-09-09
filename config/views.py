@@ -8,6 +8,8 @@ from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
+from config.static_cache import REVALIDATE
+
 
 def health_check(request):
     """Simple health check endpoint."""
@@ -27,6 +29,13 @@ def spa_view(request):
     In production, WhiteNoise serves /static/ and /assets/ assets referenced
     by index.html. In development, Vite serves the SPA directly — this view
     is only hit when the frontend build output is present.
+
+    This is the SECOND way the shell reaches a browser: WhiteNoise answers
+    `/canopy/` (its index file), and every deep link — `/supervisor`,
+    `/w/<ws>/…`, `/share/<token>` — lands here. It shipped with no cache headers
+    at all, which leaves the freshness of the one file that names the current
+    asset hashes up to each browser's heuristics. Same `no-cache` as WhiteNoise
+    now sends, so both doors agree; see config/static_cache.py.
     """
     index_path: Path = settings.FRONTEND_DIST_DIR / "index.html"
     if not index_path.exists():
@@ -36,4 +45,6 @@ def spa_view(request):
             status=503,
             content_type="text/plain",
         )
-    return FileResponse(open(index_path, "rb"), content_type="text/html")
+    response = FileResponse(open(index_path, "rb"), content_type="text/html")
+    response["Cache-Control"] = REVALIDATE
+    return response

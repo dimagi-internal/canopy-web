@@ -19,6 +19,12 @@ import { registerSW } from 'virtual:pwa-register'
 // moment. The polling below is kept — a long-lived client (installed PWA, menubar
 // WKWebView, a tab open for days) otherwise never discovers a deploy at all, which
 // is how the Sessions surface once got stuck on a pre-feature bundle.
+//
+// SINCE THEN: navigations are network-first, so the account above is history, not
+// current behaviour — a page is no longer served a stale shell in the first place,
+// and none of the rest can follow from it. What is still true is that a waiting SW
+// holds a stale PRECACHE, which is what the app would fall back to offline. That is
+// all adopting it promptly buys now, so waiting for `hidden` costs nothing.
 const UPDATE_INTERVAL_MS = 60_000
 
 /** Apply a waiting update only when the page is HIDDEN.
