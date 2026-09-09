@@ -277,37 +277,149 @@ jobs:
             exit 1
           fi
 
+      - name: Install preflight dependencies
+        run: pip install --quiet 'boto3>=1.34,<2.0'
+
       - name: Deploy (CloudFormation owns the task definition + service)
         run: |
-          # CloudFormation registers the real task definition and rolls the
-          # service. It is the ONLY writer of both, so the stack can never drift
-          # from what is running and a later `cloudformation deploy` can never
-          # roll prod back to a stale ImageTag — the trap this replaces.
+          # THREE steps, not one, so the permissions question is asked BEFORE
+          # anything is applied.
           #
-          # Intrinsics (!Ref, !Sub) resolve natively here, which is why the
-          # template no longer has to be readable by a script and
-          # render_taskdef.py is gone.
+          # `aws cloudformation deploy` builds a change set and executes it in
+          # one go, which is why the 2026-09-09 failure surfaced as a 403 five
+          # minutes into a rollout. --no-execute-changeset stops after building
+          # it, leaving something we can inspect.
           #
-          # CFN's own overhead is ~10s; the rest is the ECS rollout that
-          # update-service waited for anyway (measured 2026-07-26: TaskDefinition
-          # 6s, Service 5m53s).
-          #
-          # On failure, PRINT THE STACK EVENTS. `aws cloudformation deploy` says
-          # only "Failed to create/update the stack. Run the following command to
-          # fetch the list of events" — and then exits, so the reason lives in an
-          # API call nobody in the Actions log can make. Measured 2026-09-09: a
-          # deploy failed, and reading why needed AWS credentials and a separate
-          # session, while every other deploy queued behind it. The reason was one
-          # line (an IAM action the deploy role lacked) that this would have put
-          # straight in the log.
-          if ! aws cloudformation deploy \
+          # We keep `deploy` rather than calling create-change-set directly, and
+          # that is deliberate: `deploy` carries a stack's existing parameters
+          # forward for us. connect-labs/infra/README.md records a real incident
+          # on 2026-08-18 where hand-rolling the parameter list silently removed
+          # a stack's alarm-email subscription. `deploy` has no
+          # --change-set-name flag (checked against aws-cli 2.34.10), so the
+          # change set is located by comparing the newest one before and after.
+          # Safe because the workflow's concurrency group serialises deploys.
+          set -o pipefail
+
+          # A denied or throttled ListChangeSets must never read as "no change
+          # sets" — that is the single worst outcome available here: it makes
+          # AFTER == BEFORE == "None" below, which reads as "nothing to
+          # deploy" and exits 0 GREEN having shipped nothing. So this captures
+          # stderr and the exit status separately from the output, and an API
+          # error hard-fails rather than falling through to the empty-list
+          # sentinel. A genuinely empty list (a stack with no change sets yet)
+          # still yields "None" and the existing no-op path below.
+          newest_change_set () {
+            local out
+            # This shell runs with -e (GitHub Actions' default for `run:`
+            # steps). A plain `out=$(cmd)` assignment trips it the instant
+            # `cmd` fails, before we ever reach a line that inspects $? — so
+            # the failure is captured via an `if` condition instead, which is
+            # exempt from -e, letting us print our own diagnostic first.
+            if out=$(aws cloudformation list-change-sets \
+              --stack-name "${{ env.CFN_STACK }}" \
+              --query 'sort_by(Summaries,&CreationTime)[-1].ChangeSetId' \
+              --output text 2>/tmp/newest-change-set.err); then
+              # The CLI can print the literal string "None" for an empty
+              # result with --output text; treat that the same as a
+              # genuinely empty list.
+              if [ -z "$out" ]; then
+                out="None"
+              fi
+              echo "$out"
+              return 0
+            else
+              echo "::error::list-change-sets failed: $(cat /tmp/newest-change-set.err)" >&2
+              return 1
+            fi
+          }
+
+          BEFORE=$(newest_change_set) || exit 1
+
+          aws cloudformation deploy \
             --stack-name "${{ env.CFN_STACK }}" \
             --template-file deploy/aws/canopy-web.cfn.yaml \
             --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
-            --parameter-overrides ImageTag="${{ github.sha }}"; then
+            --no-execute-changeset \
+            --parameter-overrides ImageTag="${{ github.sha }}"
+
+          AFTER=$(newest_change_set) || exit 1
+          if [ "$AFTER" = "$BEFORE" ] || [ "$AFTER" = "None" ]; then
+            echo "No new change set — nothing to deploy."
+            exit 0
+          fi
+          echo "Change set: $AFTER"
+
+          # An empty diff still creates a change set: the CLI's `deploy` raises
+          # ChangeEmptyError and leaves it behind in status FAILED ("The
+          # submitted information didn't contain changes") WITHOUT deleting it
+          # (awscli/customizations/cloudformation/deployer.py) — so the
+          # BEFORE/AFTER check above cannot see a no-op deploy, and executing
+          # this change set would just error. Anything but CREATE_COMPLETE
+          # means there is nothing to apply.
+          #
+          # Same rule as newest_change_set above: an API error here (denied,
+          # throttled) must hard-fail rather than fall into "MISSING" and read
+          # as a harmless no-op — that would swallow a real describe-change-set
+          # failure the same way an unchecked list-change-sets failure did.
+          # Captured via `if`, not a bare assignment: with -e active (GitHub
+          # Actions' default), a bare `STATUS=$(cmd)` would abort the script
+          # the instant cmd fails, before we could print our own diagnostic.
+          if STATUS=$(aws cloudformation describe-change-set --change-set-name "$AFTER" \
+            --query Status --output text 2>/tmp/describe-change-set.err); then
+            if [ -z "$STATUS" ]; then
+              STATUS="MISSING"
+            fi
+          else
+            echo "::error::describe-change-set failed: $(cat /tmp/describe-change-set.err)"
+            exit 1
+          fi
+          if [ "$STATUS" != "CREATE_COMPLETE" ]; then
+            echo "Change set is $STATUS, not CREATE_COMPLETE — nothing to deploy."
+            aws cloudformation delete-change-set --change-set-name "$AFTER" || true
+            exit 0
+          fi
+
+          # The role this job is running as; the same principal that will
+          # execute the change set. get-caller-identity returns the ASSUMED-ROLE
+          # arn, which simulate-principal-policy does not accept — convert it to
+          # the role arn.
+          PRINCIPAL=$(aws sts get-caller-identity --query Arn --output text \
+            | sed 's|:sts:|:iam:|; s|assumed-role/\([^/]*\)/.*|role/\1|')
+          echo "Preflight against: $PRINCIPAL"
+
+          # Exit codes: 0 = clean, proceed. 1 = the role can't write something
+          # this change set touches — block. 2 = the preflight itself
+          # couldn't be evaluated (it needs iam:SimulatePrincipalPolicy, which
+          # the deploy role does not have yet — the grant belongs in the
+          # bootstrap stack, not a hand-edit of this workflow). Until that
+          # grant lands, the gate is advisory: continuing on 2 is strictly
+          # better than the nothing that existed before this preflight, and
+          # treating "could not run" the same as "found a problem" would block
+          # every single deploy today.
+          set +e
+          python -m deploy.aws.preflight \
+                 --stack "${{ env.CFN_STACK }}" \
+                 --change-set "$AFTER" \
+                 --principal "$PRINCIPAL"
+          PREFLIGHT_RC=$?
+          set -e
+          if [ $PREFLIGHT_RC -eq 2 ]; then
+            echo "::warning::Deploy preflight could not run (see above). Continuing without the gate."
+          elif [ $PREFLIGHT_RC -ne 0 ]; then
+            echo "::error::Deploy preflight failed — no infrastructure change was applied. Migrations for this deploy have already run (they run before this step); only the CloudFormation change set was refused. See above."
+            aws cloudformation delete-change-set --change-set-name "$AFTER" || true
+            exit 1
+          fi
+
+          aws cloudformation execute-change-set --change-set-name "$AFTER"
+
+          if ! aws cloudformation wait stack-update-complete \
+                 --stack-name "${{ env.CFN_STACK }}"; then
+              # Kept verbatim from #723: aws prints only "run describe-stack-events"
+              # and exits, so the reason lives behind an API call nobody reading
+              # the log can make.
               echo "::group::CloudFormation stack events (most recent first)"
-              # Only the events carrying a reason — the rest is IN_PROGRESS noise.
               aws cloudformation describe-stack-events \
                 --stack-name "${{ env.CFN_STACK }}" \
                 --max-items 40 \
