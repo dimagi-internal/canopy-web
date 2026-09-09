@@ -1782,3 +1782,80 @@ def test_a_missing_node_degrades_without_attempting_npm(cloud_runner, monkeypatc
     runs, logs = _acp_install(cloud_runner, monkeypatch, on_path=None, has_node=False)
     assert runs == []
     assert any("fall back" in m for m in logs), logs
+
+
+# ── a running turn can be steered and stopped ───────────────────────────────
+#
+# canopy-web has published a `runner.interject` frame on every chat send during a
+# running turn since `_maybe_interject` landed; this runner received it, logged
+# it, and dropped it — because `claude -p` is one process with one prompt and
+# stdin closed, so there was nowhere to put it. ACP can take a second
+# `session/prompt` mid-turn (`_meta.steering.supported`, `promptQueueing`),
+# verified on cloud-ec2-1 2026-09-09 against adapter 0.75.1: interjected
+# mid-`sleep`, the agent abandoned its loop and answered the new instruction.
+
+class _FakeAgent:
+    def __init__(self, fail=False):
+        self.prompts, self.cancels, self.fail = [], 0, fail
+    def prompt(self, text):
+        if self.fail:
+            raise RuntimeError("connection is closed")
+        self.prompts.append(text)
+    def cancel(self):
+        self.cancels += 1
+
+
+def test_a_message_reaches_a_running_turn(cloud_runner):
+    a = _FakeAgent()
+    cloud_runner._acp_register("turn-1", a)
+    try:
+        assert cloud_runner.steer_turn("turn-1", "change course") is True
+        assert a.prompts == ["change course"]
+    finally:
+        cloud_runner._acp_unregister("turn-1")
+
+
+def test_steering_an_unknown_turn_reports_failure_rather_than_pretending(cloud_runner):
+    """canopy-web has already told a person their message was sent; silently
+    dropping it is the failure this whole path exists to fix."""
+    assert cloud_runner.steer_turn("nobody-home", "hello") is False
+
+
+def test_a_finished_turn_is_unreachable(cloud_runner):
+    a = _FakeAgent()
+    cloud_runner._acp_register("turn-2", a)
+    cloud_runner._acp_unregister("turn-2")
+    assert cloud_runner.steer_turn("turn-2", "too late") is False
+    assert a.prompts == []
+
+
+def test_a_failing_steer_is_reported_not_raised(cloud_runner, monkeypatch):
+    """It runs on the WS thread — an exception there takes the socket down."""
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    cloud_runner._acp_register("turn-3", _FakeAgent(fail=True))
+    try:
+        assert cloud_runner.steer_turn("turn-3", "boom") is False
+    finally:
+        cloud_runner._acp_unregister("turn-3")
+
+
+def test_stop_cancels_the_live_session(cloud_runner):
+    a = _FakeAgent()
+    cloud_runner._acp_register("turn-4", a)
+    try:
+        assert cloud_runner.stop_turn("turn-4") is True
+        assert a.cancels == 1
+        cloud_runner._acp_unregister("turn-4")
+        assert cloud_runner.stop_turn("turn-4") is False
+    finally:
+        cloud_runner._acp_unregister("turn-4")
+
+
+def test_the_turn_unregisters_before_the_connection_closes(cloud_runner):
+    """Order matters: a steer arriving in the gap would reach a closed
+    connection and raise inside the WS thread."""
+    import re
+    src = (pathlib.Path(cloud_runner.__file__).read_text()
+           if hasattr(cloud_runner, "__file__") else "")
+    body = re.search(r"finally:\n\s*# Unregister BEFORE close.*?agent\.close\(\)", src, re.S)
+    assert body, "run_acp's finally no longer unregisters before closing"
