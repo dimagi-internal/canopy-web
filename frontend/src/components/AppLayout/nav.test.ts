@@ -10,14 +10,15 @@ const authed = { isAuthed: true, active: 'connect' }
 
 describe('NAV_GROUPS', () => {
   it('keeps every destination the flat nav carried', () => {
-    // The row this replaced held 15 links. Grouping is meant to reorganize the
-    // header, never to quietly drop a surface out of it.
+    // The row this replaced held 15 links (Storyboards is the one added since).
+    // Grouping is meant to reorganize the header, never to quietly drop a
+    // surface out of it.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
         'Activity', 'Agents', 'Chats', 'DDD', 'Inbound', 'Insights', 'Members',
-        'Projects', 'Schedule', 'Sessions', 'Shareouts', 'Supervisor', 'System',
-        'Timeline', 'Walkthroughs',
+        'Projects', 'Schedule', 'Sessions', 'Shareouts', 'Storyboards', 'Supervisor',
+        'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
   })
@@ -57,8 +58,8 @@ describe('resolveNavGroups', () => {
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
-    // Demos is DDD + Walkthroughs, both tenant items — an empty menu would be
-    // a trigger that opens onto nothing.
+    // Demos is DDD + Walkthroughs + Storyboards, all tenant items — an empty
+    // menu would be a trigger that opens onto nothing.
     const labels = resolveNavGroups({ isAuthed: true, active: null }).map((g) => g.label)
     expect(labels).not.toContain('Demos')
     expect(labels).toEqual(['Work', 'Fleet', 'Workspace'])
@@ -116,7 +117,7 @@ describe('isNavGroupActive', () => {
     for (const pathname of [
       '/w/connect', '/w/connect/chat', '/insights', '/supervisor',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
-      '/w/connect/walkthroughs', '/w/connect/shareouts', '/w/connect/timeline',
+      '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
       '/sessions', '/w/connect/members', '/w/connect/inbound', '/system',
     ]) {
       const hits = groups.filter((g) => isNavGroupActive(g, pathname)).map((g) => g.label)
@@ -126,5 +127,12 @@ describe('isNavGroupActive', () => {
 
   it('marks no group on a route the nav does not own', () => {
     expect(groups.some((g) => isNavGroupActive(g, '/settings'))).toBe(false)
+  })
+
+  it('does not light Demos up on the public storyboard page', () => {
+    // /storyboard/:slug is the chrome-less share page, not the index; the
+    // index is the tenant route /w/:ws/storyboards.
+    expect(groups.some((g) => isNavGroupActive(g, '/storyboard/oes-supply'))).toBe(false)
+    expect(isNavGroupActive(group('Demos'), '/w/connect/storyboards')).toBe(true)
   })
 })

@@ -59,6 +59,9 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: 'ddd', label: 'DDD', tenant: true },
       { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
+      // The shared arcs — several narratives as one link. Without this entry a
+      // board was reachable only from the link it was last pasted into.
+      { path: 'storyboards', label: 'Storyboards', tenant: true },
     ],
   },
   {
