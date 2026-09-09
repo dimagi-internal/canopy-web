@@ -785,6 +785,8 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     try:
         agent = core.AcpAgent(cwd=workdir, env=_agent_env(agent_slug), on_update=on_update)
         agent.start()
+        # Reachable by the WS thread from here on — see `steer_turn`.
+        _acp_register(turn_id, agent)
         session_id = ""
         if resume_session_id and _resume_target_exists(workdir, resume_session_id):
             state["replaying"] = True
@@ -830,6 +832,9 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc}")
         return False, f"runner error (acp): {exc}", (agent.session_id if agent else "")
     finally:
+        # Unregister BEFORE close: a steer that arrives in the gap would
+        # otherwise reach a closed connection and raise inside the WS thread.
+        _acp_unregister(turn_id)
         if agent is not None:
             try:
                 agent.close()
@@ -1421,6 +1426,76 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     # packages/ — looking for it there disabled the ACP executor on every boot.
     _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor", parent="runner")
     _install_acp_adapter()
+
+
+#: Turn id -> the live AcpAgent driving it, for the WS thread to reach into.
+#:
+#: A turn runs on a worker thread blocked inside `run_acp`'s pump; control frames
+#: (`interject`, cancel) arrive on the WS thread. Steering is the one thing that
+#: MUST cross those threads — waiting for the pump would deliver the message
+#: after the turn it was meant to change. `AcpConnection._send` is lock-guarded,
+#: so a prompt from another thread is safe by construction.
+_ACP_LIVE: dict = {}
+_ACP_LIVE_LOCK = threading.Lock()
+
+
+def _acp_register(turn_id: str, agent) -> None:
+    with _ACP_LIVE_LOCK:
+        _ACP_LIVE[turn_id] = agent
+
+
+def _acp_unregister(turn_id: str) -> None:
+    with _ACP_LIVE_LOCK:
+        _ACP_LIVE.pop(turn_id, None)
+
+
+def _acp_agent_for(turn_id: str):
+    with _ACP_LIVE_LOCK:
+        return _ACP_LIVE.get(turn_id)
+
+
+def steer_turn(turn_id: str, message: str) -> bool:
+    """Deliver a human's message INTO a turn that is already running.
+
+    Returns whether it was delivered, which the caller logs — a message that
+    silently goes nowhere is the failure this exists to prevent, and canopy-web
+    has already told a person their message was sent.
+
+    `claude -p` cannot do this at all: it is one process, one prompt, stdin
+    closed. ACP can — `session/prompt` is a request the agent accepts while a
+    previous one is still running, reported as `_meta.steering.supported` and
+    `promptQueueing` in `initialize`. Verified on cloud-ec2-1 2026-09-09 against
+    adapter 0.75.1: interjected mid-`sleep`, the agent abandoned its loop and
+    answered the new instruction, emitting none of the remaining output.
+
+    The returned Pending is deliberately dropped. The interjection's reply
+    arrives as ordinary `session/update` traffic, which the reducer already
+    turns into ledger rows — the same path the turn's own output takes. Nothing
+    needs to await it, and awaiting it here would block the WS thread.
+    """
+    agent = _acp_agent_for(turn_id)
+    if agent is None:
+        return False
+    try:
+        agent.prompt(message)
+        return True
+    except Exception as exc:  # noqa: BLE001 — a failed steer must not kill the socket
+        _log(f"steer turn={turn_id[:8]} failed: {exc}")
+        return False
+
+
+def stop_turn(turn_id: str) -> bool:
+    """`session/cancel` — the Escape equivalent. Verified on cloud-ec2-1:
+    stopReason `cancelled`, same second."""
+    agent = _acp_agent_for(turn_id)
+    if agent is None:
+        return False
+    try:
+        agent.cancel()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"stop turn={turn_id[:8]} failed: {exc}")
+        return False
 
 
 #: The adapter's binary and package names. `find_adapter` in canopy_acp resolves
@@ -2894,7 +2969,18 @@ def run_over_ws(runner_id: str) -> bool:
                     if mtype == "wake":
                         _drain(ws, runner_id)
                     elif mtype == "interject":
-                        _log(f"interject turn={msg.get('turn_id')}: {msg.get('message')!r}")
+                        # canopy-web has ALREADY told a person their message was
+                        # sent, so whether it actually landed is the thing worth
+                        # logging. Before ACP this frame was logged and dropped:
+                        # `claude -p` is one process with one prompt and stdin
+                        # closed, so there was nowhere to put it.
+                        t_id = str(msg.get("turn_id") or "")
+                        body = str(msg.get("message") or "")
+                        if body and steer_turn(t_id, body):
+                            _log(f"interject turn={t_id[:8]}: delivered mid-turn")
+                        else:
+                            _log(f"interject turn={t_id[:8]}: NOT delivered "
+                                 f"(no live ACP turn) — {body[:60]!r}")
                     elif mtype == "stream":
                         # Latency optimization only — /streams is polled below
                         # regardless, so a dropped frame costs one tick, never
