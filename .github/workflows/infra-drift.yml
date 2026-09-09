@@ -1,0 +1,99 @@
+# .github/workflows/infra-drift.yml
+name: Infra drift
+
+# Nothing detected drift until someone ran detect-stack-drift by hand on
+# 2026-09-09 and found labs-jj-audit-analytics had a task-definition environment
+# variable changed out-of-band — a change the next `cloudformation deploy` would
+# have silently reverted. A stack that has drifted is a stack whose template no
+# longer describes what is running, which makes every review of that template a
+# review of the wrong thing.
+#
+# Read-only: detect-stack-drift inspects, it does not reconcile.
+#
+# NO `schedule:` TRIGGER YET, deliberately. Measured 2026-09-09: the deploy role
+# has implicitDeny on all three actions below, so a nightly run would fail every
+# night. The grant it needs is:
+#
+#     Effect: Allow
+#     Action:
+#       - cloudformation:DetectStackDrift
+#       - cloudformation:DescribeStackDriftDetectionStatus
+#       - cloudformation:DescribeStackResourceDrifts
+#     Resource: arn:aws:cloudformation:us-east-1:858923557655:stack/canopy-web/*
+#
+# That grant belongs in the canopy-web BOOTSTRAP stack, not in another hand-edit
+# of a shared role — hand-editing it is the debt this whole spec exists to repay.
+# Enable the schedule in the same change that lands the bootstrap stack.
+# Until then this is runnable on demand, and by an admin locally.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  drift:
+    name: Detect CloudFormation drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Detect drift
+        run: |
+          set -o pipefail
+          # canopy-web only. The deploy role's CloudFormation grants are scoped
+          # to stack/canopy-web/* and stack/ace-web/*, with nothing at all for
+          # canopy-cloud-runner — including it would guarantee a failure even
+          # after the drift grant lands. ace-web and the connect-labs platform
+          # stacks are detected from their own repos; each repo is
+          # self-contained, which is the point.
+          STACKS="canopy-web"
+          FAILED=0
+
+          for STACK in $STACKS; do
+            echo "::group::$STACK"
+            if ! ID=$(aws cloudformation detect-stack-drift --stack-name "$STACK" \
+                        --query StackDriftDetectionId --output text 2>&1); then
+              echo "::error::Cannot detect drift on $STACK: $ID"
+              echo "If this is an AccessDenied, the deploy role still lacks the"
+              echo "cloudformation:DetectStackDrift grant — see the header of this file."
+              echo "::endgroup::"
+              exit 1
+            fi
+
+            # Detection is asynchronous; poll until it stops being IN_PROGRESS.
+            for _ in $(seq 1 60); do
+              STATUS=$(aws cloudformation describe-stack-drift-detection-status \
+                         --stack-drift-detection-id "$ID" \
+                         --query DetectionStatus --output text)
+              [ "$STATUS" = "DETECTION_IN_PROGRESS" ] || break
+              sleep 5
+            done
+
+            DRIFT=$(aws cloudformation describe-stack-drift-detection-status \
+                      --stack-drift-detection-id "$ID" \
+                      --query StackDriftStatus --output text)
+            echo "$STACK: detection=$STATUS drift=$DRIFT"
+
+            if [ "$DRIFT" = "DRIFTED" ]; then
+              aws cloudformation describe-stack-resource-drifts \
+                --stack-name "$STACK" \
+                --stack-resource-drift-status-filters MODIFIED DELETED \
+                --query 'StackResourceDrifts[].{Resource:LogicalResourceId,Type:ResourceType,Status:StackResourceDriftStatus,Properties:PropertyDifferences[].PropertyPath}' \
+                --output json
+              FAILED=1
+            fi
+            echo "::endgroup::"
+
+            if [ "$DRIFT" = "DRIFTED" ]; then
+              echo "::error::$STACK has drifted — the template no longer describes what is running. The next deploy will silently revert it."
+            fi
+          done
+
+          exit $FAILED
