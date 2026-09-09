@@ -193,9 +193,25 @@ Resources:
       Protocol: HTTP
       TargetType: ip
       HealthCheckPath: /canopy/health/
-      HealthCheckIntervalSeconds: 30
+      # Measured 2026-09-08: a deploy took 12.9 minutes, of which 10.3 was this
+      # ECS rolling replace — the image build was 26 SECONDS. Two ALB defaults
+      # were the whole cost, and neither buys anything at this scale.
+      #
+      # 30s x 2 checks meant a healthy new task still waited ~60s to be admitted.
+      # /canopy/health/ is cheap, and a task that is up answers it immediately.
+      HealthCheckIntervalSeconds: 5
       HealthyThresholdCount: 2
+      HealthCheckTimeoutSeconds: 4
       Matcher: { HttpCode: "200" }
+      TargetGroupAttributes:
+        # THE BIG ONE: deregistration_delay defaults to 300s and was never set
+        # here, so every deploy spent five minutes draining a task the new one
+        # had already replaced. That default protects long-lived requests; this
+        # app serves a SPA, an API and a WebSocket, and the ALB stops sending it
+        # new connections the moment draining starts. Five seconds is ample for
+        # in-flight requests to land. Raise it if long-poll/upload work appears.
+        - Key: deregistration_delay.timeout_seconds
+          Value: "5"
 
   ListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
