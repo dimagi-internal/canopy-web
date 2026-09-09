@@ -220,6 +220,47 @@ def test_claude_cmd_without_resume(cloud_runner):
 def test_claude_cmd_with_resume(cloud_runner):
     cmd = cloud_runner._claude_cmd("hello", "sess-123")
     assert cmd[-2:] == ["--resume", "sess-123"]
+    # Both would ask the CLI to be two sessions at once.
+    assert "--session-id" not in cmd
+
+
+# ── a turn must be VISIBLE to the duplicate/sibling check ───────────────────
+#
+# canopy's live-turns.sh enumerates live sessions out of argv
+# (`--session-id|--resume <uuid>`) — the only handle a process has on which
+# session it is. A bare `claude -p` matches neither, so on cloud-ec2-1 the check
+# found no sessions, could not see itself, and exited 2 on every turn. The check
+# was right to refuse ("I could not look" must not read as "nobody is there");
+# the consequence was that the fleet's protection against two turns working the
+# same thread did not exist on a cloud runner at all.
+
+def test_a_fresh_turn_names_its_session_so_it_can_be_enumerated(cloud_runner):
+    cmd = cloud_runner._claude_cmd("hello")
+    assert "--session-id" in cmd, (
+        "a turn with no session id in argv is invisible to live-turns.sh, "
+        "which disables duplicate-turn protection on this box"
+    )
+    import uuid as _uuid
+    sid = cmd[cmd.index("--session-id") + 1]
+    _uuid.UUID(sid)  # raises if it is not a real uuid
+
+
+def test_each_turn_gets_its_own_session_id(cloud_runner):
+    """A shared id would make two concurrent turns look like one session."""
+    a = cloud_runner._claude_cmd("one")
+    b = cloud_runner._claude_cmd("two")
+    assert a[a.index("--session-id") + 1] != b[b.index("--session-id") + 1]
+
+
+def test_the_enumeration_pattern_live_turns_uses_actually_matches(cloud_runner):
+    """Pinned against the REAL regex from live-turns.sh, not a paraphrase of it:
+    `grep -oE -- '--(session-id|resume) [0-9a-f-]{36}'`. If that pattern and this
+    argv ever drift apart again, the failure is silent everywhere else."""
+    import re
+    pattern = re.compile(r"--(session-id|resume) [0-9a-f-]{36}")
+    for cmd in (cloud_runner._claude_cmd("fresh"),
+                cloud_runner._claude_cmd("resumed", "0e2f1c9a-4b7d-4f0e-9a11-2b3c4d5e6f70")):
+        assert pattern.search(" ".join(cmd)), f"not enumerable: {cmd}"
 
 
 # ── resume-target existence check (review C2 / I1) ──────────────────────────
