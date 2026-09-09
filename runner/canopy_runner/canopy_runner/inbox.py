@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import time
+from pathlib import Path
 from typing import NamedTuple
 
 # UNREAD only — the "new email" signal. Critically NOT "all recent threads":
@@ -262,15 +263,87 @@ OK_PAIRING_WINDOW_S = 2 * 60 * 60
 #: ``{(mailbox, alarm_name): wall-clock time we last ENQUEUED a turn for it}``. Written
 #: only on a real enqueue, never when coalescing — so a flapping alarm is quiet for one
 #: window and then genuinely re-notifies, rather than being suppressed forever by its own
-#: repeats. Process-local for the same reason as `_seen_state`: losing it on restart costs
-#: one redundant turn, never a dropped incident. That is the fail-open direction.
+#: repeats.
+#:
+#: PERSISTED, unlike `_seen_state` — and the difference is the whole point (#714). This
+#: used to say "process-local for the same reason as `_seen_state`: losing it on restart
+#: costs one redundant turn." Half of that inheritance was wrong. `_seen_state` is cheap
+#: to lose because *the server is the authority on idempotency* — that is its docstring's
+#: actual argument, and it holds. But the enqueue key is `email-<agent>-<thread>-<count>`:
+#: **nothing anywhere is keyed on the alarm NAME**, so when this dict is lost, nothing
+#: else in the system knows the incident already has an owner.
+#:
+#: And "one redundant turn" assumed restarts are rare and random. The runner SELF-UPDATES,
+#: so they are routine and scheduled, and the blast radius is every alarm storm in flight
+#: at that moment. Measured 2026-09-09: `labs-jj-web-cpu-high-actionable`'s `OK:` thread
+#: had been correctly suppressed for 50 minutes (its `ALARM:` owner had diagnosed the
+#: alarm, merged a fix and marked the storm read twice). An upgrade restart landed at
+#: 00:52:50Z; **23 seconds later** the first poll enqueued that thread as a fresh hal
+#: session whose entire job was to rediscover it should stand down — exactly the outcome
+#: #670 exists to prevent. Its `messageCount` had bumped after the owner's last sweep, so
+#: the server key was novel and server-side dedup could not help either.
+#:
+#: Loading stays fail-OPEN in every direction: a missing, unreadable, malformed or
+#: partially-corrupt file yields an empty dict, i.e. precisely today's behaviour. Entries
+#: older than the longest window are dropped on load, so the file is self-limiting and a
+#: long downtime cannot resurrect stale ownership.
 _alarm_enqueued: dict[tuple[str, str], float] = {}
+
+#: Set once per process by the first `check_inbox` call that is given a path; `None` keeps
+#: the dict purely in-memory, which is what every test and any embedding caller gets by
+#: default.
+_alarm_state_path: Path | None = None
+_alarm_state_loaded = False
+
+#: Entries this old cannot affect any decision — both windows have expired — so they are
+#: dropped rather than written back forever.
+_ALARM_STATE_TTL_S = max(OK_PAIRING_WINDOW_S, ALARM_REPEAT_WINDOW_S)
+
+
+def _load_alarm_enqueued(path: Path, now: float) -> None:
+    """Seed `_alarm_enqueued` from `path`, dropping expired entries.
+
+    Every failure mode — no file, bad JSON, wrong shape, a non-numeric timestamp — leaves
+    the dict as it was. Suppressing a turn requires an entry, so an empty dict enqueues,
+    which is the safe direction.
+    """
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, list):
+        return
+    for row in raw:
+        # Row-level tolerance: one corrupt entry must not discard the rest.
+        if not isinstance(row, list) or len(row) != 3:
+            continue
+        box, name, ts = row
+        if not isinstance(box, str) or not isinstance(name, str):
+            continue
+        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+            continue
+        if now - ts >= _ALARM_STATE_TTL_S:
+            continue
+        _alarm_enqueued[(box, name)] = float(ts)
+
+
+def _save_alarm_enqueued(path: Path, now: float) -> None:
+    """Write `_alarm_enqueued` to `path`, expired entries omitted. Best-effort: a failed
+    write costs at most the redundant turn this file exists to prevent, so it must never
+    take the poll loop down."""
+    rows = [[box, name, ts] for (box, name), ts in _alarm_enqueued.items()
+            if now - ts < _ALARM_STATE_TTL_S]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows))
+    except (OSError, ValueError):
+        pass
 
 
 def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 query: str = DEFAULT_QUERY, max_threads: int = 15, runner=subprocess.run,
                 sender_of=None, facts_of=None, discovered_by: str = "poll",
-                clock=time.time) -> dict:
+                clock=time.time, alarm_state_path=None) -> dict:
     """Enqueue an email-origin turn for each new thread state. Returns
     {"new": [thread_ids that became a NEW turn], "seen": [ids already tracked],
     "skipped": [ids whose newest message is the agent's own reply],
@@ -294,7 +367,19 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     and fails open (unknown -> enqueue) so an unreadable thread never silently drops a
     real reply. `sender_of(thread_id) -> str|None` is the narrower legacy seam, kept
     because existing callers and tests inject it; supplying it opts out of every fact
-    that needs the body, so a `sender_of`-injected call behaves exactly as before."""
+    that needs the body, so a `sender_of`-injected call behaves exactly as before.
+
+    `alarm_state_path` is where the alarm incident-ownership record (`_alarm_enqueued`)
+    is persisted so an upgrade restart cannot re-dispatch an already-owned `OK:` (#714).
+    Read once per process and rewritten only when an alarm turn is actually enqueued.
+    Omit it and the record stays purely in memory — exactly the pre-#714 behaviour."""
+    global _alarm_state_path, _alarm_state_loaded
+    if alarm_state_path is not None and not _alarm_state_loaded:
+        # Once per process: the file is the previous process's memory, not a cache to be
+        # re-read on every poll (this process is the only writer while it lives).
+        _alarm_state_path = Path(alarm_state_path)
+        _alarm_state_loaded = True
+        _load_alarm_enqueued(_alarm_state_path, clock())
     if facts_of is None:
         if sender_of is not None:
             def facts_of(tid: str) -> ThreadFacts:
@@ -396,7 +481,13 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # not extend its own suppression, or an alarm flapping for an hour would be
         # reported once and then silently held down for the whole hour.
         if key and key[0] == "ALARM":
-            _alarm_enqueued[(box, key[1])] = clock()
+            now = clock()
+            _alarm_enqueued[(box, key[1])] = now
+            # Persist immediately: the gap this closes is a restart, and a restart is not
+            # something we get to flush before. Only on a real stamp, so a quiet poll
+            # writes nothing.
+            if _alarm_state_path is not None:
+                _save_alarm_enqueued(_alarm_state_path, now)
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced,
             "ok_without_alarm": ok_without_alarm}

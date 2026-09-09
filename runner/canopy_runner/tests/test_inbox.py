@@ -133,9 +133,22 @@ def _clear_seen_state():
     """`_seen_state` is module-global and these tests reuse thread ids."""
     inbox._seen_state.clear()
     inbox._alarm_enqueued.clear()
+    inbox._alarm_state_path = None
+    inbox._alarm_state_loaded = False
     yield
     inbox._seen_state.clear()
     inbox._alarm_enqueued.clear()
+    inbox._alarm_state_path = None
+    inbox._alarm_state_loaded = False
+
+
+def _restart():
+    """Everything a runner restart destroys: both process-local caches and the
+    once-per-process load flag. What survives is only what reached disk."""
+    inbox._seen_state.clear()
+    inbox._alarm_enqueued.clear()
+    inbox._alarm_state_path = None
+    inbox._alarm_state_loaded = False
 
 
 def _clock(t):
@@ -320,6 +333,108 @@ def test_ok_is_coalesced_even_when_its_alarm_was_an_earlier_batch():
     assert res["new"] == []
     assert res["coalesced"] == ["thr-ok"]
     assert len(client.enqueued) == 1
+
+
+def test_ok_is_still_coalesced_across_a_runner_restart(tmp_path):
+    """#714 — the regression this file could not previously see.
+
+    `_alarm_enqueued` was process-local, so the runner's own self-update restart erased
+    which incidents had an owner and the next poll re-dispatched an already-owned `OK:`.
+    Measured 2026-09-09: an upgrade restart, then a CREATE 23 seconds later on a thread
+    the previous process had been suppressing for 50 minutes.
+    """
+    state = tmp_path / "alarm-incidents.json"
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0), alarm_state_path=state)
+    assert len(client.enqueued) == 1
+
+    _restart()
+
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 2}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(50 * 60), alarm_state_path=state)
+    assert res["new"] == []
+    assert res["coalesced"] == ["thr-ok"]
+    assert len(client.enqueued) == 1
+
+
+def test_restart_state_expires_so_a_later_ok_is_a_real_incident(tmp_path):
+    """The persisted record must not resurrect ownership forever — past the longest
+    window it is dropped on load and the `OK:` fires, as it would have pre-#714."""
+    state = tmp_path / "alarm-incidents.json"
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0), alarm_state_path=state)
+    _restart()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 2}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(inbox._ALARM_STATE_TTL_S + 1),
+                            alarm_state_path=state)
+    assert res["new"] == ["thr-ok"]
+
+
+@pytest.mark.parametrize("payload", ["", "not json", '{"a": 1}', '[["hal"]]',
+                                     '[["hal", "x", "soon"]]', '[["hal", 5, 1.0]]'])
+def test_unreadable_alarm_state_fails_open(tmp_path, payload):
+    """Every corruption mode enqueues rather than suppressing. Suppression requires a
+    valid entry, so a damaged file can only ever cost the redundant turn we were already
+    paying before #714 — never a dropped incident."""
+    state = tmp_path / "alarm-incidents.json"
+    state.write_text(payload)
+    client = FakeClient()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(0), alarm_state_path=state)
+    assert res["new"] == ["thr-ok"]
+
+
+def test_missing_alarm_state_file_fails_open(tmp_path):
+    client = FakeClient()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(0),
+                            alarm_state_path=tmp_path / "nope" / "alarm-incidents.json")
+    assert res["new"] == ["thr-ok"]
+
+
+def test_no_state_path_keeps_the_record_in_memory_only(tmp_path):
+    """Omitting the path must behave exactly as before #714 — and write nothing."""
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0))
+    assert inbox._alarm_state_path is None
+    assert list(tmp_path.iterdir()) == []
+    _restart()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 2}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                            clock=_clock(60), alarm_state_path=None)
+    assert res["new"] == ["thr-ok"]
+
+
+def test_a_coalesced_ok_does_not_extend_its_own_suppression_on_disk(tmp_path):
+    """The stamp is written only on a real enqueue. A recovery folding into an existing
+    incident must not refresh the window, or a flapping alarm would be reported once and
+    then held down forever — the property the in-memory version already had."""
+    state = tmp_path / "alarm-incidents.json"
+    client = FakeClient()
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(0), alarm_state_path=state)
+    before = state.read_text()
+    ok_only = [{"id": "thr-ok", "from": SNS, "subject": _OK, "messageCount": 2}]
+    inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner(ok_only), sender_of=lambda tid: SNS.lower(),
+                      clock=_clock(60 * 60), alarm_state_path=state)
+    assert state.read_text() == before
 
 
 def test_ok_with_no_recent_alarm_still_enqueues():
