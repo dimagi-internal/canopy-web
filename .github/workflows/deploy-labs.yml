@@ -324,6 +324,21 @@ jobs:
           fi
           echo "Change set: $AFTER"
 
+          # An empty diff still creates a change set: the CLI's `deploy` raises
+          # ChangeEmptyError and leaves it behind in status FAILED ("The
+          # submitted information didn't contain changes") WITHOUT deleting it
+          # (awscli/customizations/cloudformation/deployer.py) — so the
+          # BEFORE/AFTER check above cannot see a no-op deploy, and executing
+          # this change set would just error. Anything but CREATE_COMPLETE
+          # means there is nothing to apply.
+          STATUS=$(aws cloudformation describe-change-set --change-set-name "$AFTER" \
+            --query Status --output text 2>/dev/null || echo "MISSING")
+          if [ "$STATUS" != "CREATE_COMPLETE" ]; then
+            echo "Change set is $STATUS, not CREATE_COMPLETE — nothing to deploy."
+            aws cloudformation delete-change-set --change-set-name "$AFTER" || true
+            exit 0
+          fi
+
           # The role this job is running as; the same principal that will
           # execute the change set. get-caller-identity returns the ASSUMED-ROLE
           # arn, which simulate-principal-policy does not accept — convert it to
