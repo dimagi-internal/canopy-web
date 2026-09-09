@@ -1423,24 +1423,51 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     _install_acp_adapter()
 
 
+#: The adapter's binary and package names. `find_adapter` in canopy_acp resolves
+#: the binary off PATH first, so having it there is the whole success condition.
+ACP_ADAPTER_BIN = "claude-agent-acp"
+ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
+
+
 def _install_acp_adapter() -> None:
-    """Install the Node ACP adapter the executor drives.
+    """Put the Node ACP adapter on PATH, if it is not already there.
 
     Skipped entirely unless RUNNER_EXECUTOR=acp: it costs an npm install and a
     Node dependency on every boot, and the `claude -p` path needs neither.
     `run_acp` falls back to `claude -p` when the adapter is missing, so a failure
     here degrades rather than breaks.
+
+    Two things this got wrong, both measured on cloud-ec2-1 on 2026-09-09, and
+    both already solved a few hundred lines away for `tsx` in
+    bootstrap_agents.sh's `ensure_plugin_runtime`:
+
+    * **A bare `npm install -g` cannot work here.** This runs as the SERVICE user
+      (ubuntu), which cannot write /usr/lib/node_modules, so npm exits 243
+      (EACCES). `$HOME/.local/bin` is already first on the unit's PATH
+      (runner.cfn.yaml), so `--prefix "$HOME/.local"` installs somewhere the
+      adapter is actually found.
+    * **It never asked whether the adapter was already installed.** With one
+      present at /usr/bin/claude-agent-acp it still ran the doomed install and
+      logged "could not install the ACP adapter … the ACP executor will fall
+      back to claude -p" — on a boot that then executed every turn over ACP
+      perfectly well. A warning that names the wrong outcome is worse than
+      silence: it sends the next person debugging in the opposite direction.
     """
     if RUNNER_EXECUTOR != "acp":
         return
-    if shutil.which("node") is None:
-        _log("warn: node not on PATH; the ACP executor will fall back to claude -p")
+    existing = shutil.which(ACP_ADAPTER_BIN)
+    if existing:
+        _log(f"ACP adapter already on PATH ({existing})")
         return
+    if shutil.which("node") is None or shutil.which("npm") is None:
+        _log("warn: node/npm not on PATH; the ACP executor will fall back to claude -p")
+        return
+    prefix = str(pathlib.Path.home() / ".local")
     try:
-        subprocess.run(["npm", "install", "-g", "@agentclientprotocol/claude-agent-acp"],
+        subprocess.run(["npm", "install", "-g", "--prefix", prefix, ACP_ADAPTER_PACKAGE],
                        check=True, timeout=300,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _log("installed @agentclientprotocol/claude-agent-acp")
+        _log(f"installed {ACP_ADAPTER_PACKAGE} into {prefix}")
     except Exception as exc:  # noqa: BLE001
         _log(f"warn: could not install the ACP adapter ({exc}); "
              "the ACP executor will fall back to claude -p")

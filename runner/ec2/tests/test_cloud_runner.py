@@ -1725,3 +1725,60 @@ def test_a_failed_steady_state_post_does_not_advance_the_offset(cloud_runner, mo
     st = cloud_runner._STREAM_READERS["s"]
     assert st["reader"] is None, "a failed post must drop the tailer"
     assert st["count"] == 0, "count must not advance past records the server never took"
+
+
+# ── the ACP adapter has to actually land on PATH ────────────────────────────
+#
+# Measured on cloud-ec2-1, 2026-09-09. Two faults, both already solved for `tsx`
+# in bootstrap_agents.sh's ensure_plugin_runtime a few hundred lines away:
+# a bare `npm install -g` cannot work as the service user (EACCES, exit 243),
+# and the installer never asked whether the adapter was already there — so with
+# one present at /usr/bin/claude-agent-acp it ran the doomed install and logged
+# "the ACP executor will fall back to claude -p" on a boot that then ran every
+# turn over ACP. A warning naming the wrong outcome sends the next debugger the
+# opposite way.
+
+def _acp_install(cloud_runner, monkeypatch, *, executor="acp", on_path=None,
+                 has_node=True):
+    runs: list = []
+    logs: list = []
+    which = {"claude-agent-acp": on_path,
+             "node": "/usr/bin/node" if has_node else None,
+             "npm": "/usr/bin/npm" if has_node else None}
+    monkeypatch.setattr(cloud_runner, "RUNNER_EXECUTOR", executor)
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda n: which.get(n))
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: logs.append(m))
+    monkeypatch.setattr(cloud_runner.subprocess, "run",
+                        lambda cmd, **kw: runs.append(cmd))
+    cloud_runner._install_acp_adapter()
+    return runs, logs
+
+
+def test_an_adapter_already_on_path_is_left_alone(cloud_runner, monkeypatch):
+    runs, logs = _acp_install(cloud_runner, monkeypatch,
+                              on_path="/usr/bin/claude-agent-acp")
+    assert runs == [], "reinstalled an adapter that was already installed"
+    assert not any("fall back" in m for m in logs), (
+        f"claimed a fallback that did not happen: {logs}")
+    assert any("already on PATH" in m for m in logs), logs
+
+
+def test_the_install_targets_a_prefix_the_service_user_can_write(cloud_runner, monkeypatch):
+    """A bare `npm install -g` is EACCES for the ubuntu service user."""
+    runs, _ = _acp_install(cloud_runner, monkeypatch, on_path=None)
+    assert len(runs) == 1, runs
+    cmd = runs[0]
+    assert "--prefix" in cmd, f"bare global install cannot work as this user: {cmd}"
+    assert cmd[cmd.index("--prefix") + 1].endswith("/.local"), cmd
+    assert cmd[-1] == cloud_runner.ACP_ADAPTER_PACKAGE, cmd
+
+
+def test_nothing_is_installed_when_the_executor_is_not_acp(cloud_runner, monkeypatch):
+    runs, _ = _acp_install(cloud_runner, monkeypatch, executor="cli", on_path=None)
+    assert runs == []
+
+
+def test_a_missing_node_degrades_without_attempting_npm(cloud_runner, monkeypatch):
+    runs, logs = _acp_install(cloud_runner, monkeypatch, on_path=None, has_node=False)
+    assert runs == []
+    assert any("fall back" in m for m in logs), logs
