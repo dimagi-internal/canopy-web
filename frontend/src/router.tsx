@@ -26,6 +26,7 @@ import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
 import StoryboardPage from './pages/StoryboardPage'
+import StoryboardsPage from './pages/StoryboardsPage'
 import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
 import SupervisorPage from '@/pages/SupervisorPage'
@@ -204,6 +205,7 @@ export const router = createBrowserRouter(guarded([
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },
+      { path: '/w/:workspace/storyboards', element: <StoryboardsPage /> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },
       {
@@ -251,6 +253,7 @@ export const router = createBrowserRouter(guarded([
       { path: '/timeline', element: <TenantRedirect to="timeline" /> },
       { path: '/shareouts/*', element: <TenantRedirect to="shareouts" /> },
       { path: '/walkthroughs', element: <TenantRedirect to="walkthroughs" /> },
+      { path: '/storyboards', element: <TenantRedirect to="storyboards" /> },
       { path: '/agents/*', element: <TenantRedirect to="agents" /> },
       { path: '/ddd/*', element: <TenantRedirect to="ddd" /> },
       { path: '/ddd-plans', element: <Navigate to="/" replace /> },

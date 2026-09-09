@@ -121,3 +121,20 @@ export async function leaveFeedback(
   }
   return resp.json()
 }
+
+/** One row of the index — what a member sees before opening a board. */
+export interface StoryboardListItem {
+  slug: string
+  title: string
+  lede: string
+  capability: Capability
+  layout: Layout
+  act_count: number
+  /** Absolute, token-bearing link. Members only — this is the thing you send. */
+  share_url: string | null
+}
+
+/** Every board in a workspace the caller belongs to. Members only. */
+export function listStoryboards(): Promise<{ items: StoryboardListItem[] }> {
+  return getJson('/api/storyboards/')
+}

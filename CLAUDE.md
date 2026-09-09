@@ -130,6 +130,7 @@ the active workspace. `/ddd-plans` and `/reviews` now redirect to `/`.
 - `/w/:workspace/activity` — Fleet turn log scoped to that workspace (see `/activity` below)
 - `/w/:workspace/shareouts` (+ `/shareouts/:period`) — Dated, teammate-facing work briefings (what shipped, why, how to leverage) posted by `/canopy:shareout`; `:period` is a copy-linkable permalink to one briefing
 - `/w/:workspace/walkthroughs` — Sharable demos uploaded from `/canopy:walkthrough`
+- `/w/:workspace/storyboards` — Index of the workspace's storyboards (the shared arcs): title, layout (review / reel), act count, and the token-bearing share link to copy. Under the Demos menu. The board itself opens at `/storyboard/:slug`
 - `/w/:workspace/ddd` (+ `/ddd/:narrative`, `/ddd/:narrative/:runId`) — Demo-driven-development (DDD) views: narrative → version → run → package (video + deck + narrative + links)
 - `/w/:workspace/agents` — First-class AI agents list (e.g. "Echo")
 - `/w/:workspace/members` — Members + invites admin surface (owner-only actions): list members, remove a member, invite by email, list/revoke pending invites. Canopy sends no email — invite by copying the generated `/invite/:token` link and sending it yourself.
