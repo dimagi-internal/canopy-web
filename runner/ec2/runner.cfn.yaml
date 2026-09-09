@@ -28,6 +28,27 @@ Parameters:
     Type: String
     Default: ''
     Description: Comma-separated agent slugs this runner may drive.
+  RunnerExecutor:
+    Type: String
+    AllowedValues: ['cli', 'acp']
+    Default: 'acp'
+    Description: >
+      Which executor runs a turn: `cli` spawns `claude -p` and parses
+      stream-json; `acp` drives @agentclientprotocol/claude-agent-acp over
+      JSON-RPC. ACP is the standard that specifies what the cli path hand-rolls,
+      and it is the only one of the two that can offer steering, interrupt and
+      permission prompts (spec 2026-07-27-acp-adoption-design).
+
+      Defaulted to `acp` rather than left off, for two reasons. It is safe by
+      construction — `run_acp` falls back to `claude -p` whenever the adapter is
+      missing, so a box without it degrades instead of failing. And a default of
+      `cli` here would SILENTLY revert a box someone had switched on, the next
+      time anyone ran up.sh: up.sh overrides only SshCidr, so every other
+      parameter falls back to its default on every stack update.
+
+      Verified on cloud-ec2-1, 2026-09-09: tool_start/tool_end/assistant events
+      arrive in the ledger's existing shapes, `toolCallId` matching the
+      transcript's tool_use.id, with rawInput populated.
   RunnerSessions:
     Type: String
     AllowedValues: ['0', '1']
@@ -243,6 +264,7 @@ Resources:
                 RUNNER_PROJECTS=${RunnerProjects}
                 RUNNER_AGENTS=${RunnerAgents}
                 RUNNER_SESSIONS=${RunnerSessions}
+                RUNNER_EXECUTOR=${RunnerExecutor}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}
