@@ -190,11 +190,22 @@ Resources:
   #   github-actions-labs-deploy is not authorized to perform:
   #   elasticloadbalancing:ModifyTargetGroup on labs-jj-canopy-web-tg
   # The stack rolled back and prod was fine, but every deploy behind it was
-  # blocked until the grant was added by hand (2026-09-09). The role's inline
-  # GitHubActionsLabsDeployPolicy now allows ModifyTargetGroup +
-  # ModifyTargetGroupAttributes on BOTH labs-jj-ace-web-tg and
-  # labs-jj-canopy-web-tg — ace had hit the same wall earlier and been granted
-  # it for its own ARN only.
+  # blocked until the grants were added by hand (2026-09-09). The role's inline
+  # GitHubActionsLabsDeployPolicy now allows, for an UPDATE of this resource:
+  #
+  #   ModifyTargetGroup + ModifyTargetGroupAttributes + DescribeTargetGroupAttributes
+  #     scoped to labs-jj-ace-web-tg AND labs-jj-canopy-web-tg (ace had hit the
+  #     same wall earlier and been granted it for its own ARN only)
+  #   DescribeTargetGroups on Resource "*", region-conditioned — ELB does NOT
+  #     support resource-level permissions for it, so an ARN-scoped grant matches
+  #     nothing and silently denies. That cost a second failed deploy: the first
+  #     grant left it out precisely BECAUSE scoping it is meaningless, which was
+  #     the right observation and the wrong conclusion. The handler needs it.
+  #
+  # Enumerating what a handler needs is guesswork from the template; CloudTrail
+  # answers it directly. `aws cloudtrail lookup-events` filtered to errorCode
+  # AccessDenied and this role listed every denied call at once, instead of one
+  # per failed deploy.
   #
   # That role is shared platform infrastructure and is NOT in this repo, so
   # nothing here can assert the grant. If a deploy 403s on an elasticloadbalancing
