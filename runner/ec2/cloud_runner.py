@@ -1753,6 +1753,10 @@ _AUTHORIZE = re.compile(r"https://claude\.com/cai/oauth/authorize\?[^\s\x00-\x1f
 #: spaces, so after `strip_terminal` the banner reads "YourOAuthtoken(validfor1year):".
 _TOKEN_BANNER = re.compile(
     r"Your\s*OAuth\s*token.{0,120}?(sk-ant-[A-Za-z0-9_\-]{16,})", re.S | re.I)
+#: The CLI's own declaration that the exchange COMPLETED. Whitespace-tolerant
+#: for the same reason as the banner: the TUI positions with cursor moves.
+_TOKEN_ANNOUNCED = re.compile(
+    r"Long-lived\s*authentication\s*token\s*created|Your\s*OAuth\s*token", re.I)
 #: Preferred when it is present — a known-good historical format.
 _TOKEN_OAT = re.compile(r"sk-ant-oat[A-Za-z0-9_\-]{8,}")
 #: Last resort: any credential that is NOT one of the kinds we know are wrong.
@@ -1824,6 +1828,14 @@ def extract_token(raw: bytes) -> str | None:
     then the known `oat` format, then anything credential-shaped that is not a
     kind we know is wrong. A miss here is not cosmetic — it throws away a
     credential the human has already successfully created.
+
+    THE BANNER OUTRANKS OUR PREFIX OPINION, and that ordering is deliberate:
+    under "Your OAuth token (valid for 1 year):" the CLI is naming the value,
+    and pass 1 therefore does NOT apply the api/admin exclusion that pass 3
+    does. Adding it there would re-create the very bug this function exists to
+    fix — our taxonomy overruling a direct statement from the tool that owns
+    the credential. The exclusion belongs on the UNANCHORED pass, where we are
+    guessing, and nowhere else.
     """
     text = strip_terminal(raw)
     m = _TOKEN_BANNER.search(text)
@@ -1889,6 +1901,22 @@ _PASTE_SETTLE_SECONDS = 0.5
 class MintTimeout(RuntimeError):
     """The CLI never reached the expected step. Always fatal to the attempt:
     a half-driven TUI is not a state worth resuming."""
+
+
+class MintUnreadableToken(MintTimeout):
+    """The sign-in SUCCEEDED and we could not read the credential out.
+
+    A different fault from "no token appeared", and collapsing the two is what
+    made 2026-09-08 expensive: a human signed in correctly, Claude issued a
+    year-long token, the runner failed to match its prefix, and the operator was
+    told "setup-token never printed a token". That sentence sent the debugging
+    at the sign-in — which had worked perfectly — instead of at the six-line
+    parser, and cost a second attempt to notice.
+
+    Distinguished because the two need OPPOSITE responses: this one is a runner
+    bug to fix and never to retry blindly, while a real failure is worth another
+    go. It is also the more urgent of the two, since a credential was minted and
+    then lost."""
 
 
 class MintSession:
@@ -1968,7 +1996,17 @@ class MintSession:
         os.write(self._fd, b"\r")
         token = self._pump(timeout, extract_token)
         tail = _diagnostic_tail(self._buf)
+        # Ask BEFORE close(): the buffer is the only witness that the exchange
+        # completed, and the redaction in `tail` deliberately removes the token
+        # itself, so this is the last moment the distinction can be drawn.
+        announced = bool(_TOKEN_ANNOUNCED.search(strip_terminal(self._buf)))
         self.close()
+        if token is None and announced:
+            raise MintUnreadableToken(
+                "the sign-in SUCCEEDED — Claude issued a token — but this runner "
+                "could not read it out of the CLI's output, so the credential is "
+                "lost and a new sign-in is needed. That is a bug in the runner, "
+                "not anything you did. What it said: " + (tail or "(nothing)"))
         if token is None:
             raise MintTimeout(
                 "setup-token never printed a token. What it said: " + (tail or "(nothing)"))
