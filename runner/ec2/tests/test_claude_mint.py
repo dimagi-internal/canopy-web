@@ -292,3 +292,55 @@ def test_an_unannounced_api_key_is_still_refused(cm):
     """Loosening the prefix must not start staging the wrong credential."""
     assert cm.extract_token(b"sk-ant-api03-nope0123456789abcdefghij") is None
     assert cm.extract_token(b"sk-ant-admin01-nope0123456789abcdefgh") is None
+
+
+# ── a created token we cannot read is NOT a missing token ──────────────────
+#
+# 2026-09-08: a human signed in correctly, Claude issued a year-long token, the
+# runner failed to match its prefix, and the operator was told "setup-token
+# never printed a token". That sentence pointed the debugging at the sign-in —
+# which had worked perfectly — instead of at the parser, and cost a second
+# attempt to notice. The two faults need opposite responses, so they get
+# different exceptions.
+
+def _submit_expecting(cm, monkeypatch, buf: bytes):
+    monkeypatch.setattr(cm.os, "write", lambda fd, data: len(data))
+    monkeypatch.setattr(cm.time, "sleep", lambda s: None)
+    session = cm.MintSession()
+    session._fd = 7
+    session._buf = buf
+    monkeypatch.setattr(session, "_pump", lambda timeout, extract: extract(buf))
+    monkeypatch.setattr(session, "close", lambda: None)
+    with pytest.raises(cm.MintTimeout) as exc:
+        session.submit_code("THECODE#THESTATE")
+    return exc.value
+
+
+def test_an_unreadable_credential_is_reported_as_its_own_fault(cm, monkeypatch):
+    """The CLI announced success; extraction found nothing it recognised."""
+    buf = ("YourOAuthtoken(validfor1year):\n"
+           "totally-unrecognisable-credential-value\n").encode()
+    err = _submit_expecting(cm, monkeypatch, buf)
+    assert isinstance(err, cm.MintUnreadableToken)
+    assert "SUCCEEDED" in str(err)
+    assert "bug in the runner" in str(err)
+
+
+def test_a_genuine_failure_is_still_a_plain_timeout(cm, monkeypatch):
+    """Nothing was announced, so a new attempt is the right response."""
+    buf = b"Pastecodehereifprompted>\n****************\n"
+    err = _submit_expecting(cm, monkeypatch, buf)
+    assert not isinstance(err, cm.MintUnreadableToken)
+    assert "never printed a token" in str(err)
+
+
+def test_the_banner_outranks_our_prefix_opinion(cm):
+    """DELIBERATE, and load-bearing: under the CLI's own "Your OAuth token"
+    label the value IS the token, so pass 1 does not apply pass 3's api/admin
+    exclusion. Applying it there would re-create the 2026-09-08 bug — our
+    taxonomy overruling the tool that owns the credential. Documented as a test
+    so it is not "tidied up" into a regression."""
+    announced = b"YourOAuthtoken(validfor1year):\nsk-ant-api03-0123456789abcdefghij\n"
+    assert cm.extract_token(announced) == "sk-ant-api03-0123456789abcdefghij"
+    # ...but unanchored, the same string is refused.
+    assert cm.extract_token(b"sk-ant-api03-0123456789abcdefghij") is None
