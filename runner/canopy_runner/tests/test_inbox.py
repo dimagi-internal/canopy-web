@@ -49,7 +49,7 @@ def test_idempotency_key_includes_message_count():
 
 def test_empty_inbox_enqueues_nothing():
     client = FakeClient()
-    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "created": []}
+    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "ok_without_alarm": []}
     assert client.enqueued == []
 
 
@@ -361,12 +361,18 @@ def test_a_human_subject_that_looks_like_a_refire_is_never_suppressed():
     assert res["new"] == ["thr-human"]
 
 
-# --- An alarm announcing its OWN CREATION is not an incident (#688) ----------------
+# --- An `OK:` with no ALARM to recover from is not an incident (#688, #712) ---------
 #
 # CloudWatch emails every alarm carrying `OKActions` the moment it is created, under a
 # subject indistinguishable from a real recovery. Only the body separates them. Bodies
 # below are the real 2026-09-07 `labs-jj-web-worker-kill-rate-actionable` notice, which
 # burned a full hal session, and its real-recovery counterpart.
+#
+# #688 keyed on `N/A -> OK`. #712 is why that was too narrow: the SAME non-event spells
+# itself `INSUFFICIENT_DATA -> OK` when the alarm is created a few minutes ahead of its
+# data, and that spelling burned another full hal session. The rule is now "an `OK:` is
+# only work when it recovers from ALARM", which covers both spellings and cannot swallow
+# a real recovery.
 
 _CREATION_OK = 'OK: "labs-jj-web-worker-kill-rate-actionable" in US East (N. Virginia)'
 
@@ -387,6 +393,25 @@ _RECOVERY_BODY = (
     '"labs-jj-web-cpu-high" ... has transitioned to OK state.\r\n\r\nAlarm Details:\r\n'
     "- Name:                       labs-jj-web-cpu-high\r\n"
     "- State Change:               ALARM -> OK\r\n"
+)
+
+_INSUFFICIENT_OK = 'OK: "labs-jj-rds-free-storage-low" in US East (N. Virginia)'
+
+#: The real 2026-09-09 notice (#712). `labs-jj-rds-free-storage-low` was created by a
+#: CloudFormation change set at 00:15:09Z and emailed this at 00:27:33Z — 83.7 GB free
+#: against a 20 GB threshold, having never been in ALARM. Note there is NO "was created"
+#: marker in the reason and NO `N/A`: the ONLY thing separating it from a real recovery
+#: is that the prior state is not `ALARM`.
+_INSUFFICIENT_CREATION_BODY = (
+    "You are receiving this email because your Amazon CloudWatch Alarm "
+    '"labs-jj-rds-free-storage-low" in the US East (N. Virginia) region has entered the '
+    'OK state, because "Threshold Crossed: 3 out of the last 3 datapoints '
+    "[8.3714617344E10 (09/09/26 00:22:00), 8.3835891712E10 (09/09/26 00:17:00), "
+    '8.3510099968E10 (09/09/26 00:12:00)] were not less than the threshold '
+    '(2.147483648E10)".\r\n\r\nAlarm Details:\r\n'
+    "- Name:                       labs-jj-rds-free-storage-low\r\n"
+    "- State Change:               INSUFFICIENT_DATA -> OK\r\n"
+    "- Timestamp:                  Wednesday 09 September, 2026 00:27:33 UTC\r\n"
 )
 
 
@@ -429,7 +454,7 @@ def test_alarm_creation_notice_does_not_fire_a_turn():
                 "messageCount": 1}]
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_dual_runner(threads, _CREATION_BODY))
-    assert res["created"] == ["thr-created"]
+    assert res["ok_without_alarm"] == ["thr-created"]
     assert res["new"] == []
     assert client.enqueued == []
 
@@ -440,7 +465,29 @@ def test_creation_notice_is_detected_inside_a_multipart_body():
                 "messageCount": 1}]
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_dual_runner(threads, _CREATION_BODY, parts=True))
-    assert res["created"] == ["thr-created"]
+    assert res["ok_without_alarm"] == ["thr-created"]
+
+
+def test_an_INSUFFICIENT_DATA_creation_does_not_fire_a_turn():
+    """#712: the second spelling of a creation. `labs-jj-rds-free-storage-low` was created
+    at 00:15:09Z, had never been in ALARM, and emailed `INSUFFICIENT_DATA -> OK` at
+    00:27:33Z with 83.7 GB free against a 20 GB threshold. #688's `N/A -> OK` key did not
+    match it and it dispatched a full hal turn."""
+    client = FakeClient()
+    threads = [{"id": "thr-insuff", "from": SNS, "subject": _INSUFFICIENT_OK,
+                "messageCount": 1}]
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=_dual_runner(threads, _INSUFFICIENT_CREATION_BODY))
+    assert res["ok_without_alarm"] == ["thr-insuff"]
+    assert res["new"] == []
+    assert client.enqueued == []
+
+
+def test_thread_facts_reads_INSUFFICIENT_DATA_as_not_a_recovery():
+    facts = inbox.thread_facts(
+        "hal@dimagi-ai.com", "canopy", "thr-insuff",
+        runner=_dual_runner([], _INSUFFICIENT_CREATION_BODY))
+    assert facts.recovers_from_alarm is False
 
 
 def test_a_real_recovery_still_fires():
@@ -451,7 +498,7 @@ def test_a_real_recovery_still_fires():
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_dual_runner(threads, _RECOVERY_BODY))
     assert res["new"] == ["thr-ok"]
-    assert res["created"] == []
+    assert res["ok_without_alarm"] == []
 
 
 def test_creation_body_on_a_non_sns_sender_is_never_suppressed():
@@ -463,7 +510,7 @@ def test_creation_body_on_a_non_sns_sender_is_never_suppressed():
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_dual_runner(threads, _CREATION_BODY, frm=human))
     assert res["new"] == ["thr-human"]
-    assert res["created"] == []
+    assert res["ok_without_alarm"] == []
 
 
 def test_creation_marker_in_an_ALARM_subject_is_not_suppressed():
@@ -473,7 +520,7 @@ def test_creation_marker_in_an_ALARM_subject_is_not_suppressed():
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_dual_runner(threads, _CREATION_BODY))
     assert res["new"] == ["thr-alarm"]
-    assert res["created"] == []
+    assert res["ok_without_alarm"] == []
 
 
 def test_thread_facts_returns_sender_and_creation_flag_from_one_fetch():
@@ -481,11 +528,12 @@ def test_thread_facts_returns_sender_and_creation_flag_from_one_fetch():
         "hal@dimagi-ai.com", "canopy", "thr-created",
         runner=_dual_runner([], _CREATION_BODY))
     assert facts.newest_from == SNS.lower()
-    assert facts.is_alarm_creation is True
+    assert facts.recovers_from_alarm is False
 
 
 def test_thread_facts_fails_open_on_an_undecodable_body():
-    """Unknown must read as 'not a creation notice' — i.e. enqueue."""
+    """Unknown must read as None — 'we could not tell' — i.e. enqueue. Only a POSITIVE
+    read of a non-ALARM prior state suppresses; `None` never does."""
     def run(cmd, capture_output, text, timeout):
         payload = json.dumps({"messages": [{"payload": {
             "mimeType": "text/plain",
@@ -494,7 +542,7 @@ def test_thread_facts_fails_open_on_an_undecodable_body():
         return SimpleNamespace(returncode=0, stdout=payload, stderr="")
     facts = inbox.thread_facts("hal@dimagi-ai.com", "canopy", "t", runner=run)
     assert facts.newest_from == SNS.lower()
-    assert facts.is_alarm_creation is False
+    assert facts.recovers_from_alarm is None
 
 
 def test_sender_of_injection_opts_out_of_body_facts():
@@ -506,4 +554,4 @@ def test_sender_of_injection_opts_out_of_body_facts():
     res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                             runner=_runner(threads), sender_of=lambda tid: SNS.lower())
     assert res["new"] == ["thr-created"]
-    assert res["created"] == []
+    assert res["ok_without_alarm"] == []

@@ -215,7 +215,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             n_new, n_seen = len(res["new"]), len(res["seen"])
             n_skip = len(res.get("skipped", []))
             n_coal = len(res.get("coalesced", []))
-            n_created = len(res.get("created", []))
+            n_no_alarm = len(res.get("ok_without_alarm", []))
             # Log EVERY poll, not just ones that enqueue — otherwise a healthy poll that
             # finds nothing new is silent and you can't tell polling is happening at all.
             # `skipped` = unread threads whose newest message is the agent's own reply
@@ -224,14 +224,18 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # `coalesced` = a CloudWatch `OK:` folded into its `ALARM:` turn (one incident,
             # one session). Logged rather than silent: suppressing a turn is exactly the
             # kind of behaviour that must be visible when someone asks why no turn fired.
-            # `created` = an alarm announcing its own creation — no incident to fold into,
-            # so it gets its own count for the same visibility reason.
+            # `ok_without_alarm` = an `OK:` that recovers from something other than ALARM
+            # (an alarm announcing its own creation, or a merely-dark metric) — there was
+            # no incident to fold into, so it gets its own count for the same visibility
+            # reason. Named for what it MEASURES, not for the one cause we first saw it
+            # from: keying on `N/A -> OK` alone missed the `INSUFFICIENT_DATA -> OK`
+            # spelling and burned a hal turn (#712).
             logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply, %d coalesced: alarm OK: into its "
-                        "ALARM:, %d alarm self-creation notices)",
+                        "ALARM:, %d OK: with no ALARM to recover from)",
                         agent, "RUNG" if agent in rung_slugs else "polled",
-                        n_new + n_seen + n_skip + n_coal + n_created,
-                        n_new, n_seen, n_skip, n_coal, n_created)
+                        n_new + n_seen + n_skip + n_coal + n_no_alarm,
+                        n_new, n_seen, n_skip, n_coal, n_no_alarm)
         except Exception as exc:  # noqa: BLE001 — one bad inbox never kills the loop
             logger.warning("inbox check for %s failed: %s", agent, exc)
         finally:
