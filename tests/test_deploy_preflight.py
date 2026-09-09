@@ -12,7 +12,10 @@ from deploy.aws.preflight import (
     RESOURCE_ACTIONS,
     UnmappedResourceType,
     actions_for,
+    changes_from_change_set,
+    check,
     evaluate,
+    main,
     render,
 )
 
@@ -164,3 +167,113 @@ class TestRender:
 
     def test_no_findings_renders_empty(self):
         assert render([]) == ""
+
+
+DESCRIBED = {
+    "Changes": [
+        {"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "TaskDefinition",
+            "ResourceType": "AWS::ECS::TaskDefinition", "Replacement": "True"}},
+        {"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "Service",
+            "PhysicalResourceId": "arn:aws:ecs:us-east-1:1:service/c/s",
+            "ResourceType": "AWS::ECS::Service", "Replacement": "False"}},
+    ]
+}
+
+
+class TestChangesFromChangeSet:
+    def test_it_reads_action_type_and_physical_id(self):
+        changes = changes_from_change_set(DESCRIBED)
+        assert [c.logical_id for c in changes] == ["TaskDefinition", "Service"]
+        assert changes[0].physical_id is None
+        assert changes[1].physical_id == "arn:aws:ecs:us-east-1:1:service/c/s"
+
+    def test_replacement_is_parsed_from_cfns_string(self):
+        # CloudFormation returns the string "True"/"False"/"Conditional".
+        changes = changes_from_change_set(DESCRIBED)
+        assert changes[0].replacement is True
+        assert changes[1].replacement is False
+
+    def test_conditional_replacement_is_treated_as_replacement(self):
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "S", "ResourceType": "AWS::ECS::Service",
+            "Replacement": "Conditional"}}]}
+        assert changes_from_change_set(described)[0].replacement is True
+
+    def test_non_resource_entries_are_ignored(self):
+        described = {"Changes": [{"Type": "Something", "OtherChange": {}}]}
+        assert changes_from_change_set(described) == []
+
+
+class FakeCfn:
+    def __init__(self, described): self._described = described
+    def describe_change_set(self, **kw): return self._described
+
+
+class FakeIam:
+    """Returns `allowed` for every action except those in `deny`."""
+    def __init__(self, deny=()): self.deny = set(deny); self.calls = []
+    def simulate_principal_policy(self, **kw):
+        self.calls.append(kw)
+        return {"EvaluationResults": [
+            {"EvalActionName": a,
+             "EvalDecision": "implicitDeny" if a in self.deny else "allowed"}
+            for a in kw["ActionNames"]
+        ]}
+
+
+class TestCheck:
+    def test_clean_change_set_returns_no_findings(self):
+        assert check(FakeCfn(DESCRIBED), FakeIam(), "s", "cs", "arn:role") == []
+
+    def test_a_denied_action_is_reported(self):
+        iam = FakeIam(deny={"ecs:UpdateService"})
+        findings = check(FakeCfn(DESCRIBED), iam, "s", "cs", "arn:role")
+        assert [f.action for f in findings] == ["ecs:UpdateService"]
+
+    def test_it_simulates_against_the_physical_arn_when_there_is_one(self):
+        # Grants here are resource-scoped: ModifyTargetGroup is implicitDeny on
+        # "*" and allowed on the real ARN. Simulating against "*" would report a
+        # failure that is not real.
+        iam = FakeIam()
+        check(FakeCfn(DESCRIBED), iam, "s", "cs", "arn:role")
+        by_action = {c["ActionNames"][0]: c for c in iam.calls}
+        assert by_action["ecs:UpdateService"]["ResourceArns"] == [
+            "arn:aws:ecs:us-east-1:1:service/c/s"
+        ]
+        assert "ResourceArns" not in by_action["ecs:RegisterTaskDefinition"]
+
+    def test_a_non_arn_physical_id_is_not_passed_as_a_resource(self):
+        # Some physical ids are names, not ARNs (a log group, for one).
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "LogGroup",
+            "PhysicalResourceId": "/ecs/canopy-web",
+            "ResourceType": "AWS::Logs::LogGroup", "Replacement": "False"}}]}
+        iam = FakeIam()
+        check(FakeCfn(described), iam, "s", "cs", "arn:role")
+        assert all("ResourceArns" not in c for c in iam.calls)
+
+
+class TestMain:
+    def test_exit_zero_when_clean(self, monkeypatch, capsys):
+        monkeypatch.setattr("deploy.aws.preflight._clients",
+                            lambda: (FakeCfn(DESCRIBED), FakeIam()))
+        assert main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"]) == 0
+
+    def test_exit_one_and_print_when_denied(self, monkeypatch, capsys):
+        monkeypatch.setattr("deploy.aws.preflight._clients",
+                            lambda: (FakeCfn(DESCRIBED), FakeIam(deny={"ecs:UpdateService"})))
+        rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
+        assert rc == 1
+        assert "ecs:UpdateService" in capsys.readouterr().out
+
+    def test_an_unmapped_type_exits_non_zero(self, monkeypatch, capsys):
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Add", "LogicalResourceId": "K",
+            "ResourceType": "AWS::Kinesis::Stream", "Replacement": "False"}}]}
+        monkeypatch.setattr("deploy.aws.preflight._clients",
+                            lambda: (FakeCfn(described), FakeIam()))
+        rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
+        assert rc == 1
+        assert "AWS::Kinesis::Stream" in capsys.readouterr().out

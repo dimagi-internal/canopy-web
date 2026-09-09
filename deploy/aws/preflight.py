@@ -16,6 +16,8 @@ log. See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md
 """
 from __future__ import annotations
 
+import argparse
+import sys
 from dataclasses import dataclass
 
 ALLOWED = "allowed"
@@ -196,3 +198,97 @@ def render(findings: list[Finding]) -> str:
         "See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md",
     ]
     return "\n".join(lines)
+
+
+def changes_from_change_set(described: dict) -> list[ResourceChange]:
+    """Reduce `describe-change-set` output to the resource changes."""
+    changes: list[ResourceChange] = []
+    for entry in described.get("Changes", []):
+        if entry.get("Type") != "Resource":
+            continue
+        rc = entry["ResourceChange"]
+        # CloudFormation returns the STRING "True"/"False"/"Conditional".
+        # Conditional counts as a replacement: it means CFN may create and
+        # delete, and we would rather demand a grant we do not use than skip
+        # one we do.
+        replacement = rc.get("Replacement") in ("True", "Conditional")
+        changes.append(
+            ResourceChange(
+                logical_id=rc["LogicalResourceId"],
+                resource_type=rc["ResourceType"],
+                change_action=rc["Action"],
+                physical_id=rc.get("PhysicalResourceId"),
+                replacement=replacement,
+            )
+        )
+    return changes
+
+
+def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> list[Finding]:
+    """Findings for every resource this change set would touch."""
+    described = cfn.describe_change_set(StackName=stack_name, ChangeSetName=change_set)
+    findings: list[Finding] = []
+
+    for change in changes_from_change_set(described):
+        actions = actions_for(change.resource_type, change.change_action, change.replacement)
+        if not actions:
+            continue
+
+        kwargs: dict = {
+            "PolicySourceArn": principal_arn,
+            "ActionNames": list(actions),
+            # Region-conditioned grants (DescribeTargetGroups) evaluate as denied
+            # without this, because the condition key would be absent.
+            "ContextEntries": [{
+                "ContextKeyName": "aws:RequestedRegion",
+                "ContextKeyValues": ["us-east-1"],
+                "ContextKeyType": "string",
+            }],
+        }
+        # Only pass a resource when it is genuinely an ARN. Some physical ids are
+        # names (a log group is "/ecs/canopy-web"), and simulate rejects those.
+        if change.physical_id and change.physical_id.startswith("arn:"):
+            kwargs["ResourceArns"] = [change.physical_id]
+
+        results = iam.simulate_principal_policy(**kwargs)
+        decisions = {
+            r["EvalActionName"]: r["EvalDecision"]
+            for r in results.get("EvaluationResults", [])
+        }
+        findings.extend(evaluate(change, decisions))
+
+    return findings
+
+
+def _clients():
+    """Real boto3 clients. Patched in tests; the only AWS coupling in the file."""
+    import boto3
+
+    return boto3.client("cloudformation"), boto3.client("iam")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stack", required=True)
+    parser.add_argument("--change-set", required=True)
+    parser.add_argument("--principal", required=True,
+                        help="ARN of the role that will execute the change set")
+    args = parser.parse_args(argv)
+
+    cfn, iam = _clients()
+    try:
+        findings = check(cfn, iam, args.stack, args.change_set, args.principal)
+    except UnmappedResourceType as exc:
+        print(str(exc))
+        return 1
+
+    if findings:
+        print(render(findings))
+        return 1
+
+    print("Preflight OK — the deploying role can write every resource in this change set.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
