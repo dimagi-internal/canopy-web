@@ -8,6 +8,8 @@ from pathlib import Path
 
 import environ
 
+from config.static_cache import add_cache_headers
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -194,6 +196,14 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # that; the spec and Lighthouse don't, and the manifest is the thing that makes
 # /supervisor installable.
 WHITENOISE_MIMETYPES = {".webmanifest": "application/manifest+json"}
+
+# Cache policy for those same files. WhiteNoise's default is max-age=60 on
+# EVERYTHING, which serves a stale index.html for up to a minute after a deploy
+# (so a fresh visit renders the previous build until you hard-refresh) while
+# also re-validating content-hashed assets that can never change. The hook
+# splits them: hashed ⇒ immutable, everything else ⇒ revalidate. See
+# config/static_cache.py.
+WHITENOISE_ADD_HEADERS_FUNCTION = add_cache_headers
 
 # Frontend SPA build output (served by catch-all view; WhiteNoise handles assets)
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
