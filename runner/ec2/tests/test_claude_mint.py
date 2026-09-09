@@ -220,3 +220,29 @@ def test_the_code_is_stripped_before_it_is_typed(cm, monkeypatch):
     not the credential's."""
     _, events = _fake_submit(cm, monkeypatch, code="  THECODE#THESTATE\n ")
     assert events[0] == b"THECODE#THESTATE"
+
+
+def test_the_verdict_survives_the_length_cap(cm):
+    """The LAST thing the CLI said is the reason this function exists, so the
+    cap must eat the oldest lines, never the newest.
+
+    Regression: the tail was joined oldest-first and then sliced `[:limit]`,
+    which trims the end — the newest line. On 2026-09-08 a real failure detail
+    ended with the single character "O", the decapitated head of "OAuth error:
+    Request failed with status code 400", and was read as "the CLI printed
+    nothing at all"."""
+    noise = b"".join(b"\r\n" + f"chatter line {i} that is here only to fill the budget".encode()
+                     for i in range(40))
+    out = noise + b"\r\nOAuth error: Request failed with status code 400\r\n"
+    tail = cm._diagnostic_tail(out)
+    assert len(tail) <= 600
+    assert tail.endswith("OAuth error: Request failed with status code 400"), tail[-120:]
+
+
+def test_a_single_over_long_line_is_still_reported(cm):
+    """One line longer than the whole budget must not collapse to nothing —
+    and its HEAD is the informative half."""
+    out = b"\r\n" + b"Invalid authorization code. " + b"x" * 4000 + b"\r\n"
+    tail = cm._diagnostic_tail(out)
+    assert len(tail) <= 600
+    assert tail.startswith("Invalid authorization code.")

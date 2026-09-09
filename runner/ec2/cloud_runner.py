@@ -1825,15 +1825,31 @@ def _diagnostic_tail(raw: bytes, limit: int = 600) -> str:
     # Collapse the TUI's redraw frames — spinner rows carry no information and
     # would otherwise be the entire tail.
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    seen, keep = set(), []
+    seen, newest_first = set(), []
     for ln in reversed(lines):
         if ln in seen:
             continue
         seen.add(ln)
-        keep.append(ln)
-        if sum(len(k) for k in keep) > limit:
+        newest_first.append(ln)
+        if sum(len(k) for k in newest_first) > limit:
             break
-    return " | ".join(reversed(keep))[:limit]
+    # Trim from the OLD end. This used to join oldest-first and then slice
+    # `[:limit]`, which deletes the NEWEST line — the CLI's verdict, and the
+    # entire reason this function exists. Seen live on 2026-09-08: a tail whose
+    # final segment was the single character "O", the decapitated head of
+    # "OAuth error: Request failed with status code 400". It reads as "the CLI
+    # said nothing", which is the exact wrong conclusion, and it was reached.
+    chosen: list[str] = []
+    total = 0
+    for ln in newest_first:
+        cost = len(ln) + (3 if chosen else 0)
+        if chosen and total + cost > limit:
+            break
+        chosen.append(ln)
+        total += cost
+    # The slice now bites only when a SINGLE line is over budget; for one line
+    # the head is the informative half, so keeping it is right.
+    return " | ".join(reversed(chosen))[:limit]
 
 
 #: How long to let a pasted code settle before sending Enter as a separate
