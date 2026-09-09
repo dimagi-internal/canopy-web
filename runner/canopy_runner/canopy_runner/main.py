@@ -202,6 +202,11 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
 
     from . import inbox as inbox_mod
     cap = getattr(cfg, "inbox_max_threads", 8)
+    # Which alarm incidents already have an owner — the one piece of dedup state with no
+    # server-side equivalent, so it has to survive the runner's own self-update restart
+    # (#714). Sibling of inbox-last.json / gmail-watch.json.
+    alarm_state = (Path(cfg.state_path).with_name("alarm-incidents.json")
+                   if cfg.state_path else Path("alarm-incidents.json"))
     for agent in due_slugs:
         box = cfg.mailboxes[agent]
         if paused and agent in paused:
@@ -211,6 +216,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
                 client, agent, mailbox=box["account"], gog_client=box["client"],
                 query=box.get("query", inbox_mod.DEFAULT_QUERY), max_threads=cap,
                 discovered_by=inbox_due.discovered_by(agent, rung_slugs),
+                alarm_state_path=alarm_state,
             )
             n_new, n_seen = len(res["new"]), len(res["seen"])
             n_skip = len(res.get("skipped", []))
