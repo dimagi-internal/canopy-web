@@ -246,3 +246,49 @@ def test_a_single_over_long_line_is_still_reported(cm):
     tail = cm._diagnostic_tail(out)
     assert len(tail) <= 600
     assert tail.startswith("Invalid authorization code.")
+
+
+# ── the token's format is Anthropic's to choose, not ours to pin ───────────
+#
+# 2026-09-08, live: a sign-in COMPLETED. The CLI printed "Long-lived
+# authentication token created successfully!" and rendered the credential. The
+# runner discarded it and reported "setup-token never printed a token", because
+# `\bsk-ant-oat…` did not match. The token is returned by Anthropic's token
+# endpoint and merely displayed by the CLI, so pinning the prefix bound this
+# runner to a taxonomy nobody promised us — and cost a human a real sign-in.
+
+#: The success screen as `strip_terminal` renders it. Spaces are largely absent
+#: on purpose: the TUI positions text with cursor moves, which the CSI strip
+#: removes, so words glue together. Anything matching the banner must tolerate it.
+_SUCCESS = (
+    "Pastecodehereifprompted>\n"
+    "*********************nAa-r0\n"
+    "✓Long-livedauthenticationtokencreatedsuccessfully!\n"
+    "YourOAuthtoken(validfor1year):\n"
+    "{token}\n"
+    "Storethistokensecurely.Youwon'tbeabletoseeitagain.\n"
+)
+
+
+def test_a_token_the_cli_announces_is_taken_whatever_its_prefix(cm):
+    """The regression. A prefix we have never seen is still the credential the
+    human just created, and throwing it away is the worst outcome available."""
+    out = _SUCCESS.format(token="sk-ant-zzz99-QqWwEe_rTtYy-0123456789abcdef").encode()
+    assert cm.extract_token(out) == "sk-ant-zzz99-QqWwEe_rTtYy-0123456789abcdef"
+
+
+def test_the_known_format_still_wins_when_present(cm):
+    out = _SUCCESS.format(token="sk-ant-oat01-AbC_dEf-0123456789abcdefghij").encode()
+    assert cm.extract_token(out) == "sk-ant-oat01-AbC_dEf-0123456789abcdefghij"
+
+
+def test_the_banner_is_matched_through_the_tuis_missing_spaces(cm):
+    """`YourOAuthtoken(validfor1year):` — not a typo, that is what the terminal
+    strip actually yields."""
+    assert cm._TOKEN_BANNER.search("YourOAuthtoken(validfor1year):\nsk-ant-x-0123456789abcdef")
+
+
+def test_an_unannounced_api_key_is_still_refused(cm):
+    """Loosening the prefix must not start staging the wrong credential."""
+    assert cm.extract_token(b"sk-ant-api03-nope0123456789abcdefghij") is None
+    assert cm.extract_token(b"sk-ant-admin01-nope0123456789abcdefgh") is None

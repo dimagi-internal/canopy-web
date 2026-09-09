@@ -1740,8 +1740,25 @@ _CSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]")
 #: those finds nothing at runtime.
 _AUTHORIZE = re.compile(r"https://claude\.com/cai/oauth/authorize\?[^\s\x00-\x1f\"'<>]+")
 
-#: A setup-token is an OAuth token — `sk-ant-oat…`, distinct from an API key.
-_TOKEN = re.compile(r"\bsk-ant-oat[A-Za-z0-9_\-]+")
+#: The minted credential. The PREFIX IS NOT OURS TO PIN: the token is chosen by
+#: Anthropic's token endpoint and merely displayed by the CLI (`children: S.token`
+#: in the setup-token view), so `\bsk-ant-oat…` made this runner depend on a
+#: taxonomy nobody promised us. On 2026-09-08 a sign-in COMPLETED — the CLI
+#: printed "Long-lived authentication token created successfully!" — and the
+#: runner discarded the credential and reported failure, because it did not
+#: start with `oat`. The human did everything right and was told it had failed.
+#:
+#: So the CLI's OWN ANNOUNCEMENT is the anchor, not a guess at the format. Note
+#: the whitespace-tolerance: the TUI positions text with cursor moves rather than
+#: spaces, so after `strip_terminal` the banner reads "YourOAuthtoken(validfor1year):".
+_TOKEN_BANNER = re.compile(
+    r"Your\s*OAuth\s*token.{0,120}?(sk-ant-[A-Za-z0-9_\-]{16,})", re.S | re.I)
+#: Preferred when it is present — a known-good historical format.
+_TOKEN_OAT = re.compile(r"sk-ant-oat[A-Za-z0-9_\-]{8,}")
+#: Last resort: any credential that is NOT one of the kinds we know are wrong.
+#: `api…`/`admin…` are different credentials that would be staged into the wrong
+#: env var and fail confusingly.
+_TOKEN_ANY = re.compile(r"sk-ant-(?!api|admin)[A-Za-z0-9_\-]{16,}")
 
 
 def strip_terminal(raw: bytes) -> str:
@@ -1801,8 +1818,18 @@ def extract_authorize_url(raw: bytes) -> str | None:
 
 
 def extract_token(raw: bytes) -> str | None:
-    """The minted long-lived token, once the exchange has completed."""
-    m = _TOKEN.search(strip_terminal(raw))
+    """The minted long-lived token, once the exchange has completed.
+
+    Three passes, most-grounded first: what the CLI SAID is its OAuth token,
+    then the known `oat` format, then anything credential-shaped that is not a
+    kind we know is wrong. A miss here is not cosmetic — it throws away a
+    credential the human has already successfully created.
+    """
+    text = strip_terminal(raw)
+    m = _TOKEN_BANNER.search(text)
+    if m:
+        return m.group(1)
+    m = _TOKEN_OAT.search(text) or _TOKEN_ANY.search(text)
     return m.group(0) if m else None
 
 
@@ -2063,7 +2090,11 @@ def _drain_mint(runner_id: str) -> None:
                 # encrypted bundle — it never touches the browser, so the only
                 # secret a human handled was the single-use code.
                 _api("POST", f"/runners/{runner_id}/mint/result", {"token": token})
-                _log(f"mint {mint_id[:8]}: signed in; new token stored")
+                # The FORMAT, never the secret: 12 characters is the prefix and
+                # nothing else, and it is the one fact we lacked when a real
+                # token was discarded for not looking like the format we assumed.
+                _log(f"mint {mint_id[:8]}: signed in; new token stored "
+                     f"(format {token[:12]}…)")
                 if _reload_claude_credentials():
                     _log("picked up the freshly minted credential")
             finally:
