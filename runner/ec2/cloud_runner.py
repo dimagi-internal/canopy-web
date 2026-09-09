@@ -1836,6 +1836,13 @@ def _diagnostic_tail(raw: bytes, limit: int = 600) -> str:
     return " | ".join(reversed(keep))[:limit]
 
 
+#: How long to let a pasted code settle before sending Enter as a separate
+#: keypress. Generous on purpose: it is paid once per sign-in, against a human
+#: who has just spent a minute in a browser, and the failure it prevents costs
+#: them the whole attempt plus 90 seconds of watching a spinner.
+_PASTE_SETTLE_SECONDS = 0.5
+
+
 class MintTimeout(RuntimeError):
     """The CLI never reached the expected step. Always fatal to the attempt:
     a half-driven TUI is not a state worth resuming."""
@@ -1888,10 +1895,34 @@ class MintSession:
         return url
 
     def submit_code(self, code: str, timeout: float = 90.0) -> str:
-        """Type the code the human pasted, and return the minted token."""
+        """Type the code the human pasted, and return the minted token.
+
+        The RETURN IS ITS OWN WRITE, and the settle between the two is the whole
+        fix rather than caution. Sent as one chunk — `code + b"\\r"` — an older
+        CLI reads the arrival as a PASTE and takes the trailing carriage return
+        as the last CHARACTER of the pasted text, not as Enter. The code lands
+        in the input, nothing submits, and the CLI says nothing at all: the pump
+        then burns its full timeout and reports "never printed a token" for what
+        is really "never asked".
+
+        Measured on the box (`claude` 2.1.197, 2026-09-08), all three variants
+        against a live `setup-token`:
+
+            code + CR, one write   -> silent, no submit      <- the bug
+            code, settle, then CR  -> submits, CLI answers in 0.6s
+            code, settle, then LF  -> silent, no submit
+
+        The render is the tell: the one-write case masks the WHOLE field, the
+        split case reveals its last six characters — because in the first the
+        carriage return is sitting in the value. Newer CLIs (2.1.266) submit
+        either way, which is why this was invisible in development and cost a
+        human four sign-in attempts against a box one npm-install behind.
+        """
         if self._fd is None:
             raise MintTimeout("this mint session is not running")
-        os.write(self._fd, code.strip().encode() + b"\r")
+        os.write(self._fd, code.strip().encode())
+        time.sleep(_PASTE_SETTLE_SECONDS)
+        os.write(self._fd, b"\r")
         token = self._pump(timeout, extract_token)
         tail = _diagnostic_tail(self._buf)
         self.close()
