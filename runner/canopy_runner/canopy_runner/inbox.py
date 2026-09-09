@@ -28,20 +28,39 @@ DEFAULT_QUERY = "in:inbox is:unread newer_than:14d"
 #: matching `OK: "<name>" in <region>`. The quoted alarm name is what pairs the two.
 _ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
 
-#: An alarm announcing its OWN CREATION, in the body of an otherwise ordinary `OK:`.
+#: The prior state named by an `OK:` notification's body — the `X` in `X -> OK`.
 #:
 #: CloudWatch emails every alarm carrying `OKActions` the moment it is created, and the
 #: subject is indistinguishable from a real recovery — same `OK: "<name>" in <region>`
-#: shape, same SNS sender. Only the body separates them, and it is unambiguous: a real
-#: recovery always names a concrete prior state (`ALARM -> OK`, `INSUFFICIENT_DATA -> OK`),
-#: while a creation has no prior state at all.
+#: shape, same SNS sender. Only the body separates them.
 #:
 #: So every monitoring PR that adds an alerting alarm used to dispatch a full agent
 #: session on a non-event. Measured on hal twice in two days —
 #: `labs-jj-web-cpu-high-actionable` (2026-09-06, connect-labs#1463) and
 #: `labs-jj-web-worker-kill-rate-actionable` (2026-09-07, connect-labs#1537, emailed
 #: 8 minutes after that PR merged). See #688.
-_ALARM_CREATION = re.compile(r"^\s*-?\s*State Change:\s*N/A\s*->\s*OK\s*$",
+#:
+#: #688 keyed on `N/A -> OK` and recorded the reason: "a real recovery always names a
+#: concrete prior state (`ALARM -> OK`, `INSUFFICIENT_DATA -> OK`), while a creation has
+#: no prior state at all." The second half of that is false, and #712 is the counterexample:
+#: creation has TWO spellings, and which one you get is a timing accident. An alarm created
+#: while its evaluation window already has datapoints evaluates immediately and says
+#: `N/A -> OK`; one created a few minutes ahead of its data lands in `INSUFFICIENT_DATA`
+#: first and says `INSUFFICIENT_DATA -> OK` for the very same non-event.
+#: (`labs-jj-rds-free-storage-low`, created 2026-09-09 00:15:09Z by a CloudFormation change
+#: set, emailed `INSUFFICIENT_DATA -> OK` at 00:27:33Z with 83.7 GB free against a 20 GB
+#: threshold. It had never been in ALARM. A full hal turn was dispatched on it.)
+#:
+#: Nothing in the body distinguishes that from a genuine metric-went-dark-and-came-back —
+#: both carry a threshold-crossed reason. So do not try to detect *creation*. Detect what
+#: this check is actually for, which is strictly checkable and cannot swallow a real
+#: recovery: **an `OK:` is only work when it recovers from `ALARM`.**
+#:
+#: The apparent counterexample — ALARM -> INSUFFICIENT_DATA -> OK, where a real incident's
+#: recovery reports `INSUFFICIENT_DATA -> OK` — never reaches this check: `_alarm_incident_is_owned`
+#: (#670) coalesces that `OK:` into its `ALARM:` turn first. And if a runner restart lost that
+#: memory, the `ALARM:` thread is still unread and enqueues on its own, which is the right owner.
+_OK_PRIOR_STATE = re.compile(r"^\s*-?\s*State Change:\s*(\S+)\s*->\s*OK\s*$",
                              re.MULTILINE)
 
 
@@ -111,15 +130,17 @@ def search_threads(mailbox: str, gog_client: str, query: str = DEFAULT_QUERY,
 class ThreadFacts(NamedTuple):
     """What one `gog gmail thread get` tells us about a thread's NEWEST message.
 
-    Both fields fail OPEN — `newest_from=None` and `is_alarm_creation=False` are the
+    Both fields fail OPEN — `newest_from=None` and `recovers_from_alarm=None` are the
     "we don't know" values, and every caller treats them as "enqueue normally".
     """
 
     #: The newest message's `From`, lowercased, or None if undeterminable.
     newest_from: str | None = None
-    #: True only when the body positively identifies an alarm announcing its own
-    #: creation (see `_ALARM_CREATION`). Never a guess.
-    is_alarm_creation: bool = False
+    #: For an `OK:` body carrying a parseable `X -> OK` state change: whether `X` is
+    #: `ALARM`, i.e. whether this is a real recovery. `None` means the body named no
+    #: prior state we could read — the fail-open value (see `_OK_PRIOR_STATE`).
+    #: Never a guess.
+    recovers_from_alarm: bool | None = None
 
 
 def _decoded_body(msg: dict) -> str:
@@ -179,8 +200,9 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
         if h.get("name", "").lower() == "from":
             sender = (h.get("value") or "").lower()
             break
+    m = _OK_PRIOR_STATE.search(_decoded_body(newest))
     return ThreadFacts(newest_from=sender,
-                       is_alarm_creation=bool(_ALARM_CREATION.search(_decoded_body(newest))))
+                       recovers_from_alarm=(m.group(1).upper() == "ALARM") if m else None)
 
 
 def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
@@ -254,8 +276,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     "skipped": [ids whose newest message is the agent's own reply],
     "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
     recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S],
-    "created": [SNS `OK:` ids that are an alarm announcing its OWN creation — a
-    non-event, in its own bucket because there is no incident to fold it into]}
+    "ok_without_alarm": [SNS `OK:` ids whose body recovers from something other than
+    `ALARM` — an alarm announcing its own creation, or a merely-dark metric. A non-event,
+    in its own bucket because there is no incident to fold it into]}
     — the split matters
     for logging: re-polling the same unread mail is idempotent server-side, so it must
     read as "nothing new", not as fresh work.
@@ -284,7 +307,7 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     seen: list[str] = []
     skipped: list[str] = []
     coalesced: list[str] = []
-    created: list[str] = []
+    ok_without_alarm: list[str] = []
     box = mailbox.lower()
     # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
     # (the subjects differ), so one alarm transition used to enqueue two turns — and the
@@ -334,14 +357,16 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             _seen_state[(box, tid)] = count
             continue
         facts = facts_of(tid)
-        # An alarm announcing its OWN creation. This is the one check that needs the
-        # body, and it is deliberately placed AFTER the two cheap guards above and on
+        # An `OK:` that recovers from something other than `ALARM` — an alarm announcing
+        # its own creation (`N/A -> OK`, or `INSUFFICIENT_DATA -> OK` when it was created
+        # ahead of its data), or a metric that was merely dark. None of those is an
+        # incident: there was no ALARM to recover from. This is the one check that needs
+        # the body, and it is deliberately placed AFTER the two cheap guards above and on
         # the SAME fetch as the sender — so it costs no subprocess this path was not
-        # already paying for (see `thread_facts`). Narrow on purpose: only an `OK:`
-        # from SNS (`alarm_key`) whose body says `N/A -> OK`. A real recovery names a
-        # concrete prior state and still fires. #688.
-        if key and key[0] == "OK" and facts.is_alarm_creation:
-            created.append(tid)
+        # already paying for (see `thread_facts`). A real recovery says `ALARM -> OK` and
+        # still fires; an unreadable body says None and still fires. #688, #712.
+        if key and key[0] == "OK" and facts.recovers_from_alarm is False:
+            ok_without_alarm.append(tid)
             _seen_state[(box, tid)] = count
             continue
         latest = facts.newest_from
@@ -374,4 +399,4 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             _alarm_enqueued[(box, key[1])] = clock()
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced,
-            "created": created}
+            "ok_without_alarm": ok_without_alarm}
