@@ -3,8 +3,67 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import fs from 'node:fs'
 import { VitePWA } from 'vite-plugin-pwa'
 import { navigationMatcher } from './src/pwa/navigation-fallback'
+
+/**
+ * Fail the BUILD if the emitted service worker would serve the app shell from
+ * cache again.
+ *
+ * This is guarded rather than merely commented because it has now regressed
+ * twice, both times from a default nobody set: vite-plugin-pwa reinstates
+ * `navigateFallback: 'index.html'` when the key is absent, and workbox's
+ * `directoryIndex` quietly maps a bare `/` onto the precached `index.html`
+ * regardless. Either one alone puts the app a full deploy behind and sends
+ * people back to hard-refreshing, and neither shows up in a test or a type
+ * error — only in a browser, a deploy later. A dependency bump can bring either
+ * back.
+ *
+ * So the emitted file is read and checked. Cheap, and it fails where the
+ * mistake is made.
+ */
+function assertShellIsNotCacheFirst() {
+  return {
+    name: 'canopy:assert-shell-not-cache-first',
+    apply: 'build' as const,
+    closeBundle: {
+      order: 'post' as const,
+      handler() {
+        const swPath = path.resolve(
+          __dirname,
+          'dist',
+          'sw.js',
+        )
+        if (!fs.existsSync(swPath)) return // SW generation disabled (e.g. a test build)
+        const sw = fs.readFileSync(swPath, 'utf8')
+        const problems: string[] = []
+        if (sw.includes('NavigationRoute')) {
+          problems.push(
+            "sw.js registers a NavigationRoute — navigateFallback is back on, so every " +
+              'navigation would be answered from the build-time precache.',
+          )
+        }
+        if (!sw.includes('directoryIndex:null')) {
+          problems.push(
+            "sw.js does not set directoryIndex:null — a bare '/' would resolve to the " +
+              'precached index.html ahead of the network-first route.',
+          )
+        }
+        if (!sw.includes('NetworkFirst')) {
+          problems.push('sw.js has no NetworkFirst route — nothing fetches a fresh shell.')
+        }
+        if (problems.length) {
+          throw new Error(
+            'The service worker would serve a stale app shell:\n  - ' +
+              problems.join('\n  - ') +
+              '\nSee the runtimeCaching block in vite.config.ts.',
+          )
+        }
+      },
+    },
+  }
+}
 
 // Same override as playwright.config/backend.sh — see E2E_API_PORT there.
 const API_ORIGIN = `http://localhost:${process.env.E2E_API_PORT ?? '8000'}`
@@ -148,7 +207,17 @@ export default defineConfig({
             options: {
               cacheName: 'app-shell',
               networkTimeoutSeconds: 4,
-              expiration: { maxEntries: 32 },
+              // ONE entry, deliberately. NetworkFirst's own cache is only
+              // reached when the network fails or times out, and every copy in
+              // it is the same SPA shell — so extra entries add no coverage,
+              // only the chance of holding an OLD shell. A shell cached at build
+              // N names assets that build N+5's precache no longer has, and
+              // because a cache hit short-circuits the precache fallback below,
+              // that stale copy would win offline and then fail to load its
+              // scripts. Keeping exactly the most recent one cannot drift from
+              // the precache, and any other URL falls through to the fallback,
+              // which by construction matches it.
+              expiration: { maxEntries: 1 },
               precacheFallback: { fallbackURL: 'index.html' },
             },
           },
@@ -156,6 +225,7 @@ export default defineConfig({
       },
       devOptions: { enabled: false },
     }),
+    assertShellIsNotCacheFirst(),
   ],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
