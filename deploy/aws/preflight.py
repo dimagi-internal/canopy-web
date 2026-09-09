@@ -16,6 +16,28 @@ log. See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+ALLOWED = "allowed"
+
+
+@dataclass(frozen=True)
+class ResourceChange:
+    """One entry from `describe-change-set`, reduced to what we need."""
+
+    logical_id: str
+    resource_type: str
+    change_action: str  # "Add" | "Modify" | "Remove"
+    physical_id: str | None  # absent on an Add
+    replacement: bool
+
+
+@dataclass(frozen=True)
+class Finding:
+    logical_id: str
+    resource_type: str
+    action: str
+
 
 class UnmappedResourceType(Exception):
     """A resource type with no entry in RESOURCE_ACTIONS.
@@ -140,3 +162,37 @@ def actions_for(
     for action in wanted:
         merged += by_action.get(action, ())
     return tuple(dict.fromkeys(merged))
+
+
+def evaluate(change: ResourceChange, decisions: dict[str, str]) -> list[Finding]:
+    """Findings for one changed resource, given simulate's verdict per action.
+
+    An action missing from `decisions` is a finding, not a pass — a truncated or
+    surprising simulate response must never read as permission granted.
+    """
+    needed = actions_for(change.resource_type, change.change_action, change.replacement)
+    return [
+        Finding(change.logical_id, change.resource_type, action)
+        for action in needed
+        if decisions.get(action) != ALLOWED
+    ]
+
+
+def render(findings: list[Finding]) -> str:
+    """The message that replaces a 403 five minutes into a rollout."""
+    if not findings:
+        return ""
+    lines = [
+        "This deploy would change resources the deploying role cannot write:",
+        "",
+    ]
+    for f in findings:
+        lines.append(f"  {f.logical_id} ({f.resource_type})")
+        lines.append(f"      needs {f.action}")
+    lines += [
+        "",
+        "Nothing has been applied. Either grant the action to the deploy role,",
+        "or apply this change from the bootstrap stack with admin credentials.",
+        "See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md",
+    ]
+    return "\n".join(lines)

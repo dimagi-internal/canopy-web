@@ -7,9 +7,13 @@ stack it deploys; the other eleven had simply never changed.
 import pytest
 
 from deploy.aws.preflight import (
+    Finding,
+    ResourceChange,
     RESOURCE_ACTIONS,
     UnmappedResourceType,
     actions_for,
+    evaluate,
+    render,
 )
 
 
@@ -74,3 +78,89 @@ class TestActionsFor:
     def test_every_mapping_covers_all_three_change_actions(self):
         for resource_type, by_action in RESOURCE_ACTIONS.items():
             assert set(by_action) == {"Add", "Modify", "Remove"}, resource_type
+
+
+def _change(**kw) -> ResourceChange:
+    base = dict(
+        logical_id="TargetGroup",
+        resource_type="AWS::ElasticLoadBalancingV2::TargetGroup",
+        change_action="Modify",
+        physical_id="arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/abc",
+        replacement=False,
+    )
+    base.update(kw)
+    return ResourceChange(**base)
+
+
+class TestEvaluate:
+    def test_all_allowed_is_no_findings(self):
+        decisions = {
+            "elasticloadbalancing:ModifyTargetGroup": "allowed",
+            "elasticloadbalancing:ModifyTargetGroupAttributes": "allowed",
+            "elasticloadbalancing:DescribeTargetGroups": "allowed",
+        }
+        assert evaluate(_change(), decisions) == []
+
+    def test_a_denied_action_becomes_a_finding(self):
+        decisions = {
+            "elasticloadbalancing:ModifyTargetGroup": "implicitDeny",
+            "elasticloadbalancing:ModifyTargetGroupAttributes": "allowed",
+            "elasticloadbalancing:DescribeTargetGroups": "allowed",
+        }
+        findings = evaluate(_change(), decisions)
+        assert findings == [
+            Finding(
+                logical_id="TargetGroup",
+                resource_type="AWS::ElasticLoadBalancingV2::TargetGroup",
+                action="elasticloadbalancing:ModifyTargetGroup",
+            )
+        ]
+
+    def test_explicit_deny_counts_too(self):
+        decisions = {a: "explicitDeny" for a in (
+            "elasticloadbalancing:ModifyTargetGroup",
+            "elasticloadbalancing:ModifyTargetGroupAttributes",
+            "elasticloadbalancing:DescribeTargetGroups",
+        )}
+        assert len(evaluate(_change(), decisions)) == 3
+
+    def test_an_action_missing_from_the_results_is_a_finding_not_a_pass(self):
+        # Fail closed: a simulate response that omits an action must never read
+        # as permission granted.
+        assert evaluate(_change(), {}) != []
+
+    def test_an_image_tag_deploy_passes(self):
+        # The steady state this must not break.
+        td = _change(
+            logical_id="TaskDefinition",
+            resource_type="AWS::ECS::TaskDefinition",
+            physical_id=None,
+        )
+        svc = _change(
+            logical_id="Service",
+            resource_type="AWS::ECS::Service",
+            physical_id="arn:aws:ecs:us-east-1:1:service/c/s",
+        )
+        assert evaluate(td, {"ecs:RegisterTaskDefinition": "allowed"}) == []
+        assert evaluate(svc, {"ecs:UpdateService": "allowed"}) == []
+
+
+class TestRender:
+    def test_it_names_the_resource_and_the_action(self):
+        out = render([
+            Finding("TargetGroup", "AWS::ElasticLoadBalancingV2::TargetGroup",
+                    "elasticloadbalancing:ModifyTargetGroup")
+        ])
+        assert "TargetGroup" in out
+        assert "elasticloadbalancing:ModifyTargetGroup" in out
+
+    def test_it_says_what_to_do_about_it(self):
+        out = render([
+            Finding("TargetGroup", "AWS::ElasticLoadBalancingV2::TargetGroup",
+                    "elasticloadbalancing:ModifyTargetGroup")
+        ])
+        # A message nobody can act on is the failure mode this replaces.
+        assert "admin" in out.lower()
+
+    def test_no_findings_renders_empty(self):
+        assert render([]) == ""
