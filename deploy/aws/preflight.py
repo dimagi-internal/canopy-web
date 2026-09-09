@@ -13,6 +13,13 @@ deploys. The other eleven had simply never changed, so nobody found out.
 This asks the question up front, against the change set CloudFormation is about
 to execute, and names the missing action instead of leaving a 403 in a rollout
 log. See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md
+
+The preflight itself calls two actions the CI role does not (yet) have —
+iam:SimulatePrincipalPolicy and cloudformation:ListChangeSets both come back
+implicitDeny, measured against the live role on 2026-09-09. A preflight that
+cannot run must say so loudly rather than let a bare exception (or worse, a
+silently swallowed one) read as "no findings, safe to proceed" — that would be
+strictly worse than not having a preflight at all. See main()'s exit code 2.
 """
 from __future__ import annotations
 
@@ -46,6 +53,17 @@ class UnmappedResourceType(Exception):
 
     Fails the preflight rather than passing it: an unknown type is exactly the
     case where nobody has thought about whether CI may write it.
+    """
+
+
+class UnmappedChangeAction(Exception):
+    """A change action CloudFormation reported that isn't Add/Modify/Remove.
+
+    Fails closed for the same reason as UnmappedResourceType: `actions_for`'s
+    fallthrough is meant ONLY for the deliberate, evidence-backed Remove case
+    (see BLOCKING_CHANGE_ACTIONS below). Any other action — Dynamic, Import,
+    or a future CloudFormation addition — must not fall through that same
+    branch and silently read as "nothing to check".
     """
 
 
@@ -157,8 +175,15 @@ def actions_for(
         wanted: tuple[str, ...] = BLOCKING_CHANGE_ACTIONS
     elif change_action in BLOCKING_CHANGE_ACTIONS:
         wanted = (change_action,)
-    else:
+    elif change_action == "Remove":
         return ()
+    else:
+        raise UnmappedChangeAction(
+            f"Unrecognized change action {change_action!r} on {resource_type}. "
+            f"Add/Modify/Remove are handled explicitly; anything else "
+            f"(Dynamic, Import, a future CFN addition, …) fails closed rather "
+            f"than falling through the Remove branch and going unchecked."
+        )
 
     merged: tuple[str, ...] = ()
     for action in wanted:
@@ -193,8 +218,11 @@ def render(findings: list[Finding]) -> str:
         lines.append(f"      needs {f.action}")
     lines += [
         "",
-        "Nothing has been applied. Either grant the action to the deploy role,",
-        "or apply this change from the bootstrap stack with admin credentials.",
+        "No infrastructure change was applied. Note: migrations for this deploy",
+        "have already run (they run before this step, against the new code) —",
+        "only the CloudFormation change set was refused. Either grant the action",
+        "to the deploy role, or apply this change from the bootstrap stack with",
+        "admin credentials.",
         "See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md",
     ]
     return "\n".join(lines)
@@ -224,9 +252,30 @@ def changes_from_change_set(described: dict) -> list[ResourceChange]:
     return changes
 
 
+def _describe_change_set_all_pages(cfn, stack_name: str, change_set: str) -> dict:
+    """`describe-change-set`, following NextToken to the end.
+
+    A single call only returns the first page; a change set with more
+    resources than fit on one page would otherwise leave everything past it
+    unchecked, with no signal that anything was skipped.
+    """
+    changes: list = []
+    next_token: str | None = None
+    while True:
+        kwargs: dict = {"StackName": stack_name, "ChangeSetName": change_set}
+        if next_token:
+            kwargs["NextToken"] = next_token
+        page = cfn.describe_change_set(**kwargs)
+        changes.extend(page.get("Changes", []))
+        next_token = page.get("NextToken")
+        if not next_token:
+            break
+    return {"Changes": changes}
+
+
 def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> list[Finding]:
     """Findings for every resource this change set would touch."""
-    described = cfn.describe_change_set(StackName=stack_name, ChangeSetName=change_set)
+    described = _describe_change_set_all_pages(cfn, stack_name, change_set)
     findings: list[Finding] = []
 
     for change in changes_from_change_set(described):
@@ -275,12 +324,31 @@ def main(argv: list[str] | None = None) -> int:
                         help="ARN of the role that will execute the change set")
     args = parser.parse_args(argv)
 
+    # Imported here, not at module level, so importing this module (e.g. under
+    # test, or by anything that just wants the pure functions above) never
+    # needs boto3/botocore to be importable — the only place this module
+    # touches AWS is behind _clients() and this call.
+    from botocore.exceptions import ClientError
+
     cfn, iam = _clients()
     try:
         findings = check(cfn, iam, args.stack, args.change_set, args.principal)
-    except UnmappedResourceType as exc:
+    except (UnmappedResourceType, UnmappedChangeAction) as exc:
         print(str(exc))
         return 1
+    except ClientError as exc:
+        # The preflight's OWN permissions are missing (measured 2026-09-09:
+        # iam:SimulatePrincipalPolicy and cloudformation:ListChangeSets both
+        # implicitDeny for the CI role). This is a THIRD outcome, distinct
+        # from "ran and found problems" — silently treating it as either
+        # "clean" (exit 0) or "blocked" (exit 1) would be worse than no
+        # preflight at all: the first pretends a gate exists when it doesn't,
+        # the second wedges every deploy on a permission this file cannot
+        # grant itself. Exit 2 says plainly: this could not be evaluated.
+        action = exc.operation_name
+        print(f"Deploy preflight could not run: {action} failed.")
+        print(str(exc))
+        return 2
 
     if findings:
         print(render(findings))

@@ -192,17 +192,40 @@ not matter before it touches a live credential.
 
 Three things, in each repo, none shared:
 
-- **Permissions preflight.** Before `cloudformation deploy`, assert via
+- **Permissions preflight.** Before `execute-change-set`, assert via
   `simulate-principal-policy` that the deploying principal can write every
-  resource type in the CI stack. Fails with the missing action named, rather
-  than a 403 five minutes into a rollout.
-- **Drift detection.** `detect-stack-drift` on a schedule, reporting drift as a
-  failure. Nothing detects drift today; the drift found on 2026-09-09 was found
-  by hand.
+  resource the CHANGE SET touches — not, as first written here, "every
+  resource type in the CI stack": the code checks only the resource changes
+  actually in the change set, and only the Add/Modify actions that would fail
+  a deploy (Remove is deliberately not blocking — CloudFormation tolerates a
+  failed cleanup delete, measured on this stack 2026-09-09). The literal
+  "every resource type" reading would demand Create-family grants an
+  image-tag deploy never calls (e.g. `ecs:CreateService` when the deploy only
+  updates), and would block every deploy running today. Fails with the
+  missing action named, rather than a 403 five minutes into a rollout.
+- **Drift detection.** `detect-stack-drift`, currently `workflow_dispatch`
+  only — the `schedule:` trigger is deferred, not shipped, until the grant
+  below lands (a nightly run would fail every night with the same
+  implicitDeny). See `.github/workflows/infra-drift.yml`.
 - **Deploy failure diagnostics.** Shipped ahead of this spec in #723: the deploy
   step prints stack events on failure and raises the first failing resource's
   reason. Finding the cause of the 2026-09-09 failure otherwise required AWS
   credentials and a separate session.
+
+**The preflight and drift detection both need grants the deploy role does not
+have.** Measured against the live role:
+
+    iam:SimulatePrincipalPolicy      implicitDeny
+    cloudformation:ListChangeSets    implicitDeny
+    cloudformation:DetectStackDrift  implicitDeny (+ the two Describe* reads)
+
+Both belong in the bootstrap stack (a human-applied, admin-credentialed
+grant), not a hand-edit of the shared CI role — that hand-edit is exactly the
+debt this whole spec exists to repay. Until the bootstrap stack lands: the
+preflight degrades to advisory (an unevaluable preflight logs a warning and
+the deploy proceeds, rather than blocking on a permission it cannot grant
+itself — see `deploy/aws/preflight.py` exit code 2), and drift detection stays
+`workflow_dispatch`-only, runnable on demand by an admin locally.
 
 ## Risks
 

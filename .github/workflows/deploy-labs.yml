@@ -300,14 +300,40 @@ jobs:
           # Safe because the workflow's concurrency group serialises deploys.
           set -o pipefail
 
+          # A denied or throttled ListChangeSets must never read as "no change
+          # sets" — that is the single worst outcome available here: it makes
+          # AFTER == BEFORE == "None" below, which reads as "nothing to
+          # deploy" and exits 0 GREEN having shipped nothing. So this captures
+          # stderr and the exit status separately from the output, and an API
+          # error hard-fails rather than falling through to the empty-list
+          # sentinel. A genuinely empty list (a stack with no change sets yet)
+          # still yields "None" and the existing no-op path below.
           newest_change_set () {
-            aws cloudformation list-change-sets \
+            local out
+            # This shell runs with -e (GitHub Actions' default for `run:`
+            # steps). A plain `out=$(cmd)` assignment trips it the instant
+            # `cmd` fails, before we ever reach a line that inspects $? — so
+            # the failure is captured via an `if` condition instead, which is
+            # exempt from -e, letting us print our own diagnostic first.
+            if out=$(aws cloudformation list-change-sets \
               --stack-name "${{ env.CFN_STACK }}" \
               --query 'sort_by(Summaries,&CreationTime)[-1].ChangeSetId' \
-              --output text 2>/dev/null || echo "None"
+              --output text 2>/tmp/newest-change-set.err); then
+              # The CLI can print the literal string "None" for an empty
+              # result with --output text; treat that the same as a
+              # genuinely empty list.
+              if [ -z "$out" ]; then
+                out="None"
+              fi
+              echo "$out"
+              return 0
+            else
+              echo "::error::list-change-sets failed: $(cat /tmp/newest-change-set.err)" >&2
+              return 1
+            fi
           }
 
-          BEFORE=$(newest_change_set)
+          BEFORE=$(newest_change_set) || exit 1
 
           aws cloudformation deploy \
             --stack-name "${{ env.CFN_STACK }}" \
@@ -317,7 +343,7 @@ jobs:
             --no-execute-changeset \
             --parameter-overrides ImageTag="${{ github.sha }}"
 
-          AFTER=$(newest_change_set)
+          AFTER=$(newest_change_set) || exit 1
           if [ "$AFTER" = "$BEFORE" ] || [ "$AFTER" = "None" ]; then
             echo "No new change set — nothing to deploy."
             exit 0
@@ -331,8 +357,23 @@ jobs:
           # BEFORE/AFTER check above cannot see a no-op deploy, and executing
           # this change set would just error. Anything but CREATE_COMPLETE
           # means there is nothing to apply.
-          STATUS=$(aws cloudformation describe-change-set --change-set-name "$AFTER" \
-            --query Status --output text 2>/dev/null || echo "MISSING")
+          #
+          # Same rule as newest_change_set above: an API error here (denied,
+          # throttled) must hard-fail rather than fall into "MISSING" and read
+          # as a harmless no-op — that would swallow a real describe-change-set
+          # failure the same way an unchecked list-change-sets failure did.
+          # Captured via `if`, not a bare assignment: with -e active (GitHub
+          # Actions' default), a bare `STATUS=$(cmd)` would abort the script
+          # the instant cmd fails, before we could print our own diagnostic.
+          if STATUS=$(aws cloudformation describe-change-set --change-set-name "$AFTER" \
+            --query Status --output text 2>/tmp/describe-change-set.err); then
+            if [ -z "$STATUS" ]; then
+              STATUS="MISSING"
+            fi
+          else
+            echo "::error::describe-change-set failed: $(cat /tmp/describe-change-set.err)"
+            exit 1
+          fi
           if [ "$STATUS" != "CREATE_COMPLETE" ]; then
             echo "Change set is $STATUS, not CREATE_COMPLETE — nothing to deploy."
             aws cloudformation delete-change-set --change-set-name "$AFTER" || true
@@ -347,11 +388,26 @@ jobs:
             | sed 's|:sts:|:iam:|; s|assumed-role/\([^/]*\)/.*|role/\1|')
           echo "Preflight against: $PRINCIPAL"
 
-          if ! python -m deploy.aws.preflight \
+          # Exit codes: 0 = clean, proceed. 1 = the role can't write something
+          # this change set touches — block. 2 = the preflight itself
+          # couldn't be evaluated (it needs iam:SimulatePrincipalPolicy, which
+          # the deploy role does not have yet — the grant belongs in the
+          # bootstrap stack, not a hand-edit of this workflow). Until that
+          # grant lands, the gate is advisory: continuing on 2 is strictly
+          # better than the nothing that existed before this preflight, and
+          # treating "could not run" the same as "found a problem" would block
+          # every single deploy today.
+          set +e
+          python -m deploy.aws.preflight \
                  --stack "${{ env.CFN_STACK }}" \
                  --change-set "$AFTER" \
-                 --principal "$PRINCIPAL"; then
-            echo "::error::Deploy preflight failed — nothing was applied. See above."
+                 --principal "$PRINCIPAL"
+          PREFLIGHT_RC=$?
+          set -e
+          if [ $PREFLIGHT_RC -eq 2 ]; then
+            echo "::warning::Deploy preflight could not run (see above). Continuing without the gate."
+          elif [ $PREFLIGHT_RC -ne 0 ]; then
+            echo "::error::Deploy preflight failed — no infrastructure change was applied. Migrations for this deploy have already run (they run before this step); only the CloudFormation change set was refused. See above."
             aws cloudformation delete-change-set --change-set-name "$AFTER" || true
             exit 1
           fi

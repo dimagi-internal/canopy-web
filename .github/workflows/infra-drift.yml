@@ -81,7 +81,20 @@ jobs:
                       --query StackDriftStatus --output text)
             echo "$STACK: detection=$STATUS drift=$DRIFT"
 
-            if [ "$DRIFT" = "DRIFTED" ]; then
+            # A detection that never completed must never read as "no drift".
+            # DETECTION_FAILED means CloudFormation itself gave up (e.g. it
+            # couldn't read a resource); a still-IN_PROGRESS status after the
+            # poll loop above gave up means we simply stopped watching. Either
+            # way DRIFT is not "DRIFTED" here, so without this check the job
+            # would exit 0 having verified nothing — a detection that never ran
+            # looking exactly as healthy as a clean one.
+            if [ "$STATUS" = "DETECTION_FAILED" ]; then
+              echo "::error::$STACK drift detection FAILED — CloudFormation could not complete it. This proves nothing about drift; it is not the same as clean."
+              FAILED=1
+            elif [ "$STATUS" = "DETECTION_IN_PROGRESS" ]; then
+              echo "::error::$STACK drift detection timed out still IN_PROGRESS after the poll loop. This proves nothing about drift; it is not the same as clean."
+              FAILED=1
+            elif [ "$DRIFT" = "DRIFTED" ]; then
               aws cloudformation describe-stack-resource-drifts \
                 --stack-name "$STACK" \
                 --stack-resource-drift-status-filters MODIFIED DELETED \

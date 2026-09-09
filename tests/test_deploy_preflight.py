@@ -10,6 +10,7 @@ from deploy.aws.preflight import (
     Finding,
     ResourceChange,
     RESOURCE_ACTIONS,
+    UnmappedChangeAction,
     UnmappedResourceType,
     actions_for,
     changes_from_change_set,
@@ -59,6 +60,15 @@ class TestActionsFor:
             actions_for("AWS::Kinesis::Stream", "Add")
         assert "AWS::Kinesis::Stream" in str(exc.value)
         assert "RESOURCE_ACTIONS" in str(exc.value)
+
+    def test_an_unrecognized_change_action_fails_closed_like_an_unmapped_type(self):
+        # Remove is the ONE deliberate no-block fallthrough (evidence above).
+        # Anything else outside Add/Modify/Remove — Dynamic, Import, a future
+        # CFN addition — must not silently share that same "nothing to check"
+        # path.
+        with pytest.raises(UnmappedChangeAction) as exc:
+            actions_for("AWS::ECS::Service", "Dynamic")
+        assert "Dynamic" in str(exc.value)
 
     def test_every_type_in_the_live_stacks_is_mapped(self):
         # The resource types canopy-web and ace-web actually contain. If one of
@@ -211,6 +221,17 @@ class FakeCfn:
     def describe_change_set(self, **kw): return self._described
 
 
+class PagedFakeCfn:
+    """Serves describe-change-set across pages, keyed by the NextToken given."""
+    def __init__(self, pages: dict):
+        self.pages = pages  # {None: first page, "<token>": next page, ...}
+        self.calls = []
+
+    def describe_change_set(self, **kw):
+        self.calls.append(kw)
+        return self.pages[kw.get("NextToken")]
+
+
 class FakeIam:
     """Returns `allowed` for every action except those in `deny`."""
     def __init__(self, deny=()): self.deny = set(deny); self.calls = []
@@ -254,6 +275,49 @@ class TestCheck:
         check(FakeCfn(described), iam, "s", "cs", "arn:role")
         assert all("ResourceArns" not in c for c in iam.calls)
 
+    def test_every_simulate_call_carries_the_region_context_entry(self):
+        # Region-conditioned grants (DescribeTargetGroups) evaluate as denied
+        # without this — the regression that makes a real, region-scoped grant
+        # read as implicitDeny and produces a false failure. This is the check
+        # that would have caught dropping the ContextEntries block.
+        iam = FakeIam()
+        check(FakeCfn(DESCRIBED), iam, "s", "cs", "arn:role")
+        assert iam.calls
+        for call in iam.calls:
+            entries = call.get("ContextEntries")
+            assert entries
+            region_entries = [
+                e for e in entries if e.get("ContextKeyName") == "aws:RequestedRegion"
+            ]
+            assert region_entries
+            assert region_entries[0]["ContextKeyValues"]
+
+
+class TestCheckPagination:
+    def test_it_follows_next_token_to_check_every_page(self):
+        # A change set spanning two pages: the second page's resource change
+        # (Service, denied) must still be checked. If check() stopped at the
+        # first page, the deny on page two would go unchecked and this would
+        # report clean when it should report a finding.
+        page1 = {
+            "NextToken": "p2",
+            "Changes": [{"Type": "Resource", "ResourceChange": {
+                "Action": "Modify", "LogicalResourceId": "TaskDefinition",
+                "ResourceType": "AWS::ECS::TaskDefinition", "Replacement": "False"}}],
+        }
+        page2 = {
+            "Changes": [{"Type": "Resource", "ResourceChange": {
+                "Action": "Modify", "LogicalResourceId": "Service",
+                "PhysicalResourceId": "arn:aws:ecs:us-east-1:1:service/c/s",
+                "ResourceType": "AWS::ECS::Service", "Replacement": "False"}}],
+        }
+        cfn = PagedFakeCfn({None: page1, "p2": page2})
+        iam = FakeIam(deny={"ecs:UpdateService"})
+        findings = check(cfn, iam, "s", "cs", "arn:role")
+        assert [f.action for f in findings] == ["ecs:UpdateService"]
+        assert len(cfn.calls) == 2
+        assert cfn.calls[1]["NextToken"] == "p2"
+
 
 class TestMain:
     def test_exit_zero_when_clean(self, monkeypatch, capsys):
@@ -277,3 +341,26 @@ class TestMain:
         rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
         assert rc == 1
         assert "AWS::Kinesis::Stream" in capsys.readouterr().out
+
+    def test_a_client_error_exits_two_not_zero_or_one(self, monkeypatch, capsys):
+        # CRITICAL: the preflight's OWN permissions are missing (measured
+        # 2026-09-09 — iam:SimulatePrincipalPolicy is implicitDeny for the CI
+        # role). This must be a THIRD outcome: reading it as "clean" (0) hides
+        # that no gate ran at all; reading it as "blocked" (1) wedges every
+        # deploy on a grant this file cannot give itself.
+        from botocore.exceptions import ClientError
+
+        class ExplodingCfn:
+            def describe_change_set(self, **kw):
+                raise ClientError(
+                    {"Error": {"Code": "AccessDenied", "Message": "implicitDeny"}},
+                    "ListChangeSets",
+                )
+
+        monkeypatch.setattr("deploy.aws.preflight._clients",
+                            lambda: (ExplodingCfn(), FakeIam()))
+        rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
+        assert rc == 2
+        out = capsys.readouterr().out
+        assert "ListChangeSets" in out
+        assert "AccessDenied" in out
