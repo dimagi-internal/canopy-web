@@ -2342,8 +2342,10 @@ def _agent_mailboxes() -> dict:
     `/api/inbound/runner-mailboxes` deliberately serves only address + topic —
     "the runner intersects this with the mailboxes it actually holds credentials
     for". On this box that intersection IS the clone: bootstrap provisions gog
-    per agent, and each repo's config/agent.json is the single source for its
-    mailbox and gog client (a per-agent mailbox, the SHARED fleet client).
+    per agent, and each repo's config/agent.json names its mailbox and the gog
+    client its turns DECLARE. That client is intent, not fact — see
+    `_resolve_mailbox_clients`, which replaces it with the one whose token
+    actually authenticates before anything is read.
     """
     boxes: dict = {}
     for slug in [s.strip() for s in AGENT_SLUGS.split(",") if s.strip()]:
@@ -2360,6 +2362,94 @@ def _agent_mailboxes() -> dict:
 
 
 _INBOX_STAMPS: dict = {}
+
+#: account -> the gog client whose token PROVED it can read that mailbox. Filled
+#: by `_resolve_mailbox_clients`, evicted by `_drain_inbox` on a "No auth" failure
+#: so a rotated token is re-probed on the next tick rather than mourned forever.
+_GOG_CLIENT_LIVE: dict = {}
+
+
+def _gog_config_dir() -> pathlib.Path:
+    """gog's own config dir on Linux — $GOG_HOME, else $XDG_CONFIG_HOME/gogcli,
+    else ~/.config/gogcli. Mirrors bootstrap_agents.sh `gog_config_dir`."""
+    home = os.environ.get("GOG_HOME", "").strip()
+    if home:
+        return pathlib.Path(os.path.expanduser(home))
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
+        os.path.expanduser("~"), ".config")
+    return pathlib.Path(base) / "gogcli"
+
+
+def _candidate_gog_clients(account: str, declared: str) -> list:
+    """Every client this box could present for `account`, most likely first.
+
+    Order: what the agent's config declares; what gog's own `account_clients`
+    map says (bootstrap writes it); then every `credentials-<client>.json` in the
+    config dir. None of these is authoritative on its own — a token is minted FOR
+    a client and only that client can use it — so the list is a search order,
+    not an answer. `_resolve_mailbox_clients` asks the token.
+    """
+    order = [declared]
+    cfg_dir = _gog_config_dir()
+    try:
+        data = json.loads((cfg_dir / "config.json").read_text())
+        order.append(((data.get("account_clients") or {}).get(account) or ""))
+    except Exception:  # noqa: BLE001 — no map yet is a normal first-boot state
+        pass
+    try:
+        for f in sorted(cfg_dir.glob("credentials-*.json")):
+            order.append(f.name[len("credentials-"):-len(".json")])
+    except Exception:  # noqa: BLE001
+        pass
+    seen: list = []
+    for c in order:
+        c = (c or "").strip()
+        if c and c not in seen:
+            seen.append(c)
+    return seen
+
+
+def _resolve_mailbox_clients(boxes: dict, probe) -> dict:
+    """Replace each mailbox's DECLARED gog client with the one that AUTHENTICATES.
+
+    `probe(account, client)` makes one real gog call and raises if the token
+    under `client` cannot read `account`. The first candidate that succeeds is
+    cached in `_GOG_CLIENT_LIVE`; a mailbox no candidate can open is dropped
+    from the returned map with one log line naming what was tried.
+
+    Why a probe and not a lookup: every agent's config declares the shared
+    `canopy` client, but on this box echo's live token sits under `echo` (and
+    ace's `ace` token is expired, so ace only works under `canopy`). Neither
+    config/agent.json nor gog's account_clients map gets both right —
+    bootstrap_agents.sh spells out why, and canopy-web#661 (reverted the same
+    day) is what trusting the declaration cost. The token is the only authority
+    (canopy-web#738).
+    """
+    resolved: dict = {}
+    for slug, box in boxes.items():
+        account = (box.get("account") or "").strip()
+        declared = (box.get("client") or "").strip()
+        live = _GOG_CLIENT_LIVE.get(account)
+        if not live:
+            tried = _candidate_gog_clients(account, declared)
+            for client in tried:
+                try:
+                    probe(account, client)
+                except Exception:  # noqa: BLE001 — this candidate cannot open it
+                    continue
+                live = client
+                _GOG_CLIENT_LIVE[account] = client
+                if client != declared:
+                    _log(f"inbox {slug}: token for {account} lives under client "
+                         f"{client!r}, config declares {declared!r} — reading "
+                         f"with {client!r}")
+                break
+            if not live:
+                _log(f"inbox {slug}: no gog client can read {account} "
+                     f"(tried: {', '.join(tried) or 'none'})")
+                continue
+        resolved[slug] = {**box, "client": live}
+    return resolved
 
 
 def _drain_inbox(runner_id: str) -> None:
@@ -2378,6 +2468,23 @@ def _drain_inbox(runner_id: str) -> None:
         return
     try:
         rung = inbox_due.take_pending()
+        # Resolve only the mailboxes that are DUE, so a mailbox nobody rang and
+        # whose timer has not elapsed costs no gog call this tick.
+        due_declared = inbox_due.due(boxes, _INBOX_STAMPS, now=time.time(),
+                                     interval=INBOX_POLL_SECONDS, rung=rung)
+        boxes = {
+            **{s: b for s, b in boxes.items() if s not in due_declared},
+            **_resolve_mailbox_clients(
+                {s: boxes[s] for s in due_declared},
+                lambda account, client: inbox_mod.search_threads(
+                    account, client, max_threads=1),
+            ),
+        }
+        # A mailbox no client could open is stamped like any other failure, or
+        # it is re-probed every tick.
+        for slug in due_declared:
+            if slug not in boxes:
+                _INBOX_STAMPS[slug] = time.time()
         due = inbox_due.due(boxes, _INBOX_STAMPS, now=time.time(),
                             interval=INBOX_POLL_SECONDS, rung=rung)
         rung_slugs = {
@@ -2397,6 +2504,10 @@ def _drain_inbox(runner_id: str) -> None:
                          f"({inbox_due.discovered_by(slug, rung_slugs)})")
             except Exception as exc:  # noqa: BLE001
                 _log(f"inbox {slug}: check failed ({exc})")
+                # A token that stopped authenticating (rotated, revoked) must be
+                # re-probed next time, not presented forever from the cache.
+                if "no auth" in str(exc).lower():
+                    _GOG_CLIENT_LIVE.pop(box.get("account"), None)
             finally:
                 # Stamp even on failure, or a broken mailbox is retried every tick.
                 _INBOX_STAMPS[slug] = time.time()
