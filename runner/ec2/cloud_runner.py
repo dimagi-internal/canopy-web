@@ -140,6 +140,14 @@ WORK_DIR = os.environ.get("WORK_DIR", "/tmp/canopy-runner-work")
 # Agent-fleet bootstrap (runner/ec2/bootstrap_agents.sh) — see
 # bootstrap_agent_fleet() below for why this runs from here and not cloud-init.
 AGENT_ROOT = os.environ.get("AGENT_ROOT", "/opt/agents")
+#: Which agents this box has clones (and gog credentials) for. Set by cloud-init
+#: from the same CFN parameter bootstrap_agents.sh provisions from, so the list
+#: the mailbox map is built from is the list that was actually provisioned.
+AGENT_SLUGS = os.environ.get("AGENT_SLUGS", "")
+#: The timer half of inbox delivery. The doorbell is the delivery mechanism; this
+#: is the AUDITOR — mail the timer finds is mail push failed to ring for, which is
+#: what makes a broken watch loud instead of silent. Same 300s as the laptop.
+INBOX_POLL_SECONDS = int(os.environ.get("INBOX_POLL_SECONDS", "300"))
 CANOPY_WEB_REPO_DIR = os.environ.get("CANOPY_WEB_REPO_DIR", "/opt/canopy-web")
 CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/dimagi-internal/canopy-web.git")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "15"))
@@ -1425,6 +1433,15 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     # canopy_acp lives beside the runner programs (runner/canopy_acp), not in
     # packages/ — looking for it there disabled the ACP executor on every boot.
     _expose_repo_package(repo_dir, "canopy_acp", "the ACP executor", parent="runner")
+    # The SAME inbox reader the laptop runs, imported rather than reimplemented.
+    # `canopy_runner.inbox` and `.inbox_due` are stdlib-only and its package
+    # __init__ is a version string, so this costs nothing and — more to the point
+    # — means the doorbell, the (thread, messageCount) idempotency key, the
+    # own-reply skip and the CloudWatch alarm coalescing have ONE implementation
+    # and one set of tests. A second copy of that logic would drift the way
+    # `encode_project_dir` already has (three files, "keep the two in step").
+    _expose_repo_package(repo_dir, "canopy_runner", "the shared inbox reader",
+                         parent="runner")
     _install_acp_adapter()
 
 
@@ -2264,6 +2281,129 @@ def _drain_mint(runner_id: str) -> None:
         _log(f"mint drain error: {exc}")
 
 
+# ── inbox (the Gmail doorbell, and the timer that audits it) ───────────────
+#
+# Until now this box had no inbox code at all, so a `check_inbox` frame reached a
+# runner that could not act on it. That was invisible because the LAPTOPS' 300s
+# timer found the same mail a few minutes later and enqueued it — push looked
+# slow rather than dead. canopy-web logged the truth all along:
+#
+#   gmail.push.missed x18, since 2026-08-01
+#   "the 300s poll found mail that push never rang for — push is registered but
+#    not delivering"
+#
+# The box HAS the credentials (bootstrap_agents.sh runs step2_gog_config +
+# refresh_gmail_token per agent, and a live `gog gmail search` succeeds here); it
+# only ever lacked the code. So: same modules, same behaviour, same tests.
+_INBOX_CORE: object = False
+
+
+def _inbox_core():
+    """`canopy_runner.inbox` + `.inbox_due`, imported lazily off the clone."""
+    global _INBOX_CORE
+    if _INBOX_CORE is not False:
+        return _INBOX_CORE
+    try:
+        from canopy_runner import inbox, inbox_due  # noqa: PLC0415
+        _INBOX_CORE = (inbox, inbox_due)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"inbox reader unavailable ({exc}); this box will not read mail")
+        _INBOX_CORE = None
+    return _INBOX_CORE
+
+
+class _InboxClient:
+    """The one method `check_inbox` needs, over this runner's own `_api`.
+
+    Deliberately a shim rather than a shared client class: the two runners differ in
+    transport (this one has `_api`, the laptop has a Client object), and the
+    thing worth sharing is the READING logic, not the plumbing under it.
+    """
+
+    def __init__(self, runner_id: str) -> None:
+        self._runner_id = runner_id
+
+    def enqueue_turn(self, agent_slug: str, origin: str, idempotency_key: str, *,
+                     prompt: str = "", origin_ref: dict | None = None,
+                     routing: str = "prefer_local") -> dict:
+        status, payload = _api("POST", "/turns/", {
+            "agent_slug": agent_slug, "origin": origin,
+            "idempotency_key": idempotency_key, "prompt": prompt,
+            "origin_ref": origin_ref or {}, "routing": routing,
+        })
+        # 201 = new, 200 = idempotent hit. The caller logs the difference so a
+        # re-poll of the same unread mail reads as "nothing new", not fresh work.
+        return {**(payload or {}), "_created": status == 201}
+
+
+def _agent_mailboxes() -> dict:
+    """{agent_slug: {"account": ..., "client": ...}} from the agent clones.
+
+    `/api/inbound/runner-mailboxes` deliberately serves only address + topic —
+    "the runner intersects this with the mailboxes it actually holds credentials
+    for". On this box that intersection IS the clone: bootstrap provisions gog
+    per agent, and each repo's config/agent.json is the single source for its
+    mailbox and gog client (a per-agent mailbox, the SHARED fleet client).
+    """
+    boxes: dict = {}
+    for slug in [s.strip() for s in AGENT_SLUGS.split(",") if s.strip()]:
+        cfg = pathlib.Path(AGENT_ROOT) / slug / "config" / "agent.json"
+        try:
+            data = json.loads(cfg.read_text())
+        except Exception:  # noqa: BLE001 — an agent without one simply has no mailbox
+            continue
+        account = (data.get("email") or "").strip()
+        client = (data.get("gog_client") or "").strip()
+        if account and client:
+            boxes[slug] = {"account": account, "client": client}
+    return boxes
+
+
+_INBOX_STAMPS: dict = {}
+
+
+def _drain_inbox(runner_id: str) -> None:
+    """Check every mailbox that is due — rung by the doorbell, or timed out.
+
+    Modelled on `_drain_mint`: polled from the same tick, and every failure is
+    logged rather than raised, because a mailbox whose auth died must not take
+    the turn loop down with it.
+    """
+    core = _inbox_core()
+    if core is None:
+        return
+    inbox_mod, inbox_due = core
+    boxes = _agent_mailboxes()
+    if not boxes:
+        return
+    try:
+        rung = inbox_due.take_pending()
+        due = inbox_due.due(boxes, _INBOX_STAMPS, now=time.time(),
+                            interval=INBOX_POLL_SECONDS, rung=rung)
+        rung_slugs = {
+            slug for slug in boxes
+            if (boxes[slug].get("account") or "").strip().lower() in rung
+        }
+        client = _InboxClient(runner_id)
+        for slug in due:
+            box = boxes[slug]
+            try:
+                res = inbox_mod.check_inbox(
+                    client, slug, mailbox=box["account"], gog_client=box["client"],
+                    discovered_by=inbox_due.discovered_by(slug, rung_slugs),
+                )
+                if res.get("new"):
+                    _log(f"inbox {slug}: {len(res['new'])} new turn(s) "
+                         f"({inbox_due.discovered_by(slug, rung_slugs)})")
+            except Exception as exc:  # noqa: BLE001
+                _log(f"inbox {slug}: check failed ({exc})")
+            finally:
+                # Stamp even on failure, or a broken mailbox is retried every tick.
+                _INBOX_STAMPS[slug] = time.time()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"inbox drain error: {exc}")
+
+
 # ── session continuity (resolve-session / record-session round-trip) ───────
 def _session_thread_key(turn: dict) -> str:
     """The key resolve-session/record-session use for a SESSION-targeted turn, or
@@ -2754,6 +2894,7 @@ def run_over_rest(runner_id: str) -> None:
         # likely to need one, and leaving this on the WS path only would strand
         # the operator on the runners that fail most.
         _drain_mint(runner_id)
+        _drain_inbox(runner_id)
         if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
             time.sleep(POLL_SECONDS)
             continue
@@ -2981,6 +3122,15 @@ def run_over_ws(runner_id: str) -> bool:
                         else:
                             _log(f"interject turn={t_id[:8]}: NOT delivered "
                                  f"(no live ACP turn) — {body[:60]!r}")
+                    elif mtype == "check_inbox":
+                        # Mark it due; the POLL thread does the read. Same split
+                        # the laptop uses, for the same reason: a `gog` subprocess
+                        # on the wake-listener would block the socket that keeps
+                        # this runner alive.
+                        core = _inbox_core()
+                        if core is not None:
+                            core[1].ring(str(msg.get("mailbox") or ""))
+                            _log(f"doorbell: {msg.get('mailbox')} marked due")
                     elif mtype == "stream":
                         # Latency optimization only — /streams is polled below
                         # regardless, so a dropped frame costs one tick, never
@@ -3006,6 +3156,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _drain(ws, runner_id)
                     _sync_session_views(runner_id)          # incl. backfills
                     _drain_mint(runner_id)
+                    _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()
                 elif time.monotonic() - last_stream >= STREAM_POLL_SECONDS:
