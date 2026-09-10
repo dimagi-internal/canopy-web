@@ -10,23 +10,24 @@ name: Infra drift
 #
 # Read-only: detect-stack-drift inspects, it does not reconcile.
 #
-# NO `schedule:` TRIGGER YET, deliberately. Measured 2026-09-09: the deploy role
-# has implicitDeny on all three actions below, so a nightly run would fail every
-# night. The grant it needs is:
+# Runs on a SCHEDULE as of 2026-09-09. It shipped dispatch-only because the
+# deploy role had implicitDeny on all three drift actions, which would have
+# failed every night. Those grants are now in place:
 #
-#     Effect: Allow
-#     Action:
-#       - cloudformation:DetectStackDrift
-#       - cloudformation:DescribeStackDriftDetectionStatus
-#       - cloudformation:DescribeStackResourceDrifts
-#     Resource: arn:aws:cloudformation:us-east-1:858923557655:stack/canopy-web/*
+#     cloudformation:DetectStackDrift            (stack-scoped)
+#     cloudformation:DescribeStackResourceDrifts (stack-scoped)
+#     cloudformation:DescribeStackDriftDetectionStatus  on "*" -- it takes a
+#       DETECTION ID, not a stack ARN, so a stack-scoped grant matches nothing
+#       and silently denies. That cost one debugging round; do not "tidy" it
+#       back to a stack scope.
 #
-# That grant belongs in the canopy-web BOOTSTRAP stack, not in another hand-edit
-# of a shared role — hand-editing it is the debt this whole spec exists to repay.
-# Enable the schedule in the same change that lands the bootstrap stack.
-# Until then this is runnable on demand, and by an admin locally.
+# They are still HAND-MADE on the shared role and tracked nowhere. Moving them
+# into the canopy-web bootstrap stack is the outstanding work -- see
+# docs/superpowers/specs/2026-09-09-labs-iac-status.md.
 
 on:
+  schedule:
+    - cron: "0 8 * * *"   # 08:00 UTC daily, after the nightly contract run
   workflow_dispatch:
 
 permissions:
