@@ -281,3 +281,36 @@ def test_ref_installs_something_else_on_purpose(box):
     assert out.returncode == 0, out.stderr
     assert "print('branch build')" in box.installed
     assert box.restarted
+
+
+# --- the credentials refresh runs under the RUNNER'S env ----------------------
+#
+# canopy-runner.service loads runner.env; canopy-runner-update.service does not.
+# So the --credentials-only pass — whose whole purpose is to pick up a credential
+# set in canopy-web — ran with no GOG_KEYRING_PASSWORD and no CANOPY_TOKEN, saw
+# every mailbox as dead, and re-reported that to the control plane every 30 min
+# (cloud-ec2-1, 2026-09-10 11:59Z: "no gog token anywhere" for ace, seven seconds
+# before the service start read ace's vault AND its canopy-web token).
+def test_the_credentials_refresh_sees_the_runners_env(box):
+    (box.home / "runner.env").write_text(
+        "CANOPY_BASE_URL=https://labs.example/canopy\nCANOPY_TOKEN=tok\n"
+        "GOG_KEYRING_PASSWORD=kp\n"
+    )
+    sha = box.seed_repo(GOOD_RUNNER)   # seed FIRST — it rewrites bootstrap_agents.sh
+    seen = box.root / "bootstrap-env.txt"
+    stub = box.repo / "runner" / "ec2" / "bootstrap_agents.sh"
+    stub.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "args=$*" "CANOPY_TOKEN=${{CANOPY_TOKEN:-}}" '
+        f'"GOG_KEYRING_PASSWORD=${{GOG_KEYRING_PASSWORD:-}}" > "{seen}"\n'
+    )
+    stub.chmod(0o755)
+    box.stamp(sha)
+    box.expect(sha)          # current → nothing to install, refresh still runs
+    r = box.run()
+    assert r.returncode == 0, r.stderr
+    assert seen.exists(), "the credentials-only pass did not run"
+    lines = seen.read_text().splitlines()
+    assert "args=--credentials-only" in lines
+    assert "CANOPY_TOKEN=tok" in lines, "no token → no vault config, no canopy-web token"
+    assert "GOG_KEYRING_PASSWORD=kp" in lines, "no keyring password → every mailbox reads as dead"
