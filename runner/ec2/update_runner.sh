@@ -60,7 +60,15 @@ RUNNER_SRC="runner/ec2/cloud_runner.py"
 # The paths the DEPLOYED sha is computed over (deploy-labs.yml's cloud_sha step).
 # Kept identical here so a stamp written by this script names the same commit the
 # server expects — bootstrap_agents.sh included, because a restart is how it ships.
-SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh")
+# update_runner.sh is in this list ON PURPOSE. The shim at
+# /usr/local/bin/canopy-runner-update reads THIS script from the clone's origin/main
+# without fetching, and origin/main only moves when the install path runs — which
+# only happens when one of these files changes. So an updater-only change never
+# reached a box: #742 merged 13:3xZ on 2026-09-10 and the 13:40Z tick still ran the
+# old script. Listing it here makes an updater change a deploy, as the shim's own
+# comment already claims. Keep in step with deploy-labs.yml's cloud_sha step —
+# runner/ec2/tests/test_update_runner_sh.py pins the two lists equal.
+SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner/ec2/update_runner.sh")
 # The daemon rewrites the busy marker every heartbeat (20s). Older than this means
 # it is not running its loop at all — stopped, wedged, or crash-looping. That is
 # NOT busy: it is the case this script exists to rescue, so it must never block.
