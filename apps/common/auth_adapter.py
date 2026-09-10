@@ -61,6 +61,24 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             request, provider, error=error, exception=exception, extra_context=extra_context
         )
 
+    def is_open_for_signup(self, request, sociallogin):
+        """Social sign-up stays OPEN — it is the only legitimate account-creation path.
+
+        allauth's default delegates this to the ACCOUNT adapter, and
+        `CustomAccountAdapter.is_open_for_signup` answers False to close the local
+        username/password form. Left delegated, that also closed FIRST-TIME Google
+        sign-in: `pre_social_login` admitted the (allowlisted or invited) email,
+        then `process_signup` asked this gate, got False, and rendered "Sign Up
+        Closed" to every person without an existing `User` row — while everyone
+        who signed in before the form was closed never reached the check, so
+        nobody on the inside saw it (canopy-web#740, 2026-09-10).
+
+        The gate that matters — domain allowlist or live workspace invite, on a
+        PROVIDER-verified email — has already run in `pre_social_login` below by
+        the time allauth asks this, so there is nothing left for it to refuse.
+        """
+        return True
+
     def pre_social_login(self, request, sociallogin):
         email = (sociallogin.account.extra_data.get("email") or "").strip().lower()
         admitted_outside_domain = False
@@ -165,6 +183,10 @@ class CustomAccountAdapter(DefaultAccountAdapter):
     never touching Google. Every legitimate identity here comes from the
     social provider (or is provisioned server-side by a management command
     with an unusable password), so nothing is lost by closing it.
+
+    This adapter answers for the LOCAL form only. allauth's social adapter
+    would otherwise inherit this False for first-time Google sign-in too, which
+    is why `CustomSocialAccountAdapter.is_open_for_signup` overrides it.
 
     NOTE: `ACCOUNT_LOGIN_METHODS` / `ACCOUNT_SIGNUP_FIELDS` in settings are
     allauth>=65 names and are INERT on the pinned 0.63.x — they look like
