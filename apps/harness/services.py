@@ -78,6 +78,43 @@ def enqueue_turn(
     # silent rewrite); this is the leg that catches stored payloads and internal
     # callers. Remove with the aliases, one release on.
     origin = Turn.LEGACY_ORIGIN_ALIASES.get(origin, origin)
+    # An email thread IS a conversation, so it targets a SESSION rather than the
+    # agent directly. A Turn is a fine unit of execution and a poor unit of
+    # conversation: it ends, and leaves a human nothing to open, watch or type
+    # into. A Session is what ace-web already renders through the shared canopy
+    # chat kit, so this is what turns "ACE replied to that eventually" into
+    # "here is the run, live, and you can steer it".
+    #
+    # A CONVERSION, not an addition, and not by choice: `turn_targets_agent_xor
+    # _project_xor_session` is a database CHECK constraint, so a turn carrying
+    # both an agent and a session cannot be written at all. Found by running the
+    # tests — reading the service function suggested the opposite.
+    #
+    # What moves, deliberately:
+    #   * serialization is per SESSION, not per agent, so two email threads to
+    #     the same agent now run in parallel — the behaviour a reader expects of
+    #     separate conversations, and the reason to key on the thread at all;
+    #   * tenancy derives from session.workspace, which is set to the agent's own.
+    # What does NOT move, verified: routing resolves a session turn's agent via
+    # `chat_session.agent_id` (claim_next_turn's agent_ids is a union of both
+    # legs), so the source/actor rules still apply; `resolve_agent_slug` already
+    # surfaces `chat_session.agent.slug`, so the runner drives the same agent in
+    # the same clone; and every runner in the fleet declares sessions=true, so
+    # nothing is stranded on one box.
+    if session is None and agent is not None and origin == Turn.ORIGIN_EMAIL:
+        thread_id = str((origin_ref or {}).get("thread_id") or "")
+        if thread_id:
+            try:
+                session = email_thread_session(
+                    agent, thread_id, str((origin_ref or {}).get("subject") or ""))
+                agent = None          # the session now carries the agent
+            except Exception:  # noqa: BLE001
+                # Degrade to the previous behaviour. A turn that runs without a
+                # session is the status quo; a turn that fails to EXIST because
+                # its session could not be made is a regression, and mail is not
+                # a surface that tolerates one.
+                logger.exception("could not bind an email turn to a session")
+                session = None
     if sum([bool(agent), bool(project), bool(session)]) != 1:
         raise ValueError("a turn targets exactly one of agent / project / session")
     if project and workspace is None:
@@ -1431,6 +1468,63 @@ def _thread_session(agent, project, workspace, thread_key):
         workspace=workspace or (agent.workspace if agent else None) or wsvc.ensure_default_workspace(),
         origin=Session.ORIGIN_RUNNER,
         title=thread_key[:200],
+    )
+
+
+#: How an email thread names its Session. Namespaced like `emdash:<task>` so the
+#: three producers of a thread_key cannot collide.
+EMAIL_THREAD_PREFIX = "email:"
+
+#: Where the Gmail thread id is remembered on the Session, so the SECOND message
+#: on a thread finds the FIRST message's session instead of making a new one.
+#: `_thread_session` cannot serve this: it looks a thread_key up only as a
+#: Session UUID, so any non-UUID key creates a fresh row every single time.
+EMAIL_THREAD_KEY = "email_thread_key"
+
+
+def email_thread_session(agent, thread_id: str, subject: str = ""):
+    """The durable Session for one Gmail thread — found, or created once.
+
+    An inbound email already becomes a Turn. A Turn is a fine unit of execution
+    and a poor unit of CONVERSATION: it ends, and there is nothing left for a
+    human to open, watch, or type into. A Session is the thing ace-web already
+    renders through the shared chat kit, so binding the two is what turns "ACE
+    replied to that email eventually" into "here is the run, live, and you can
+    steer it".
+
+    Keyed on the Gmail thread, which gives the behaviour a reader expects for
+    free: a reply on the same thread continues the same session; a new thread
+    opens a parallel one.
+
+    `origin_key` is stamped because that is the field ace-web's session list
+    filters on — a session without it exists and is invisible, which is the
+    least useful possible outcome.
+    """
+    from apps.canopy_sessions.models import Session
+
+    key = f"{EMAIL_THREAD_PREFIX}{thread_id}"
+    # A KEY-PATH lookup, not `metadata__contains`: `contains` on a JSONField is
+    # PostgreSQL-only and raises NotSupportedError on SQLite, so the production
+    # path would have worked while every test errored — found by running them.
+    existing = (
+        Session.objects.filter(agent=agent, **{f"metadata__{EMAIL_THREAD_KEY}": key})
+        .order_by("created_at")
+        .first()
+    )
+    if existing is not None:
+        return existing
+    workspace = (agent.workspace if agent else None) or wsvc.ensure_default_workspace()
+    return Session.objects.create(
+        agent=agent,
+        workspace=workspace,
+        origin=Session.ORIGIN_RUNNER,
+        title=(subject or key)[:200],
+        metadata={
+            EMAIL_THREAD_KEY: key,
+            # ace-web lists sessions by this; see its CLAUDE.md § canopy-hosted chat.
+            "origin_key": f"ace-web:{workspace.slug}",
+            "source": "email",
+        },
     )
 
 
