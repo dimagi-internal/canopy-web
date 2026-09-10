@@ -134,7 +134,7 @@ jobs:
       - name: Resolve cloud runner code sha
         id: cloud_sha
         run: |
-          PATHS="runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh"
+          PATHS="runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh runner/ec2/update_runner.sh"
           SHA="$(git log -1 --format=%H -- $PATHS)"
           TS="$(git log -1 --format=%ct -- $PATHS)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"

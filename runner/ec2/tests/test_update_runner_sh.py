@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import time
 
@@ -79,12 +80,14 @@ class Box:
         src.mkdir(parents=True, exist_ok=True)
         (src / "cloud_runner.py").write_text(runner_source)
         (src / "bootstrap_agents.sh").write_text("#!/bin/bash\n")
+        (src / "update_runner.sh").write_text("#!/bin/bash\n")
         if first:
             _git(self.repo.parent, "init", "-q", "canopy-web")
         _git(self.repo, "add", "-A")
         _git(self.repo, "commit", "-q", "--allow-empty", "-m", "runner")
         return _git(self.repo, "log", "-1", "--format=%H", "--",
-                    "runner/ec2/cloud_runner.py", "runner/ec2/bootstrap_agents.sh")
+                    "runner/ec2/cloud_runner.py", "runner/ec2/bootstrap_agents.sh",
+                    "runner/ec2/update_runner.sh")
 
     def stamp(self, sha: str, committed_at: int = 1) -> None:
         (self.home / "build-info.json").write_text(
@@ -314,3 +317,35 @@ def test_the_credentials_refresh_sees_the_runners_env(box):
     assert "args=--credentials-only" in lines
     assert "CANOPY_TOKEN=tok" in lines, "no token → no vault config, no canopy-web token"
     assert "GOG_KEYRING_PASSWORD=kp" in lines, "no keyring password → every mailbox reads as dead"
+
+
+# --- the updater itself ships by deploy -------------------------------------
+#
+# The shim reads update_runner.sh from the clone's origin/main WITHOUT fetching;
+# origin/main only moves when the install path runs, and that only happens when a
+# SHA_PATHS file changes. With update_runner.sh absent from the list, an updater-
+# only change never reached a box (#742: merged, and the next tick still ran the
+# old script). The two lists — here and in deploy-labs.yml — must agree, and both
+# must name the updater.
+def test_the_updater_is_in_both_sha_path_lists_and_they_agree():
+    script = SCRIPT.read_text()
+    m = re.search(r'^SHA_PATHS=\((.*)\)$', script, re.M)
+    assert m, "SHA_PATHS not found in update_runner.sh"
+    script_paths = re.findall(r'"([^"]+)"', m.group(1))
+    workflow = (SCRIPT.parent.parent.parent / ".github" / "workflows" / "deploy-labs.yml").read_text()
+    m2 = re.search(r'^\s*PATHS="([^"]+)"', workflow, re.M)
+    assert m2, "cloud_sha PATHS not found in deploy-labs.yml"
+    workflow_paths = m2.group(1).split()
+    assert script_paths == workflow_paths, "the script and the deploy compute the sha over different files"
+    assert "runner/ec2/update_runner.sh" in script_paths, "an updater-only change must be a deploy"
+
+
+def test_a_change_to_the_updater_alone_moves_the_deployed_sha(box):
+    before = box.seed_repo(GOOD_RUNNER)
+    (box.repo / "runner" / "ec2" / "update_runner.sh").write_text("#!/bin/bash\n# changed\n")
+    _git(box.repo, "add", "-A")
+    _git(box.repo, "commit", "-q", "-m", "updater only")
+    after = _git(box.repo, "log", "-1", "--format=%H", "--",
+                 "runner/ec2/cloud_runner.py", "runner/ec2/bootstrap_agents.sh",
+                 "runner/ec2/update_runner.sh")
+    assert after != before
