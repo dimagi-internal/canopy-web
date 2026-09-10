@@ -1859,3 +1859,109 @@ def test_the_turn_unregisters_before_the_connection_closes(cloud_runner):
            if hasattr(cloud_runner, "__file__") else "")
     body = re.search(r"finally:\n\s*# Unregister BEFORE close.*?agent\.close\(\)", src, re.S)
     assert body, "run_acp's finally no longer unregisters before closing"
+
+
+# ── the doorbell, answered ──────────────────────────────────────────────────
+#
+# This box had no inbox code at all, so canopy-web's `check_inbox` frame reached
+# a runner that could not act on it. Invisible, because the LAPTOPS' 300s timer
+# found the same mail minutes later — push looked slow rather than dead. The
+# server had been saying so since 2026-08-01:
+#
+#   gmail.push.missed x18 — "the 300s poll found mail that push never rang for"
+#
+# The credentials were never the gap (bootstrap runs step2_gog_config +
+# refresh_gmail_token per agent, and a live `gog gmail search` succeeds here);
+# only the code was.
+
+def test_the_inbox_reader_is_the_laptops_not_a_copy(cloud_runner):
+    """DRY, pinned. A second implementation of the (thread, messageCount)
+    idempotency key, the own-reply skip and the alarm coalescing would drift the
+    way `encode_project_dir` already has — three files and a comment asking
+    people to keep them in step."""
+    import pathlib as _pl
+    src = _pl.Path(cloud_runner.__file__).read_text()
+    assert "from canopy_runner import inbox, inbox_due" in src, (
+        "the cloud runner must IMPORT the shared reader, not reimplement it")
+    # CODE only. The first version of this test scanned the whole file and
+    # tripped on its own explanatory comments — a check that fails on prose
+    # teaches people to delete the prose.
+    code = "\n".join(
+        ln for ln in src.splitlines() if not ln.lstrip().startswith("#")
+    )
+    for reimplemented in ("messageCount", "def check_inbox", "gog gmail search"):
+        assert reimplemented not in code, (
+            f"{reimplemented!r} looks reimplemented here; it belongs to "
+            "canopy_runner.inbox")
+
+
+def test_the_shared_reader_is_exposed_off_the_clone(cloud_runner):
+    import pathlib as _pl
+    src = _pl.Path(cloud_runner.__file__).read_text()
+    assert '_expose_repo_package(repo_dir, "canopy_runner"' in src
+
+
+def test_the_mailbox_map_comes_from_the_agent_clones(cloud_runner, tmp_path, monkeypatch):
+    """`/api/inbound/runner-mailboxes` serves address + topic only — the runner
+    "intersects this with the mailboxes it actually holds credentials for", and
+    on this box that intersection is the clone bootstrap provisioned."""
+    for slug, email, client in (("ace", "ace@dimagi-ai.com", "canopy"),
+                                ("hal", "hal@dimagi-ai.com", "canopy")):
+        d = tmp_path / slug / "config"
+        d.mkdir(parents=True)
+        (d / "agent.json").write_text(
+            f'{{"email": "{email}", "gog_client": "{client}"}}')
+    (tmp_path / "nomail" / "config").mkdir(parents=True)
+    (tmp_path / "nomail" / "config" / "agent.json").write_text('{"name": "no mailbox"}')
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    monkeypatch.setattr(cloud_runner, "AGENT_SLUGS", "ace,hal,nomail,missing")
+    boxes = cloud_runner._agent_mailboxes()
+    assert boxes == {
+        "ace": {"account": "ace@dimagi-ai.com", "client": "canopy"},
+        "hal": {"account": "hal@dimagi-ai.com", "client": "canopy"},
+    }, "an agent with no mailbox, or no clone, must simply not appear"
+
+
+def test_a_doorbell_frame_marks_the_mailbox_due(cloud_runner, monkeypatch):
+    """Marks due only — the gog subprocess belongs on the poll thread, or it
+    blocks the socket keeping this runner alive."""
+    rung = []
+    fake_due = type("D", (), {"ring": staticmethod(lambda m: rung.append(m))})
+    monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: (object(), fake_due))
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    core = cloud_runner._inbox_core()
+    core[1].ring("ace@dimagi-ai.com")
+    assert rung == ["ace@dimagi-ai.com"]
+
+
+def test_a_broken_mailbox_is_stamped_so_it_is_not_retried_every_tick(cloud_runner, monkeypatch):
+    calls = []
+
+    class _Inbox:
+        @staticmethod
+        def check_inbox(client, slug, **kw):
+            calls.append(slug)
+            raise RuntimeError("auth is dead")
+
+    class _Due:
+        @staticmethod
+        def take_pending(): return set()
+        @staticmethod
+        def due(boxes, stamps, **kw): return [s for s in boxes if s not in stamps]
+        @staticmethod
+        def discovered_by(slug, rung): return "poll"
+
+    monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: (_Inbox, _Due))
+    monkeypatch.setattr(cloud_runner, "_agent_mailboxes",
+                        lambda: {"ace": {"account": "a@b.c", "client": "canopy"}})
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    cloud_runner._INBOX_STAMPS.clear()
+    cloud_runner._drain_inbox("runner-1")
+    cloud_runner._drain_inbox("runner-1")
+    assert calls == ["ace"], "a failing mailbox must not be retried on every tick"
+    cloud_runner._INBOX_STAMPS.clear()
+
+
+def test_a_missing_reader_disables_mail_without_taking_the_loop_down(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: None)
+    cloud_runner._drain_inbox("runner-1")   # must not raise
