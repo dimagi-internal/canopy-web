@@ -10,7 +10,7 @@ done, what is not, and what to be careful of".
 | | |
 | --- | --- |
 | **Deploy preflight** (canopy-web #732) | Merged and deployed. Before CloudFormation applies a change set, the deploy asks IAM whether the deploying role may perform the actions CFN will call, and refuses with the missing action named. |
-| **Drift detection** (canopy-web #732) | `workflow_dispatch`-only. Run it from the Actions tab: **Infra drift**. |
+| **Drift detection** (canopy-web #732) | Runs daily at 08:00 UTC, and on demand from the Actions tab: **Infra drift**. |
 | **Mobile emulator under CloudFormation** (ace-web #761, #762) | Stack `ace-mobile` owns all 7 resources. Drift `IN_SYNC`. Terraform still present — deleting it is the one leftover task. |
 | **Emulator verified working** | Booted 2026-09-09 after 3 months stopped. Maestro drove it to launch CommCare, exit 0. Stopped again. |
 
@@ -38,8 +38,18 @@ repo. If someone rebuilds that role from scratch, these vanish and deploys break
 | `elasticloadbalancing:DescribeTargetGroups` on `*` | the CFN handler calls it; not resource-scopable | `GitHubActionsLabsDeployPolicy` |
 | `cloudformation:ListChangeSets` | the preflight locates its change set with it | `CanopyWebCloudFormationDeploy` |
 | `iam:SimulatePrincipalPolicy` on `*` | the preflight IS this call | `GitHubActionsLabsDeployPolicy` |
+| `cloudformation:DetectStackDrift` | the drift workflow | `CanopyWebCloudFormationDeploy` |
+| `cloudformation:DescribeStackResourceDrifts` | the drift workflow | `CanopyWebCloudFormationDeploy` |
+| `cloudformation:DescribeStackDriftDetectionStatus` on `*` | the drift workflow; takes a DETECTION ID, not a stack ARN, so a stack-scoped grant matches nothing | `CanopyWebCloudFormationDeploy` |
 
-**These four are the debt the whole spec exists to repay.** They belong in the
+**Seven, not four.** Two actions here (`DescribeTargetGroups`,
+`DescribeStackDriftDetectionStatus`) cannot be resource-scoped and must be
+granted on `*`. Both were first written stack-scoped, both silently denied, and
+both cost a debugging round. If you move these into a bootstrap stack, keep
+those two on `*` — "tidying" them to a stack scope breaks them without an error
+anyone will read.
+
+**These seven are the debt the whole spec exists to repay.** They belong in the
 per-app bootstrap stacks, which is what the unwritten plan 4 and the written
 plan 3 are for. Until then they are invisible.
 
@@ -48,14 +58,16 @@ A side effect worth knowing: adding `ModifyTargetGroup` also granted it to
 ace-web's target group ARN. Benign — it fixes the same latent bug there — but
 nobody asked for it.
 
-**The drift workflow has no schedule** because the deploy role has implicitDeny
-on the three drift actions. The grant it needs is written into the workflow's
-own header. Turn the schedule on in the same change that lands the grant.
+**The drift workflow now runs daily** (08:00 UTC). It shipped dispatch-only
+because the deploy role lacked the three drift actions; those were granted by
+hand on 2026-09-09 and the schedule turned on in the same change.
 
-**A known live drift, not ours:** `labs-jj-audit-analytics` →
-`UmamiTaskDefinition` → `ContainerDefinitions/0/Environment/2` was changed
-out-of-band. The next `cloudformation deploy` on that stack will silently revert
-it. Whoever changed it should decide which value is right.
+**The `labs-jj-audit-analytics` drift is FIXED** (connect-labs #1691). It was
+not an out-of-band edit to revert: `UMAMI_BUILD_VERSION` was declared TWICE in
+the template by the Umami upgrade work, ECS kept one, and the running task had
+three environment variables where the template described four. The live side was
+right; the template was wrong. Since Umami upgrades recur, a duplicate left in
+place would have re-drifted the stack on every one.
 
 ## The rule the whole thing turns on
 
