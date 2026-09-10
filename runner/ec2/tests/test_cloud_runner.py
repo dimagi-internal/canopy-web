@@ -1939,6 +1939,8 @@ def test_a_broken_mailbox_is_stamped_so_it_is_not_retried_every_tick(cloud_runne
 
     class _Inbox:
         @staticmethod
+        def search_threads(account, client, max_threads=15): return []   # the client probe
+        @staticmethod
         def check_inbox(client, slug, **kw):
             calls.append(slug)
             raise RuntimeError("auth is dead")
@@ -1965,3 +1967,144 @@ def test_a_broken_mailbox_is_stamped_so_it_is_not_retried_every_tick(cloud_runne
 def test_a_missing_reader_disables_mail_without_taking_the_loop_down(cloud_runner, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: None)
     cloud_runner._drain_inbox("runner-1")   # must not raise
+
+
+# ── the client is the token's, not the config's (canopy-web#738) ──────────────
+#
+# Every agent declares `gog_client: canopy`, but a token is minted FOR a client
+# and only that client can use it. On the live box echo's token sits under
+# `echo`, so a reader that presents the declaration logged `No auth for gmail
+# echo@dimagi-ai.com` 59 times in five hours — for the one mailbox whose default
+# runner list actually rings this box. bootstrap_agents.sh already says "pick
+# the client whose token AUTHENTICATES"; #661 (reverted the same day) is what
+# trusting the declaration cost. The reader now asks the token.
+
+def _gog_home(tmp_path, monkeypatch, *, account_clients=None, credentials=()):
+    home = tmp_path / "gogcli"
+    home.mkdir()
+    if account_clients is not None:
+        (home / "config.json").write_text(json.dumps({"account_clients": account_clients}))
+    for c in credentials:
+        (home / f"credentials-{c}.json").write_text("{}")
+    monkeypatch.setenv("GOG_HOME", str(home))
+    return home
+
+
+def test_candidate_clients_declared_then_gogs_map_then_credential_files(cloud_runner, tmp_path, monkeypatch):
+    _gog_home(tmp_path, monkeypatch,
+              account_clients={"echo@dimagi-ai.com": "echo"},
+              credentials=("ace", "canopy", "echo"))
+    assert cloud_runner._candidate_gog_clients("echo@dimagi-ai.com", "canopy") == [
+        "canopy", "echo", "ace"], "declared first, gog's own map second, then every credential file, deduped"
+    assert cloud_runner._candidate_gog_clients("x@y.z", "") == ["ace", "canopy", "echo"], \
+        "an empty declaration must not become a candidate (an empty --client points gog at the wrong app silently)"
+
+
+def test_the_reader_presents_the_client_whose_token_authenticates(cloud_runner, tmp_path, monkeypatch):
+    _gog_home(tmp_path, monkeypatch, account_clients={"echo@dimagi-ai.com": "echo"})
+    logs = []
+    monkeypatch.setattr(cloud_runner, "_log", logs.append)
+    probed = []
+
+    def probe(account, client):
+        probed.append((account, client))
+        if client != "echo":
+            raise RuntimeError(f"No auth for gmail {account}.")
+
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    out = cloud_runner._resolve_mailbox_clients(
+        {"echo": {"account": "echo@dimagi-ai.com", "client": "canopy"}}, probe)
+    assert out == {"echo": {"account": "echo@dimagi-ai.com", "client": "echo"}}
+    assert probed == [("echo@dimagi-ai.com", "canopy"), ("echo@dimagi-ai.com", "echo")], \
+        "the declared client is tried FIRST — when it works (ace/ada/eva/hal) there is exactly one call"
+    assert any("lives under client 'echo'" in m and "declares 'canopy'" in m for m in logs), \
+        "a disagreement between token and declaration is said out loud, naming both"
+
+
+def test_a_working_declaration_costs_one_probe_and_is_then_cached(cloud_runner, tmp_path, monkeypatch):
+    _gog_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    probed = []
+    boxes = {"hal": {"account": "hal@dimagi-ai.com", "client": "canopy"}}
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    cloud_runner._resolve_mailbox_clients(boxes, lambda a, c: probed.append(c))
+    cloud_runner._resolve_mailbox_clients(boxes, lambda a, c: probed.append(c))
+    assert probed == ["canopy"], "proved once per process, not once per tick"
+
+
+def test_a_mailbox_no_client_can_open_is_dropped_and_names_what_was_tried(cloud_runner, tmp_path, monkeypatch):
+    _gog_home(tmp_path, monkeypatch, credentials=("canopy", "echo"))
+    logs = []
+    monkeypatch.setattr(cloud_runner, "_log", logs.append)
+
+    def probe(account, client):
+        raise RuntimeError("No auth")
+
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    out = cloud_runner._resolve_mailbox_clients(
+        {"echo": {"account": "echo@dimagi-ai.com", "client": "canopy"}}, probe)
+    assert out == {}
+    assert any("no gog client can read echo@dimagi-ai.com (tried: canopy, echo)" in m for m in logs)
+
+
+def test_a_no_auth_failure_evicts_the_cached_client_so_a_rotated_token_is_reprobed(cloud_runner, monkeypatch):
+    class _Inbox:
+        @staticmethod
+        def search_threads(account, client, max_threads=15): return []
+        @staticmethod
+        def check_inbox(client, slug, **kw):
+            raise RuntimeError("No auth for gmail echo@dimagi-ai.com.")
+
+    class _Due:
+        @staticmethod
+        def take_pending(): return set()
+        @staticmethod
+        def due(boxes, stamps, **kw): return [s for s in boxes if s not in stamps]
+        @staticmethod
+        def discovered_by(slug, rung): return "poll"
+
+    monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: (_Inbox, _Due))
+    monkeypatch.setattr(cloud_runner, "_agent_mailboxes",
+                        lambda: {"echo": {"account": "echo@dimagi-ai.com", "client": "canopy"}})
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    cloud_runner._INBOX_STAMPS.clear()
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    cloud_runner._drain_inbox("runner-1")
+    assert "echo@dimagi-ai.com" not in cloud_runner._GOG_CLIENT_LIVE, \
+        "the token that just failed must not be presented from the cache next tick"
+    assert "echo" in cloud_runner._INBOX_STAMPS, "still stamped — no every-tick retry"
+    cloud_runner._INBOX_STAMPS.clear()
+
+
+def test_the_drain_probes_only_mailboxes_that_are_due(cloud_runner, monkeypatch):
+    probed, checked = [], []
+
+    class _Inbox:
+        @staticmethod
+        def search_threads(account, client, max_threads=15):
+            probed.append((account, client)); return []
+        @staticmethod
+        def check_inbox(client, slug, **kw):
+            checked.append((slug, kw["gog_client"])); return {"new": []}
+
+    class _Due:
+        @staticmethod
+        def take_pending(): return set()
+        @staticmethod
+        def due(boxes, stamps, **kw): return [s for s in boxes if s not in stamps]
+        @staticmethod
+        def discovered_by(slug, rung): return "poll"
+
+    monkeypatch.setattr(cloud_runner, "_inbox_core", lambda: (_Inbox, _Due))
+    monkeypatch.setattr(cloud_runner, "_agent_mailboxes", lambda: {
+        "ace": {"account": "ace@dimagi-ai.com", "client": "canopy"},
+        "hal": {"account": "hal@dimagi-ai.com", "client": "canopy"},
+    })
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    cloud_runner._INBOX_STAMPS.clear()
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    cloud_runner._INBOX_STAMPS["hal"] = 10**12   # not due
+    cloud_runner._drain_inbox("runner-1")
+    assert probed == [("ace@dimagi-ai.com", "canopy")], "a mailbox that is not due costs no gog call"
+    assert checked == [("ace", "canopy")]
+    cloud_runner._INBOX_STAMPS.clear()
