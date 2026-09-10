@@ -293,7 +293,16 @@ if [ "$V" = "busy" ]; then
   log "busy — skipping the credentials refresh too."
 elif [ -x "$REPO_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   log "refreshing credentials (config changes reach the box here, not via a deploy)"
-  ( set +e; "$REPO_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
+  # Under the RUNNER'S environment, not this timer's. canopy-runner.service loads
+  # runner.env; canopy-runner-update.service does not, so this pass used to run
+  # with no GOG_KEYRING_PASSWORD (every keyring read fails: "mailbox NOT live" for
+  # all five agents) and no CANOPY_TOKEN (no per-agent vault, no canopy-web token:
+  # "no gog token anywhere" for ace while the very next service start read both).
+  # Measured 2026-09-10 11:59Z on cloud-ec2-1 — and this pass re-reports readiness,
+  # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
+  ( set +e
+    if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+    "$REPO_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
     || log "credentials refresh returned non-zero — the box is otherwise untouched."
 fi
 exit 0
