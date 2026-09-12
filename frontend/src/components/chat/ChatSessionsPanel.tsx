@@ -174,7 +174,7 @@ export function ChatSessionsPanel({
         // interval.
         else setSessions(await listSessions(showArchived ? 'all' : 'active'))
       } catch {
-        setCloseError("Couldn't close this session")
+        setCloseError('Couldn’t close this session')
       } finally {
         setClosingId(null)
       }
@@ -450,11 +450,17 @@ export function ChatSessionsPanel({
               picks it up and streams the reply back as it works.
             </p>
             <p className="mt-2 text-[12px] text-muted-foreground">
-              Nothing to chat with?{' '}
-              <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
-                You need an agent first
-              </Link>
-              .
+              {agents.length === 0 ? (
+                <>
+                  Nothing to chat with?{' '}
+                  <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
+                    You need an agent first
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>Pick an agent from "New chat with…" above to start one.</>
+              )}
             </p>
           </div>
         )

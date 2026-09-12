@@ -418,3 +418,38 @@ describe('ChatSessionsPanel — close a session', () => {
     expect(btn.closest('a')).toBeNull()
   })
 })
+
+describe('ChatSessionsPanel — empty states', () => {
+  it('says "You need an agent first" when there are zero agents and zero sessions', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([])
+
+    renderPanel([])
+
+    expect(await screen.findByText('No chats yet')).toBeTruthy()
+    expect(screen.getByText('You need an agent first')).toBeTruthy()
+  })
+
+  it('says "Pick an agent from New chat with… above" when there are agents but zero sessions', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('No chats yet')).toBeTruthy()
+    expect(screen.getByText('Pick an agent from "New chat with…" above to start one.')).toBeTruthy()
+    expect(screen.queryByText('You need an agent first')).toBeNull()
+  })
+
+  it('preserves the "No chats on a live runner" message when all sessions are parked', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('parked', { runner_online: false, runner_status: 'paused' }),
+    ])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('No chats on a live runner')).toBeTruthy()
+    expect(screen.queryByText('No chats yet')).toBeNull()
+  })
+})

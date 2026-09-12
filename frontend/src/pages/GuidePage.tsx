@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { guideGroups } from '@/guide/grouping'
 import { USER_PATHS } from '@/guide/paths'
 
@@ -8,6 +10,19 @@ import { USER_PATHS } from '@/guide/paths'
  * surface and the documentation surface are the same content.
  */
 export function GuidePage() {
+  const { hash } = useLocation()
+
+  // React Router navigates with pushState, which does NOT trigger the browser's
+  // native fragment scrolling — so a /guide#<route-path> link from an empty state
+  // would land at the top of the page and silently do nothing. Anchor ids are
+  // route paths ('/w/:workspace/agents'), so they MUST be looked up with
+  // getElementById: '#/w/:workspace/agents' is not a valid CSS selector and
+  // querySelector would throw.
+  useEffect(() => {
+    if (!hash) return
+    const el = document.getElementById(decodeURIComponent(hash.slice(1)))
+    el?.scrollIntoView({ block: 'start' })
+  }, [hash])
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="text-lg font-semibold text-foreground">Guide</h1>
