@@ -1596,20 +1596,76 @@ function navItemPath(item: { path: string; tenant: boolean }): string {
   return item.path ? `/w/:workspace/${item.path}` : '/w/:workspace'
 }
 
+/** The tenant index — matches only EXACTLY. See `navMatch`. */
+const TENANT_INDEX = '/w/:workspace'
+
+/**
+ * Does `surfacePath` belong under the nav item at `navPath`?
+ *
+ * Exact match, or a detail route beneath it — `/w/:workspace/chat/:id` belongs
+ * with `/w/:workspace/chat`, because a reader looking for "the chat page" wants
+ * the list and the single chat together.
+ *
+ * The tenant index is the exception. `/w/:workspace` is a prefix of every tenant
+ * route, so prefix-matching it would pull the whole app into the Projects entry.
+ */
+function navMatch(surfacePath: string, navPath: string): boolean {
+  if (surfacePath === navPath) return true
+  if (navPath === TENANT_INDEX) return false
+  return surfacePath.startsWith(`${navPath}/`)
+}
+
+/**
+ * Clusters for surfaces the nav does not name.
+ *
+ * Without these, 25 of the 41 descriptors land in one "Elsewhere" bucket — 61%
+ * of the guide in a junk drawer, which defeats the point of grouping it by the
+ * menu at all. (Measured before this existed.)
+ *
+ * These are assigned BEFORE the nav groups, which matters for exactly one case:
+ * the ten rail sections all sit under `/w/:workspace/agents/:slug/`, so nav's
+ * `/w/:workspace/agents` would otherwise absorb them into Fleet and leave this
+ * group empty.
+ */
+const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
+  {
+    // One agent's left rail — ten sections under a single agent.
+    label: 'Agent workspace',
+    match: (p) => p.startsWith('/w/:workspace/agents/:slug/'),
+  },
+  {
+    // Pages someone reaches from a link you sent them, with no account.
+    label: 'Shared links (no login)',
+    match: (p) =>
+      ['/share/:token', '/storyboard/:slug', '/narrative/:slug', '/walkthrough/:id',
+       '/review/:id', '/invite/:token'].includes(p) || p.startsWith('/ddd-release/'),
+  },
+]
+
 export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGroup[] {
   const claimed = new Set<string>()
-  const groups: GuideGroup[] = []
-
-  for (const nav of NAV_GROUPS) {
-    const wanted = nav.items.map(navItemPath)
-    const members = surfaces.filter((s) => wanted.includes(s.path))
+  const take = (pred: (p: string) => boolean) => {
+    const members = surfaces.filter((s) => !claimed.has(s.path) && pred(s.path))
     members.forEach((m) => claimed.add(m.path))
-    if (members.length) groups.push({ label: nav.label, surfaces: members })
+    return members
   }
 
+  // Assign clusters first (see CLUSTERS' note), but DISPLAY the nav groups
+  // first, because that is the order a reader already knows from the header.
+  const clusterGroups = CLUSTERS.map((c) => ({ label: c.label, surfaces: take(c.match) }))
+
+  const navGroups = NAV_GROUPS.map((nav) => {
+    const wanted = nav.items.map(navItemPath)
+    return { label: nav.label, surfaces: take((p) => wanted.some((w) => navMatch(p, w))) }
+  })
+
   const rest = surfaces.filter((s) => !claimed.has(s.path))
-  if (rest.length) groups.push({ label: 'Elsewhere', surfaces: rest })
-  return groups
+
+  return [
+    ...navGroups.filter((g) => g.surfaces.length),
+    ...clusterGroups.filter((g) => g.surfaces.length),
+    ...(rest.length ? [{ label: 'Elsewhere', surfaces: rest }] : []),
+  ]
 }
 ```
 
@@ -1633,13 +1689,50 @@ describe('guideGroups', () => {
     expect(labels).toContain('Fleet')
   })
 
-  it('never drops a surface the nav does not mention', () => {
+  it('never drops a surface, even one nothing claims', () => {
     const groups = guideGroups([
-      { path: '/share/:token', title: 'Shared session', audience: 'Anyone', what: 'x' },
+      { path: '/nowhere-at-all', title: 'Orphan', audience: 'Anyone', what: 'x' },
     ])
     expect(groups).toEqual([
-      { label: 'Elsewhere', surfaces: [expect.objectContaining({ path: '/share/:token' })] },
+      { label: 'Elsewhere', surfaces: [expect.objectContaining({ path: '/nowhere-at-all' })] },
     ])
+  })
+
+  it('clusters the agent rail rather than letting Fleet absorb it', () => {
+    // The rail sits under /w/:workspace/agents/:slug/, and nav has
+    // /w/:workspace/agents — so without cluster-first assignment all ten
+    // sections would land in Fleet and this group would be empty.
+    const rail = guideGroups().find((g) => g.label === 'Agent workspace')
+    expect(rail?.surfaces.length).toBe(10)
+    const fleet = guideGroups().find((g) => g.label === 'Fleet')
+    expect(fleet?.surfaces.map((s) => s.path)).toContain('/w/:workspace/agents')
+    expect(fleet?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/agents/:slug/inbox')
+  })
+
+  it('groups the no-login shared links together', () => {
+    const shared = guideGroups().find((g) => g.label === 'Shared links (no login)')
+    expect(shared?.surfaces.map((s) => s.path)).toEqual(
+      expect.arrayContaining(['/share/:token', '/storyboard/:slug', '/walkthrough/:id']),
+    )
+  })
+
+  it('puts a detail route with its list route', () => {
+    const chats = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace/chat'))
+    expect(chats?.surfaces.map((s) => s.path)).toContain('/w/:workspace/chat/:id')
+  })
+
+  it('does not let the tenant index swallow every tenant path', () => {
+    // /w/:workspace prefixes every tenant route; if it prefix-matched, the group
+    // holding Projects would absorb the entire app.
+    const work = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace'))
+    expect(work?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/members')
+  })
+
+  it('keeps Elsewhere a small remainder, not a dumping ground', () => {
+    const elsewhere = guideGroups().find((g) => g.label === 'Elsewhere')
+    // Measured at ~4 genuinely uncategorised surfaces. A jump here means a new
+    // cluster needs a rule, not that the bucket should grow.
+    expect(elsewhere?.surfaces.length ?? 0).toBeLessThanOrEqual(8)
   })
 })
 ```
@@ -1752,8 +1845,11 @@ demand it):
   },
 ```
 
-In `frontend/src/components/AppLayout/nav.ts`, add it to the last group (the
-team/admin one), so it is reachable without knowing the URL.
+In `frontend/src/components/AppLayout/nav.ts`, add it to the **`Workspace`** group (the
+last one, holding Shareouts / Timeline / Sessions / Members / Inbound / System) as
+`{ path: '/guide', label: 'Guide', tenant: false }`. That group already holds the other
+global, non-tenant reference surface (`/system`), so `/guide` sits beside its closest
+sibling and is reachable without knowing the URL.
 
 - [ ] **Step 5: Run the whole frontend suite and build**
 
