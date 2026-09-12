@@ -37,6 +37,8 @@ from .schemas import (
     SessionDetailOut,
     SessionOut,
     StreamStateOut,
+    TransferIn,
+    TransferOut,
     TurnOutMinimal,
     ResetIn,
     ResetOut,
@@ -378,6 +380,48 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return turn
+
+
+@router.post(
+    "/{session_id}/transfer", response=TransferOut,
+    summary="Move a live session onto another runner",
+)
+def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
+    """Move a session between boxes — cloud -> laptop, or between the two macOS
+    accounts — carrying its message history across.
+
+    `place` was the closest thing before this and it is not the same operation:
+    it re-pins one queued turn and leaves the binding where it was, so the next
+    ship still 404s and the next send sticks to the old box. The failure that
+    motivated this endpoint was doing the move by hand with `place`/`send` —
+    execution DID move, and the session's entire pre-transfer history was deleted
+    on the new box's first ship (session 169212e2, 2026-09-12).
+
+    409, not 422, while a turn executes: the request is well-formed and will
+    succeed once the source box is idle, which is a state conflict rather than a
+    bad body. Stop the session (`POST /{id}/stop`) and retry.
+    """
+    session = _session_or_404(request, session_id)
+    try:
+        binding, turn = services.transfer_session(
+            session=session, placement=payload.runner, brief=payload.brief,
+            user=request.user,
+        )
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except RuntimeError as exc:
+        raise HttpError(409, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return {
+        "session_id": str(session.id),
+        "runner": binding.runner.name if binding.runner_id else "",
+        "transferred_from": (
+            binding.transferred_from.name if binding.transferred_from_id else ""
+        ),
+        "index_offset": binding.index_offset,
+        "turn_id": str(turn.id),
+    }
 
 
 @router.post(

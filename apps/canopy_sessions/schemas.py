@@ -49,6 +49,34 @@ class PlaceIn(Schema):
     placement: str
 
 
+class TransferIn(Schema):
+    """Body for POST /{session_id}/transfer — move a LIVE session onto another
+    runner, history and all.
+
+    Distinct from `place`, which only re-pins a queued turn and leaves the
+    binding (and so the next ship, and the next send's stickiness) on the old
+    box. This moves the session."""
+    # The target runner's UUID. No "wait" spelling here — `place`'s "wait" means
+    # "pin to where this session already is", which is the one thing a transfer
+    # can never mean.
+    runner: str
+    # The handoff. Prepended with `services.TRANSFER_PREAMBLE` server-side, so
+    # this carries only what the server cannot know: the branch, what is pushed,
+    # what shipped, what is still open. Optional, but a transfer without one
+    # lands a cold session in a fresh worktree and it will go looking.
+    brief: str = ""
+
+
+class TransferOut(Schema):
+    session_id: str
+    runner: str
+    transferred_from: str
+    # The epoch base the target's ordinals now land above — surfaced because it is
+    # the observable proof the history was carried rather than dropped.
+    index_offset: int
+    turn_id: str
+
+
 class TurnOutMinimal(Schema):
     """Just enough of a Turn for the /place response — the caller only needs to
     confirm the pin took, not the full harness TurnOut shape."""

@@ -256,6 +256,43 @@ class RunnerBinding(models.Model):
     # already does for a change of ordinal SCHEME. Blank = never reported (an old
     # runner, or a session whose runner has not shipped since this landed).
     transcript_id = models.CharField(max_length=100, blank=True, default="")
+    # How far this session's `turn_index` space has been SHIFTED past the history
+    # already held — added to every incoming transcript ordinal before it becomes
+    # a Message row, and subtracted again when the markers are reported back to
+    # the runner (apps/harness/api.py::get_session_streams).
+    #
+    # It exists for TRANSFER (services.transfer_session). A transfer re-points
+    # this binding at another box, which cannot resume the old box's claude
+    # session — it opens a fresh one, whose transcript ordinals restart near 0.
+    # Those collide head-on with the ordinals the previous box already wrote
+    # (`message_index_unique_per_session`), and `transcript_id` disagreeing would
+    # send `ensure_transcript_identity` in to drop the lot. Both of those are
+    # correct for the case that field was built for — a REUSED emdash task name
+    # pointing at a genuinely different conversation, where the old rows are
+    # another thread's and must go. A transfer is the opposite: same conversation,
+    # new box, and the history is the thing being carried across.
+    #
+    # So the offset makes the successor's ordinals land ABOVE the predecessor's
+    # instead of on top of them, and `ensure_transcript_identity` scopes its drop
+    # to at-or-above the offset — the current epoch — leaving everything below it
+    # alone. One monotonic index space is preserved, which is what `ordering =
+    # ["turn_index"]`, the unique constraint, and every pagination query already
+    # assume; the alternative (a second `segment` coordinate) would have made all
+    # three of those wrong at once.
+    #
+    # Aligned to `BLOCK_STRIDE` so a stored index stays decomposable back into
+    # (record, block) after subtracting the offset. 0 = never transferred, which
+    # is every session that predates this and the overwhelming majority after.
+    index_offset = models.PositiveIntegerField(default=0)
+    # Transfer provenance — WHICH box this conversation came from and when. Kept
+    # because after a transfer the binding's `runner` is the new box and nothing
+    # else records that the session ran somewhere else first; a reader trying to
+    # explain a jump in `turn_index` (the offset) needs to see the reason for it.
+    transferred_at = models.DateTimeField(null=True, blank=True)
+    transferred_from = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="session_bindings_transferred_away",
+    )
     # Liveness: a viewer is attached, so the bound runner should stream this
     # session's events up live. Toggled by the attach registry on the 0<->1 edge.
     stream_desired = models.BooleanField(default=False)
