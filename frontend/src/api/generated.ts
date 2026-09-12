@@ -3847,6 +3847,38 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/transfer": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a live session onto another runner
+         * @description Move a session between boxes — cloud -> laptop, or between the two macOS
+         *     accounts — carrying its message history across.
+         *
+         *     `place` was the closest thing before this and it is not the same operation:
+         *     it re-pins one queued turn and leaves the binding where it was, so the next
+         *     ship still 404s and the next send sticks to the old box. The failure that
+         *     motivated this endpoint was doing the move by hand with `place`/`send` —
+         *     execution DID move, and the session's entire pre-transfer history was deleted
+         *     on the new box's first ship (session 169212e2, 2026-09-12).
+         *
+         *     409, not 422, while a turn executes: the request is well-formed and will
+         *     succeed once the source box is idle, which is a state conflict rather than a
+         *     bad body. Stop the session (`POST /{id}/stop`) and retry.
+         */
+        readonly post: operations["apps_canopy_sessions_api_transfer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/answer-menu": {
         readonly parameters: {
             readonly query?: never;
@@ -10025,6 +10057,37 @@ export interface components {
             /** Placement */
             readonly placement: string;
         };
+        /** TransferOut */
+        readonly TransferOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Runner */
+            readonly runner: string;
+            /** Transferred From */
+            readonly transferred_from: string;
+            /** Index Offset */
+            readonly index_offset: number;
+            /** Turn Id */
+            readonly turn_id: string;
+        };
+        /**
+         * TransferIn
+         * @description Body for POST /{session_id}/transfer — move a LIVE session onto another
+         *     runner, history and all.
+         *
+         *     Distinct from `place`, which only re-pins a queued turn and leaves the
+         *     binding (and so the next ship, and the next send's stickiness) on the old
+         *     box. This moves the session.
+         */
+        readonly TransferIn: {
+            /** Runner */
+            readonly runner: string;
+            /**
+             * Brief
+             * @default
+             */
+            readonly brief: string;
+        };
         /**
          * MenuAnswerIn
          * @description Which option to press on a blocked agent's dialog.
@@ -15670,6 +15733,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_transfer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferOut"];
                 };
             };
         };
