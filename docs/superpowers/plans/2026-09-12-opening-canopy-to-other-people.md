@@ -2089,18 +2089,55 @@ contributor that silently fails to register would report 0 forever:
 
 ```python
 def test_demos_published_comes_from_the_registry(client, db):
+    from django.contrib.auth import get_user_model
+
     from apps.walkthroughs.models import Walkthrough
 
-    # Two rows, one run package — the count must be 1, not 2.
-    Walkthrough.objects.create(title="v", kind="video", run_id="demo-2026-09-12-001")
-    Walkthrough.objects.create(title="d", kind="html", run_id="demo-2026-09-12-001")
+    owner = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+
+    def artifact(kind: str) -> None:
+        # Walkthrough has SEVEN fields with neither null/blank nor a default
+        # (verified against apps/walkthroughs/models.py): title, kind, owner,
+        # drive_file_id, drive_folder_id, content_type, size_bytes. Omitting any
+        # of them raises IntegrityError, not a validation error.
+        Walkthrough.objects.create(
+            title=f"artifact-{kind}",
+            kind=kind,
+            owner=owner,
+            drive_file_id=f"file-{kind}",
+            drive_folder_id="folder-1",
+            content_type="video/mp4" if kind == "video" else "text/html",
+            size_bytes=1,
+            run_id="demo-2026-09-12-001",
+        )
+
+    # Two artifacts, ONE run package — the count must be 1, not 2. This is the
+    # assertion that catches counting rows instead of distinct run_ids.
+    artifact("video")
+    artifact("html")
 
     body = client.get("/api/system/public-stats").json()
     assert body["demos_published"] == 1
+
+
+def test_demos_published_ignores_artifacts_with_no_run(client, db):
+    from django.contrib.auth import get_user_model
+
+    from apps.walkthroughs.models import Walkthrough
+
+    owner = get_user_model().objects.create_user(username="o2", email="o2@dimagi.com")
+    # A one-off upload carries no run_id — it is not a published package.
+    Walkthrough.objects.create(
+        title="loose", kind="html", owner=owner, drive_file_id="f2",
+        drive_folder_id="folder-1", content_type="text/html", size_bytes=1,
+    )
+
+    body = client.get("/api/system/public-stats").json()
+    assert body["demos_published"] == 0
 ```
 
-If `Walkthrough.objects.create` needs more required fields than shown, supply them —
-check `apps/walkthroughs/models.py` for non-null fields without defaults.
+`kind` must be one of `Walkthrough.KIND_CHOICES` (`apps/walkthroughs/models.py:34`) —
+check the valid values before inventing one.
 
 - [ ] **Step 9: Confirm it is genuinely anonymous end to end**
 
