@@ -329,7 +329,7 @@ def storage_content(content: dict, text: str) -> dict:
 ORDINAL_SCHEME = 1
 
 
-def _ensure_current_ordinal_scheme(locked_session) -> int:
+def _ensure_current_ordinal_scheme(locked_session, offset: int = 0) -> int:
     """Drop rows written under a superseded ordinal scheme, so the incoming ones
     can't interleave with them.
 
@@ -341,10 +341,24 @@ def _ensure_current_ordinal_scheme(locked_session) -> int:
     This is `reset` — the existing first-class action — fired automatically on
     the first write instead of waiting for someone to run it. Derived rows only;
     Turns and their ledger are never touched. Returns rows deleted.
+
+    Scoped to the current epoch (`offset`), for the same reason
+    `ensure_transcript_identity` is — and with a stronger justification, because
+    the remedy this function relies on is not available across a transfer.
+    "Drop and re-derive" is safe only while something can re-derive; the rows a
+    transfer carried across were derived from a transcript on a box this server
+    may never be able to reach again, so dropping them is final. The
+    interleaving hazard does not reach across the boundary either: the offset
+    guarantees every inherited row sorts below every new one whatever scheme
+    composed their numbers, so epoch order dominates scheme and the render stays
+    chronological. Two epochs in two schemes is therefore fine; two SCHEMES in
+    ONE epoch is what this still prevents.
     """
     if locked_session.ordinal_scheme == ORDINAL_SCHEME:
         return 0
-    deleted, _ = Message.objects.filter(session=locked_session).delete()
+    deleted, _ = Message.objects.filter(
+        session=locked_session, turn_index__gte=offset
+    ).delete()
     locked_session.ordinal_scheme = ORDINAL_SCHEME
     locked_session.save(update_fields=["ordinal_scheme", "updated_at"])
     return deleted
@@ -372,6 +386,17 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
     Blank `transcript_id` (an old runner) is a no-op: it carries no claim about
     provenance, and dropping rows on no evidence would wipe a healthy session.
     Returns rows deleted.
+
+    Scoped to the CURRENT EPOCH — rows at or above `binding.index_offset`. Below
+    it is history carried across a TRANSFER (`transfer_session`), which is the one
+    case where a changed `transcript_id` does NOT mean "a different conversation's
+    rows are attached": it is the same conversation on a new box, which
+    necessarily opened a fresh claude session with a fresh id. Unscoped, this
+    function deletes exactly the thing a transfer exists to preserve — measured
+    2026-09-12 on session 169212e2 moving cloud-ec2-1 -> jj-mbp-cdp, which lost
+    every one of its 60+ pre-transfer rows the moment the laptop shipped its
+    first transcript. For a never-transferred session the offset is 0 and the
+    scope is the whole session, i.e. exactly the previous behaviour.
     """
     if not transcript_id:
         return 0
@@ -393,7 +418,9 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         # is exactly the state issue #615 describes — rows of unknown provenance,
         # possibly a previous task's — and the shipper is sending the full history
         # for precisely that reason. Rebuilding once is cheap and self-healing.
-        deleted, _ = Message.objects.filter(session=session).delete()
+        deleted, _ = Message.objects.filter(
+            session=session, turn_index__gte=binding.index_offset
+        ).delete()
         binding.transcript_id = transcript_id
         binding.save(update_fields=["transcript_id", "updated_at"])
         return deleted
@@ -418,13 +445,23 @@ def persist_transcript_rows(session, rows) -> int:
     sequential round trips to RDS. Every durable path funnels through here — live
     stream, backfill, reset — so the cost was paid on all of them, and it scaled
     with session length, i.e. it was worst exactly where history matters most.
-    Now: one existence probe plus batched inserts, regardless of row count."""
+    Now: one existence probe plus batched inserts, regardless of row count.
+
+    Ordinals are shifted by the binding's `index_offset` on the way in, so a
+    transferred session's new box writes ABOVE the history it inherited instead of
+    colliding with it. THE single funnel for that shift, deliberately: live
+    stream, backfill and reset all come through here, so applying it anywhere
+    upstream would mean applying it three times and forgetting it once. The
+    identity property the docstring above rests on survives — a given
+    (transcript ordinal, epoch) still maps to exactly one `turn_index`, so
+    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition."""
+    offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
         # `is not None`, never a truthiness test: index 0 is a real ordinal (the
         # transcript's first record) and `x or -1` would read it as "no ordinal".
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
-            _ensure_current_ordinal_scheme(locked)
+            _ensure_current_ordinal_scheme(locked, offset)
         next_index = None
         prepared: list[tuple[int, str, str, dict]] = []
         claimed: set[int] = set()
@@ -451,6 +488,11 @@ def persist_transcript_rows(session, rows) -> int:
                 if next_index is None:
                     next_index = _next_index(locked)
                 index, next_index = next_index, next_index + 1
+            else:
+                # Only ordinal-keyed rows shift. The `index < 0` leg above already
+                # assigns an ABSOLUTE index off the session's own high-water mark,
+                # so offsetting it too would double-count.
+                index += offset
             # First occurrence wins, matching what `get_or_create` did implicitly:
             # a repeat within ONE payload used to find the row its predecessor had
             # just written. A bulk insert has no such ordering, and the pair would
@@ -696,6 +738,16 @@ def _next_index(session: Session) -> int:
     return 0 if current is None else current + 1
 
 
+def _index_offset(session) -> int:
+    """This session's current transcript epoch base — see
+    `RunnerBinding.index_offset`. No binding means nothing has ever been
+    transferred, so 0."""
+    binding = RunnerBinding.objects.filter(session=session).values_list(
+        "index_offset", flat=True
+    ).first()
+    return int(binding or 0)
+
+
 def _placeable_runner(session: Session, runner_id):
     """A runner may be a placement target only if it could actually CLAIM this
     session's turns — its pairer belongs to the session's workspace (mirrors
@@ -753,6 +805,147 @@ def _resolve_placement(session: Session, placement: str | None):
             return _placeable_runner(session, rid)
     return None
 
+
+
+# Prepended to every transfer brief, server-side, so no caller can forget it.
+#
+# The receiving session is NOT a resumed conversation. A transfer re-points the
+# binding at a box that cannot reach the old box's claude session, so the new
+# runner opens a fresh one: it arrives with none of the thread above it in
+# context, while the web UI shows it the whole history — which reads, to it, as
+# if it should already know all of this. Saying so plainly is what stops it
+# confidently re-deriving (or redoing) work that already shipped. Proven by hand
+# on 2026-09-12: a transferred session given this preamble plus a git-state brief
+# verified two PRs and a file checksum and then correctly stopped, rather than
+# starting over.
+TRANSFER_PREAMBLE = """\
+**This session has been transferred from {source} to {target}.**
+
+You are a FRESH session picking up this thread. The conversation above happened \
+on another box, in a different checkout — you do NOT have it in context, even \
+though the chat history is showing it to you. Everything you can rely on is \
+below. Read it, verify the state yourself, then report and wait; do not start \
+new work or redo anything already described as shipped.
+
+Anything that was never pushed from {source} did not come with you.
+"""
+
+
+def transfer_session(*, session: Session, placement: str, brief: str = "", user=None):
+    """Move a live session onto another runner, carrying its history.
+
+    The three things a transfer has to do, which pinning a turn alone does NOT:
+
+    1. **Re-point the binding.** A pinned turn lands on the target box, but the
+       binding still names the old one, so `post_session_stream`'s
+       runner-owned-binding gate (404s a non-owner) drops everything the new box
+       ships until its first `record_session` happens to fix it up. Moving it here
+       makes the transfer the thing that decides placement, rather than a race.
+    2. **Open a new epoch.** The target cannot resume the source's claude session,
+       so it starts a fresh transcript whose ordinals restart near 0. Those would
+       collide with the rows already held and, worse, trip
+       `ensure_transcript_identity` into deleting them. `index_offset` lifts the
+       new box's ordinals above the inherited history instead. See its docstring
+       on the model — this is the field's entire reason to exist.
+    3. **Hand over context.** The new session is cold. `TRANSFER_PREAMBLE` plus the
+       caller's `brief` become the prompt of a turn pinned to the target, which is
+       the only thing standing between "picked up the thread" and "started again
+       from a blank worktree".
+
+    `placement` is a runner UUID (resolved through the same `_placeable_runner`
+    gate `send_message` uses, so a foreign or non-session-capable box is refused
+    rather than left pinned-and-unclaimable forever).
+
+    Raises ValueError for an unresolvable/ineligible target, LookupError for a
+    session with no binding to move, and RuntimeError while a turn is still
+    executing — a box mid-thought would keep writing into the epoch we are about
+    to close, so the caller stops the session first (`POST /{id}/stop`) and
+    retries. Returns (binding, turn).
+    """
+    target = _placeable_runner(session, placement)
+    if target is None:
+        raise ValueError("unknown runner for transfer")
+    if session.status != Session.ACTIVE:
+        raise ValueError("cannot transfer an archived session")
+    if Turn.objects.filter(
+        chat_session=session, status__in=list(harness_services.EXECUTING)
+    ).exists():
+        raise RuntimeError("a turn is still executing — stop the session first")
+
+    with transaction.atomic():
+        binding = (
+            RunnerBinding.objects.select_for_update().filter(session=session).first()
+        )
+        if binding is None:
+            raise LookupError("session has no runner binding to transfer")
+        source = binding.runner
+        if source is not None and source.id == target.id:
+            raise ValueError(f"session is already on '{target.name}'")
+
+        # Round UP to a stride boundary past the high-water mark, so a stored index
+        # minus the offset still decomposes into (record, block). `+ BLOCK_STRIDE`
+        # rather than a bare ceiling leaves one clear stride of gap between the
+        # epochs — without it an offset landing exactly on the mark lets the new
+        # transcript's record 0 sit in the same stride as the old tail.
+        high = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
+        if high is not None:
+            binding.index_offset = ((int(high) // BLOCK_STRIDE) + 2) * BLOCK_STRIDE
+
+        binding.runner = target
+        binding.transferred_from = source
+        binding.transferred_at = timezone.now()
+        # Everything below describes the SOURCE box's screen, and none of it is
+        # true of the target. `session_key` and `host` in particular are what
+        # `reusable_by` consults: left populated they would tell the target to go
+        # drive a task that does not exist on it. Cleared, `resolve_session`
+        # returns reuse=False + new_thread=False, which is precisely "open a fresh
+        # session under this account and rehydrate from `summary`" — the path the
+        # two-account failover already uses.
+        binding.session_key = ""
+        binding.host = ""
+        binding.transcript_id = ""
+        binding.pending_question = None
+        binding.pending_answer = None
+        binding.close_requested = False
+        binding.agent_status = ""
+        binding.agent_status_stale = False
+        binding.tail = []
+        binding.save(update_fields=[
+            "runner", "transferred_from", "transferred_at", "index_offset",
+            "session_key", "host", "transcript_id", "pending_question",
+            "pending_answer", "close_requested", "agent_status",
+            "agent_status_stale", "tail", "updated_at",
+        ])
+
+        # So a LATER send on a still-unbound session re-pins here too, instead of
+        # falling back to open routing and landing on whichever box polls first.
+        metadata = dict(session.metadata or {})
+        metadata["requested_runner_id"] = str(target.id)
+        session.metadata = metadata
+        session.save(update_fields=["metadata", "updated_at"])
+
+        source_name = source.name if source is not None else "an unknown runner"
+        prompt = TRANSFER_PREAMBLE.format(source=source_name, target=target.name)
+        if brief.strip():
+            prompt = f"{prompt}\n{brief.strip()}\n"
+        thread_key = binding.thread_key or str(session.id)
+        turn, _created = harness_services.enqueue_turn(
+            session=session,
+            origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+            # Keyed on the TARGET and the transfer's own timestamp: transferring
+            # back and forth (which is the normal shape of a failover) must not
+            # dedupe onto the outbound turn.
+            idempotency_key=(
+                f"transfer:{session.id.hex}:{target.id.hex}:"
+                f"{int(binding.transferred_at.timestamp())}"
+            ),
+            prompt=prompt,
+            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id),
+                        "transfer_from": source_name},
+            enqueued_by=user,
+            pinned_runner=target,
+        )
+    return binding, turn
 
 
 def claim_pending_attachments(session, message=None) -> list[dict]:

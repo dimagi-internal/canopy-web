@@ -877,7 +877,7 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     "ship only what is new" from "ship the history I am missing" — a Max alone can
     only ever append above the high-water mark and so can never fill a hole below
     it, which is how a session ended up stuck at 8.6% with no way to self-heal."""
-    from django.db.models import Max as _Max, Min as _Min
+    from django.db.models import F, Max as _Max, Min as _Min
 
     from apps.canopy_sessions.models import RunnerBinding, Session
 
@@ -894,18 +894,48 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
         # though: `drain_backfills` is a separate path this filter does not
         # touch, so an explicit "Load full session" on one still works. Eager for
         # live sessions, on demand for retired ones.
+        # Scoped to the CURRENT EPOCH, and reported in the RUNNER's own ordinal
+        # space (see RunnerBinding.index_offset). Both halves matter for a
+        # transferred session, and for opposite reasons:
+        #   - the filter, because rows inherited from the previous box are not in
+        #     this runner's transcript at all. An unfiltered Min/Max would hand it
+        #     a high-water mark it can never reach, so every record of the live
+        #     conversation would sit BELOW the marker and never ship — issue #615's
+        #     failure exactly, reintroduced by preserving history rather than by
+        #     reusing a task name.
+        #   - the subtraction, because the runner compares these against ordinals
+        #     it computes from its OWN file. It needs no knowledge of the offset:
+        #     the shift is applied on write (persist_transcript_rows) and undone
+        #     here, so both directions stay inside the server.
+        # Offset 0 (never transferred) makes the filter cover everything and the
+        # subtraction a no-op, i.e. the previous behaviour byte for byte.
         .annotate(
-            _first_index=_Min("session__messages__turn_index"),
-            _last_index=_Max("session__messages__turn_index"),
+            _first_index=_Min(
+                "session__messages__turn_index",
+                filter=Q(session__messages__turn_index__gte=F("index_offset")),
+            ),
+            _last_index=_Max(
+                "session__messages__turn_index",
+                filter=Q(session__messages__turn_index__gte=F("index_offset")),
+            ),
         )
     )
+
+    def _local(marker, offset):
+        """A server-space marker in the runner's own ordinal space. None stays
+        None — "I hold nothing of this transcript", which is what a freshly
+        transferred session is, and it tells the runner to ship from the top."""
+        return None if marker is None else max(int(marker) - int(offset or 0), 0)
+
     return {"streams": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
          # emdash_project, never `project`: an agent chat leaves `project` blank
          # and its worktree lives under the agent's own repo. Sending "" here is
          # what stopped agent sessions ever being streamed or backfilled.
-         "project": b.session.emdash_project, "last_index": b._last_index,
-         "first_index": b._first_index, "live": b.stream_desired,
+         "project": b.session.emdash_project,
+         "last_index": _local(b._last_index, b.index_offset),
+         "first_index": _local(b._first_index, b.index_offset),
+         "live": b.stream_desired,
          # What the markers above are markers INTO. They are per-file ordinals, so
          # a runner reading a different transcript must discard them rather than
          # resume against them (issue #615).
