@@ -4,6 +4,7 @@ import { aiStatus as fetchAiStatus, aiAuthStart, aiAuthComplete, aiAuthPoll } fr
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
+import { CopyBlock } from '@/components/CopyBlock'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 
@@ -368,28 +369,6 @@ function DebugAccessPanel() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-export function CopyBlock({
-  label, value, copied, onCopy,
-}: { label: string; value: string; copied: boolean; onCopy: () => void }) {
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{label}</span>
-        <button
-          type="button"
-          onClick={onCopy}
-          className="text-xs text-primary hover:text-primary transition-colors"
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <pre className="bg-background border border-border rounded-lg p-3 text-xs text-foreground-secondary font-mono overflow-x-auto whitespace-pre-wrap break-all">
-        {value}
-      </pre>
     </div>
   )
 }

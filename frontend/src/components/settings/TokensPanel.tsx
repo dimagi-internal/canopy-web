@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { listTokens, mintToken, revokeToken, type PersonalToken } from '@/api/tokens'
 import { tokenStatus } from '@/api/tokenStatus'
-import { CopyBlock } from '@/pages/SettingsPage'
+import { CopyBlock } from '@/components/CopyBlock'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 
@@ -22,7 +22,11 @@ export function TokensPanel() {
   const [busy, setBusy] = useState(false)
 
   async function refresh() {
-    setTokens(await listTokens())
+    try {
+      setTokens(await listTokens())
+    } catch {
+      setError('Could not load tokens.')
+    }
   }
 
   useEffect(() => {

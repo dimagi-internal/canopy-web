@@ -33,7 +33,11 @@ vi.mock('@/api/presence', () => ({ getPresencePreference, setPresencePreference 
 // mount. Mocked here purely so rendering the full SettingsPage in these
 // presence-focused tests doesn't also hit the (unmocked, jsdom-unreachable)
 // tokens endpoint.
-vi.mock('@/api/tokens', () => ({ listTokens: vi.fn().mockResolvedValue([]) }))
+vi.mock('@/api/tokens', () => ({
+  listTokens: vi.fn().mockResolvedValue([]),
+  mintToken: vi.fn(),
+  revokeToken: vi.fn(),
+}))
 
 const { SettingsPage } = await import('./SettingsPage')
 const { PRESENCE_PREFERENCE_CHANGED_EVENT } = await import('@/presence/events')
