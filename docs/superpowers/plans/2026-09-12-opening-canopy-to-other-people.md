@@ -41,10 +41,22 @@ for generated API types.
 - **Backend tests** go in root `tests/test_*.py` for cross-cutting concerns, or
   `apps/<app>/tests/test_*.py` where that app already has a `tests/` package
   (`apps/workspaces/tests/` does).
-- **Frontend tests** are vitest, colocated as `<module>.test.ts(x)`. There is **no
-  jsdom / testing-library** configured — test pure functions and extracted logic, never
-  by mounting React components. This is why logic gets extracted into plain `.ts` modules
-  (the precedent is `frontend/src/workspace/resolveActiveWorkspace.ts`).
+- **Frontend tests** are vitest, colocated as `<module>.test.ts(x)`. **jsdom 29 and
+  `@testing-library/react` 16 ARE installed and used** — there are ~10 component tests
+  calling `render()` (`PublicHeader.test.tsx`, `ChatSessionsPanel.test.tsx`,
+  `RunnerAssignments.test.tsx`, …), so mounting a component in a test is available to you.
+  (An earlier revision of this plan claimed otherwise, propagating a stale comment at
+  `frontend/src/workspace/resolveActiveWorkspace.ts:2`. That comment is wrong; the plan
+  was wrong for repeating it.) Still prefer extracting decision logic into a plain `.ts`
+  module and testing it directly — it is faster and less brittle than asserting on
+  rendered output — but a component test is a legitimate choice where the behaviour only
+  exists once mounted.
+- **A task that changes a Pydantic response schema MUST run `cd frontend && npm run build`,
+  not just the backend tests.** Fields in `generated.ts` are non-optional, so adding one
+  to a response model breaks every test file that constructs a mock of it — and those
+  files are usually nowhere near your diff. Task 1 shipped exactly this break (two
+  `tsc` failures in `PublicHeader.test.tsx` and `NoteComposer.test.tsx`) because its
+  verification ran `pytest` only. Task 10 adds `PublicStatsOut`; do not repeat it.
 - **Open PRs with auto-merge armed**: `gh pr merge <n> --auto`. Never pass `--squash` or
   any strategy flag — the merge queue owns the strategy and a strategy flag leaves
   auto-merge UNARMED. Verify with `gh pr view <n> --json autoMergeRequest`.
@@ -260,8 +272,9 @@ F1 finding). Surfacing the gate is what lets the UI show the right thing."
 workspace. A signed-in user with no membership therefore sees an empty app shell — no
 error, no message, nothing. This is the literal first screen of the power-user rollout.
 
-The state logic goes in a plain `.ts` module because there is no jsdom in this project;
-pure logic is the only thing that can be unit-tested here.
+The state logic goes in a plain `.ts` module because a pure function is the cheapest,
+least brittle place to pin a three-way decision — not because component testing is
+unavailable (it is available; see Global Constraints).
 
 **No backend test needed for the create endpoint.** `apps/workspaces/tests/test_api.py`
 already covers both error paths this screen must handle: the 403 for an ineligible caller
@@ -329,9 +342,9 @@ Create `frontend/src/pages/firstRun.ts`:
 
 ```typescript
 /**
- * Which first-run state applies. Extracted as a pure function because this
- * project has no jsdom/testing-library — logic in a .ts module is the only
- * thing unit-testable here (same reason as workspace/resolveActiveWorkspace.ts).
+ * Which first-run state applies. Extracted as a pure function so the three-way
+ * decision can be pinned directly, without mounting anything — cheaper and less
+ * brittle than asserting on rendered output.
  *
  * There are THREE zero-workspace states, not one. An invite-admitted user who
  * holds no membership may not create a workspace (the F1 finding — see
@@ -371,7 +384,11 @@ export async function createWorkspace(
   const res = await apiV2.POST('/api/workspaces/', {
     body: { slug, display_name: displayName },
   })
-  if (res.error) {
+  // Branch on `res.response.ok`, NOT on `res.error` — this endpoint declares only a
+  // 201 in the OpenAPI schema, so `res.error` narrows to `never` and `if (res.error)`
+  // fails tsc. `frontend/src/api/workspaces.ts:32-36` documents this convention and
+  // every other function in the file follows it.
+  if (!res.response.ok) {
     // 409 = slug taken, 403 = not eligible (F1), 422 = bad slug charset.
     // The server's problem+json `detail` is the only message worth showing:
     // the slug rules are enforced by Workspace.SLUG_PATTERN server-side and
