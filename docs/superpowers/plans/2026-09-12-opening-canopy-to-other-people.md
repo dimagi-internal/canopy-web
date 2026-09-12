@@ -1679,6 +1679,12 @@ companion spec ships.
 - Modify: `frontend/src/pages/AgentsPage.tsx`
 - Modify: `frontend/src/pages/ChatListPage.tsx`
 
+**Use react-router `<Link to="/guide#...">`, never a relative `<a href>`.** A relative
+href resolves differently at each route depth and ignores the `/canopy` basename: from
+`/w/:ws/chat`, `../guide` lands on `/w/guide`. `Link` with an absolute path handles the
+basename automatically and is depth-independent. Add
+`import { Link } from 'react-router-dom'` to each file if it is not already there.
+
 **Interfaces:**
 - Consumes: `USER_PATHS` (Task 7) for the copy's starting points.
 - Produces: nothing consumed by later tasks.
@@ -1708,9 +1714,9 @@ In `frontend/src/pages/AgentsPage.tsx`, where the list is empty:
   </p>
   <p className="mt-2 text-[12px] text-muted-foreground">
     You will also need a runner online to execute its turns.{' '}
-    <a href="../../guide#/w/:workspace/agents" className="text-primary hover:underline">
+    <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
       Read more in the guide
-    </a>
+    </Link>
     .
   </p>
 </div>
@@ -1734,9 +1740,9 @@ In `frontend/src/pages/ChatListPage.tsx`, where the session list is empty:
   </p>
   <p className="mt-2 text-[12px] text-muted-foreground">
     Nothing to chat with?{' '}
-    <a href="../guide#/w/:workspace/agents" className="text-primary hover:underline">
+    <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
       You need an agent first
-    </a>
+    </Link>
     .
   </p>
 </div>
@@ -1750,9 +1756,10 @@ Expected: tsc clean, tests pass.
 - [ ] **Step 5: Verify the links resolve**
 
 In the running app, open a workspace with no agents, click through to the guide from the
-empty state, and confirm it lands on the Agents entry rather than the top of the page.
-Relative hrefs under `/w/:workspace/...` are easy to get wrong by one `../` — check the
-resulting URL in the address bar.
+empty state, and confirm the address bar shows `/canopy/guide#/w/:workspace/agents` (not
+`/canopy/w/<ws>/guide...`) and that the page scrolls to the Agents entry. Do the same from
+an empty Chats list — the two pages sit at different route depths, which is exactly what
+a relative href would get wrong.
 
 - [ ] **Step 6: Commit**
 
@@ -2360,6 +2367,25 @@ In `frontend/src/router.tsx`, add to the existing `PublicLayout` children array 
 It must go in the `PublicLayout` block, **not** the `AppLayout` block — `AppLayout` fires
 authed calls that bounce anonymous visitors to login.
 
+- [ ] **Step 5b: Give `/about` a descriptor**
+
+`/about` is a real route, so `isDocumentable('/about')` is true and Task 6's coverage test
+will fail until it is described. It gets a descriptor rather than an entry in
+`NOT_DOCUMENTABLE`, which stays reserved for redirects and the catch-all. Add to
+`frontend/src/guide/surfaces.ts`:
+
+```typescript
+  {
+    path: '/about',
+    title: 'About Canopy (public)',
+    audience: 'Anyone, including people with no account',
+    what: 'The public explainer — what Canopy is, the five components it is made of, live counts, and the five ways in. No login required, so this is the link to send someone outside the team.',
+    actions: ['Send it to someone', 'See the live fleet counts'],
+  },
+```
+
+Run `npx vitest run src/guide/coverage.test.ts` and confirm it is green before moving on.
+
 - [ ] **Step 6: Allowlist the page path in the login middleware**
 
 In `apps/common/middleware.py`, add to `PUBLIC_PATH_PREFIXES`:
@@ -2402,7 +2428,7 @@ Expected: no matches.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add frontend/src/guide/components.ts frontend/src/guide/components.test.ts frontend/src/api/publicStats.ts frontend/src/pages/AboutPage.tsx frontend/src/router.tsx frontend/src/pwa/navigation-fallback.ts apps/common/middleware.py
+git add frontend/src/guide/components.ts frontend/src/guide/components.test.ts frontend/src/api/publicStats.ts frontend/src/pages/AboutPage.tsx frontend/src/guide/surfaces.ts frontend/src/router.tsx frontend/src/pwa/navigation-fallback.ts apps/common/middleware.py
 git commit -m "web: public explainer at /about
 
 Chrome-less on PublicLayout, anonymous, with live aggregate counts because
