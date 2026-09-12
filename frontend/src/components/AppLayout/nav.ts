@@ -77,6 +77,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: 'members', label: 'Members', tenant: true },
       { path: 'inbound', label: 'Inbound', tenant: true },
       { path: '/system', label: 'System', tenant: false },
+      { path: '/guide', label: 'Guide', tenant: false },
     ],
   },
 ]

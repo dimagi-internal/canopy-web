@@ -16,7 +16,7 @@ describe('NAV_GROUPS', () => {
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Inbound', 'Insights', 'Members',
+        'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Inbound', 'Insights', 'Members',
         'Projects', 'Schedule', 'Sessions', 'Shareouts', 'Storyboards', 'Supervisor',
         'System', 'Timeline', 'Walkthroughs',
       ].sort(),
@@ -54,7 +54,7 @@ describe('resolveNavGroups', () => {
     const groups = resolveNavGroups({ isAuthed: true, active: null })
     const hrefs = groups.flatMap((g) => g.items.map((i) => i.href))
     expect(hrefs.some((h) => h.includes('/w//'))).toBe(false)
-    expect(hrefs).toEqual(['/insights', '/supervisor', '/activity', '/schedules', '/sessions', '/system'])
+    expect(hrefs).toEqual(['/insights', '/supervisor', '/activity', '/schedules', '/sessions', '/system', '/guide'])
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {

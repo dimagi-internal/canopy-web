@@ -32,6 +32,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Browse the catalog', 'Read a capability in full'],
   },
   {
+    path: '/guide',
+    title: 'Guide',
+    audience: 'Anyone finding their way around',
+    what: "What every surface in Canopy is for, generated from the app's own route table.",
+    actions: ['Find the page you need', 'See what a surface needs before it works'],
+  },
+  {
     path: '/insights',
     title: 'Insights',
     audience: 'Anyone watching the portfolio',

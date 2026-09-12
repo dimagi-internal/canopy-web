@@ -6,6 +6,7 @@ import { FirstRunPage } from './pages/FirstRunPage'
 import { AppLayout } from './components/AppLayout/AppLayout'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { NotFound } from './components/NotFound'
+import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { ProjectsPage } from './pages/ProjectsPage'
@@ -190,6 +191,7 @@ export const routeTable: RouteObject[] = [
     children: [
       // --- Personal / global (not tenant-scoped) ---
       { path: '/system', element: <SystemPage /> },
+      { path: '/guide', element: <GuidePage /> },
       { path: '/insights', element: <InsightsPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
