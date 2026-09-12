@@ -41,6 +41,8 @@ def health(request: HttpRequest) -> HealthOut:
 
 @common_router.get("/me/", response=MeOut, summary="Current user")
 def me(request: HttpRequest) -> MeOut:
+    from apps.workspaces.services import can_create_workspace
+
     user = request.user
     avatar_url = ""
     social = (
@@ -54,6 +56,7 @@ def me(request: HttpRequest) -> MeOut:
         email=user.email,
         name=(user.get_full_name() or user.username or user.email),
         avatar_url=avatar_url,
+        can_create_workspace=can_create_workspace(user),
     )
 
 

@@ -4675,6 +4675,11 @@ export interface components {
             readonly name: string;
             /** Avatar Url */
             readonly avatar_url: string;
+            /**
+             * Can Create Workspace
+             * @default false
+             */
+            readonly can_create_workspace: boolean;
         };
         /**
          * PresencePreferenceOut
