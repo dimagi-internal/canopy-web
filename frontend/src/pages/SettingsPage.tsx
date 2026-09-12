@@ -3,6 +3,7 @@ import { mintDebugSession, type MintDebugSessionResponse } from '@/api/debug'
 import { aiStatus as fetchAiStatus, aiAuthStart, aiAuthComplete, aiAuthPoll } from '@/api/ai'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
+import { TokensPanel } from '@/components/settings/TokensPanel'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 
@@ -252,6 +253,8 @@ export function SettingsPage() {
         </div>
       </div>
 
+      <TokensPanel />
+
       <DebugAccessPanel />
     </div>
   )
@@ -369,7 +372,7 @@ function DebugAccessPanel() {
   )
 }
 
-function CopyBlock({
+export function CopyBlock({
   label, value, copied, onCopy,
 }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
   return (
