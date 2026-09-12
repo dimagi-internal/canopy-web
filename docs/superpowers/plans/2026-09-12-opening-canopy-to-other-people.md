@@ -734,6 +734,8 @@ free to drift.
 
 **Files:**
 - Create: `frontend/src/api/tokens.ts`
+- Create: `frontend/src/api/tokenStatus.ts`
+- Test: `frontend/src/api/tokenStatus.test.ts`
 - Create: `frontend/src/components/settings/TokensPanel.tsx`
 - Modify: `frontend/src/pages/SettingsPage.tsx`
 
@@ -812,6 +814,56 @@ Expected: a non-zero count. The tokens router is already registered
 (`apps/api/api.py:175`), so no backend change and no regen is needed for this task. If
 the count is 0, run `npm run gen:api` with the backend up and commit the result.
 
+- [ ] **Step 2b: Extract and pin the status ladder**
+
+The panel renders a three-way status per token. It is a silent, user-visible derivation —
+showing "active" for a revoked token would be the worst possible bug on a credentials
+screen — so it goes in a pure module and gets a test, the same way `firstRun.ts` holds the
+first-run decision. Create `frontend/src/api/tokenStatus.ts`:
+
+```typescript
+import type { PersonalToken } from './tokens'
+
+/**
+ * What to show in the Status column. Order matters: a revoked token may ALSO
+ * carry an expiry, and "revoked" is the answer that matters — it is the one
+ * that means "this credential is dead right now".
+ */
+export function tokenStatus(t: Pick<PersonalToken, 'revoked_at' | 'expires_at'>): string {
+  if (t.revoked_at) return 'revoked'
+  if (t.expires_at) return `expires ${t.expires_at.slice(0, 10)}`
+  return 'active'
+}
+```
+
+And `frontend/src/api/tokenStatus.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest'
+import { tokenStatus } from './tokenStatus'
+
+describe('tokenStatus', () => {
+  it('reports a live token with an expiry', () => {
+    expect(tokenStatus({ revoked_at: null, expires_at: '2027-03-01T00:00:00Z' })).toBe(
+      'expires 2027-03-01',
+    )
+  })
+
+  it('reports a never-expiring token as active', () => {
+    expect(tokenStatus({ revoked_at: null, expires_at: null })).toBe('active')
+  })
+
+  it('prefers revoked over expiry — a revoked token is dead regardless of its expiry', () => {
+    // This is the case that must never regress: reporting "expires 2027-03-01"
+    // for a revoked credential would tell someone it still works.
+    expect(tokenStatus({ revoked_at: '2026-09-01T00:00:00Z', expires_at: '2027-03-01T00:00:00Z' }))
+      .toBe('revoked')
+  })
+})
+```
+
+Then use `tokenStatus(t)` in the panel's Status cell instead of the inline ternary chain.
+
 - [ ] **Step 3: Write the panel**
 
 Create `frontend/src/components/settings/TokensPanel.tsx`:
@@ -819,6 +871,7 @@ Create `frontend/src/components/settings/TokensPanel.tsx`:
 ```tsx
 import { useEffect, useState } from 'react'
 import { listTokens, mintToken, revokeToken, type PersonalToken } from '@/api/tokens'
+import { tokenStatus } from '@/api/tokenStatus'
 
 /**
  * List / mint / revoke Personal Access Tokens.
@@ -944,9 +997,7 @@ export function TokensPanel() {
                 <td className="py-1.5 text-muted-foreground">
                   {t.last_used_at ? t.last_used_at.slice(0, 10) : 'never'}
                 </td>
-                <td className="py-1.5 text-muted-foreground">
-                  {t.revoked_at ? 'revoked' : t.expires_at ? `expires ${t.expires_at.slice(0, 10)}` : 'active'}
-                </td>
+                <td className="py-1.5 text-muted-foreground">{tokenStatus(t)}</td>
                 <td className="py-1.5 text-right">
                   {t.revoked_at ? null : (
                     <button
