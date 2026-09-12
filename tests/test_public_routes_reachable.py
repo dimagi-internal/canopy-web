@@ -67,6 +67,7 @@ PUBLIC_PATHS = [
     "/api/storyboards/ecf-supply",
     "/api/storyboards/ecf-supply/narratives/verified-monitoring",
     "/api/storyboards/ecf-supply/feedback",
+    "/about",
 ]
 
 

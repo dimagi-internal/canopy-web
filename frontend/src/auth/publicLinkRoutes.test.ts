@@ -28,7 +28,7 @@ describe('isPublicLinkRoute', () => {
   it('covers every chrome-less public surface', () => {
     const prefixes = publicPrefixes(clientSrc)
     for (const route of [
-      '/review/', '/share/', '/ddd-release/', '/storyboard/', '/narrative/', '/invite/',
+      '/review/', '/share/', '/ddd-release/', '/storyboard/', '/narrative/', '/invite/', '/about',
     ]) {
       expect(prefixes).toContain(route)
     }

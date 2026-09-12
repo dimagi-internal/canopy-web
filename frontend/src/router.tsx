@@ -31,6 +31,7 @@ import StoryboardPage from './pages/StoryboardPage'
 import StoryboardsPage from './pages/StoryboardsPage'
 import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
+import { AboutPage } from './pages/AboutPage'
 import SupervisorPage from '@/pages/SupervisorPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
@@ -300,6 +301,9 @@ export const routeTable: RouteObject[] = [
       // One narrative, scene by scene, for an outsider. `?b=<board>` carries the
       // storyboard whose token gates it — the narrative itself has no token.
       { path: '/narrative/:slug', element: <NarrativeReviewPage /> },
+      // The public explainer — anyone, no login. Mounted here (not AppLayout)
+      // for the same reason as its siblings above.
+      { path: '/about', element: <AboutPage /> },
     ],
   },
 ]

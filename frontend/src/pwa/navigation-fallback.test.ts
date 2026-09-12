@@ -31,6 +31,7 @@ describe('navigate-fallback ownership', () => {
       '/w/connect',
       '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
       `/walkthrough/${UUID}`, // viewer shell (no /content)
+      '/about', // public explainer
     ]
     for (const p of spaPaths) {
       it(p, () => expect(shouldServeShell(p)).toBe(true))
@@ -52,6 +53,11 @@ describe('navigate-fallback ownership', () => {
     for (const p of serverPaths) {
       it(p, () => expect(shouldServeShell(p)).toBe(false))
     }
+  })
+
+  it('the public explainer is handled, an API path is not', () => {
+    expect(shouldServeShell('/about')).toBe(true)
+    expect(shouldServeShell('/api/whatever')).toBe(false)
   })
 
   it('an unknown path fails safe (network, not shell)', () => {
@@ -111,6 +117,7 @@ describe('the matcher workbox inlines into the SW', () => {
     '/w/connect',
     '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
     `/walkthrough/${UUID}`,
+    '/about',
     '/api/ddd/runs/x',
     '/accounts/google/login/',
     '/admin/',

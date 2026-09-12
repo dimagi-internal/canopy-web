@@ -339,6 +339,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     what: "One narrative, scene by scene, for someone meeting the story for the first time — clean by default, with an optional toggle to see what changed since the last version. Editing (if allowed) opens the scene's own text directly.",
     actions: ['Read the narrative', 'Toggle "what changed"', 'Comment or suggest an edit (if the board allows it)'],
   },
+  {
+    path: '/about',
+    title: 'About Canopy (public)',
+    audience: 'Anyone, including people with no account',
+    what: 'The public explainer — what Canopy is, the five components it is made of, live counts, and the five ways in. No login required, so this is the link to send someone outside the team.',
+    actions: ['Send it to someone', 'See the live fleet counts'],
+  },
 ]
 
 export function describedPaths(): Set<string> {

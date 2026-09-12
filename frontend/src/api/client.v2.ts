@@ -96,7 +96,8 @@ function isPublicLinkRoute(): boolean {
     p.startsWith("/ddd-release/") ||
     p.startsWith("/storyboard/") ||
     p.startsWith("/narrative/") ||
-    p.startsWith("/invite/")
+    p.startsWith("/invite/") ||
+    p.startsWith("/about")
   );
 }
 
