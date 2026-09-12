@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import type { RouteObject } from 'react-router-dom'
 import { createBrowserRouter, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useWorkspace } from './workspace/WorkspaceProvider'
+import { FirstRunPage } from './pages/FirstRunPage'
 import { AppLayout } from './components/AppLayout/AppLayout'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { NotFound } from './components/NotFound'
@@ -123,7 +124,7 @@ function TenantRedirect({ to }: { to: string }) {
   const { active, loading } = useWorkspace()
   const { '*': tail } = useParams()
   if (loading) return null
-  if (!active) return null // no membership yet; nothing to route to
+  if (!active) return <FirstRunPage /> // no membership yet — explain, don't blank
   const suffix = tail ? `/${tail}` : ''
   return <Navigate to={`/w/${active}/${to}${suffix}`} replace />
 }
@@ -132,7 +133,7 @@ function TenantRedirect({ to }: { to: string }) {
 function RootRedirect() {
   const { active, loading } = useWorkspace()
   if (loading) return null
-  if (!active) return null
+  if (!active) return <FirstRunPage />
   return <Navigate to={`/w/${active}`} replace />
 }
 
