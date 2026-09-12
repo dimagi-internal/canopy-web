@@ -14,7 +14,7 @@ import { firstRunState } from './firstRun'
  * guaranteed to read, so it explains what a workspace IS rather than just
  * asking for a slug.
  */
-export function FirstRunPage() {
+export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: boolean }) {
   const { workspaces, loading, refresh } = useWorkspace()
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -36,7 +36,12 @@ export function FirstRunPage() {
     canCreate,
   })
 
-  if (state === 'loading' || state === 'ready') return null
+  if (state === 'loading') return null
+  if (state === 'ready' && !alwaysOfferForm) return null
+  // On /new-workspace an eligible user sees the form even though they already
+  // belong somewhere; `needs-invite` still applies, because eligibility is the
+  // server's call either way.
+  const offerForm = alwaysOfferForm ? canCreate : state === 'can-create'
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -66,7 +71,7 @@ export function FirstRunPage() {
         <span className="font-medium text-foreground">workspace</span>. You are not in one yet.
       </p>
 
-      {state === 'can-create' ? (
+      {offerForm ? (
         <form onSubmit={submit} className="mt-8 space-y-4">
           <div>
             <label htmlFor="ws-slug" className="block text-xs font-medium text-foreground-secondary">

@@ -188,6 +188,7 @@ export const router = createBrowserRouter(guarded([
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
       { path: '/settings', element: <SettingsPage /> },
+      { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // --- Public viewers (root; self-enforce visibility) ---
       { path: '/walkthrough/:id', element: <WalkthroughViewerPage /> },
       { path: '/review/:id', element: <ReviewPage /> },

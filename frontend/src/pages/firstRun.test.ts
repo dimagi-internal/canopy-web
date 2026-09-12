@@ -33,4 +33,10 @@ describe('firstRunState', () => {
     // list means that count isn't trustworthy yet.
     expect(firstRunState({ loading: true, workspaceCount: 1, canCreate: true })).toBe('loading')
   })
+
+  it('still reports ready for a member — /new-workspace opts out via a prop, not this fn', () => {
+    // Documents the seam: firstRunState stays a pure description of the user's
+    // standing. The route decides whether to show a form anyway.
+    expect(firstRunState({ loading: false, workspaceCount: 3, canCreate: true })).toBe('ready')
+  })
 })

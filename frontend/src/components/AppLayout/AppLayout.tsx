@@ -185,7 +185,13 @@ function UserMenu() {
 function WorkspaceSwitcher() {
   const { workspaces, active } = useWorkspace()
   const navigate = useNavigate()
-  if (workspaces.length <= 1) return null
+  // Hide the SWITCHER when there is nothing to switch between — but never hide
+  // the way to make another one. Conflating those two is what left a
+  // one-workspace user with no path to a second (and a zero-workspace user
+  // with no path at all).
+  if (workspaces.length <= 1) {
+    return <NewWorkspaceLink />
+  }
   return (
     <select
       aria-label="Workspace"
@@ -199,6 +205,19 @@ function WorkspaceSwitcher() {
         </option>
       ))}
     </select>
+  )
+}
+
+/** The one affordance that must never be conditional on how many workspaces
+ *  you already have. Routes to the first-run screen, which owns the form. */
+function NewWorkspaceLink() {
+  return (
+    <Link
+      to="/new-workspace"
+      className="text-xs text-muted-foreground hover:text-foreground"
+    >
+      + Workspace
+    </Link>
   )
 }
 
