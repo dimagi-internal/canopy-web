@@ -2179,15 +2179,40 @@ def _extra(name: str) -> int:
         return 0
 
 
-def public_stats() -> dict[str, int]:
+#: Short TTL on an ANONYMOUS endpoint, so an unauthenticated caller cannot turn
+#: this into a free load generator against the database. 60s is well inside what
+#: a counts display needs to be truthful. The project configures no `CACHES`, so
+#: this is Django's default per-process LocMemCache — each web process computing
+#: the counts once a minute is fine, and the pattern matches
+#: `apps/canopy_sessions/attach.py` and `apps/mcp/rate_limit.py`.
+_CACHE_KEY = "system:public-stats:v1"
+_CACHE_TTL = 60
+
+
+def _compute() -> dict[str, int]:
     return {
         "agents": Agent.objects.count(),
         "skills": _skill_count(),
         "runners_online": _runners_online(),
+        # DONE only — "turns executed" should not count failures or cancellations.
+        # Hits the ("status", "created_at") index on its leading column.
         "turns_executed": Turn.objects.filter(status=Turn.DONE).count(),
         "demos_published": _extra("demos_published"),
     }
+
+
+def public_stats() -> dict[str, int]:
+    cached = cache.get(_CACHE_KEY)
+    if cached is not None:
+        return cached
+    stats = _compute()
+    cache.set(_CACHE_KEY, stats, timeout=_CACHE_TTL)
+    return stats
 ```
+
+Add `from django.core.cache import cache` to the imports. Bump the `v1` in the cache key
+if you ever change the returned field set, so a running process cannot serve a stale shape
+to the new schema.
 
 Add `from collections.abc import Callable` to the imports (used in the annotations above).
 
