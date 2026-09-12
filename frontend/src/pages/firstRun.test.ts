@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { firstRunState } from './firstRun'
+import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
 describe('firstRunState', () => {
   it('is loading while the workspace list is unresolved, regardless of eligibility', () => {
@@ -33,10 +33,31 @@ describe('firstRunState', () => {
     // list means that count isn't trustworthy yet.
     expect(firstRunState({ loading: true, workspaceCount: 1, canCreate: true })).toBe('loading')
   })
+})
 
-  it('still reports ready for a member — /new-workspace opts out via a prop, not this fn', () => {
-    // Documents the seam: firstRunState stays a pure description of the user's
-    // standing. The route decides whether to show a form anyway.
-    expect(firstRunState({ loading: false, workspaceCount: 3, canCreate: true })).toBe('ready')
+describe('shouldOfferCreateForm', () => {
+  it('respects eligibility even when alwaysOfferForm is true (the F1 gate)', () => {
+    // An invite-admitted user holding no membership may not create a workspace.
+    // On /new-workspace, passing alwaysOfferForm=true should NOT bypass the
+    // eligibility check — offering a form would 403.
+    expect(shouldOfferCreateForm({ state: 'ready', canCreate: false, alwaysOfferForm: true })).toBe(
+      false,
+    )
+  })
+
+  it('offers the form on /new-workspace to an eligible user who already belongs somewhere', () => {
+    expect(shouldOfferCreateForm({ state: 'ready', canCreate: true, alwaysOfferForm: true })).toBe(
+      true,
+    )
+  })
+
+  it('offers the form to an eligible user with no workspace', () => {
+    expect(shouldOfferCreateForm({ state: 'can-create', canCreate: true, alwaysOfferForm: false }))
+      .toBe(true)
+  })
+
+  it('does not offer the form to an ineligible user with no workspace', () => {
+    expect(shouldOfferCreateForm({ state: 'needs-invite', canCreate: false, alwaysOfferForm: false }))
+      .toBe(false)
   })
 })

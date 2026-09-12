@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
 import { createWorkspace } from '@/api/workspaces'
-import { firstRunState } from './firstRun'
+import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
 /**
  * What a brand-new user sees. Replaces the two `return null` sites in
@@ -41,7 +41,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   // On /new-workspace an eligible user sees the form even though they already
   // belong somewhere; `needs-invite` still applies, because eligibility is the
   // server's call either way.
-  const offerForm = alwaysOfferForm ? canCreate : state === 'can-create'
+  const offerForm = shouldOfferCreateForm({ state, canCreate, alwaysOfferForm })
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()

@@ -179,32 +179,35 @@ function UserMenu() {
   )
 }
 
-// Tenant switcher — navigates between the caller's workspaces by rewriting the
-// :workspace URL segment. Hidden when there's nothing to switch to (the common
-// single-tenant case), so today's UI is unchanged.
+// Workspace switcher and create affordance. The switcher appears only when
+// there are multiple workspaces to choose from; create is always present.
 function WorkspaceSwitcher() {
   const { workspaces, active } = useWorkspace()
   const navigate = useNavigate()
-  // Hide the SWITCHER when there is nothing to switch between — but never hide
-  // the way to make another one. Conflating those two is what left a
-  // one-workspace user with no path to a second (and a zero-workspace user
-  // with no path at all).
-  if (workspaces.length <= 1) {
-    return <NewWorkspaceLink />
-  }
+  // TWO independent decisions, which is the entire point of this component.
+  // Whether to show a SWITCHER depends on having something to switch between.
+  // Whether to show CREATE does not depend on anything. Conflating them is what
+  // left a one-workspace user with no path to a second and a zero-workspace user
+  // with no path at all — and the first fix of it left a five-workspace user
+  // with no path to a sixth.
   return (
-    <select
-      aria-label="Workspace"
-      className="min-h-11 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
-      value={active ?? ''}
-      onChange={(e) => navigate(`/w/${e.target.value}/agents`)}
-    >
-      {workspaces.map((w) => (
-        <option key={w.slug} value={w.slug}>
-          {w.display_name}
-        </option>
-      ))}
-    </select>
+    <div className="flex items-center gap-2">
+      {workspaces.length > 1 ? (
+        <select
+          aria-label="Workspace"
+          className="min-h-11 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
+          value={active ?? ''}
+          onChange={(e) => navigate(`/w/${e.target.value}/agents`)}
+        >
+          {workspaces.map((w) => (
+            <option key={w.slug} value={w.slug}>
+              {w.display_name}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      <NewWorkspaceLink />
+    </div>
   )
 }
 

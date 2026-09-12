@@ -25,3 +25,24 @@ export function firstRunState({ loading, workspaceCount, canCreate }: FirstRunIn
   if (workspaceCount > 0) return 'ready'
   return canCreate ? 'can-create' : 'needs-invite'
 }
+
+/**
+ * Whether to render the create FORM (as opposed to the needs-invite panel).
+ *
+ * `/new-workspace` passes `alwaysOfferForm` so a user who already belongs
+ * somewhere still sees the form — but eligibility is still consulted, never
+ * bypassed: an invite-admitted user holding no membership may not create a
+ * workspace (the F1 finding, apps/workspaces/services.py::can_create_workspace),
+ * and offering them a form would render a button that 403s.
+ */
+export function shouldOfferCreateForm({
+  state,
+  canCreate,
+  alwaysOfferForm,
+}: {
+  state: FirstRunState
+  canCreate: boolean
+  alwaysOfferForm: boolean
+}): boolean {
+  return alwaysOfferForm ? canCreate : state === 'can-create'
+}
