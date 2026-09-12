@@ -2494,6 +2494,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/system/public-stats": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Aggregate counts for the public explainer (anonymous)
+         * @description Anonymous, aggregates only.
+         *
+         *     NOTE: `auth=None` is half the story — apps/common/middleware.py is
+         *     default-deny, so this path is also allowlisted there. Both are required.
+         *
+         *     Placement matters: declared ABOVE `detail()` (`/{kind}/{name}`), since
+         *     Ninja resolves routes in declaration order and `detail` would otherwise
+         *     capture `public-stats` as a `kind`.
+         */
+        readonly get: operations["apps_system_api_public_stats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/system/{kind}/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -8702,6 +8729,22 @@ export interface components {
             readonly description: string;
         };
         /**
+         * PublicStatsOut
+         * @description Aggregates for the public explainer. Integers only — see apps/system/stats.py.
+         */
+        readonly PublicStatsOut: {
+            /** Agents */
+            readonly agents: number;
+            /** Skills */
+            readonly skills: number;
+            /** Runners Online */
+            readonly runners_online: number;
+            /** Turns Executed */
+            readonly turns_executed: number;
+            /** Demos Published */
+            readonly demos_published: number;
+        };
+        /**
          * CapabilityDetailOut
          * @description Single capability — adds the full markdown body.
          */
@@ -14095,6 +14138,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilityCatalogOut"];
+                };
+            };
+        };
+    };
+    readonly apps_system_api_public_stats: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PublicStatsOut"];
                 };
             };
         };

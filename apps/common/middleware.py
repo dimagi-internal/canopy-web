@@ -39,6 +39,7 @@ PUBLIC_PATH_PREFIXES = (
     # query string too AND keeps the prefix, so it is the correct handler.
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
+    "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
 )
 
 
