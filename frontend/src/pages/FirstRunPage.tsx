@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
-import { getMe } from '@/api/me'
+import { useAuth } from '@/auth/AuthProvider'
 import { createWorkspace } from '@/api/workspaces'
 import { firstRunState } from './firstRun'
 
@@ -16,16 +16,19 @@ import { firstRunState } from './firstRun'
  */
 export function FirstRunPage() {
   const { workspaces, loading, refresh } = useWorkspace()
+  const { user } = useAuth()
   const navigate = useNavigate()
-  const [canCreate, setCanCreate] = useState<boolean | null>(null)
   const [slug, setSlug] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    void getMe().then((me) => setCanCreate(me?.can_create_workspace ?? false))
-  }, [])
+  // AuthProvider resolves `useAuth()` before any route mounts (it gates on
+  // `status === 'loading'` itself), so `user` is always the real MeOut here —
+  // no second fetch, no null-while-pending state to represent. `?? false`
+  // stays fail-closed: defaulting an unresolved eligibility to "can create"
+  // would offer a form that 403s (the F1 gate this screen exists to respect).
+  const canCreate = user?.can_create_workspace ?? false
 
   const state = firstRunState({
     loading,

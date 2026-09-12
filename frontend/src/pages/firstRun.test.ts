@@ -2,9 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { firstRunState } from './firstRun'
 
 describe('firstRunState', () => {
-  it('is loading while either the workspace list or me is unresolved', () => {
-    expect(firstRunState({ loading: true, workspaceCount: 0, canCreate: null })).toBe('loading')
-    expect(firstRunState({ loading: false, workspaceCount: 0, canCreate: null })).toBe('loading')
+  it('is loading while the workspace list is unresolved, regardless of eligibility', () => {
+    // Two cases with opposite `canCreate` values, both loading — this is the
+    // mutation guard: deleting the `loading` check entirely would make the
+    // first of these return 'can-create' instead.
+    expect(firstRunState({ loading: true, workspaceCount: 0, canCreate: true })).toBe('loading')
+    expect(firstRunState({ loading: true, workspaceCount: 0, canCreate: false })).toBe('loading')
   })
 
   it('is ready once the user has at least one workspace', () => {
@@ -23,5 +26,11 @@ describe('firstRunState', () => {
     // Guards the ordering: an eligible user WITH a workspace must be routed on,
     // not parked on the first-run screen.
     expect(firstRunState({ loading: false, workspaceCount: 2, canCreate: true })).toBe('ready')
+  })
+
+  it('prefers loading over ready when the workspace list has not resolved yet', () => {
+    // Even though workspaceCount > 0 would normally mean 'ready', a still-loading
+    // list means that count isn't trustworthy yet.
+    expect(firstRunState({ loading: true, workspaceCount: 1, canCreate: true })).toBe('loading')
   })
 })
