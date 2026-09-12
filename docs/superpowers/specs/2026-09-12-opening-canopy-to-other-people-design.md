@@ -117,8 +117,9 @@ the `create-agent` command. It becomes a button in the companion spec.
 **One new data file**, `frontend/src/guide/surfaces.ts`: one descriptor per route,
 keyed by the exact path string from the route table. Per surface — what it is in one
 line, who it is for, what you need before it does anything useful, and what you can do
-on it. 38 entries: the route table declares 49 paths, of which 11 are redirects or legacy
-aliases that need no descriptor.
+on it. 43 entries, verified against `router.tsx`: 52 path literals are declared, 12 are
+redirects, legacy aliases or the catch-all and need no descriptor, leaving 40 today —
+plus the three surfaces this work adds (`/new-workspace`, `/guide`, `/about`).
 
 **One small enabling refactor.** `frontend/src/router.tsx` currently passes its route
 array as an inline literal to `createBrowserRouter(guarded([...]))`. Extract it to a
