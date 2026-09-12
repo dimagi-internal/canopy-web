@@ -7,6 +7,7 @@ rather than only that today's fields are fine.
 """
 import pytest
 from django.core.cache import cache
+from django.test import Client, override_settings
 
 ALLOWED_KEYS = {
     "agents",
@@ -41,11 +42,54 @@ def test_returns_only_integer_aggregates(client, db):
         assert isinstance(value, int), f"{key} is {type(value)}, not an int"
 
 
+@override_settings(REQUIRE_AUTH=True)
+def test_public_stats_is_public_through_the_login_middleware(db):
+    # The allowlist half of the gate. REQUIRE_AUTH is False suite-wide
+    # (config/settings/test.py:24), so without this override
+    # LoginRequiredMiddleware is inert and the whole suite proves only that
+    # auth=None took on the route — apps/common/middleware.py's
+    # PUBLIC_PATH_PREFIXES entry could be deleted and every other test here
+    # would stay green while production 302s every anonymous visitor to
+    # Google. This is the test that actually exercises that allowlist.
+    assert Client().get("/api/system/public-stats").status_code == 200
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_sibling_system_routes_are_not_public(db):
+    # PUBLIC_PATH_PREFIXES is a PREFIX match (middleware._is_public), so it
+    # also admits /api/system/public-stats/foo — which Ninja routes to
+    # detail(kind="public-stats", name="foo"), not public_stats(). Pin that
+    # Ninja's own session_auth still gates that path, since the middleware
+    # allowlist does not distinguish it from the real public route.
+    assert Client().get("/api/system/public-stats/foo").status_code == 401
+
+
 def test_leaks_no_names_slugs_or_ids(client, db):
-    # A count cannot leak what it is a count of. Anything that is not an int
-    # could — so the guard is on the type, not on a denylist of field names.
-    body = client.get("/api/system/public-stats").json()
-    assert not any(isinstance(v, (str, list, dict)) for v in body.values())
+    # A count cannot leak what it is a count of — but that claim is only
+    # tested if something with a name/slug/id actually exists in the DB and
+    # is confirmed absent from the response, and if the response can't
+    # authenticate an anonymous caller into a session either. Asserting only
+    # "every value is an int" (test_returns_only_integer_aggregates) already
+    # implies this — and isinstance(True, int) is True, so that assertion is
+    # even weaker than it reads — so this test earns its name by checking the
+    # actual leak claim instead of restating the type check.
+    from apps.agents.models import Agent
+    from apps.workspaces.testing import a_workspace
+
+    ws = a_workspace(slug="leak-canary-workspace")
+    Agent.objects.create(slug="leak-canary-agent", name="Leak Canary", workspace=ws)
+
+    # A bare integer pk is deliberately NOT checked here: with a response this
+    # small (five single-digit counts), a small autoincrement id is likely to
+    # coincidentally match one of them, which would make this assertion flaky
+    # rather than meaningful. The distinctive slugs/name are the real signal.
+    resp = client.get("/api/system/public-stats")
+    raw = resp.content.decode()
+    assert "leak-canary-workspace" not in raw  # Workspace.slug (its pk)
+    assert "leak-canary-agent" not in raw
+    assert "Leak Canary" not in raw
+    # An anonymous read must not mint or extend a session either.
+    assert "Set-Cookie" not in resp.headers
 
 
 def test_counts_reflect_reality(client, db):

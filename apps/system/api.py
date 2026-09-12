@@ -44,9 +44,9 @@ def public_stats(request: HttpRequest) -> dict:
     NOTE: `auth=None` is half the story — apps/common/middleware.py is
     default-deny, so this path is also allowlisted there. Both are required.
 
-    Placement matters: declared ABOVE `detail()` (`/{kind}/{name}`), since
-    Ninja resolves routes in declaration order and `detail` would otherwise
-    capture `public-stats` as a `kind`.
+    Declared above `detail()` for readability. `/{kind}/{name}` is two path
+    segments, so it cannot capture this single-segment route — the order is
+    not load-bearing.
     """
     return stats.public_stats()
 
