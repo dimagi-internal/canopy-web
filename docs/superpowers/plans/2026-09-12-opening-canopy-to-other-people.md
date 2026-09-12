@@ -1371,13 +1371,27 @@ Run: `cd frontend && npx vitest run src/guide/coverage.test.ts`
 Expected: all pass. Iterate: each failure names exactly which path is missing a
 descriptor or which descriptor names no route.
 
-- [ ] **Step 7: Confirm it is fast**
+- [ ] **Step 7: Confirm the cost is acceptable, and expect ~a second rather than milliseconds**
 
 Run: `cd frontend && npx vitest run src/guide/coverage.test.ts --reporter=verbose`
-Expected: the file's duration is milliseconds, not seconds. If it is slow, something is
-importing React components transitively — the test must only pull in `routeTable`'s
-*paths*. If `router.tsx`'s lazy imports make the import heavy, move `routeTable` into its
-own module (`frontend/src/routeTable.ts`) that holds paths and element references only.
+
+**What to expect, and why.** `router.tsx` has ~35 imports and most of them are **eager**
+page imports (`ProjectsPage`, `InsightsPage`, `SettingsPage`, `AppLayout`, …) — only the
+agent-rail sections and the chat pages are `lazy()`. So importing `routeTable` transitively
+loads most of the app's component tree. That is unavoidable: the route table's `element`
+values *are* those components, so any module holding the table holds the imports. Do not
+try to dodge it by moving `routeTable` to its own file — the imports travel with it, and
+an earlier draft of this plan wrongly suggested that as a fix.
+
+A few hundred milliseconds to about a second is fine and is the intended cost. This is
+already proven to work: `SettingsPage.presence.test.tsx` imports `SettingsPage` and renders
+it. Do NOT introduce a second source of truth for the paths to make the test faster — a
+hand-maintained path list is exactly the drift this registry exists to prevent.
+
+**If the import fails** (rather than merely being slow), the cause will be an import-time
+side effect in some page module, not the size of the graph. Mock the offending module in
+this test the way `SettingsPage.presence.test.tsx` mocks `@/api/tokens`, and say which one
+in your report — an import-time side effect in a page module is worth knowing about.
 
 - [ ] **Step 8: Commit**
 
