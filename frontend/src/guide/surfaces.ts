@@ -120,7 +120,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   {
     path: '/w/:workspace/members',
     title: 'Members',
-    audience: 'Workspace owner',
+    audience: 'Any workspace member (owner-only actions)',
     what: 'Admin surface for who is in the workspace: the member list with roles, and pending invites — each invite is a copy-linkable `/invite/:token` URL (canopy sends no email itself).',
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
   },
@@ -308,8 +308,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/share/:token',
     title: 'Shared session (public)',
     audience: 'Whoever was sent the link',
-    what: 'A public, chrome-less, read-only viewer for one shared Claude Code transcript — no login required. Best-effort secret-scrubbed before sharing.',
-    actions: ['Read the transcript'],
+    what: 'A public, chrome-less, read-only viewer for a shared Claude Code transcript — or for several grouped as one arc, which lands on a clickable list of the member sessions. No login required. Best-effort secret-scrubbed before sharing.',
+    actions: ['Read the transcript', 'Open a session from a shared arc'],
   },
   {
     path: '/ddd-release/:narrative/:runId',
