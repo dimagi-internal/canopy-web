@@ -450,7 +450,7 @@ export function ChatSessionsPanel({
               picks it up and streams the reply back as it works.
             </p>
             <p className="mt-2 text-[12px] text-muted-foreground">
-              {agents.length === 0 ? (
+              {agents.length === 0 && projects.length === 0 ? (
                 <>
                   Nothing to chat with?{' '}
                   <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
@@ -459,7 +459,7 @@ export function ChatSessionsPanel({
                   .
                 </>
               ) : (
-                <>Pick an agent from "New chat with…" above to start one.</>
+                <>Pick one from "New chat with…" above to start one.</>
               )}
             </p>
           </div>

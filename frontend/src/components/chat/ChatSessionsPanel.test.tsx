@@ -430,14 +430,25 @@ describe('ChatSessionsPanel — empty states', () => {
     expect(screen.getByText('You need an agent first')).toBeTruthy()
   })
 
-  it('says "Pick an agent from New chat with… above" when there are agents but zero sessions', async () => {
+  it('says "Pick one from New chat with… above" when there are agents but zero sessions', async () => {
     listSlugs.mockResolvedValue([])
     listSessions.mockResolvedValue([])
 
     renderPanel([agent()])
 
     expect(await screen.findByText('No chats yet')).toBeTruthy()
-    expect(screen.getByText('Pick an agent from "New chat with…" above to start one.')).toBeTruthy()
+    expect(screen.getByText('Pick one from "New chat with…" above to start one.')).toBeTruthy()
+    expect(screen.queryByText('You need an agent first')).toBeNull()
+  })
+
+  it('says "Pick one from New chat with… above" when there are projects but zero agents and zero sessions', async () => {
+    listSlugs.mockResolvedValue([{ slug: 'acme', name: 'Acme', workspace: 'dimagi' } as ProjectSlug])
+    listSessions.mockResolvedValue([])
+
+    renderPanel([])
+
+    expect(await screen.findByText('No chats yet')).toBeTruthy()
+    expect(screen.getByText('Pick one from "New chat with…" above to start one.')).toBeTruthy()
     expect(screen.queryByText('You need an agent first')).toBeNull()
   })
 
