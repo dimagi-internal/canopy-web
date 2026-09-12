@@ -122,7 +122,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // Legacy flat tenant surface (e.g. /agents, /ddd/foo) → the active workspace's
 // scoped path. Waits for the workspace list so `active` is known.
-function TenantRedirect({ to }: { to: string }) {
+export function TenantRedirect({ to }: { to: string }) {
   const { active, loading } = useWorkspace()
   const { '*': tail } = useParams()
   if (loading) return null
@@ -132,7 +132,7 @@ function TenantRedirect({ to }: { to: string }) {
 }
 
 // Bare "/" → the active workspace's workbench.
-function RootRedirect() {
+export function RootRedirect() {
   const { active, loading } = useWorkspace()
   if (loading) return null
   if (!active) return <FirstRunPage />

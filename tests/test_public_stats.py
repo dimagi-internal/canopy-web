@@ -119,6 +119,7 @@ def test_demos_published_comes_from_the_registry(client, db):
         # (verified against apps/walkthroughs/models.py): title, kind, owner,
         # drive_file_id, drive_folder_id, content_type, size_bytes. Omitting any
         # of them raises IntegrityError, not a validation error.
+        # visibility=link: demos_published excludes private packages (below).
         Walkthrough.objects.create(
             title=f"artifact-{kind}",
             kind=kind,
@@ -128,6 +129,7 @@ def test_demos_published_comes_from_the_registry(client, db):
             content_type="video/mp4" if kind == "video" else "text/html",
             size_bytes=1,
             run_id="demo-2026-09-12-001",
+            visibility=Walkthrough.VISIBILITY_LINK,
         )
 
     # Two artifacts, ONE run package — the count must be 1, not 2. This is the
@@ -137,6 +139,31 @@ def test_demos_published_comes_from_the_registry(client, db):
 
     body = client.get("/api/system/public-stats").json()
     assert body["demos_published"] == 1
+
+
+def test_demos_published_excludes_private_packages(client, db):
+    # A public counter spanning every tenant must not disclose ANOTHER
+    # tenant's private demo packages, even as a bare count — canopy is now
+    # open to a second tenant, so this is no longer a hypothetical.
+    from django.contrib.auth import get_user_model
+
+    from apps.walkthroughs.models import Walkthrough
+
+    owner = get_user_model().objects.create_user(username="o3", email="o3@dimagi.com")
+    Walkthrough.objects.create(
+        title="private-artifact",
+        kind="html",
+        owner=owner,
+        drive_file_id="f3",
+        drive_folder_id="folder-1",
+        content_type="text/html",
+        size_bytes=1,
+        run_id="demo-2026-09-12-002",
+        visibility=Walkthrough.VISIBILITY_PRIVATE,
+    )
+
+    body = client.get("/api/system/public-stats").json()
+    assert body["demos_published"] == 0
 
 
 def test_demos_published_ignores_artifacts_with_no_run(client, db):

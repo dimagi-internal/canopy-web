@@ -32,6 +32,8 @@ describe('navigate-fallback ownership', () => {
       '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
       `/walkthrough/${UUID}`, // viewer shell (no /content)
       '/about', // public explainer
+      '/guide', // self-documenting descriptor registry
+      '/new-workspace', // FirstRunPage's alwaysOfferForm route
     ]
     for (const p of spaPaths) {
       it(p, () => expect(shouldServeShell(p)).toBe(true))
@@ -118,6 +120,8 @@ describe('the matcher workbox inlines into the SW', () => {
     '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
     `/walkthrough/${UUID}`,
     '/about',
+    '/guide',
+    '/new-workspace',
     '/api/ddd/runs/x',
     '/accounts/google/login/',
     '/admin/',

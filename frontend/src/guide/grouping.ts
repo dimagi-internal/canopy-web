@@ -49,6 +49,12 @@ function navMatch(surfacePath: string, navPath: string): boolean {
  * the ten rail sections all sit under `/w/:workspace/agents/:slug/`, so nav's
  * `/w/:workspace/agents` would otherwise absorb them into Fleet and leave this
  * group empty.
+ *
+ * This is now a THIRD hardcoded path list, beside `NOT_DOCUMENTABLE` and
+ * `nav.ts` — and unlike the coverage test, it fails SILENTLY: rename a route
+ * (or its surface) and it just relocates here to "Elsewhere" rather than
+ * erroring, which the `<= 8` cap in coverage.test.ts absorbs several times
+ * before it goes red. The cap is the only tripwire on this list going stale.
  */
 const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
   {
@@ -57,8 +63,13 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     match: (p) => p.startsWith('/w/:workspace/agents/:slug/'),
   },
   {
-    // Pages someone reaches from a link you sent them, with no account.
-    label: 'Shared links (no login)',
+    // Pages someone reaches from a link you sent them, with no account of
+    // their own on the surface itself. NOT all of these are actually
+    // loginless: /invite/:token requires signing in with the invited
+    // address to accept, and a `private` walkthrough routes a logged-out
+    // visitor to sign-in — "shared by link" is the accurate claim, "no
+    // login" was not.
+    label: 'Shared by link',
     match: (p) =>
       ['/share/:token', '/storyboard/:slug', '/narrative/:slug', '/walkthrough/:id',
        '/review/:id', '/invite/:token'].includes(p) || p.startsWith('/ddd-release/'),

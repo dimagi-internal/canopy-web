@@ -338,7 +338,7 @@ function AppShell() {
                 )
               })}
             </nav>
-            <WorkspaceSwitcher />
+            {isAuthed && <WorkspaceSwitcher />}
             {isAuthed && <PresenceHeaderBadge key={presenceReconnectNonce} />}
             <UserMenu />
             {isAuthed && (

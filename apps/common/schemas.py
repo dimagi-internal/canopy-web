@@ -41,11 +41,15 @@ class MeOut(StrictModel):
     email: EmailStr
     name: str
     avatar_url: str
-    can_create_workspace: bool = False
-    """Whether this caller may POST /api/workspaces/. False for an
-    invite-admitted user holding no membership — see the F1 finding in
-    apps.workspaces.services.can_create_workspace. The first-run screen reads
-    this so it never offers a button that 403s."""
+    can_create_workspace: bool = Field(
+        default=False,
+        description=(
+            "Whether this caller may POST /api/workspaces/. False for an "
+            "invite-admitted user holding no membership — see the F1 finding "
+            "in apps.workspaces.services.can_create_workspace. The first-run "
+            "screen reads this so it never offers a button that 403s."
+        ),
+    )
 
 
 class PresencePreferenceOut(StrictModel):

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { COMPONENTS, ONE_SENTENCE } from '@/guide/components'
 import { USER_PATHS } from '@/guide/paths'
 import { getPublicStats, type PublicStats } from '@/api/publicStats'
+import { apiUrl } from '@/api/base'
 
 /**
  * The public explainer. Chrome-less, anonymous, mounted OUTSIDE AppLayout so
@@ -71,13 +72,26 @@ export function AboutPage() {
                 <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
                 <p className="mt-2 text-[13px] text-foreground-secondary">{p.startHere}</p>
                 {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {p.surfaces.map((s) => (
+                    // Plain text, deliberately not a link — these are route
+                    // TEMPLATES (e.g. /w/:workspace/chat), not URLs an
+                    // anonymous visitor could actually navigate to.
+                    <code
+                      key={s}
+                      className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-foreground-secondary"
+                    >
+                      {s}
+                    </code>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
         </section>
 
         <footer className="mt-12 border-t border-border pt-6 text-[12px] text-muted-foreground">
-          <a href="./api/docs/" className="text-primary hover:underline">
+          <a href={apiUrl('/api/docs/')} className="text-primary hover:underline">
             API reference
           </a>
         </footer>

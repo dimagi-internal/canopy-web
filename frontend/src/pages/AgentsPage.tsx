@@ -163,7 +163,10 @@ export function AgentsPage() {
           <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
             An agent is a persona with its own git repo — skills, hooks and an identity. It is
             not created here: run <code className="text-primary">/canopy:create-agent</code> in
-            Claude Code, which scaffolds the repo, then it appears in this list.
+            Claude Code, which scaffolds the repo, then register it in this workspace for it
+            to appear in this list. That command needs the canopy plugin installed, which
+            needs a Personal Access Token — mint one from{' '}
+            <Link to="/settings" className="text-primary hover:underline">Settings</Link>.
           </p>
           <p className="mt-2 text-[12px] text-muted-foreground">
             You will also need a runner online to execute its turns.{' '}

@@ -97,7 +97,7 @@ function isPublicLinkRoute(): boolean {
     p.startsWith("/storyboard/") ||
     p.startsWith("/narrative/") ||
     p.startsWith("/invite/") ||
-    p.startsWith("/about")
+    p === "/about"
   );
 }
 

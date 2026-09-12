@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { guideGroups } from '@/guide/grouping'
 import { USER_PATHS } from '@/guide/paths'
 
@@ -33,23 +33,29 @@ export function GuidePage() {
 
       <section className="mt-8">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Start here
+          Five ways in — pick the one that&apos;s you
         </h2>
-        <ol className="mt-3 space-y-3">
-          {USER_PATHS.map((p, i) => (
-            <li key={p.id} className="flex gap-3 rounded-lg border border-border bg-card p-3">
-              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                {i + 1}
-              </span>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">{p.title}</h3>
-                <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
-                <p className="mt-1.5 text-[13px] text-foreground-secondary">{p.startHere}</p>
-                {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
+        <ul className="mt-3 space-y-3">
+          {USER_PATHS.map((p) => (
+            <li key={p.id} className="rounded-lg border border-border bg-card p-3">
+              <h3 className="text-sm font-semibold text-foreground">{p.title}</h3>
+              <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
+              <p className="mt-1.5 text-[13px] text-foreground-secondary">{p.startHere}</p>
+              {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {p.surfaces.map((s) => (
+                  <Link
+                    key={s}
+                    to={'#' + s}
+                    className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-foreground-secondary hover:text-foreground"
+                  >
+                    {s}
+                  </Link>
+                ))}
               </div>
             </li>
           ))}
-        </ol>
+        </ul>
       </section>
 
       {guideGroups().map((group) => (

@@ -40,7 +40,10 @@ PUBLIC_PATH_PREFIXES = (
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
-    "/about",  # the public explainer page shell (its stats API is allowlisted above)
+    # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a
+    # full path), so prefix-matching it is safe; "/about" alone would also
+    # admit any future "/about-billing" or "/aboutus" route as a side effect.
+    # See `_is_about` below for the exact-match version.
 )
 
 
@@ -138,6 +141,14 @@ def _is_storyboard_link(request) -> bool:
     return path.startswith("/api/storyboards/")
 
 
+def _is_about(path: str) -> bool:
+    # The public explainer page shell. Exact match ONLY — its stats API is
+    # allowlisted separately in PUBLIC_PATH_PREFIXES — so a future route that
+    # merely begins "/about" (e.g. "/about-billing", "/aboutus") does not
+    # silently become public too.
+    return path == "/about"
+
+
 def _is_ddd_release_link(request) -> bool:
     # /ddd-release/<slug>/<run_id> (SPA shell) and the read API
     # (/api/ddd/release/<run_id>/) self-enforce the ?t=<share_token> gate (or a
@@ -173,6 +184,7 @@ class LoginRequiredMiddleware:
         if (
             request.user.is_authenticated
             or _is_public(request.path)
+            or _is_about(request.path)
             or _is_walkthrough_link(request)
             or _is_review_link(request.path)
             or _is_share_link(request.path)

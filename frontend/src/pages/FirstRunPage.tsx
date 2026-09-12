@@ -62,13 +62,30 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
     navigate(`/w/${res.slug}`)
   }
 
+  // `state === 'ready'` means the caller already belongs to a workspace —
+  // the primary way to reach this page IS `/new-workspace` now that it and
+  // the header link exist, so the copy must not tell an existing member they
+  // have no workspace (that was the C2 regression).
+  const alreadyAMember = state === 'ready'
+
   return (
     <div className="mx-auto max-w-xl px-6 py-16">
-      <h1 className="text-lg font-semibold text-foreground">Welcome to Canopy</h1>
+      <h1 className="text-lg font-semibold text-foreground">
+        {alreadyAMember ? 'New workspace' : 'Welcome to Canopy'}
+      </h1>
       <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
-        Canopy runs a fleet of AI agents and keeps the record of what they do. Everything
-        that belongs to a team — projects, agents, chats, demos — lives inside a{' '}
-        <span className="font-medium text-foreground">workspace</span>. You are not in one yet.
+        {alreadyAMember ? (
+          <>
+            Workspaces keep separate teams&apos; projects, agents and demos apart.
+            Create another below.
+          </>
+        ) : (
+          <>
+            Canopy runs a fleet of AI agents and keeps the record of what they do. Everything
+            that belongs to a team — projects, agents, chats, demos — lives inside a{' '}
+            <span className="font-medium text-foreground">workspace</span>. You are not in one yet.
+          </>
+        )}
       </p>
 
       {offerForm ? (
@@ -109,9 +126,11 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
           >
             {busy ? 'Creating…' : 'Create workspace'}
           </button>
-          <p className="text-[12px] text-muted-foreground">
-            Already invited to one? Open the /invite/… link a colleague sent you instead.
-          </p>
+          {!alreadyAMember && (
+            <p className="text-[12px] text-muted-foreground">
+              Already invited to one? Open the /invite/… link a colleague sent you instead.
+            </p>
+          )}
         </form>
       ) : (
         <div className="mt-8 rounded-lg border border-border bg-card p-4">

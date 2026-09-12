@@ -13,9 +13,12 @@ accepted:
     ACTIVITY: throughput per minute, whether any box is currently up at all
     (effectively presence for a small named team), and the moment a demo
     package gets created (a step change in `demos_published`).
-  - `demos_published` counts distinct `run_id`s across ALL tenants and ALL
-    visibilities, including `private` walkthroughs — a private run still
-    increments the public total.
+  - `demos_published` counts distinct `run_id`s across ALL tenants, but only
+    `link`-visibility walkthroughs — a `private` run does NOT increment the
+    public total. Now that canopy is open to a second tenant, folding another
+    tenant's private packages into a number the internet can see would be a
+    disclosure made on their behalf without asking, even though the count
+    itself carries no name/slug/id. See apps/walkthroughs/apps.py.
 Neither is a names/slugs/ids leak, so neither changes the type-closed
 contract this module enforces. But "aggregates are safe" is not an
 unconditional license — a future stat that narrows the denominator (e.g. "per
@@ -95,6 +98,10 @@ def _extra(name: str) -> int:
     """
     fn = _EXTRA.get(name)
     if fn is None:
+        # CI catches a de-registration today (a coverage test would fail), but
+        # an INSTALLED_APPS change plus a matching test edit would not — log so
+        # there's a signal even then.
+        logger.warning("public stats contributor %r is not registered", name)
         return 0
     try:
         return int(fn())

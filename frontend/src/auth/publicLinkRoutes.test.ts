@@ -14,10 +14,17 @@ import authSrc from './AuthProvider.tsx?raw'
  * the visitor to Google. Caught by opening the link, not by any test — hence
  * this one.
  */
+// Harvests BOTH clause styles: `startsWith('/x/')` (a prefix) and
+// `=== '/x'` (an exact match, used by `/about` so a future `/about-billing`
+// or `/aboutus` route doesn't silently become public too — see C8). Missing
+// either style here would make this test a silent no-op for that clause,
+// exactly the failure mode this test exists to catch.
 function publicPrefixes(source: string): string[] {
   const fn = source.slice(source.indexOf('function isPublicLinkRoute'))
   const body = fn.slice(0, fn.indexOf('\n}'))
-  return [...body.matchAll(/startsWith\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]).sort()
+  const startsWithMatches = [...body.matchAll(/startsWith\(['"]([^'"]+)['"]\)/g)].map((m) => m[1])
+  const exactMatches = [...body.matchAll(/===\s*['"]([^'"]+)['"]/g)].map((m) => m[1])
+  return [...startsWithMatches, ...exactMatches].sort()
 }
 
 describe('isPublicLinkRoute', () => {
@@ -32,5 +39,13 @@ describe('isPublicLinkRoute', () => {
     ]) {
       expect(prefixes).toContain(route)
     }
+  })
+
+  it('/about is an exact match, not a prefix', () => {
+    // Regression pin for C8: "/about" used to be startsWith, which would also
+    // admit "/about-billing" or "/aboutus".
+    expect(publicPrefixes(clientSrc)).not.toContain('/about/')
+    expect(clientSrc).toMatch(/===\s*["']\/about["']/)
+    expect(authSrc).toMatch(/===\s*["']\/about["']/)
   })
 })

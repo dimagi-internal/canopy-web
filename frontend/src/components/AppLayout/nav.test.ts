@@ -10,7 +10,7 @@ const authed = { isAuthed: true, active: 'connect' }
 
 describe('NAV_GROUPS', () => {
   it('keeps every destination the flat nav carried', () => {
-    // The row this replaced held 15 links (Storyboards is the one added since).
+    // The row this replaced held 15 links (Storyboards and Guide are the two added since).
     // Grouping is meant to reorganize the header, never to quietly drop a
     // surface out of it.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))

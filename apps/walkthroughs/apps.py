@@ -18,8 +18,15 @@ class WalkthroughsConfig(AppConfig):
             # A "run package" is a derived grouping of Walkthrough rows by
             # run_id (apps/runs/aggregate.py) — apps/runs has no models. Counting
             # rows would inflate it: one package is a video AND a deck.
+            #
+            # Excludes `private` walkthroughs. This is a public counter spanning
+            # every tenant, and canopy is now open to a second tenant — counting
+            # another tenant's private packages into a number the internet can
+            # see is a disclosure made on their behalf without asking, even
+            # though the count itself carries no name/slug/id.
             return (
-                Walkthrough.objects.exclude(run_id__isnull=True)
+                Walkthrough.objects.filter(visibility=Walkthrough.VISIBILITY_LINK)
+                .exclude(run_id__isnull=True)
                 .exclude(run_id="")
                 .values("run_id")
                 .distinct()

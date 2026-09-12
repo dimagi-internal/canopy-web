@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from apps.common.middleware import (
+    _is_about,
     _is_ddd_release_link,
     _is_invite_link,
     _is_public,
@@ -46,6 +47,7 @@ def _allowlisted(path: str, method: str = "GET") -> bool:
     request = _Req(path, method)
     return (
         _is_public(path)
+        or _is_about(path)
         or _is_walkthrough_link(request)
         or _is_review_link(path)
         or _is_share_link(path)
@@ -68,6 +70,7 @@ PUBLIC_PATHS = [
     "/api/storyboards/ecf-supply/narratives/verified-monitoring",
     "/api/storyboards/ecf-supply/feedback",
     "/about",
+    "/api/system/public-stats",
 ]
 
 
@@ -90,6 +93,10 @@ GATED_PATHS = [
     "/ddd/verified-monitoring",
     "/api/agents/",
     "/api/feedback/",
+    # "/about" is an EXACT match, not a prefix — a future route that merely
+    # begins "/about" must not become public as a side effect (C8).
+    "/about-billing",
+    "/aboutus",
 ]
 
 

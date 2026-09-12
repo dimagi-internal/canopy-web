@@ -35,8 +35,8 @@ describe('guideGroups', () => {
     expect(fleet?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/agents/:slug/inbox')
   })
 
-  it('groups the no-login shared links together', () => {
-    const shared = guideGroups().find((g) => g.label === 'Shared links (no login)')
+  it('groups the shared-by-link surfaces together', () => {
+    const shared = guideGroups().find((g) => g.label === 'Shared by link')
     expect(shared?.surfaces.map((s) => s.path)).toEqual(
       expect.arrayContaining(['/share/:token', '/storyboard/:slug', '/walkthrough/:id']),
     )
