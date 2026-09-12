@@ -277,7 +277,9 @@ three-state logic, which is what `firstRun.test.ts` below covers.
 
 **Interfaces:**
 - Consumes: `MeOut.can_create_workspace` (Task 1); `useWorkspace()` from
-  `@/workspace/WorkspaceProvider` returning `{ workspaces, active, loading }`;
+  `@/workspace/WorkspaceProvider` returning `{ workspaces, active, loading, refresh }`
+  — verified: `refresh: () => Promise<void>` re-fetches the membership list and its own
+  doc comment states a page mutating the caller's workspace state must call it;
   `getMe()` from `@/api/me`.
 - Produces: `firstRunState(args) -> 'loading' | 'can-create' | 'needs-invite' | 'ready'`,
   and `createWorkspace(slug, displayName) -> Promise<WorkspaceOut>` in `api/workspaces.ts`.
@@ -387,6 +389,7 @@ Create `frontend/src/pages/FirstRunPage.tsx`:
 
 ```tsx
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { getMe } from '@/api/me'
 import { createWorkspace } from '@/api/workspaces'
@@ -402,7 +405,8 @@ import { firstRunState } from './firstRun'
  * asking for a slug.
  */
 export function FirstRunPage() {
-  const { workspaces, loading } = useWorkspace()
+  const { workspaces, loading, refresh } = useWorkspace()
+  const navigate = useNavigate()
   const [canCreate, setCanCreate] = useState<boolean | null>(null)
   const [slug, setSlug] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -431,11 +435,13 @@ export function FirstRunPage() {
       setError(res.error)
       return
     }
-    // Full reload rather than client navigation: the workspace list is fetched
-    // once by WorkspaceProvider, and a brand-new membership has to be visible
-    // to every consumer (nav, switcher, tenancy resolution) before any tenant
-    // route renders.
-    window.location.assign(`${import.meta.env.BASE_URL.replace(/\/$/, '')}/w/${res.slug}`)
+    // WorkspaceProvider fetches the membership list once on mount and never
+    // invalidates it, so a brand-new membership is invisible until something
+    // re-fetches. `refresh()` is the provider's documented mechanism for exactly
+    // this ("a page that mutates the CALLER's own role in a workspace must call
+    // this afterward") — use it rather than a full page reload.
+    await refresh()
+    navigate(`/w/${res.slug}`)
   }
 
   return (
