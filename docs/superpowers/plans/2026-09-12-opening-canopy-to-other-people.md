@@ -632,15 +632,19 @@ In the same file, beside `WorkspaceSwitcher`:
  *  you already have. Routes to the first-run screen, which owns the form. */
 function NewWorkspaceLink() {
   return (
-    <a
-      href={`${import.meta.env.BASE_URL.replace(/\/$/, '')}/new-workspace`}
+    <Link
+      to="/new-workspace"
       className="text-xs text-muted-foreground hover:text-foreground"
     >
       + Workspace
-    </a>
+    </Link>
   )
 }
 ```
+
+Use react-router `<Link>`, not a hand-built `href` off `BASE_URL` — `Link` applies the
+router's basename itself, and this file already imports from `react-router-dom`
+(`useNavigate`). Same reasoning as Task 9's links.
 
 - [ ] **Step 3: Add the `/new-workspace` route**
 
@@ -661,13 +665,17 @@ In `FirstRunPage.tsx`, change the signature and the guard:
 export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: boolean }) {
 ```
 
+After Task 2's fix round the guard is a SINGLE combined line —
+`if (state === 'loading' || state === 'ready') return null` — and `canCreate` is a
+plain `boolean` local derived from `useAuth()`. Replace that one line with:
+
 ```tsx
   if (state === 'loading') return null
   if (state === 'ready' && !alwaysOfferForm) return null
   // On /new-workspace an eligible user sees the form even though they already
   // belong somewhere; `needs-invite` still applies, because eligibility is the
   // server's call either way.
-  const offerForm = alwaysOfferForm ? canCreate === true : state === 'can-create'
+  const offerForm = alwaysOfferForm ? canCreate : state === 'can-create'
 ```
 
 and use `offerForm` in place of `state === 'can-create'` in the JSX conditional.
