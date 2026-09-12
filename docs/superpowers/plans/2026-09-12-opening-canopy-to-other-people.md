@@ -42,15 +42,19 @@ for generated API types.
   `apps/<app>/tests/test_*.py` where that app already has a `tests/` package
   (`apps/workspaces/tests/` does).
 - **Frontend tests** are vitest, colocated as `<module>.test.ts(x)`. **jsdom 29 and
-  `@testing-library/react` 16 ARE installed and used** — there are ~10 component tests
-  calling `render()` (`PublicHeader.test.tsx`, `ChatSessionsPanel.test.tsx`,
-  `RunnerAssignments.test.tsx`, …), so mounting a component in a test is available to you.
-  (An earlier revision of this plan claimed otherwise, propagating a stale comment at
-  `frontend/src/workspace/resolveActiveWorkspace.ts:2`. That comment is wrong; the plan
-  was wrong for repeating it.) Still prefer extracting decision logic into a plain `.ts`
-  module and testing it directly — it is faster and less brittle than asserting on
-  rendered output — but a component test is a legitimate choice where the behaviour only
-  exists once mounted.
+  `@testing-library/react` 16 are installed and used by 26 of the 61 test files** — so
+  mounting a component, or anything else needing a DOM, is available to you.
+  **But `frontend/vite.config.ts`'s `test` block sets no `environment`, so vitest's default
+  is `node`** — a test that needs a DOM must declare it per-file with a
+  `// @vitest-environment jsdom` pragma on the first line. This applies to anything that
+  transitively imports React components, not just tests that call `render()`. Omitting it
+  produces a confusing failure that looks like a broken import rather than a missing DOM.
+  (This plan got this wrong twice: first claiming jsdom was not set up at all — a stale
+  comment at `frontend/src/workspace/resolveActiveWorkspace.ts:2` — then correcting that
+  without mentioning the pragma, which cost an implementer a debugging cycle.)
+  Still prefer extracting decision logic into a plain `.ts` module and testing it directly:
+  it needs no DOM, no pragma, and is less brittle than asserting on rendered output. A
+  component test is a legitimate choice where the behaviour only exists once mounted.
 - **A task that changes a Pydantic response schema MUST run `cd frontend && npm run build`,
   not just the backend tests.** Fields in `generated.ts` are non-optional, so adding one
   to a response model breaks every test file that constructs a mock of it — and those
