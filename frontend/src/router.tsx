@@ -176,7 +176,15 @@ function guarded(routes: RouteObject[]): RouteObject[] {
   })) as RouteObject[]
 }
 
-export const router = createBrowserRouter(guarded([
+/**
+ * The route table, as data.
+ *
+ * Exported so the guide's coverage test can read it: every documented surface
+ * must have a descriptor in guide/surfaces.ts, and every descriptor must name a
+ * real route. Extracting paths from a BUILT router is awkward; reading them from
+ * this array is three lines.
+ */
+export const routeTable: RouteObject[] = [
   {
     element: <AppLayout />,
     children: [
@@ -292,7 +300,9 @@ export const router = createBrowserRouter(guarded([
       { path: '/narrative/:slug', element: <NarrativeReviewPage /> },
     ],
   },
-]), {
+]
+
+export const router = createBrowserRouter(guarded(routeTable), {
   // "/" at root, "/canopy" as a labs tenant — keeps every route + <Link> under
   // the deployment's path prefix (from Vite's import.meta.env.BASE_URL).
   basename: import.meta.env.BASE_URL.replace(/\/$/, '') || '/',
