@@ -14,8 +14,8 @@ from ninja import Router
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 
-from . import reader
-from .schemas import CapabilityCatalogOut, CapabilityDetailOut
+from . import reader, stats
+from .schemas import CapabilityCatalogOut, CapabilityDetailOut, PublicStatsOut
 
 router = Router(auth=session_auth, tags=["system"])
 
@@ -30,6 +30,25 @@ def overview(request: HttpRequest) -> dict:
         **cat,
         "items": [{k: v for k, v in item.items() if k != "body"} for item in cat["items"]],
     }
+
+
+@router.get(
+    "/public-stats",
+    response=PublicStatsOut,
+    auth=None,
+    summary="Aggregate counts for the public explainer (anonymous)",
+)
+def public_stats(request: HttpRequest) -> dict:
+    """Anonymous, aggregates only.
+
+    NOTE: `auth=None` is half the story — apps/common/middleware.py is
+    default-deny, so this path is also allowlisted there. Both are required.
+
+    Declared above `detail()` for readability. `/{kind}/{name}` is two path
+    segments, so it cannot capture this single-segment route — the order is
+    not load-bearing.
+    """
+    return stats.public_stats()
 
 
 @router.get("/{kind}/{name}", response=CapabilityDetailOut)

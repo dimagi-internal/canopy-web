@@ -158,10 +158,22 @@ export function AgentsPage() {
       )}
 
       {!loading && !error && agents.length === 0 && (
-        <div className="flex flex-col items-center justify-center h-48 text-center">
-          <p className="text-sm text-muted-foreground mb-1">No agents yet.</p>
-          <p className="text-xs text-foreground-subtle">
-            Agents appear here once they publish their first sync.
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h2 className="text-sm font-semibold text-foreground">No agents in this workspace</h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
+            An agent is a persona with its own git repo — skills, hooks and an identity. It is
+            not created here: run <code className="text-primary">/canopy:create-agent</code> in
+            Claude Code, which scaffolds the repo, then register it in this workspace for it
+            to appear in this list. That command needs the canopy plugin installed, which
+            needs a Personal Access Token — mint one from{' '}
+            <Link to="/settings" className="text-primary hover:underline">Settings</Link>.
+          </p>
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            You will also need a runner online to execute its turns.{' '}
+            <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
+              Read more in the guide
+            </Link>
+            .
           </p>
         </div>
       )}

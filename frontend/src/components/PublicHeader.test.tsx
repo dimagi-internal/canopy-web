@@ -20,7 +20,12 @@ function renderAs(status: 'authenticated' | 'anonymous') {
           status === 'authenticated'
             ? {
                 status,
-                user: { name: 'Jonathan Jackson', email: 'jj@dimagi.com', avatar_url: '' },
+                user: {
+                  name: 'Jonathan Jackson',
+                  email: 'jj@dimagi.com',
+                  avatar_url: '',
+                  can_create_workspace: false,
+                },
               }
             : { status, user: null }
         }

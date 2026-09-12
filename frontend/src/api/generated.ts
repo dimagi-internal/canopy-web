@@ -2494,6 +2494,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/system/public-stats": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Aggregate counts for the public explainer (anonymous)
+         * @description Anonymous, aggregates only.
+         *
+         *     NOTE: `auth=None` is half the story — apps/common/middleware.py is
+         *     default-deny, so this path is also allowlisted there. Both are required.
+         *
+         *     Declared above `detail()` for readability. `/{kind}/{name}` is two path
+         *     segments, so it cannot capture this single-segment route — the order is
+         *     not load-bearing.
+         */
+        readonly get: operations["apps_system_api_public_stats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/system/{kind}/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -4675,6 +4702,12 @@ export interface components {
             readonly name: string;
             /** Avatar Url */
             readonly avatar_url: string;
+            /**
+             * Can Create Workspace
+             * @description Whether this caller may POST /api/workspaces/. False for an invite-admitted user holding no membership — see the F1 finding in apps.workspaces.services.can_create_workspace. The first-run screen reads this so it never offers a button that 403s.
+             * @default false
+             */
+            readonly can_create_workspace: boolean;
         };
         /**
          * PresencePreferenceOut
@@ -8695,6 +8728,22 @@ export interface components {
              * @default
              */
             readonly description: string;
+        };
+        /**
+         * PublicStatsOut
+         * @description Aggregates for the public explainer. Integers only — see apps/system/stats.py.
+         */
+        readonly PublicStatsOut: {
+            /** Agents */
+            readonly agents: number;
+            /** Skills */
+            readonly skills: number;
+            /** Runners Online */
+            readonly runners_online: number;
+            /** Turns Executed */
+            readonly turns_executed: number;
+            /** Demos Published */
+            readonly demos_published: number;
         };
         /**
          * CapabilityDetailOut
@@ -14090,6 +14139,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilityCatalogOut"];
+                };
+            };
+        };
+    };
+    readonly apps_system_api_public_stats: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PublicStatsOut"];
                 };
             };
         };

@@ -437,14 +437,33 @@ export function ChatSessionsPanel({
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
       ) : visible.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
-          <div className="text-sm text-foreground">
-            {parked.length > 0 ? 'No chats on a live runner' : 'No chats yet'}
+        parked.length > 0 ? (
+          <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
+            <div className="text-sm text-foreground">No chats on a live runner</div>
+            <div className="text-xs text-muted-foreground">{parkedSummary(parked)}</div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {parked.length > 0 ? parkedSummary(parked) : 'Start one with “New chat”.'}
+        ) : (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="text-sm font-semibold text-foreground">No chats yet</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
+              Start a chat to hand an agent a job. Sending a message enqueues a turn, and a runner
+              picks it up and streams the reply back as it works.
+            </p>
+            <p className="mt-2 text-[12px] text-muted-foreground">
+              {agents.length === 0 && projects.length === 0 ? (
+                <>
+                  Nothing to chat with?{' '}
+                  <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">
+                    You need an agent first
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>Pick one from "New chat with…" above to start one.</>
+              )}
+            </p>
           </div>
-        </div>
+        )
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border">
           {sortSessions(visible, sort).map((s, i, rows) => {

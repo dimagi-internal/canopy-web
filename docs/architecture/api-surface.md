@@ -412,6 +412,22 @@ Push needs BOTH keys: either one empty → the endpoints 503 (`_push_configured`
 ### System (`apps/system`)
 - `GET /api/system/overview` — Capability catalog: the canopy plugin's skills/agents/commands, read live from the plugin.
 - `GET /api/system/{kind}/{name}` — Capability detail for one skill/agent/command. Drives the `/system` Workflows view.
+- `GET /api/system/public-stats` — **The only anonymous route in this surface** (`auth=None`).
+  Five aggregate integers — agents, skills, runners online, turns executed, published demo
+  packages — powering the live counts on the public explainer at `/about`. Safe to serve
+  unauthenticated for one reason: *a count cannot leak what it is a count of.* Hence the
+  guards: integers ONLY (no names, slugs, ids, timestamps, or per-agent/per-tenant
+  breakdown), the response shape closed by TYPE in `tests/test_public_stats.py` rather than
+  by a denylist of field names (the realistic failure is a helpful field added months from
+  now, which no denylist anticipates), and a 60s cache so an anonymous caller cannot turn it
+  into a free load generator. Being public needs TWO changes, not one — `auth=None` here AND
+  an entry in `apps/common/middleware.py`'s `PUBLIC_PATH_PREFIXES`, since the login
+  middleware is default-deny; `tests/test_public_routes_reachable.py` pins the second half,
+  which is otherwise untested because `REQUIRE_AUTH=False` makes that middleware inert
+  suite-wide. Accepted residual: monotonic counters polled at 60s reveal fleet *activity*
+  (throughput, whether any box is up, when a demo appears) even though they reveal no
+  identity, and `demos_published` counts runs across all tenants and visibilities including
+  private. See `docs/superpowers/specs/2026-09-12-opening-canopy-to-other-people-design.md`.
 
 ### MCP (`apps/mcp`, mounted at `/api/mcp/`)
 Not a Ninja router — a FastMCP 3.x Streamable-HTTP ASGI app mounted in `config/asgi.py`. Auth is enforced inside the server via `MultiAuth` (per-user PAT `CanopyPATVerifier`, always on; interactive Google OAuth is an env-gated seam, `MCP_OAUTH_ENABLED`). Every tool call writes an `MCPAuditLog` row; mutating tools are rate-limited per user. Tools today: `list_insights` + `clear_insights` (insights), and `list_schedules` / `preview_cron` (read) + `create_schedule` / `update_schedule` / `delete_schedule` / `run_schedule_now` (write) for recurring turns. The schedule tools call `apps/harness/schedule_services.py`, the same request-free service layer the REST routes call, so the MCP and REST surfaces can't drift. The legacy single-shared `CANOPY_MCP_BEARER` and the hand-rolled ASGI gate are gone. See `docs/architecture/mcp-surface.md`.

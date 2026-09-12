@@ -2,9 +2,11 @@ import { lazy, Suspense } from 'react'
 import type { RouteObject } from 'react-router-dom'
 import { createBrowserRouter, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useWorkspace } from './workspace/WorkspaceProvider'
+import { FirstRunPage } from './pages/FirstRunPage'
 import { AppLayout } from './components/AppLayout/AppLayout'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { NotFound } from './components/NotFound'
+import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { ProjectsPage } from './pages/ProjectsPage'
@@ -29,6 +31,7 @@ import StoryboardPage from './pages/StoryboardPage'
 import StoryboardsPage from './pages/StoryboardsPage'
 import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
+import { AboutPage } from './pages/AboutPage'
 import SupervisorPage from '@/pages/SupervisorPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
@@ -119,20 +122,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // Legacy flat tenant surface (e.g. /agents, /ddd/foo) → the active workspace's
 // scoped path. Waits for the workspace list so `active` is known.
-function TenantRedirect({ to }: { to: string }) {
+export function TenantRedirect({ to }: { to: string }) {
   const { active, loading } = useWorkspace()
   const { '*': tail } = useParams()
   if (loading) return null
-  if (!active) return null // no membership yet; nothing to route to
+  if (!active) return <FirstRunPage /> // no membership yet — explain, don't blank
   const suffix = tail ? `/${tail}` : ''
   return <Navigate to={`/w/${active}/${to}${suffix}`} replace />
 }
 
 // Bare "/" → the active workspace's workbench.
-function RootRedirect() {
+export function RootRedirect() {
   const { active, loading } = useWorkspace()
   if (loading) return null
-  if (!active) return null
+  if (!active) return <FirstRunPage />
   return <Navigate to={`/w/${active}`} replace />
 }
 
@@ -175,18 +178,28 @@ function guarded(routes: RouteObject[]): RouteObject[] {
   })) as RouteObject[]
 }
 
-export const router = createBrowserRouter(guarded([
+/**
+ * The route table, as data.
+ *
+ * Exported so the guide's coverage test can read it: every documented surface
+ * must have a descriptor in guide/surfaces.ts, and every descriptor must name a
+ * real route. Extracting paths from a BUILT router is awkward; reading them from
+ * this array is three lines.
+ */
+export const routeTable: RouteObject[] = [
   {
     element: <AppLayout />,
     children: [
       // --- Personal / global (not tenant-scoped) ---
       { path: '/system', element: <SystemPage /> },
+      { path: '/guide', element: <GuidePage /> },
       { path: '/insights', element: <InsightsPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
       { path: '/settings', element: <SettingsPage /> },
+      { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // --- Public viewers (root; self-enforce visibility) ---
       { path: '/walkthrough/:id', element: <WalkthroughViewerPage /> },
       { path: '/review/:id', element: <ReviewPage /> },
@@ -288,9 +301,14 @@ export const router = createBrowserRouter(guarded([
       // One narrative, scene by scene, for an outsider. `?b=<board>` carries the
       // storyboard whose token gates it — the narrative itself has no token.
       { path: '/narrative/:slug', element: <NarrativeReviewPage /> },
+      // The public explainer — anyone, no login. Mounted here (not AppLayout)
+      // for the same reason as its siblings above.
+      { path: '/about', element: <AboutPage /> },
     ],
   },
-]), {
+]
+
+export const router = createBrowserRouter(guarded(routeTable), {
   // "/" at root, "/canopy" as a labs tenant — keeps every route + <Link> under
   // the deployment's path prefix (from Vite's import.meta.env.BASE_URL).
   basename: import.meta.env.BASE_URL.replace(/\/$/, '') || '/',

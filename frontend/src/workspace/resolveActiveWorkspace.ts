@@ -1,5 +1,7 @@
 // Pure workspace-selection logic, extracted so it can be unit-tested without a
-// React renderer (the app has no jsdom/testing-library set up).
+// React renderer (jsdom + @testing-library/react ARE installed and used by
+// other test files — this stays a plain function because it doesn't need
+// one, not because a renderer is unavailable).
 
 export interface WorkspaceLike {
   slug: string

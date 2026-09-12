@@ -36,6 +36,7 @@ function isPublicLinkRoute(): boolean {
     path.startsWith('/storyboard/') ||
     path.startsWith('/narrative/') ||
     path.startsWith('/invite/') ||
+    path === '/about' ||
     LEGACY_WALKTHROUGH_RE.test(path)
   )
 }

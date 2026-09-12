@@ -32,3 +32,13 @@ class CapabilityCatalogOut(StrictModel):
     counts: dict[str, int]
     plugin_version: str | None = None
     warning: str | None = None
+
+
+class PublicStatsOut(StrictModel):
+    """Aggregates for the public explainer. Integers only — see apps/system/stats.py."""
+
+    agents: int
+    skills: int
+    runners_online: int
+    turns_executed: int
+    demos_published: int

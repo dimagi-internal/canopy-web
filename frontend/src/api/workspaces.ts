@@ -120,3 +120,28 @@ export async function acceptInvite(token: string): Promise<WorkspaceOut> {
   }
   return res.data as unknown as WorkspaceOut
 }
+
+// Used by FirstRunPage. Returns a result object rather than throwing: both
+// failure modes here (403 not-eligible, 409 slug-taken, 422 bad charset) are
+// expected user-facing outcomes the caller displays inline, not exceptional
+// conditions. This endpoint declares no error response in the OpenAPI schema
+// (see the `WorkspaceApiError` comment above), so `res.error` narrows the
+// whole result to `never` under `if (res.error)` — branching on
+// `res.response.ok` instead sidesteps that false-negative.
+export async function createWorkspace(
+  slug: string,
+  displayName: string,
+): Promise<{ slug: string } | { error: string }> {
+  const res = await apiV2.POST('/api/workspaces/', {
+    body: { slug, display_name: displayName },
+  })
+  if (!res.response.ok) {
+    // 409 = slug taken, 403 = not eligible (F1), 422 = bad slug charset.
+    // The server's problem+json `detail` is the only message worth showing:
+    // the slug rules are enforced by Workspace.SLUG_PATTERN server-side and
+    // restating them here would be a second copy free to drift.
+    const detail = (res.error as { detail?: string } | undefined)?.detail
+    return { error: detail || 'Could not create the workspace.' }
+  }
+  return { slug: (res.data as unknown as WorkspaceOut).slug }
+}
