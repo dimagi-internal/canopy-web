@@ -19,6 +19,7 @@ from django.test import Client
 
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
+from apps.harness import services as harness_services
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from canopy_transcript import BLOCK_STRIDE
@@ -254,6 +255,34 @@ def test_transfer_refuses_a_session_with_no_binding():
     s = Session.objects.create(workspace=ws, project="canopy-web", title="never ran")
     with pytest.raises(LookupError):
         chat.transfer_session(session=s, placement=str(laptop.id))
+
+
+def test_the_targets_first_report_does_not_reset_the_epoch():
+    """The seam between this feature and the existing report loop.
+
+    `record_session` re-points the binding on the target's first report. It
+    finds the row via `_binding_for_thread`, which keys on `thread_key` — which
+    the transfer deliberately preserves — so it MUTATES the transferred row
+    rather than creating a fresh one. A new row would come with
+    `index_offset=0` and the next ship would drop the inherited history after
+    all, which is the whole failure re-opened one step later.
+    """
+    _u, ws, cloud, laptop, _c = _ctx()
+    s = _bound_session(ws, cloud, indices=(0, 64, 128))
+    chat.transfer_session(session=s, placement=str(laptop.id))
+    offset = RunnerBinding.objects.get(session=s).index_offset
+    assert offset > 0
+
+    harness_services.record_session(
+        None, str(s.id), runner=laptop, project="canopy-web", workspace=ws,
+        emdash_task_id="c-fresh-local-task",
+    )
+
+    assert RunnerBinding.objects.filter(session=s).count() == 1, "no second binding"
+    binding = RunnerBinding.objects.get(session=s)
+    assert binding.index_offset == offset, "the report must not reset the epoch"
+    assert binding.runner_id == laptop.id
+    assert binding.session_key == "c-fresh-local-task"
 
 
 # --- the descriptor the runner reads --------------------------------------
