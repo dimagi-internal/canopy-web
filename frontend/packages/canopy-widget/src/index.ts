@@ -40,9 +40,10 @@
  */
 
 import { createChrome, type Chrome, type DisplayMode } from './chrome'
-import { SOURCE, isFrameMessage, originOf, type HostMessage } from './protocol'
+import { SOURCE, isFrameMessage, originOf, type ActionSpec, type HostMessage } from './protocol'
 
 export type { DisplayMode } from './chrome'
+export type { ActionSpec } from './protocol'
 
 export interface CanopyWidgetOptions {
   /** Where canopy lives, browser-facing. Absolute for a cross-origin canopy
@@ -83,9 +84,12 @@ export interface CanopyWidget {
   /** What the agent may read off this page. Pulled when a session opens, not
    *  subscribed to — see `@canopy/client/bridge` for why. */
   provideContext(provider: ContextProvider): void
-  /** Offer one named action. Re-registering a name replaces it, so a
-   *  re-rendering host can call this freely. */
-  registerAction(name: string, action: HostAction): void
+  /** Offer one named action.
+   *
+   *  `options.parameters` is JSON-Schema and should be supplied: without it the
+   *  agent knows the action exists but not how to call it. Re-registering a
+   *  name replaces it, so a re-rendering host can call this freely. */
+  registerAction(name: string, action: HostAction, options?: Omit<ActionSpec, 'name'>): void
   unregisterAction(name: string): void
   /** Remove the widget and stop listening. Idempotent. */
   destroy(): void
@@ -106,7 +110,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   const src = `${base}/embed/chat?app=${encodeURIComponent(options.app)}`
 
   let provider: ContextProvider | null = null
-  const actions = new Map<string, HostAction>()
+  const actions = new Map<string, { fn: HostAction; spec: ActionSpec }>()
   let destroyed = false
 
   const chrome: Chrome = createChrome(src, {
@@ -118,6 +122,12 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     zIndex: options.zIndex ?? 2147483000,
     onToggle: (open) => post({ source: SOURCE, type: 'visibility', open }),
   })
+
+  /** Sorted so a host that registers in a different order across renders does
+   *  not hand the agent a different-looking tool list each time. */
+  function actionSpecs(): ActionSpec[] {
+    return [...actions.values()].map((a) => a.spec).sort((x, y) => x.name.localeCompare(y.name))
+  }
 
   function post(message: HostMessage): void {
     // Explicit targetOrigin on every single message. '*' would broadcast the
@@ -169,7 +179,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             token: await mintToken(),
             agent: options.agent,
             metadata: options.metadata,
-            actions: [...actions.keys()].sort(),
+            actions: actionSpecs(),
           })
         } catch (error) {
           // The frame is up but unusable. Tell it so it can say so, rather than
@@ -210,8 +220,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
         return
       }
       case 'action-request': {
-        const action = actions.get(message.name)
-        if (!action) {
+        const entry = actions.get(message.name)
+        if (!entry) {
           // Never a silent no-op: to an agent that is indistinguishable from
           // success, and it will carry on as though the page changed.
           post({
@@ -223,7 +233,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
           return
         }
         try {
-          const result = await action(message.args ?? {})
+          const result = await entry.fn(message.args ?? {})
           post({ source: SOURCE, type: 'action-result', id: message.id, result })
         } catch (error) {
           post({
@@ -259,15 +269,18 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     provideContext(next) {
       provider = next
     },
-    registerAction(name, action) {
-      actions.set(name, action)
+    registerAction(name, action, options) {
+      actions.set(name, {
+        fn: action,
+        spec: { name, description: options?.description, parameters: options?.parameters },
+      })
       // Tell an already-open frame, so an action registered after mount becomes
       // callable without reopening the panel.
-      post({ source: SOURCE, type: 'actions', actions: [...actions.keys()].sort() })
+      post({ source: SOURCE, type: 'actions', actions: actionSpecs() })
     },
     unregisterAction(name) {
       actions.delete(name)
-      post({ source: SOURCE, type: 'actions', actions: [...actions.keys()].sort() })
+      post({ source: SOURCE, type: 'actions', actions: actionSpecs() })
     },
     destroy() {
       if (destroyed) return

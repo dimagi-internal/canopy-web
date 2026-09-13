@@ -353,20 +353,31 @@ describe('actions', () => {
     expect(sent('action-error')[0].message.message).toBe('not allowed on a completed run')
   })
 
-  it('declares the action list on init', async () => {
+  it('declares the action list on init, with schemas', async () => {
     const { widget, fromFrame, sent } = widgetHarness()
     widget.registerAction('b', vi.fn())
-    widget.registerAction('a', vi.fn())
+    widget.registerAction('a', vi.fn(), {
+      description: 'Dismiss things',
+      parameters: { type: 'object', properties: { ids: { type: 'array' } }, required: ['ids'] },
+    })
 
     await fromFrame({ source: SOURCE, type: 'ready' })
 
-    expect(sent('init')[0].message.actions).toEqual(['a', 'b'])
+    const declared = sent('init')[0].message.actions as Array<Record<string, unknown>>
+    // Sorted, so a host registering in a different order across renders does
+    // not hand the agent a different-looking tool list each time.
+    expect(declared.map((a) => a.name)).toEqual(['a', 'b'])
+    // The schema is the whole reason this is a spec rather than a name: the
+    // agent cannot call `a` without being told it takes `ids`.
+    expect(declared[0].parameters).toMatchObject({ required: ['ids'] })
+    expect(declared[0].description).toBe('Dismiss things')
   })
 
   it('tells an open frame when the action set changes', async () => {
     const { widget, sent } = widgetHarness()
     widget.registerAction('a', vi.fn())
-    expect(sent('actions')[0].message.actions).toEqual(['a'])
+    expect((sent('actions')[0].message.actions as Array<{ name: string }>).map((a) => a.name))
+      .toEqual(['a'])
 
     widget.unregisterAction('a')
     expect(sent('actions')[1].message.actions).toEqual([])
