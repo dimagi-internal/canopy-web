@@ -12,11 +12,20 @@
  * a reader asking "what can I do here?" is asking about their role, not about
  * which door they came through.
  *
+ * One of those five was NOT a role and was lost in the reframe: "you want
+ * canopy's skills in your own Claude Code sessions" — mint a token, install
+ * the plugin, run no agents at all. It is a real and probably common way to
+ * use canopy, so it lives inside `user` (it needs no agent of your own)
+ * rather than as a fifth role. `/settings` sits there too, not under
+ * `administrator`: minting your OWN access token is something every user
+ * does, and filing it under the owner tier told people the opposite.
+ *
  * IMPORTANT, and the reason `enforcement` exists as a field: these tiers are
- * fully enforced on the AGENTS surface and only partly enforced elsewhere.
- * Projects, walkthroughs, shareouts and reviews check that you are in the
- * tenant, not what role you hold. Saying so in the data keeps the rendered page
- * honest rather than aspirational — see docs/architecture/roles.md.
+ * fully enforced on the AGENTS and HARNESS surfaces (agents, schedules, turns)
+ * and only partly enforced elsewhere. Projects, walkthroughs, shareouts and
+ * reviews check that you are in the tenant, not what role you hold. Saying so
+ * in the data keeps the rendered page honest rather than aspirational — see
+ * docs/architecture/roles.md.
  */
 export interface UserRole {
   id: string
@@ -51,17 +60,27 @@ export const USER_ROLES: UserRole[] = [
     who: 'Someone with work to hand to an agent, or a question waiting on them.',
     enforcement: 'Workspace member. Any role, including viewer.',
     startHere: 'Open Chats in a workspace and start a chat with an agent.',
-    surfaces: ['/w/:workspace/chat', '/w/:workspace/chat/:id', '/supervisor'],
+    surfaces: [
+      '/w/:workspace/chat',
+      '/w/:workspace/chat/:id',
+      '/supervisor',
+      '/settings',
+      '/system',
+    ],
     note:
       'Chat, answer a question an agent is blocked on, decide an item, read the board. ' +
       'Then choose where it runs: a cloud runner needs nothing from you, or pair your own ' +
-      'laptop so you can jump into the terminal mid-turn.',
+      'laptop so you can jump into the terminal mid-turn. Or skip agents entirely — mint a ' +
+      'token in Settings and install the canopy plugin to use the capability library in ' +
+      'your own Claude Code sessions, with no fleet to run.',
   },
   {
     id: 'author',
     title: 'Author — you build and run',
     who: 'Someone shaping what an agent is, not just what it is doing today.',
-    enforcement: 'Editor on the agents surface. Membership-only elsewhere — a known gap.',
+    enforcement:
+      'Editor on agents, schedules and turns. Membership-only on projects, ' +
+      'walkthroughs, shareouts and reviews — a known gap.',
     startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:
@@ -73,8 +92,8 @@ export const USER_ROLES: UserRole[] = [
     title: 'Administrator — you own the workspace',
     who: 'Whoever decides who else gets in, and holds the keys.',
     enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
-    startHere: 'Open Members to invite someone, or Settings to mint an access token.',
-    surfaces: ['/w/:workspace/members', '/w/:workspace/inbound', '/settings'],
+    startHere: 'Open Members to invite someone, or an agent\'s Credentials tab to hold its keys.',
+    surfaces: ['/w/:workspace/members', '/w/:workspace/inbound'],
     note:
       'Members and invites, agent credentials, the shared vault, inbound configuration. ' +
       'Credentials are owner-only because they are the keys a runner resolves everything ' +

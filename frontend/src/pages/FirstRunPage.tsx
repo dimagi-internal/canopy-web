@@ -40,13 +40,20 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   })
 
   // Joining is a THIRD option alongside create/needs-invite, not a
-  // replacement for either — offer it only in the zero-workspace states.
-  // Fetched here (not lazily on demand) because a stranded user with no
-  // workspace is exactly the audience this list exists for; `listJoinableWorkspaces`
-  // is itself a capability list (never over-discloses), so rendering it
-  // unconditionally in this state is safe.
+  // replacement for either. Fetched here (not lazily on demand) because a
+  // stranded user with no workspace is exactly the audience this list exists
+  // for; `listJoinableWorkspaces` is itself a capability list (it never
+  // returns a workspace the caller cannot join, so it cannot become a tenant
+  // directory), which is what makes rendering it unconditionally safe.
+  //
+  // It is fetched in the `ready` state too — i.e. for someone who ALREADY
+  // belongs somewhere — and that is not incidental. Auto-join used to put a
+  // multi-workspace user into every workspace their domain matched; removing it
+  // left them with no in-app way to join a second one at all, which is a lost
+  // capability rather than missing polish. `/new-workspace` is where they land
+  // looking for one, so the joinable list belongs beside the create form.
   useEffect(() => {
-    if (state === 'loading' || state === 'ready') return
+    if (state === 'loading') return
     let cancelled = false
     listJoinableWorkspaces()
       .then((rows) => {
@@ -117,8 +124,10 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
       <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
         {alreadyAMember ? (
           <>
-            Workspaces keep separate teams&apos; projects, agents and demos apart.
-            Create another below.
+            Workspaces keep separate teams&apos; projects, agents and demos apart.{' '}
+            {joinable.length > 0
+              ? 'Create another below, or join one your address is already allowed into.'
+              : 'Create another below.'}
           </>
         ) : (
           <>
@@ -129,9 +138,11 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         )}
       </p>
 
-      {!alreadyAMember && joinable.length > 0 ? (
+      {joinable.length > 0 ? (
         <div className="mt-8 space-y-3">
-          <h2 className="text-sm font-semibold text-foreground">Join a workspace</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            {alreadyAMember ? 'Or join an existing one' : 'Join a workspace'}
+          </h2>
           {joinError ? <p className="text-[13px] text-destructive">{joinError}</p> : null}
           <ul className="space-y-2">
             {joinable.map((ws) => (

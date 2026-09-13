@@ -1,7 +1,7 @@
 # Agent instances and the ACL — you own the instance, not the agent
 
 **Date:** 2026-09-12
-**Status:** Design — not implemented. Phase 0 is independently shippable.
+**Status:** Phases 0 and 0b **SHIPPED** 2026-09-12. Phases 1–3 designed, not implemented.
 **Supersedes in part:** `2026-06-30-workspace-multi-tenancy-design.md` (the `Agent.workspace`
 FK it introduced becomes an instance field; the tenancy *rules* it established survive)
 **Related:** `2026-09-05-agent-credentials-design.md` (per-agent secrets become per-INSTANCE
@@ -129,6 +129,31 @@ reading) stays open to `viewer`. This is a pass over the write endpoints adding 
 plus a test per endpoint asserting a `viewer` is refused. It closes the live mismatch
 between the role's name and its power, and it is the piece the current rollout actually
 needs. **Do this first and separately** — it needs no model change and no migration.
+
+**Phase 0b — remove the mechanism that made `viewer` a lie in the first place.** Not in the
+original phasing, and added because Phase 0 could not honestly be called done without it.
+Phase 0 gates writes on a role; §Problem item 2 is the observation that the role was *not
+what anyone had chosen* — `auto_join_workspaces` granted `editor` of every domain-matching
+workspace as a side effect of a visibility check, so gating on `editor` while that ran would
+have been a gate whose key was handed to everyone who looked at an agent. Two mechanisms had
+to go:
+
+- **Auto-join.** Removed across 31 call sites; `Workspace.auto_join_domains` is renamed
+  `self_join_domains` (`workspaces/0008`) and now means "may join", exercised by an explicit
+  `GET /api/workspaces/joinable` + `POST /api/workspaces/{slug}/join`. `dimagi` and
+  `dimagi-associate` keep self-join. The first-run screen and `/new-workspace` offer it.
+- **Implicit enrolment on create.** Five create endpoints (projects, shareouts, walkthroughs,
+  reviews, issues) each held their own copy of `ensure_member(pinned or default, caller)`,
+  which on the flat mount made any authenticated caller an `editor` of the org default by
+  posting one row — strictly broader than auto-join, since it required no domain match at
+  all. All five now resolve through `wsvc.creation_workspace`, which returns only tenants the
+  caller is already in. Found by security review *after* Phase 0's gates landed, which is the
+  useful lesson: a role gate is only worth the enrolment discipline behind it.
+
+Phase 0's gates were also extended beyond the agents surface during review — schedule CRUD
+and `POST /api/harness/turns/` were membership-only, and a schedule is prompt text executed
+as the agent with its credentials. See `docs/architecture/roles.md` for what is enforced
+where, including what deliberately is not.
 
 **Phase 1 — `AgentInstance` lands additively.** New model, `Agent.workspace` stays and stays
 NOT NULL. Every existing agent gets exactly one instance by backfill. Nothing reads the
