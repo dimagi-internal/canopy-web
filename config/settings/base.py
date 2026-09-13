@@ -415,6 +415,23 @@ RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", defau
 # encryption key can rotate independently of SECRET_KEY.
 FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 
+# --- GitHub App (agent creation creates a real repo) -------------------------
+# A GitHub App authorized PER USER through the user-to-server web flow, so the
+# grant belongs to the human and reaches only the repos they chose plus the ones
+# canopy creates for them. See apps/tokens/github_app.py for why an App rather
+# than an OAuth App, and why this is not a credential a runner can hold.
+#
+# The CLIENT ID is not a secret — GitHub publishes it and it appears in every
+# authorize URL the browser visits — so it is a plain env var rather than a
+# Secrets Manager entry. Only the client secret is a secret. (GOOGLE_OAUTH_CLIENT_ID
+# is in Secrets Manager for historical uniformity; there is no security reason to
+# copy that here, and keeping it plain removes a manual step per deployment.)
+GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")
+GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
+# The app's slug, used only to build the "install it somewhere else" link
+# (https://github.com/apps/<slug>/installations/new). Public.
+GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
+
 # This deployment's own externally-reachable base URL — no request context to derive
 # it from when services.py builds a callback URL for a drilled agent to POST back to
 # (a shell prompt, not an HTTP view). connectlabs.py overrides to the labs URL.

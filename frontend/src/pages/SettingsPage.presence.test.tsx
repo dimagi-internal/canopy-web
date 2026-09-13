@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
+// SettingsPage is a routed page and now reads the query string — the GitHub
+// OAuth callback returns the browser to /settings?github=… — so it needs a
+// Router here, which is what every other page test in this repo already does.
+import { MemoryRouter } from 'react-router-dom'
 import type { AiStatusLegacy } from '@/api/ai'
 import type { PresencePreferenceOut } from '@/api/presence'
 import type { MintDebugSessionResponse } from '@/api/debug'
@@ -61,7 +65,11 @@ describe('SettingsPage presence toggle', () => {
     const shell = renderHook(() => usePresenceReconnectNonce())
     expect(shell.result.current).toBe(0)
 
-    render(<SettingsPage />)
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
 
     const checkbox = await screen.findByRole('checkbox', { name: /show me as viewing/i })
     expect((checkbox as HTMLInputElement).checked).toBe(true)
@@ -88,7 +96,11 @@ describe('SettingsPage presence toggle', () => {
     const handler = vi.fn()
     window.addEventListener(PRESENCE_PREFERENCE_CHANGED_EVENT, handler)
 
-    render(<SettingsPage />)
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
     const checkbox = await screen.findByRole('checkbox', { name: /show me as viewing/i })
 
     await act(async () => {
@@ -107,7 +119,11 @@ describe('SettingsPage presence toggle', () => {
     aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
     getPresencePreference.mockResolvedValue({ show_presence: true })
 
-    render(<SettingsPage />)
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    )
 
     // Resolves only if the accessible name is exactly this — a leaked help
     // sentence in the name (the a11y bug this fixes) would make this throw.

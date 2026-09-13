@@ -364,3 +364,87 @@ class DelegatedToken(models.Model):
                     expires_at__gt=timezone.now())
             .first()
         )
+
+
+class GitHubConnection(models.Model):
+    """One person's GitHub grant, held so canopy can create their agent's repo.
+
+    WHY THIS IS NOT AN AgentCredential. The credentials design puts per-user
+    secrets explicitly out of scope — an agent vault holds what the AGENT is,
+    and "Jonathan's GitHub token" is not that. This is the `chrome-sales` case
+    named there: a credential that acts on behalf of the dispatching human. So
+    it gets its own per-user row and none of the vault's semantics. It also
+    satisfies that design's rule for what canopy-web may hold at all — only
+    secrets it mints itself, which a token from its own OAuth flow is.
+
+    WHAT IS STORED, AND WHAT IS NOT. The `refresh_token` is the durable half
+    and the only thing encrypted at rest; the access token is deliberately NOT
+    stored. User access tokens live 8 hours and the refresh token 6 months
+    (GitHub's "Expire user authorization tokens" setting, which is on — with it
+    off GitHub issues no refresh token at all and we would be holding a
+    credential that never expires). Treating the access token as disposable
+    means a stolen database row is worth one refresh call to detect and revoke,
+    not indefinite access.
+
+    THE REFRESH TOKEN ROTATES. GitHub returns a NEW refresh token on every
+    refresh and invalidates the old one, so exactly one process may refresh a
+    given row — canopy-web. That is why a runner can never hold this
+    credential: two refreshers race and lock each other out. A runner that
+    needs GitHub gets an installation token instead (see
+    `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`).
+
+    SCOPE IS THE INSTALLATION'S, NOT THIS ROW'S. The app requests
+    `Administration: write` so it can create a repository, but which
+    repositories that reaches is chosen by the user at install time. GitHub:
+    "If the GitHub App creates any repositories later, the app will
+    automatically be granted access to those repositories as well." So a user
+    who picks "Only select repositories" and selects nothing still gets working
+    agent creation, and canopy ends up able to reach the repos it created and
+    nothing else. That property is what makes the permission acceptable, and
+    the connect UI says so at the point of choosing.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="github_connection",
+    )
+    # Who GitHub says this is. Display only — never used for authorization
+    # (the Django user is the identity; this is what we show them so they can
+    # tell they connected the account they meant to).
+    github_login = models.CharField(max_length=100)
+    github_user_id = models.BigIntegerField()
+    # Fernet ciphertext (apps.common.encryption). Blank only in the window
+    # between a failed refresh and a reconnect.
+    refresh_token_enc = models.TextField(blank=True, default="")
+    refresh_token_expires_at = models.DateTimeField(null=True, blank=True)
+    # Set when a refresh is rejected, so `/settings` can say "reconnect GitHub"
+    # instead of surfacing an opaque 401 in the middle of creating an agent.
+    # Cleared on every successful refresh.
+    refresh_failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "GitHub connection"
+
+    def __str__(self) -> str:
+        return f"{self.user_id} -> @{self.github_login}"
+
+    @property
+    def needs_reconnect(self) -> bool:
+        """True when the stored grant cannot mint an access token any more.
+
+        Three ways to get here, and they are one state to the user: the refresh
+        token is gone, it expired, or GitHub rejected it (revoked by the user,
+        or the app's permissions changed and the installation has not
+        re-approved). All of them mean the same next action — press Connect.
+        """
+        from django.utils import timezone
+
+        if not self.refresh_token_enc:
+            return True
+        if self.refresh_failed_at is not None:
+            return True
+        if self.refresh_token_expires_at and self.refresh_token_expires_at <= timezone.now():
+            return True
+        return False
