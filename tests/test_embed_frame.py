@@ -40,6 +40,40 @@ def _get(app_name="connect-labs"):
     return Client().get(f"/embed/chat?app={app_name}")
 
 
+@pytest.fixture
+def built_frontend(settings, tmp_path):
+    """Stand in a built frontend so the shell renders its real body.
+
+    CI's backend job does not run `npm run build`, so `_embed_assets()` finds
+    no manifest and `embed_chat` serves its "not built" page instead — which is
+    correct behaviour and made three tests below pass locally (where a build
+    existed) and fail in CI. The manifest shape mirrors a real vite build,
+    including CSS hoisted onto a SHARED chunk rather than the entry, because
+    that is the case the resolver exists to handle.
+    """
+    import json as _json
+    from apps.tokens import views_embed
+
+    vite = tmp_path / ".vite"
+    vite.mkdir()
+    (vite / "manifest.json").write_text(_json.dumps({
+        "src/embed/main.tsx": {
+            "file": "assets/embed-TEST01.js",
+            "isEntry": True,
+            "imports": ["_shared-TEST02.js"],
+        },
+        "_shared-TEST02.js": {
+            "file": "assets/shared-TEST02.js",
+            "css": ["assets/shared-TEST03.css"],
+        },
+    }))
+    settings.FRONTEND_DIST_DIR = tmp_path
+    # The manifest read is lru_cached for the life of the process, so a test
+    # that changes the setting must drop it or it reads a neighbour's.
+    views_embed._manifest.cache_clear()
+    yield tmp_path
+    views_embed._manifest.cache_clear()
+
 # --- the framing policy ---------------------------------------------------
 
 
@@ -293,7 +327,7 @@ def test_widget_js_is_not_app_scoped(settings, tmp_path):
     assert Client().get("/embed/widget.js").status_code == 200
 
 
-def test_the_shell_hands_over_the_origins_the_frame_must_validate_against():
+def test_the_shell_hands_over_the_origins_the_frame_must_validate_against(built_frontend):
     """The server is the only party that can say this.
 
     The frame is framed only by registered origins (frame-ancestors), but that
@@ -309,7 +343,7 @@ def test_the_shell_hands_over_the_origins_the_frame_must_validate_against():
     assert "https://labs-staging.dimagi.com" in body
 
 
-def test_the_shell_json_encodes_injected_values():
+def test_the_shell_json_encodes_injected_values(built_frontend):
     """These land inside a <script> block. An app name or origin carrying a
     quote would otherwise close the string and inject."""
     app = _app()
@@ -320,7 +354,7 @@ def test_the_shell_json_encodes_injected_values():
     assert '{ app: ev"il' not in body
 
 
-def test_the_shell_tells_the_frame_which_app_it_is():
+def test_the_shell_tells_the_frame_which_app_it_is(built_frontend):
     """The in-frame app needs to know, and it cannot read the query string of a
     URL the host controls any more safely than the server can hand it over."""
     _app()
