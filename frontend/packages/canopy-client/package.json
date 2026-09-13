@@ -1,0 +1,22 @@
+{
+  "name": "@canopy/client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Framework-free TypeScript client for canopy-web: delegated-token cache, REST, and the session WebSocket.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dimagi-internal/canopy-web.git",
+    "directory": "frontend/packages/canopy-client"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./bridge": "./src/bridge.ts"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "files": [
+    "src"
+  ]
+}
