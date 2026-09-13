@@ -60,6 +60,65 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
 
+      # Frontend types (frontend/src/api/generated.ts) are GENERATED from the
+      # backend's OpenAPI schema, which Django Ninja builds partly out of route
+      # docstrings — so an edit to a docstring, a schema, or a route makes the
+      # committed file stale. A stale file is a SILENT failure: it is still
+      # self-consistent TypeScript, so `Frontend build` passes and the next
+      # person to regenerate finds an unrelated diff in their PR.
+      #
+      # This lived in its own workflow (regen-openapi.yml) that could not be
+      # made a required check, for two independent reasons — so it failed and
+      # PRs merged anyway, twice (#575, then #756 → #757):
+      #   1. No `merge_group` trigger, so it never reports against the queued
+      #      merge result. Requiring it would have hung the queue forever — see
+      #      the `on:` block at the top of this file.
+      #   2. A `paths:` filter, so it does not run at all on PRs that miss the
+      #      filter, and a required check that never reports blocks the PR.
+      # It lives HERE instead: this job is already required and already runs on
+      # `merge_group`, so there is no ruleset change to make and nothing new
+      # that can deadlock.
+      #
+      # Unconditional, not path-scoped, and that is an upgrade rather than a
+      # cost. The old filter (`apps/**/api.py`, `apps/**/schemas.py`,
+      # `apps/api/**`) was a GUESS about what can move the schema and was
+      # provably incomplete — a Literal fed by an enum in `models.py`, a router
+      # registered elsewhere, or `generated.ts` mangled by a bad merge with no
+      # backend change at all, all slipped past it. Costs ~10s on a 2-minute
+      # job: the uv env above is reused, and only the codegen package is
+      # fetched.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Check generated frontend types are in sync
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+        run: |
+          uv run python -c "
+          import django, json
+          django.setup()
+          from apps.api.api import api
+          with open('frontend/openapi.json', 'w') as f:
+              json.dump(api.get_openapi_schema(), f, indent=2)
+          "
+          # Pinned to the same major the frontend declares, so CI and a local
+          # `npm run gen:api:local` cannot disagree about formatting and report
+          # a phantom diff.
+          npx --yes 'openapi-typescript@^7.13.0' frontend/openapi.json \
+            --output frontend/src/api/generated.ts --immutable
+          if ! git diff --quiet frontend/src/api/generated.ts; then
+            echo "::error file=frontend/src/api/generated.ts::generated.ts is out of date with the OpenAPI schema."
+            echo "You changed a route, a schema, or a route DOCSTRING without regenerating the types."
+            echo "Fix it locally and commit the result:"
+            echo "    cd frontend && npm run gen:api        # backend running on :8000"
+            echo "    # or dump the schema first, then: npm run gen:api:local"
+            echo "--- diff ---"
+            git --no-pager diff frontend/src/api/generated.ts
+            exit 1
+          fi
+          echo "generated.ts is up to date."
+
       - name: Run pytest
         run: uv run pytest
 

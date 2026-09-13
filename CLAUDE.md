@@ -202,15 +202,18 @@ What lives where:
 - **System (`apps/system`)**
 - **MCP (`apps/mcp`, mounted at `/api/mcp/`)**
 
-**When you change an `apps/**/schemas.py` or `api.py`, regenerate the frontend types and
-commit them** — `cd frontend && npm run gen:api` (backend up on :8000) or `npm run
-gen:api:local`. `regen-openapi.yml` verifies freshness on every such PR. It is **not a
-required check**, so a stale `generated.ts` can merge past it (observed 2026-08-01, #575
-→ fixed by #576); if you changed a route, regenerate rather than trusting the merge.
+**When you change an `apps/**/schemas.py` or `api.py` — including a route DOCSTRING, which
+Django Ninja publishes as the OpenAPI `description` — regenerate the frontend types and
+commit them**: `cd frontend && npm run gen:api` (backend up on :8000) or `npm run
+gen:api:local`. Freshness is verified inside the **`Backend tests`** job, which is a
+required check, so a stale `generated.ts` now blocks the merge. It used to live in its own
+`regen-openapi.yml`, which could not be required (no `merge_group` trigger, plus a `paths:`
+filter — either alone would hang the queue), so it failed and PRs merged anyway twice:
+#575 → #576, and #756 → #757.
 
 ## Design Decisions
 
-- **API is Pydantic-first via Django Ninja**: every request/response is a Pydantic v2 model declared in `apps/<app>/schemas.py`. Routes live in `apps/<app>/api.py`, registered on the single `NinjaAPI` instance in `apps/api/api.py`. Errors are RFC 7807 `application/problem+json`. Frontend types are generated from the OpenAPI 3.1 schema by `openapi-typescript` into `frontend/src/api/generated.ts` and consumed via `openapi-fetch`. **When you change an `apps/**/schemas.py` or `api.py`, regenerate the types and commit them: `cd frontend && npm run gen:api` (backend up on :8000) or `npm run gen:api:local` (against a dumped `openapi.json`).** The `regen-openapi.yml` workflow VERIFIES they're fresh on every such PR and fails if `generated.ts` is stale — it does NOT commit for you (an auto-commit pushed with `GITHUB_TOKEN` can't trigger the required CI checks, which used to leave the PR head unchecked and block the merge).
+- **API is Pydantic-first via Django Ninja**: every request/response is a Pydantic v2 model declared in `apps/<app>/schemas.py`. Routes live in `apps/<app>/api.py`, registered on the single `NinjaAPI` instance in `apps/api/api.py`. Errors are RFC 7807 `application/problem+json`. Frontend types are generated from the OpenAPI 3.1 schema by `openapi-typescript` into `frontend/src/api/generated.ts` and consumed via `openapi-fetch`. **When you change an `apps/**/schemas.py` or `api.py`, regenerate the types and commit them: `cd frontend && npm run gen:api` (backend up on :8000) or `npm run gen:api:local` (against a dumped `openapi.json`).** A step in the **`Backend tests`** job (a required check) VERIFIES they're fresh on EVERY PR and fails if `generated.ts` is stale — it does NOT commit for you (an auto-commit pushed with `GITHUB_TOKEN` can't trigger the required CI checks, which used to leave the PR head unchecked and block the merge). It is deliberately unconditional rather than path-scoped: the old filter was a guess about what can move the schema and missed real cases (a `Literal` fed by an enum in `models.py`, a router registered elsewhere, or `generated.ts` mangled by a bad merge with no backend change at all). **A route's docstring is published API documentation** — put maintainer rationale in `#` comments instead, or it ships to every consumer via the schema and `generated.ts`.
 - **Streaming endpoints stay on Django**: `GET /walkthrough/<uuid>/content` (the walkthrough viewer) is a bare Django view at `apps/walkthroughs/streaming.py` — HTTP Range support (for `<video>` scrubbing) doesn't fit the Ninja contract. It is the only `StreamingHttpResponse` left now that the co-authoring workspace SSE engine has been retired. (Reclaimed from `/w/<uuid>/content` by the tenancy migration; the legacy path 302-redirects.)
 - **Bare Django views**: `/api/csrf/`, `/api/debug/mint-session/`, `/auth/cli/authorize/`, and `/health/` (the last is also Ninja-mountable via `public_router`) — they manipulate sessions/cookies/redirects directly. Matched in `config/urls.py` BEFORE the Ninja `/api/` catch-all so they don't get shadowed.
 - **MCP is in-process FastMCP, not OpenAPI-derived**: `apps/mcp/` mounts a FastMCP 3.x Streamable-HTTP server at `/api/mcp/` whose tools are explicit Python functions calling the same service layer as the REST views (no HTTP self-loopback). Auth is per-user PAT inside the server (fail-closed), every call is audited, and writes are rate-limited.
