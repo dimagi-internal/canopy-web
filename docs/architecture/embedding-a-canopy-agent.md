@@ -97,27 +97,74 @@ no launcher to reopen it with.
 
 ## 2. Registering the app (canopy side, one-off)
 
-```bash
-# 1. The credential itself. Its raw value goes in the host's secret store.
-uv run python manage.py create_app_credential --name connect-labs \
-    --domains dimagi.com
+This is the security step. Canopy has to know the app exists, which origins may
+frame it, and which agents it may offer — and it fails **closed** on all three.
 
-# 2. Which origins may frame the widget. Without at least one, the embed
-#    shell 404s — an X-Frame-Options-exempt page with no frame-ancestors
-#    would be frameable by any site, so there is deliberately no default.
+### In the admin (the normal way)
+
+`/admin/tokens/appcredential/add/`, as a staff user. One page:
+
+| Field | What it does | Getting it wrong |
+| --- | --- | --- |
+| **Name** | The `app` value in `canopy.init` | Mismatch ⇒ the embed shell 404s |
+| **Allowed delegation domains** | Email domains this app may vouch for, e.g. `["dimagi.com"]` | Empty ⇒ the app can mint for nobody |
+| **Allowed frame origins** | Origins that may frame the widget, e.g. `["https://labs.connect.dimagi.com"]` | Empty ⇒ the shell 404s, deliberately — an `X-Frame-Options`-exempt page with no `frame-ancestors` is frameable by any site |
+| **Allowed agents** (inline) | Which agents this app may offer | Empty ⇒ the picker offers nothing |
+| **Provision workspace / role** | Optional: tenant a brand-new user lands in | Leave blank unless every user of this host is trusted in that tenant |
+
+**The raw credential is shown once, in a banner, on save.** It is stored only as
+a hash and cannot be recovered — copy it into the host's secret store
+immediately. Editing the app later never re-mints it (a second token would
+silently invalidate whatever the host already has deployed).
+
+Origins are validated on save: a wildcard, a path, or anything with a `;` is
+refused with an explanation. A wildcard is rejected on purpose — it would
+restore exactly the exposure `X-Frame-Options: DENY` was preventing.
+
+**Revoking** is a changelist action. It takes effect immediately: the embed
+shell 404s and existing delegated tokens stop working on their next request.
+
+### Or by command (scripted setup, needs DB access)
+
+```bash
+uv run python manage.py create_app_credential --name connect-labs --domains dimagi.com
 uv run python manage.py grant_app_frame_origin --name connect-labs \
     --origin https://labs.connect.dimagi.com
-
-# 3. Which agents this app may offer.
 uv run python manage.py grant_app_agent --name connect-labs --agent labs-helper
 uv run python manage.py grant_app_agent --name connect-labs --list
 ```
 
-Everything fails **closed**: no frame origin means no shell; no agent grant
-means the picker offers nothing. If the widget shows "No agent is available
-here yet," step 3 is usually what is missing.
+Note these need a shell with database access, which a deployment does **not**
+currently provide — `EnableExecuteCommand` is off on the ECS service and the RDS
+instance is VPC-internal. Use the admin on a deployment; the commands are for
+local and scripted setup.
 
----
+### Registering every environment
+
+Each origin that embeds the widget must be listed — production, staging, and
+`http://localhost:8000` for local development. They can all live on one
+credential, or you can register separate apps per environment if you want their
+agent grants to differ.
+
+## 2a. Where the agent's KNOWLEDGE comes from — not here
+
+Worth separating, because it is a different system. Nothing in §2 teaches an
+agent anything. Registration answers *"may this agent be offered on this host,
+to this user?"* — a permission question.
+
+What the agent **knows** lives with the agent:
+
+- its **persona and skills**, in its own git repo (`Agent.repo_url`, and the
+  skills under it);
+- its **credentials** for other systems, as named slots (`AgentCredential`) it
+  declares in `runtime.yaml` (`Agent.runtime_secrets`);
+- its **tools**, including any MCP servers it is configured against — which is
+  how an agent would query connect-labs' own data directly rather than through
+  the page.
+
+So "make the agent good at supply" is work in that agent's repo: give it skills
+about supply concepts, and MCP access to the data it should be able to look up.
+The widget only decides *whether it shows up*.
 
 ## 3. Designing the host page for this
 
