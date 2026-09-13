@@ -32,6 +32,15 @@ export interface UseSessionSocketOptions {
    * has no opinion on what to do with it.
    */
   onTitleUpdated?: () => void;
+  /**
+   * A frame the kit does not understand.
+   *
+   * The kit stays agnostic: canopy grew `session.page_action` (an agent asking
+   * the embedded page to do something) and ace-web will grow its own. Teaching
+   * the reducer about each would make a shared kit carry one app's vocabulary.
+   * Same shape as `onTitleUpdated` — handed over, no opinion taken.
+   */
+  onUnknownEvent?: (frame: WsEvent) => void;
 }
 
 export interface UseSessionSocketResult {
@@ -51,10 +60,26 @@ export interface UseSessionSocketResult {
   lastError: string | null;
 }
 
+/**
+ * Frames `sessionReducer` understands. Anything else is handed to
+ * `onUnknownEvent` rather than dropped — the reducer ignores what it does not
+ * recognise, which silently swallows an app-specific frame and leaves the
+ * container wondering why its feature never fires.
+ *
+ * Keep in step with sessionReducer's own switch.
+ */
+const KNOWN_EVENTS = new Set([
+  "chat.delta", "chat.stream_cancelled", "chat.stream_complete",
+  "chat.stream_error", "chat.stream_start", "chat.tool_result",
+  "chat.tool_use", "chat.user_message", "session.activity", "session.error",
+  "session.menu", "session.state", "session.stop", "session.title_updated",
+]);
+
 export function useSessionSocket({
   sessionId,
   wsUrl,
   onTitleUpdated,
+  onUnknownEvent,
 }: UseSessionSocketOptions): UseSessionSocketResult {
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -73,6 +98,7 @@ export function useSessionSocket({
   const pendingDraftBodyRef = useRef<string | null>(null);
   const closedByUserRef = useRef(false);
   const onTitleUpdatedRef = useRef(onTitleUpdated);
+  const onUnknownEventRef = useRef(onUnknownEvent);
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
@@ -84,6 +110,10 @@ export function useSessionSocket({
   useEffect(() => {
     onTitleUpdatedRef.current = onTitleUpdated;
   }, [onTitleUpdated]);
+
+  useEffect(() => {
+    onUnknownEventRef.current = onUnknownEvent;
+  }, [onUnknownEvent]);
 
   const send = useCallback((frame: { action: string; data: unknown }) => {
     const ws = socketRef.current;
@@ -133,6 +163,13 @@ export function useSessionSocket({
           draftDebounceRef.current = null;
         }
       }
+    }
+    // The reducer ignores anything it does not know, which silently drops an
+    // app-specific frame. Hand it over instead, so the container can act on
+    // vocabulary the shared kit deliberately does not carry.
+    if (!KNOWN_EVENTS.has(frame.event)) {
+      onUnknownEventRef.current?.(frame);
+      return;
     }
     setState((prev) => sessionReducer(prev, frame));
   }, []);

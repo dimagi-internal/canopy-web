@@ -137,14 +137,14 @@ describe('the handshake', () => {
       token: 'tok',
       agent: 'labs-helper',
       metadata: { supplyPoint: 7 },
-      actions: ['recordCount'],
+      actions: [{ name: 'recordCount' }],
     })
 
     await expect(init).resolves.toEqual({
       token: 'tok',
       agent: 'labs-helper',
       metadata: { supplyPoint: 7 },
-      actions: ['recordCount'],
+      actions: [{ name: 'recordCount' }],
     })
   })
 
@@ -163,7 +163,7 @@ describe('the handshake', () => {
 describe('requests', () => {
   async function connected() {
     const h = harness()
-    await h.fromHost({ source: SOURCE, type: 'init', token: 'tok', actions: ['act'] })
+    await h.fromHost({ source: SOURCE, type: 'init', token: 'tok', actions: [{ name: 'act' }] })
     return h
   }
 
@@ -220,16 +220,30 @@ describe('requests', () => {
     await assertion
   })
 
-  it('tracks the action list as the host changes it', async () => {
+  it('tracks the action list as the host changes it, schemas and all', async () => {
     const { link, fromHost } = await connected()
-    expect(link.actions()).toEqual(['act'])
+    expect(link.actions().map((a) => a.name)).toEqual(['act'])
 
     const seen: string[][] = []
-    link.onActionsChanged((names) => seen.push(names))
-    await fromHost({ source: SOURCE, type: 'actions', actions: ['act', 'other'] })
+    link.onActionsChanged((specs) => seen.push(specs.map((s) => s.name)))
+    await fromHost({
+      source: SOURCE,
+      type: 'actions',
+      actions: [
+        { name: 'act' },
+        {
+          name: 'other',
+          description: 'Do the other thing',
+          parameters: { type: 'object', properties: { n: { type: 'integer' } } },
+        },
+      ],
+    })
 
-    expect(link.actions()).toEqual(['act', 'other'])
+    expect(link.actions().map((a) => a.name)).toEqual(['act', 'other'])
     expect(seen).toEqual([['act', 'other']])
+    // The SCHEMA is what canopy turns into an MCP tool, so losing it here
+    // would leave the agent with a tool it cannot call.
+    expect(link.actions()[1].parameters).toMatchObject({ type: 'object' })
   })
 
   it('refuses to ask before the host has spoken', async () => {

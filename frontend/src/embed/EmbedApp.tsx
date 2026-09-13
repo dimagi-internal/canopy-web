@@ -216,7 +216,53 @@ function EmbedChat({
     () => client.sessionSocketUrl(sessionId) ?? '',
     [client, sessionId],
   )
-  const socket = useSessionSocket({ sessionId, wsUrl })
+  // The agent asking this page to do something. Arrives on the session socket
+  // as a DOORBELL only — the durable PageAction row is the mechanism, and the
+  // result goes back over HTTP so it is an acknowledged write rather than a
+  // second frame that could land nowhere.
+  const onUnknownEvent = useCallback(
+    (frame: { event: string; data?: unknown }) => {
+      if (frame.event !== 'session.page_action') return
+      const action = frame.data as { id: string; name: string; args: Record<string, unknown> }
+      void (async () => {
+        let body: { result?: unknown; error?: string }
+        try {
+          body = { result: await link.runAction(action.name, action.args) }
+        } catch (error) {
+          // A host refusal must reach the agent AS a refusal. Swallowing it
+          // here would leave the action pending until it timed out, and the
+          // agent would be told the page was closed when in fact it said no.
+          body = { error: error instanceof Error ? error.message : 'the page refused the action' }
+        }
+        await client.rest
+          .json(`/api/canopy-sessions/${sessionId}/page-actions/${action.id}/result`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          })
+          .catch(() => undefined)
+      })()
+    },
+    [client, link, sessionId],
+  )
+
+  const socket = useSessionSocket({ sessionId, wsUrl, onUnknownEvent })
+
+  // Tell canopy what this page can do, so the agent's tool list includes it.
+  // Re-sent whenever the host's set changes — a page the user navigated to
+  // offers different things, and a stale declaration is one the agent would
+  // call into nothing.
+  useEffect(() => {
+    const declare = (actions: { name: string; description?: string; parameters?: unknown }[]) => {
+      void client.rest
+        .json(`/api/canopy-sessions/${sessionId}/page-actions`, {
+          method: 'PUT',
+          body: JSON.stringify({ actions }),
+        })
+        .catch(() => undefined)
+    }
+    declare(link.actions())
+    return link.onActionsChanged(declare)
+  }, [client, link, sessionId])
 
   // Tell the runner a viewer is here (and stop when the panel closes), the same
   // attach/detach pair canopy's own chat page uses. Best-effort: never block
