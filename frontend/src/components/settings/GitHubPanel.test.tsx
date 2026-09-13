@@ -19,9 +19,20 @@ import { GitHubPanel } from './GitHubPanel'
 const asMock = getGitHubConnection as unknown as ReturnType<typeof vi.fn>
 const instMock = listGitHubInstallations as unknown as ReturnType<typeof vi.fn>
 
-const ONE_INSTALL = [
-  { installation_id: 1, account_login: 'jjackson', account_type: 'User', is_org: false },
-]
+function install(over: Record<string, unknown> = {}) {
+  return {
+    installation_id: 1,
+    account_login: 'jjackson',
+    account_type: 'User',
+    is_org: false,
+    repository_selection: 'selected',
+    repositories: ['jjackson/demo'],
+    repository_count: 1,
+    ...over,
+  }
+}
+
+const ONE_INSTALL = [install()]
 
 function conn(over: Record<string, unknown> = {}) {
   return {
@@ -80,23 +91,87 @@ describe('GitHubPanel', () => {
     // so `connected: true` with an empty installation list means a valid token
     // that can reach nothing. Measured on labs 2026-09-13: the panel said
     // "Connected as @jjackson" while nothing could be pushed.
-    asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
-    instMock.mockResolvedValue([])
-    mount()
-    expect(await screen.findByText(/no repository access yet/i)).toBeTruthy()
-    expect(screen.getByText(/Choose repositories/)).toBeTruthy()
-    // And it must NOT read as finished.
-    expect(screen.queryByRole('button', { name: /^disconnect$/i })).toBeNull()
+    vi.useFakeTimers()
+    try {
+      asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+      // Empty BOTH times — so this is a settled answer, not the post-install
+      // lag the re-check exists for.
+      instMock.mockResolvedValue([])
+      mount()
+      await vi.advanceTimersByTimeAsync(1600)
+      expect(screen.getByText(/no repository access yet/i)).toBeTruthy()
+      expect(screen.getByText(/Choose repositories/)).toBeTruthy()
+      // And it must NOT read as finished.
+      expect(screen.queryByRole('button', { name: /^disconnect$/i })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('names where access was granted once there is an installation', async () => {
+  it('names the REPOSITORIES, not just the account', async () => {
+    // The shape measured on labs 2026-09-13: one org, one repo. Reporting only
+    // "access granted on dimagi-internal" reads like the whole organisation and
+    // OVERSTATES the grant — which is the opposite of useful when the advice
+    // above was "pick only the repos you want agents in". If canopy tells
+    // people to scope carefully it has to show what they scoped to.
     asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
     instMock.mockResolvedValue([
-      { installation_id: 1, account_login: 'jjackson', account_type: 'User', is_org: false },
-      { installation_id: 2, account_login: 'dimagi-internal', account_type: 'Organization', is_org: true },
+      install({
+        installation_id: 161425953,
+        account_login: 'dimagi-internal',
+        account_type: 'Organization',
+        is_org: true,
+        repositories: ['dimagi-internal/ace'],
+        repository_count: 1,
+      }),
     ])
     mount()
-    expect(await screen.findByText(/jjackson, dimagi-internal/)).toBeTruthy()
+    expect(await screen.findByText('dimagi-internal/ace')).toBeTruthy()
+    expect(screen.getByText(/organisation/)).toBeTruthy()
+  })
+
+  it('flags an all-repositories grant instead of listing everything', async () => {
+    // It is the one grant the connect advice exists to steer people away from,
+    // so it should read as a choice worth revisiting rather than as a very
+    // long list.
+    asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+    instMock.mockResolvedValue([
+      install({ repository_selection: 'all', repositories: [], repository_count: 0 }),
+    ])
+    mount()
+    expect(await screen.findByText(/All repositories/)).toBeTruthy()
+    expect(screen.getByText(/Narrow it if you did not mean that/)).toBeTruthy()
+  })
+
+  it('says how many more there are when the grant spans a page', async () => {
+    asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+    instMock.mockResolvedValue([
+      install({ repositories: ['a/one', 'a/two'], repository_count: 7 }),
+    ])
+    mount()
+    expect(await screen.findByText(/and 5 more/)).toBeTruthy()
+  })
+
+  it('re-checks an empty list once before warning, because GitHub lags after an install', async () => {
+    // Observed on labs 2026-09-13: the "no repository access" warning appeared
+    // and then vanished on its own, because the first read after coming back
+    // from the install screen did not yet list the brand-new installation.
+    // Believing that momentary empty answer shows an alarming state that is
+    // not true.
+    vi.useFakeTimers()
+    try {
+      asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+      instMock.mockResolvedValueOnce([]).mockResolvedValueOnce(ONE_INSTALL)
+      mount()
+      // Let the first read resolve. The warning must NOT be on screen yet.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.queryByText(/no repository access yet/i)).toBeNull()
+      await vi.advanceTimersByTimeAsync(1600)
+      expect(screen.getByText('jjackson/demo')).toBeTruthy()
+      expect(instMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not ask GitHub for installations when there is no usable grant', async () => {

@@ -112,6 +112,25 @@ class GitHubInstallationOut(StrictModel):
     account_login: str
     account_type: str
     is_org: bool
+    repository_selection: str = Field(
+        default="selected",
+        description='"selected" or "all", from GitHub. Answers "did I actually scope '
+                    'this?" — an "all" grant reaches every repository the installing '
+                    'account can see, which is what the connect advice tells people to '
+                    'avoid, so the UI flags it rather than listing thousands of names.',
+    )
+    repositories: list[str] = Field(
+        default_factory=list,
+        description='Full names ("owner/repo") this installation reaches. Empty when '
+                    '`repository_selection` is "all" (enumerating is pointless there) '
+                    'and when the per-installation lookup failed, which degrades to no '
+                    'names rather than failing the whole list.',
+    )
+    repository_count: int = Field(
+        default=0,
+        description="GitHub's reported total, which can exceed len(repositories) when "
+                    "the grant spans more than one page.",
+    )
 
 
 class EmbedSelfOut(StrictModel):

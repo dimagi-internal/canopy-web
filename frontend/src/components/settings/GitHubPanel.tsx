@@ -63,15 +63,31 @@ export function GitHubPanel() {
           setInstalls(null)
           return
         }
-        listGitHubInstallations()
-          .then((rows) => { if (!cancelled) setInstalls(rows) })
-          .catch((e) => {
-            if (cancelled) return
-            setInstalls(null)
-            setInstallsError(
-              e instanceof Error ? e.message : 'Could not check your GitHub installations.',
-            )
-          })
+        // An EMPTY result is re-checked once before it is believed. GitHub
+        // does not list a brand-new installation immediately, so the first
+        // read straight after coming back from the install screen can be
+        // empty for a moment — and showing "no repository access" on that is
+        // alarming and wrong. Observed on labs 2026-09-13: the warning
+        // appeared and then vanished on its own.
+        const read = (attempt: number): void => {
+          listGitHubInstallations()
+            .then((rows) => {
+              if (cancelled) return
+              if (rows.length === 0 && attempt === 0) {
+                window.setTimeout(() => { if (!cancelled) read(1) }, 1500)
+                return
+              }
+              setInstalls(rows)
+            })
+            .catch((e) => {
+              if (cancelled) return
+              setInstalls(null)
+              setInstallsError(
+                e instanceof Error ? e.message : 'Could not check your GitHub installations.',
+              )
+            })
+        }
+        read(0)
       })
       .catch(() => { if (!cancelled) setError('Could not read the GitHub connection.') })
     return () => { cancelled = true }
@@ -186,13 +202,14 @@ export function GitHubPanel() {
             </Button>
           </div>
           {installs && installs.length > 0 && (
-            <p className="text-[13px] text-muted-foreground">
-              Repository access granted on{' '}
-              <span className="font-medium text-foreground">
-                {installs.map((i) => i.account_login).join(', ')}
-              </span>
-              .
-            </p>
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+                Repository access
+              </p>
+              {installs.map((i) => (
+                <InstallationRow key={i.installation_id} install={i} />
+              ))}
+            </div>
           )}
           {installsError && (
             <p className="text-[13px] text-muted-foreground">{installsError}</p>
@@ -230,6 +247,63 @@ export function GitHubPanel() {
         </p>
       )}
     </Card>
+  )
+}
+
+/**
+ * What one installation actually reaches.
+ *
+ * Naming the repositories rather than only the account is the point. Reporting
+ * "access granted on dimagi-internal" for an installation scoped to a single
+ * repo reads like the whole organisation — it OVERSTATES the grant to the
+ * person reading it, which is the opposite of useful when the advice above was
+ * "scope it narrowly". If canopy tells people to pick carefully, it has to show
+ * what they picked.
+ *
+ * An "all repositories" grant is called out rather than listed: enumerating it
+ * could be thousands of rows, and it is the one grant the advice exists to
+ * steer people away from, so it should read as a choice worth revisiting.
+ */
+function InstallationRow({ install }: { install: GitHubInstallationOut }) {
+  // `repositories` is optional on the wire (it has a server-side default), and
+  // `grants_all_repositories` is a service-layer property rather than a
+  // serialized field — so the "all" case is derived from the one thing GitHub
+  // actually tells us.
+  const repos = install.repositories ?? []
+  const grantsAll = install.repository_selection === 'all'
+  const more = install.repository_count - repos.length
+  return (
+    <div className="rounded border border-border bg-muted/40 p-2.5">
+      <p className="text-[13px]">
+        <span className="font-medium text-foreground">{install.account_login}</span>
+        <span className="text-muted-foreground">
+          {install.is_org ? ' (organisation)' : ' (your account)'}
+        </span>
+      </p>
+      {grantsAll ? (
+        <p className="mt-1 text-[12px] text-warning">
+          All repositories — canopy can reach every repository this account can see. Narrow
+          it if you did not mean that.
+        </p>
+      ) : repos.length > 0 ? (
+        <ul className="mt-1 space-y-0.5">
+          {repos.map((full) => (
+            <li key={full} className="text-[12px] text-foreground-secondary">
+              {full}
+            </li>
+          ))}
+          {more > 0 && (
+            <li className="text-[12px] text-muted-foreground">
+              and {more} more
+            </li>
+          )}
+        </ul>
+      ) : (
+        <p className="mt-1 text-[12px] text-muted-foreground">
+          No repositories listed. Add the ones you want agents working in.
+        </p>
+      )}
+    </div>
   )
 }
 
