@@ -99,7 +99,8 @@ def test_connecting_stores_the_refresh_token_encrypted_and_not_the_access_token(
     """
     start = client.get("/auth/github/start/")
     assert start.status_code == 302
-    assert start["Location"].startswith("https://github.com/login/oauth/authorize?")
+    # The INSTALL flow, not the authorize flow — see the dedicated tests below.
+    assert start["Location"].startswith("https://github.com/apps/canopy-agents/installations/new?")
     state = client.session[github_app.STATE_SESSION_KEY]
 
     with _fake_post(_token_response()), _fake_get({"login": "jjackson", "id": 12345}):
@@ -117,16 +118,71 @@ def test_connecting_stores_the_refresh_token_encrypted_and_not_the_access_token(
     assert not any("access" in f.name for f in GitHubConnection._meta.get_fields())
 
 
-def test_the_authorize_url_carries_the_registered_callback(client, configured):
-    """`redirect_uri` must match the app registration exactly.
+# --- which GitHub screen a user is sent to ------------------------------------
+# REGRESSION THIS PINS. Connect originally pointed at /login/oauth/authorize,
+# which asks "may this app act as you?" and shows NO repository picker. The
+# result was a connection holding a valid token with access to zero
+# repositories — reported to the user as success. Measured on labs 2026-09-13:
+# authorized cleanly, `list_installations` returned 0, nothing could be pushed.
+# The installation flow is the only one that asks about repositories, and it
+# authorizes in the same trip.
 
-    Under the script-prefix stripping this deployment runs with,
-    `request.path` comes back WITHOUT `/canopy` while `reverse()` re-adds it.
-    Building this from the wrong one fails the exchange with a
-    `redirect_uri_mismatch` that reads like a credential problem.
-    """
+
+def test_connect_sends_a_new_user_to_the_INSTALL_flow(client, configured):
     res = client.get("/auth/github/start/")
+    loc = res["Location"]
+    assert loc.startswith("https://github.com/apps/canopy-agents/installations/new?"), loc
+    # `state` still rides along — installations/new passes it through, which is
+    # what lets the callback's CSRF check treat both flows identically.
+    assert f"state={client.session[github_app.STATE_SESSION_KEY]}" in loc
+
+
+def test_a_stale_token_on_an_existing_install_goes_to_the_AUTHORIZE_flow(client, user, configured):
+    """The one case where the repository picker is the wrong screen.
+
+    They are already installed; only the token went stale. Sending them to
+    `installations/new` shows a configure screen rather than a clean
+    re-authorization, so they would have no way to mint a working token again.
+    """
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_dead"),
+        refresh_failed_at=timezone.now(),
+    )
+    res = client.get("/auth/github/start/")
+    assert res["Location"].startswith("https://github.com/login/oauth/authorize?")
+    # And THAT flow must carry the exact registered callback. Under the
+    # script-prefix stripping this deployment runs with, `request.path` comes
+    # back WITHOUT `/canopy` while `reverse()` re-adds it — building it from the
+    # wrong one fails the exchange with a `redirect_uri_mismatch` that reads
+    # like a credential problem.
     assert "redirect_uri=http%3A%2F%2Ftestserver%2Fauth%2Fgithub%2Fcallback%2F" in res["Location"]
+
+
+def test_a_healthy_connection_can_still_reach_the_install_flow(client, user, configured):
+    """Pressing Connect again while healthy means "install somewhere else"."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_ok"),
+        refresh_token_expires_at=timezone.now() + timezone.timedelta(days=180),
+    )
+    res = client.get("/auth/github/start/")
+    assert res["Location"].startswith("https://github.com/apps/canopy-agents/installations/new?")
+
+
+def test_an_install_that_returns_no_code_names_the_missing_app_setting(client, configured):
+    """The failure that is unguessable from the outside.
+
+    A fresh install arriving with no `code` means the app lacks "Request user
+    authorization (OAuth) during installation". GitHub shows the app installed,
+    canopy stores nothing, and the panel says "not connected" — with no way to
+    tell that the cause is an app setting this code cannot read. So it is named
+    rather than folded into the benign update case.
+    """
+    res = client.get("/auth/github/callback/?installation_id=42&setup_action=install")
+    assert res.status_code == 302
+    assert "github=install_without_code" in res["Location"]
+    assert not GitHubConnection.objects.exists()
 
 
 # --- the three arrivals at the callback ---------------------------------------

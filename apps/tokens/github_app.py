@@ -1,26 +1,48 @@
-"""The GitHub App user-to-server flow, and the token it yields.
+"""One per-user GitHub grant, for everything canopy and its agents do on GitHub.
 
 Request-free service layer: takes a `user`, raises domain exceptions, and does
-no HTTP-framework work — the views and (later) the agent-creation path both call
-these, so the two cannot drift about what a valid grant is.
+no HTTP-framework work — the views, the agent-creation path, and (next) the
+runner token endpoint all call these, so they cannot drift about what a valid
+grant is.
 
-WHY A GITHUB APP AND NOT AN OAUTH APP. We need exactly `Administration: write`
-to create a repository. The OAuth route would mean the `repo` scope, which is
-read and write on every private repository the person can see — for Dimagi
-staff, every private Dimagi repo, stored here, to serve a button pressed once
-per agent. GitHub's own guidance says the same in general terms: Apps are
-preferred because of fine-grained permissions, per-repository control, and
-short-lived tokens. The August 2026 OAuth changes (token rotation, multiple
-redirect URIs) closed the token-lifetime gap but explicitly did NOT change the
-coarse scope model, so they do not change the answer.
+WHY A GITHUB APP AND NOT AN OAUTH APP. An OAuth App has only coarse scopes: the
+narrowest thing that can push to a repository is `repo`, which is read AND write
+on every private repository that person can see — for Dimagi staff, every
+private Dimagi repo, held here, to serve an agent pushing to one. A GitHub App
+grants per-repository access the USER chooses, at per-action granularity.
+GitHub's own guidance says the same generally: Apps are preferred for
+fine-grained permissions, per-repository control, and short-lived tokens. The
+August 2026 OAuth changes (token rotation, multiple redirect URIs) closed the
+token-lifetime gap but explicitly did NOT touch the coarse scope model, so they
+do not change the answer.
 
-WHAT THIS DELIBERATELY IS NOT. Not a credential a runner can hold, for three
-separate reasons — the refresh token rotates so only one process may refresh it;
-the installation is scoped to repos the app CREATED, which is not where agents
-do their work; and a user token attributes every commit to that human, which
-would make agent work indistinguishable from theirs in git history. Runner
-GitHub access is an installation token, which is a different piece of work.
-See `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`.
+WHY THERE IS NO `Administration: write`, AND WHY THAT COST A CLICK. Creating a
+repository requires it — there is no narrow path, including "create from a
+template", which needs `Administration: write` AND `Contents: read` together.
+And a user access token CANNOT be down-scoped: unlike an installation token,
+there is no way to mint a reduced one, so it always carries the app's full
+permission set. Holding `Administration: write` therefore meant every runner
+token could DELETE repositories, handed to agents running Claude Code with
+permissions bypassed — the exact class of accident to design out.
+
+So canopy does not create repositories. The user creates a blank repo and hands
+it over, and this app holds only what pushing and collaborating needs
+(`Contents`, `Workflows`, `Pull requests`, `Issues`). Nothing canopy or any
+agent holds can delete a repository or change its settings.
+
+WHICH IS WHY THIS *IS* THE RUNNER CREDENTIAL, not a thing to keep away from
+runners. A user access token is the only GitHub credential that is inherently
+per-person — an installation token is per-INSTALLATION, so everyone working in
+one org would share it, which is the shared-account model this replaces. Agent
+commits are attributed to the human the work is on behalf of, which is the
+point. Runners never hold a durable credential: they ask canopy-web for a fresh
+8-hour token per use, because the refresh token rotates and exactly one process
+may refresh it.
+
+The open question that leaves is whose behalf a given piece of agent work is
+on — obvious for a chat session, `created_by` for a schedule, unclear for
+inbound mail. See
+`docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`.
 """
 from __future__ import annotations
 
@@ -106,10 +128,36 @@ def _require_configured() -> tuple[str, str]:
 
 
 def install_url() -> str:
-    """Where to send someone who wants the app on another account or org.
+    """The INSTALLATION flow — the one that asks which repositories to grant.
 
     Returns "" when the slug is unset, and the UI omits the link rather than
     rendering one that 404s.
+
+    AUTHORIZING AND INSTALLING ARE DIFFERENT THINGS, and conflating them is the
+    mistake this function exists to correct:
+
+    - `/login/oauth/authorize` (see `begin_authorization`) asks "may this app
+      act as you?". It yields identity and a token, and shows **no repository
+      picker at all**.
+    - `/apps/{slug}/installations/new` (this) asks "which account, and which
+      repositories?". That picker is GitHub's own consent screen — we cannot
+      render it, and should not be able to: a third party drawing "which repos
+      do you grant?" is a phishing surface, so GitHub owns that boundary.
+
+    A user who only authorizes ends up with a working token and access to ZERO
+    repositories — which looks like success and pushes nothing. Measured on
+    labs 2026-09-13: `@jjackson` authorized cleanly, the panel reported
+    "connected", and `list_installations` returned 0.
+
+    And since canopy no longer creates repositories, nothing is ever added to an
+    installation automatically — GitHub only auto-grants access to repos the app
+    itself created. Every repository an agent touches, including each new agent
+    repo, is one the user picked on this screen.
+
+    So this is the entry point for connecting, not a follow-up step. Because
+    the app has "Request user authorization (OAuth) during installation"
+    enabled, this single trip installs AND authorizes, returning a `code` to
+    the callback — see `begin_connection`.
     """
     slug = app_slug()
     return f"https://github.com/apps/{slug}/installations/new" if slug else ""
@@ -133,6 +181,41 @@ def begin_authorization(session, *, redirect_uri: str) -> str:
 
     query = urlencode({"client_id": cid, "redirect_uri": redirect_uri, "state": state})
     return f"{GITHUB_AUTHORIZE_URL}?{query}"
+
+
+def begin_connection(session, *, redirect_uri: str, reauthorize: bool = False) -> str:
+    """Where to send someone pressing Connect. One trip, both grants.
+
+    Defaults to the INSTALLATION flow, because that is the only one that asks
+    which repositories to grant — and with "Request user authorization (OAuth)
+    during installation" enabled on the app, it authorizes in the same pass and
+    returns a `code` to the callback. Sending people to the bare authorize URL
+    (which this used to do) produced a connection with access to nothing.
+
+    `reauthorize=True` picks the plain authorize flow instead, for the one case
+    where it is right: an existing installation whose TOKEN went stale. Those
+    users do not need the repository picker again, and `installations/new` would
+    show them a configure screen rather than a clean re-authorization.
+
+    The same session `state` is minted either way, so the callback's CSRF check
+    behaves identically — `installations/new` passes `state` through, which is
+    what makes that uniformity possible.
+    """
+    cid, _ = _require_configured()
+    if reauthorize or not app_slug():
+        # No slug means we cannot build an install URL at all; a plain
+        # authorization is strictly better than a dead link, and the panel
+        # separately reports that there are no installations.
+        return begin_authorization(session, redirect_uri=redirect_uri)
+
+    state = _secrets.token_urlsafe(32)
+    session[STATE_SESSION_KEY] = state
+    from urllib.parse import urlencode
+
+    # `redirect_uri` is deliberately NOT sent: the installation flow returns to
+    # the app's registered callback, and passing a mismatching one is an error.
+    del cid
+    return f"{install_url()}?{urlencode({'state': state})}"
 
 
 def _exchange(payload: dict) -> dict:
@@ -297,6 +380,12 @@ def list_installations(user) -> list[Installation]:
     that "bad actors can hit this URL with a spoofed `installation_id`". Reading
     the list with the user's own token means a spoofed id cannot make canopy
     believe anything — it just causes a redundant lookup.
+
+    An EMPTY list is the load-bearing case, not an edge case. It means the
+    person authorized without installing, so they hold a valid token and can
+    reach no repository at all. The panel has to say so; treating empty as
+    "fine" is what shipped first and it reported success to a user who could
+    push nothing.
     """
     token = access_token_for(user)
     resp = requests.get(

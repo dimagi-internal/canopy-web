@@ -23,6 +23,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from . import github_app
+from .models import GitHubConnection
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,27 @@ def _redirect_uri(request: HttpRequest) -> str:
 @login_required
 @require_http_methods(["GET", "POST"])
 def github_connect_start(request: HttpRequest):
-    """Send the user to GitHub to authorize the app."""
+    """Send the user to GitHub. Which screen depends on what they already have.
+
+    Default: the INSTALLATION flow, which is the only one that asks which
+    repositories to grant and (because the app requests user authorization
+    during installation) authorizes in the same trip. This used to send everyone
+    to the bare authorize URL, which produced a connection holding a valid token
+    and access to zero repositories — reported to the user as success.
+
+    The exception is a stale TOKEN on an existing connection: those people are
+    already installed and do not need the repository picker again, and
+    `installations/new` would show them a configure screen rather than a clean
+    re-authorization. Decided server-side from `needs_reconnect`, which is a
+    local field — no GitHub call, and nothing the client gets to choose.
+    """
+    conn = GitHubConnection.objects.filter(user=request.user).first()
+    reauthorize = conn is not None and conn.needs_reconnect
     try:
-        url = github_app.begin_authorization(
-            request.session, redirect_uri=_redirect_uri(request)
+        url = github_app.begin_connection(
+            request.session,
+            redirect_uri=_redirect_uri(request),
+            reauthorize=reauthorize,
         )
     except github_app.GitHubNotConfigured:
         return HttpResponseRedirect(_settings_url(request, github="not_configured"))
@@ -87,8 +105,24 @@ def github_connect_callback(request: HttpRequest):
     """
     code = request.GET.get("code") or ""
     if not code:
-        # Case 3, or someone hitting the URL directly. Either way there is no
-        # grant to record and no error to report.
+        # An installation arrived with no code to exchange. Two very different
+        # causes, and telling them apart is worth the branch.
+        if request.GET.get("setup_action") == "install":
+            # A FRESH install that produced no authorization code means the app
+            # is missing "Request user authorization (OAuth) during
+            # installation". Everything looks like it worked — GitHub shows the
+            # app installed — while canopy stores nothing and reports "not
+            # connected". That is unguessable from the outside, and it depends
+            # on an app setting this code cannot read, so it gets named.
+            logger.warning(
+                "GitHub install callback carried no code for user %s — the app is "
+                "probably missing 'Request user authorization (OAuth) during installation'",
+                request.user.pk,
+            )
+            return HttpResponseRedirect(_settings_url(request, github="install_without_code"))
+        # Otherwise: an installation was UPDATED (repositories added or
+        # removed), or someone hit the URL directly. Nothing to record and
+        # nothing wrong.
         return HttpResponseRedirect(_settings_url(request, github="installation_updated"))
 
     try:
