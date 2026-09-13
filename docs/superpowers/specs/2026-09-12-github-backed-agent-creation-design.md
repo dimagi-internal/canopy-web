@@ -1,7 +1,11 @@
 # GitHub-backed agent creation — "create agent" means a real repo, from a browser
 
 **Date:** 2026-09-12
-**Status:** Design — not implemented
+**Status:** Design — **not implemented**, and blocked on one manual step: registering the
+public GitHub App (owner + callback URL), which needs a browser and a keyboard. The
+packaging half IS done — `canopy-agent-factory` 1.0.0 is on PyPI, declared as a dependency
+here, pinned by `tests/test_agent_factory_contract.py` and watched by Dependabot — so the
+scaffolding rail is waiting on its consumer: nothing in `apps/` imports the factory yet.
 **Companion:** `2026-09-12-opening-canopy-to-other-people-design.md` — first run, the
 self-documenting app, the public explainer. That spec's agents empty state is what this
 one turns into a button.

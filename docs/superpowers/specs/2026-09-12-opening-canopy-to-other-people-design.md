@@ -1,7 +1,8 @@
 # Opening canopy to other people — first run, a self-documenting app, and a public explainer
 
 **Date:** 2026-09-12
-**Status:** Design — not implemented
+**Status:** Parts A1, B and C **SHIPPED** (#744, 2026-09-12; role model corrected in #756).
+Agent creation is the companion spec below and is still unbuilt.
 **Companion:** `2026-09-12-github-backed-agent-creation-design.md` — agent creation that
 produces a real repo. Deliberately a separate spec; see § "Why agent creation is not in here".
 **Builds on:** `2026-09-05-agent-credentials-design.md` (provisioning an agent from a
