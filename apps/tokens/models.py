@@ -12,6 +12,7 @@ Replaces the previous shared-secret flow (`/api/auth/e2e-login/` +
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import timedelta
 
@@ -122,6 +123,31 @@ class PersonalToken(models.Model):
         )
 
 
+_FRAME_ORIGIN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::\d{1,5})?$")
+
+
+def is_valid_frame_origin(value) -> bool:
+    """A single `frame-ancestors` source: scheme + host + optional port, nothing else.
+
+    Deliberately NOT a general CSP-source parser. Everything a CSP source can
+    otherwise be is something we must refuse here:
+
+    * `*` / `https:` / `https://*.example.com` — wildcards re-open framing to
+      more than one named site, and the whole point of the directive is that
+      the set is enumerated.
+    * a path (`https://host/app`) — `frame-ancestors` matches on origin, so a
+      path is silently ignored, which means writing one would give a false
+      sense of a narrower grant than was actually made.
+    * whitespace or `;` — would let one row inject a second directive into the
+      header and rewrite the policy.
+
+    `http://` is allowed because local development frames from `http://localhost`.
+    It is a weaker origin, but refusing it would push people to disable the
+    header in dev, which is worse than allowing it in a value an admin typed.
+    """
+    return isinstance(value, str) and bool(_FRAME_ORIGIN.match(value.strip()))
+
+
 class AppCredential(models.Model):
     """A registered embedding application (e.g. ace-web). Its ONLY power is the
     token-exchange endpoint: it can mint short-lived DelegatedTokens for humans
@@ -166,6 +192,21 @@ class AppCredential(models.Model):
     name = models.CharField(max_length=100, unique=True)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     allowed_delegation_domains = models.JSONField(default=list)
+    #: Origins permitted to frame this app's embed shell, as a
+    #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
+    #:
+    #: A JSONField rather than a related table (the v2 spec left this open):
+    #: it is the same kind of thing as `allowed_delegation_domains` directly
+    #: above — a short, admin-managed allowlist of opaque strings that nothing
+    #: joins against — and splitting one of the pair into a table would make
+    #: two shapes for one idea. Revisit if an app ever needs enough origins to
+    #: want paging or per-origin metadata.
+    #:
+    #: Empty means the embed shell is NOT SERVED (404), not "any origin".
+    #: `frame_origins()` is the only reader, and it sanitises, because an
+    #: XFO-exempt page with a permissive or malformed `frame-ancestors` is
+    #: frameable by anyone.
+    allowed_frame_origins = models.JSONField(default=list, blank=True)
     provision_workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.SET_NULL,
@@ -227,6 +268,22 @@ class AppCredential(models.Model):
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             revoked_at__isnull=True,
         ).first()
+
+    def frame_origins(self) -> list[str]:
+        """The origins that may frame this app's embed shell — validated here,
+        not trusted from the column.
+
+        The write path validates too (`grant_app_frame_origin`), so this is
+        defence in depth: a row inserted by a shell, a fixture or a future
+        migration must not be able to produce a permissive or malformed
+        directive. `*` is the case that matters — it would re-open framing to
+        every site, which is exactly what `X-Frame-Options: DENY` was doing for
+        us before the exemption.
+
+        Order is preserved so the header is stable (and diffable) rather than
+        set-shuffled.
+        """
+        return [o for o in (self.allowed_frame_origins or []) if is_valid_frame_origin(o)]
 
 
 class AppCredentialAgent(models.Model):

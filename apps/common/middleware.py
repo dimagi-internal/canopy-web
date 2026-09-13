@@ -37,6 +37,13 @@ PUBLIC_PATH_PREFIXES = (
     # apps.common.script_prefix), so a first-time operator landed on Connect
     # Labs after signing in. This middleware's own bounce below preserves the
     # query string too AND keeps the prefix, so it is the correct handler.
+    # The embed shell. Anonymous by necessity: the delegated token arrives
+    # later over postMessage (v2 spec §3), never on this document request, so a
+    # login bounce here would mean the widget could not load for anyone — in an
+    # iframe it would silently render Google's sign-in page instead. The view
+    # self-enforces the part that matters (it is served only for a registered,
+    # unrevoked app that has valid frame origins, and carries no data).
+    "/embed/",
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
