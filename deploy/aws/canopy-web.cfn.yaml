@@ -182,6 +182,16 @@ Resources:
       Name: canopy-web/vapid-private-key
       SecretString: "PLACEHOLDER"
 
+  # The GitHub App's client secret. The client ID is NOT here: GitHub publishes
+  # it and it appears in every authorize URL the browser visits, so it is a
+  # plain container env var below. Only the secret half needs this treatment,
+  # and keeping the id plain removes a manual step per deployment.
+  GithubAppClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/github-app-client-secret
+      SecretString: "PLACEHOLDER"
+
   # --- ALB target group + /canopy/* rule (slots in at a free priority
   #     alongside ace's /ace/* at prio 20 and the connect-labs default) ---
   # CHANGING ANYTHING BELOW NEEDS IAM THE DEPLOY ROLE MIGHT NOT HAVE. This
@@ -294,6 +304,11 @@ Resources:
             # half of the VapidPrivateKey secret below and the two must match.
             - { Name: VAPID_PUBLIC_KEY, Value: "BI34-mR1N-xMAhF3tQ1ajAe7g9KaK1nlrhX49pRQmBgo5s-KgoTtgcfOz9ejYeeAJR-tQh9JZ1cRJUCb8td-W58" }
             - { Name: VAPID_SUBJECT, Value: mailto:jjackson@dimagi.com }
+            # GitHub App: public identifiers only. The client id is in every
+            # authorize URL and the slug is in the app's public page URL, so
+            # neither is a secret; the client secret is in Secrets Manager.
+            - { Name: GITHUB_APP_CLIENT_ID, Value: "Iv23li0buZMWuemM5QQO" }
+            - { Name: GITHUB_APP_SLUG, Value: "canopy-agents" }
           Secrets:
             # Name MUST be SECRET_KEY — that's what config/settings/base.py reads.
             # (It was DJANGO_SECRET_KEY, which nothing read, so prod silently fell
@@ -305,6 +320,7 @@ Resources:
             - { Name: GOOGLE_OAUTH_CLIENT_SECRET, ValueFrom: !Ref GoogleOauthClientSecret }
             - { Name: CANOPY_DRIVE_SA_KEY_JSON, ValueFrom: !Ref DriveSaKeyJson }
             - { Name: VAPID_PRIVATE_KEY, ValueFrom: !Ref VapidPrivateKey }
+            - { Name: GITHUB_APP_CLIENT_SECRET, ValueFrom: !Ref GithubAppClientSecret }
           LogConfiguration:
             LogDriver: awslogs
             Options:

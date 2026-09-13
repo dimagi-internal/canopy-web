@@ -4,6 +4,7 @@ import { aiStatus as fetchAiStatus, aiAuthStart, aiAuthComplete, aiAuthPoll } fr
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
+import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { CopyBlock } from '@/components/CopyBlock'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
@@ -253,6 +254,8 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <GitHubPanel />
 
       <TokensPanel />
 

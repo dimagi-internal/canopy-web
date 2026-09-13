@@ -548,6 +548,72 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/tokens/github": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My GitHub connection
+         * @description Whether this deployment has GitHub set up, and whether I am connected.
+         *
+         *     Never touches GitHub. It is read on every visit to `/settings`, and a
+         *     network call there would make an unrelated page slow — and fail — because
+         *     of a third party. Staleness is not a risk: the only thing it could be stale
+         *     about is `needs_reconnect`, which the next real operation stamps anyway.
+         */
+        readonly get: operations["apps_tokens_api_github_connection"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect GitHub (mine only)
+         * @description Forget my grant.
+         *
+         *     Scoped to `request.user` with no id in the path, so there is no object to
+         *     address and therefore nothing to get wrong about whose grant is being
+         *     deleted. Idempotent: disconnecting when not connected is a 204, because the
+         *     caller's intent is already satisfied.
+         *
+         *     Deletes canopy's copy only — revoking the authorization itself happens in
+         *     GitHub's own settings, which the UI links to. Claiming to revoke upstream
+         *     and silently failing would be worse than saying which half this does.
+         */
+        readonly delete: operations["apps_tokens_api_github_disconnect"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tokens/github/installations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Where I have installed the app (the owner picker)
+         * @description The accounts and orgs the caller can have a repo created in.
+         *
+         *     This is what the create-agent form's owner dropdown renders. It is a live
+         *     read, unlike `GET /github` — the whole point is that it reflects an install
+         *     the user may have just done in another tab, and a cached list would offer
+         *     an owner that no longer works or omit the one they just added.
+         *
+         *     A 409 (not 500) when the grant is unusable, because the remedy is a user
+         *     action — press Connect — rather than anything a retry would fix.
+         */
+        readonly get: operations["apps_tokens_api_github_installations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/feedback/": {
         readonly parameters: {
             readonly query?: never;
@@ -5047,6 +5113,65 @@ export interface components {
              * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
              */
             readonly ttl_days?: number | null;
+        };
+        /**
+         * GitHubConnectionOut
+         * @description Response for GET /api/tokens/github.
+         *
+         *     Deliberately says nothing about the token itself — not a masked form, not a
+         *     length, not an expiry of the access token (there is no stored access token
+         *     to have an expiry). The only questions the UI asks are "is this deployment
+         *     set up", "am I connected", "as whom", and "do I need to press the button
+         *     again".
+         */
+        readonly GitHubConnectionOut: {
+            /**
+             * Configured
+             * @description Whether this DEPLOYMENT has GitHub App credentials at all. False on a fresh checkout and before the client secret is set, which is a real state rather than an error — the UI says 'not set up' instead of offering a button that cannot work.
+             */
+            readonly configured: boolean;
+            /**
+             * Connected
+             * @description Whether the caller has a stored grant.
+             */
+            readonly connected: boolean;
+            /**
+             * Github Login
+             * @description The GitHub account this grant belongs to, so a user can tell they connected the one they meant to. Display only — never used for authorization.
+             * @default
+             */
+            readonly github_login: string;
+            /**
+             * Needs Reconnect
+             * @description The stored grant can no longer mint an access token: the refresh token is missing, expired, or was rejected (revoked by the user, or the app's permissions changed and the install has not re-approved). One flag because all three have the same remedy.
+             * @default false
+             */
+            readonly needs_reconnect: boolean;
+            /**
+             * Install Url
+             * @description Where to install the app on another account or org. Empty when the app slug is unset, and the UI then omits the link rather than rendering one that 404s.
+             * @default
+             */
+            readonly install_url: string;
+        };
+        /**
+         * GitHubInstallationOut
+         * @description One place the caller has installed the app — the owner dropdown's source.
+         *
+         *     `installation_id` is included for display/debugging only. Nothing
+         *     authorizes on it: GitHub warns that a spoofed `installation_id` can be
+         *     posted to the callback, so the server always re-reads this list with the
+         *     user's own token rather than trusting an id from a client.
+         */
+        readonly GitHubInstallationOut: {
+            /** Installation Id */
+            readonly installation_id: number;
+            /** Account Login */
+            readonly account_login: string;
+            /** Account Type */
+            readonly account_type: string;
+            /** Is Org */
+            readonly is_org: boolean;
         };
         /** FeedbackIngestOut */
         readonly FeedbackIngestOut: {
@@ -11273,6 +11398,64 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_tokens_api_github_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GitHubConnectionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_api_github_disconnect: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_tokens_api_github_installations: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["GitHubInstallationOut"][];
+                };
             };
         };
     };

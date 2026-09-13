@@ -8,6 +8,7 @@ from django.views.generic import RedirectView
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.github_views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import csrf_view, health_check, spa_view
@@ -19,6 +20,13 @@ urlpatterns = [
     path("api/csrf/", csrf_view, name="csrf"),
     path("api/debug/", include("apps.common.urls_debug")),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
+    # The GitHub App connect flow. Bare views (redirects + session), and
+    # deliberately NOT public: the callback exists to bind a GitHub grant to a
+    # canopy identity, so there is nothing to do without a logged-in user.
+    # The callback path is registered on the GitHub App itself, so it cannot be
+    # renamed without editing the app registration too.
+    path("auth/github/start/", github_connect_start, name="github_connect_start"),
+    path("auth/github/callback/", github_connect_callback, name="github_connect_callback"),
     # The embed shell — the ONE framable canopy page. A bare view because it
     # sets per-request response headers (frame-ancestors from the app's
     # registered origins) and is X-Frame-Options-exempt; see
