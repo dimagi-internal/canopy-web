@@ -39,7 +39,7 @@ def as_user(user):
 @pytest.fixture()
 def member():
     u = User.objects.create_user(username="jj", email="jj@dimagi.com")
-    w = Workspace.objects.create(slug="dimagi", display_name="D", created_by=u, auto_join_domains=[])
+    w = Workspace.objects.create(slug="dimagi", display_name="D", created_by=u, self_join_domains=[])
     wsvc.ensure_member(w, u, WorkspaceMembership.OWNER)
     Agent.objects.create(slug="eva", name="Eva", workspace=w)
     return u

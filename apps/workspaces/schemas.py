@@ -25,13 +25,13 @@ class WorkspaceCreateIn(StrictModel):
     # save path (a shell or management command never sees this schema).
     slug: str = Field(min_length=1, max_length=64, pattern=SLUG_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
-    # Deliberately no `auto_join_domains` here: it is never client input.
-    # `auto_join_domains` grants standing DOMAIN-WIDE (every user of that
-    # domain auto-joins as editor via `auto_join_workspaces`), so letting a
-    # caller set it on their own workspace would let an attacker declare an
-    # arbitrary allowlisted domain (e.g. "dimagi.com") and silently recruit
-    # every teammate of that domain into their workspace. Only
-    # `ensure_default_workspace()` may set it, straight from
+    # Deliberately no `self_join_domains` here: it is never client input.
+    # `self_join_domains` grants standing DOMAIN-WIDE self-join eligibility
+    # (every user of that domain may `POST /join` and become editor), so
+    # letting a caller set it on their own workspace would let an attacker
+    # declare an arbitrary allowlisted domain (e.g. "dimagi.com") and
+    # silently recruit every teammate of that domain into their workspace.
+    # Only `ensure_default_workspace()` may set it, straight from
     # `AUTH_ALLOWED_EMAIL_DOMAIN` server-side. `StrictModel`'s `extra="forbid"`
     # means a request that still sends this field is rejected (422), not
     # silently ignored — see the F1 security finding on the invite-aware
@@ -41,9 +41,19 @@ class WorkspaceCreateIn(StrictModel):
 class WorkspaceOut(StrictModel):
     slug: str
     display_name: str
-    auto_join_domains: list[str]
+    self_join_domains: list[str]
     role: str  # the requesting user's role in this workspace
     created_at: dt.datetime
+
+
+class JoinableWorkspaceOut(StrictModel):
+    """One workspace the caller may join by explicit action — a capability
+    list, not a directory. `domain` is the entry of `self_join_domains` that
+    matched, so the UI can say why ("your dimagi.com address is allowed")."""
+
+    slug: str
+    display_name: str
+    domain: str
 
 
 class MemberOut(StrictModel):

@@ -1,9 +1,11 @@
 """Tenancy service helpers — the non-breaking glue for scoping agents to a
-workspace: a default workspace, domain auto-join, and membership lookups.
+workspace: a default workspace, self-join, and membership lookups.
 
-Runtime counterparts to the one-time backfill data migration. Auto-join is what
-keeps NEW domain users (and the board UI) seeing the default workspace's agents
-after scoping turns on.
+Runtime counterparts to the one-time backfill data migration. Self-join
+(`joinable_workspaces` / `join_workspace`) is the explicit, auditable
+replacement for the old implicit `auto_join_workspaces`: a domain match makes
+a workspace JOINABLE, not joined — the user must click. See
+`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`.
 """
 from __future__ import annotations
 
@@ -50,7 +52,7 @@ def ensure_default_workspace() -> Workspace | None:
         slug=DEFAULT_WORKSPACE_SLUG,
         display_name=DEFAULT_WORKSPACE_NAME,
         created_by=owner,
-        auto_join_domains=allowed_domains(),
+        self_join_domains=allowed_domains(),
     )
     ensure_member(ws, owner, WorkspaceMembership.OWNER)
     return ws
@@ -73,15 +75,57 @@ def ensure_member(
     return m, created
 
 
-def auto_join_workspaces(user) -> None:
-    """Add `user` (as editor) to every workspace whose auto_join_domains include
-    their email domain. Cheap + idempotent; safe to call per request."""
+class JoinError(Exception):
+    """Raised by `join_workspace` when the slug doesn't exist, or exists but
+    the caller's email domain doesn't match its `self_join_domains`. The API
+    layer maps BOTH cases to the same 404 — see `join_workspace`'s
+    docstring for why that collapsing is deliberate, not an oversight."""
+
+
+def joinable_workspaces(user) -> list[tuple[Workspace, str]]:
+    """Workspaces `user` may join by explicit action: their email domain is
+    in `self_join_domains` AND they are not already a member. Returns
+    `(workspace, matched_domain)` pairs. A capability list, not a directory —
+    never includes a workspace the caller cannot join, so this cannot become
+    a way to enumerate tenants."""
     domain = _email_domain(getattr(user, "email", ""))
     if not domain:
-        return
-    for ws in Workspace.objects.exclude(auto_join_domains=[]):
-        if domain in [d.lower() for d in (ws.auto_join_domains or [])]:
-            ensure_member(ws, user, WorkspaceMembership.EDITOR)
+        return []
+    already = user_workspace_slugs(user)
+    out: list[tuple[Workspace, str]] = []
+    for ws in Workspace.objects.exclude(self_join_domains=[]):
+        if ws.slug in already:
+            continue
+        if domain in [d.lower() for d in (ws.self_join_domains or [])]:
+            out.append((ws, domain))
+    return out
+
+
+def join_workspace(user, slug: str) -> Workspace:
+    """Explicit, auditable self-join — the replacement for the old implicit
+    `auto_join_workspaces`. Re-checks the domain match server-side (never
+    trusts a slug the client offers): a nonexistent slug and a slug whose
+    `self_join_domains` doesn't match the caller both raise `JoinError`,
+    collapsing to the SAME 404 at the API layer — a 403 on the second case
+    would let any signed-in user probe which workspaces exist and which
+    domains they trust, on an endpoint whose whole purpose is being callable
+    by non-members.
+
+    Grants EDITOR via `ensure_member`, which is CREATE-ONLY: declaring "any
+    dimagi.com user may join" already IS the trust decision (matching what
+    `auto_join_workspaces` used to grant), so the click adds consent + an
+    audit trail rather than a second trust gate — and because `ensure_member`
+    never raises an existing member's role, an existing `viewer` who calls
+    this stays a `viewer` rather than being promoted to `editor`. This is
+    NOT an elevation path."""
+    ws = Workspace.objects.filter(slug=slug).first()
+    if ws is None:
+        raise JoinError(slug)
+    domain = _email_domain(getattr(user, "email", ""))
+    if not domain or domain not in [d.lower() for d in (ws.self_join_domains or [])]:
+        raise JoinError(slug)
+    ensure_member(ws, user, WorkspaceMembership.EDITOR)
+    return ws
 
 
 def user_workspace_slugs(user) -> set[str]:
@@ -112,10 +156,6 @@ def request_workspace_slugs(request) -> set[str]:
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return set()
-    # Domain teammates join their org's workspaces on first touch of any scoped
-    # endpoint — the same "join on first touch" this repo already does per-handler,
-    # centralized here so by-id gates and lists agree on who's a member.
-    auto_join_workspaces(user)
     return user_workspace_slugs(user)
 
 
@@ -131,7 +171,6 @@ def workspace_slugs_for_user_id(user_id) -> set[str]:
     user = get_user_model().objects.filter(pk=user_id).first()
     if user is None:
         return set()
-    auto_join_workspaces(user)
     return user_workspace_slugs(user)
 
 

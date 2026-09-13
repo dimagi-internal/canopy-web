@@ -68,7 +68,6 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     same way an empty `allowed_delegation_domains` vouches for nobody.
     """
     app = _acting_app(request)
-    wsvc.auto_join_workspaces(request.user)
     reachable = wsvc.user_workspace_slugs(request.user)
     rows = (
         Agent.objects.filter(embedding_apps__app=app, workspace_id__in=reachable)

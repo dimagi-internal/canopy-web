@@ -9,7 +9,12 @@ import type { WorkspaceOut } from '@/api/workspaces'
 // which happens on the dynamic imports below. Same pattern as
 // SettingsPage.presence.test.tsx / AppLayout.test.tsx.
 const listWorkspaces = vi.fn<() => Promise<WorkspaceOut[]>>()
-vi.mock('@/api/workspaces', () => ({ listWorkspaces }))
+// FirstRunPage (rendered by both RootRedirect and TenantRedirect in the
+// zero-workspace case this file pins) fetches the self-join capability list
+// on mount — an unmocked call throws inside the effect and fails the test
+// with an unhandled rejection even though the assertions themselves pass.
+const listJoinableWorkspaces = vi.fn().mockResolvedValue([])
+vi.mock('@/api/workspaces', () => ({ listWorkspaces, listJoinableWorkspaces }))
 
 const { RootRedirect, TenantRedirect } = await import('./router')
 const { AuthContext } = await import('@/auth/AuthProvider')

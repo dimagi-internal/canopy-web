@@ -1,9 +1,13 @@
 """Phase 0 of the agent-instances-and-ACL design: role gates on `/api/agents`.
 
 Before this, `_get_agent_or_404` gated every write on workspace MEMBERSHIP
-only — and `auto_join_workspaces` hands out `editor` to any allowlisted-domain
-user the instant they touch an agent endpoint. The credential/vault writers had
-no role check at all. See `docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`
+only — and back when `auto_join_workspaces` still existed, it handed out
+`editor` to any allowlisted-domain user the instant they touched an agent
+endpoint (that mechanism is gone as of the same design's self-join phase —
+see `apps.workspaces.services.join_workspace` — but `editor` is still the
+role a self-join grants, so it remains the role this file's tests exercise).
+The credential/vault writers had no role check at all. See
+`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`
 and `PHASE0-BRIEF.md`.
 
 Per-endpoint coverage would be one test per line; these pin the TIERS instead:
@@ -11,7 +15,7 @@ Per-endpoint coverage would be one test per line; these pin the TIERS instead:
 - `_agent_for_admin` (owner only) — secrets + existence
 - membership-only — the interaction tier a `viewer` must keep
 plus the two security-critical specifics: a non-member gets 404 never 403 on
-an owner endpoint, and an editor (the auto-join default) is refused on all
+an owner endpoint, and an editor (the self-join default) is refused on all
 three owner endpoints individually.
 """
 from __future__ import annotations
@@ -30,7 +34,7 @@ WS_SLUG = "acl-gate-ws"
 
 @pytest.fixture
 def acl(client):
-    ws = a_workspace(WS_SLUG)  # named slug -> no auto_join_domains (see testing.py)
+    ws = a_workspace(WS_SLUG)  # named slug -> no self_join_domains (see testing.py)
     agent = Agent.objects.create(slug="aclbot", name="ACL Bot", workspace=ws, turn_mode="manual")
     owner = a_member(ws, email="acl-owner@dimagi.com", role=WorkspaceMembership.OWNER)
     editor = a_member(ws, email="acl-editor@dimagi.com", role=WorkspaceMembership.EDITOR)

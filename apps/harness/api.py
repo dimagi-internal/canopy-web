@@ -118,8 +118,9 @@ TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
 
 def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     """Resolve an agent, gated by workspace membership. A non-member gets the
-    same 404 as a missing agent (no existence leak). Domain users are auto-joined
-    to the agent's workspace first, so the default-workspace case keeps working.
+    same 404 as a missing agent (no existence leak). A domain user who has not
+    explicitly joined the agent's workspace (`POST /api/workspaces/{slug}/join`)
+    is a non-member and gets exactly that 404 — there is no more auto-join.
 
     Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
     rather than imported: api modules must not depend on each other, and the
@@ -138,7 +139,6 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     agent = Agent.objects.filter(slug=slug).first()
     if agent is None:
         raise HttpError(404, f"agent '{slug}' not found")
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws and agent.workspace_id != ws:
         raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
@@ -185,7 +185,6 @@ def _runner_read_q(request: HttpRequest) -> Q:
     host and `paired_by_email` — never credentials, which have their own
     owner-gated route.
     """
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         # Tenant-pinned: exact match only, and no null-workspace leg at all — a
@@ -215,7 +214,6 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     on an action it was told to try. Read ⊇ act-on holds by construction — every
     leg here appears in the read, ANDed with less.
     """
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         wq = Q(workspace_id=ws)
@@ -311,7 +309,6 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # Session turn: tenancy derives from the chat session's workspace (a session
     # turn has agent_id=None AND workspace_id=None, so without this branch both
     # guards below fall through — any authenticated user could read the transcript).
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if turn.chat_session_id:
         slug = turn.chat_session.workspace_id
@@ -337,7 +334,6 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
         raise HttpError(422, f"unknown runner kind '{payload.kind}'")
-    wsvc.auto_join_workspaces(request.user)
     explicit = (payload.workspace or "").strip()
     if explicit:
         # Membership-gated: a missing workspace and a non-member get the same
@@ -542,7 +538,6 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     # Same tenant leg the admin resolver enforces, checked here so the failure
     # is a clear 422 at grant time rather than a mystifying 404 the first time
     # the grantee tries to use it.
-    wsvc.auto_join_workspaces(user)
     if runner.workspace_id and not wsvc.is_member(user, runner.workspace_id):
         raise HttpError(
             422,
@@ -790,7 +785,6 @@ def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
     The pairer must be a member of it. Same 404-not-403 rule: a non-member gets
     404, never a disclosure that the workspace exists.
     """
-    wsvc.auto_join_workspaces(request.user)
     if not ws_slug or not wsvc.is_member(request.user, ws_slug):
         raise HttpError(404, "workspace not found")
     ws = Workspace.objects.filter(slug=ws_slug).first()
@@ -1180,7 +1174,6 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         agent = _agent_or_404(request, payload.agent_slug)
     else:
         # A project turn carries its own tenant.
-        wsvc.auto_join_workspaces(request.user)
         ws_slug = getattr(request, "workspace_slug", None)
         if ws_slug:
             # current_workspace gates membership on an explicit slug, so a
@@ -1248,7 +1241,6 @@ def list_turns(
     status: str | None = None,
     limit: int = 100,
 ):
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related("agent", "claimed_by").order_by("-created_at")

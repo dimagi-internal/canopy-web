@@ -120,7 +120,6 @@ def _scoped_project_queryset(request: HttpRequest):
     prefix) filter to exactly that tenant; on the flat mount filter to every
     workspace the caller is a member of, plus any still-unscoped (null) rows.
     """
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     qs = Project.objects.all()
     if ws:
@@ -136,7 +135,6 @@ def _member_project(request: HttpRequest, slug: str) -> Project | None:
     project = Project.objects.filter(slug=slug).first()
     if project is None:
         return None
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws and project.workspace_id != ws:
         return None  # wrong tenant

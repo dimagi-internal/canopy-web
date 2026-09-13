@@ -162,21 +162,22 @@ def test_list_is_tenant_scoped_and_hides_offline_runners():
     assert mc.get("/api/harness/sessions").json() == []
 
 
-def test_list_auto_joins_a_domain_matching_user_with_no_membership_row():
-    """A @dimagi.com user who has never hit any other endpoint has NO explicit
-    WorkspaceMembership row yet. The flat GET /api/harness/sessions path is
-    never touched by WorkspaceResolveMiddleware's tenant-prefix auto-join (that
-    only fires for /api/w/{ws}/... paths), so list_visible_sessions must call
-    wsvc.auto_join_workspaces itself — mirroring list_turns — or a fresh
-    domain-matching teammate gets an empty list instead of their workspace's
-    sessions."""
+def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row():
+    """Auto-join is gone (2026-09-12: self-join replaces it — see
+    docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md).
+    A @dimagi.com user who has never explicitly joined `dimagi` (via
+    `POST /api/workspaces/dimagi/join`) has NO WorkspaceMembership row, and
+    must see an EMPTY list — not the workspace's sessions — even though the
+    workspace's `self_join_domains` would let them join. This rewrites what
+    `test_list_auto_joins_a_domain_matching_user_with_no_membership_row` used
+    to assert (that merely sharing the domain silently granted the list)."""
     from django.test import Client
     from apps.harness.services import replace_reported_sessions
 
     owner = _user("owner")
     ws = _ws("dimagi", owner)
-    ws.auto_join_domains = ["dimagi.com"]
-    ws.save(update_fields=["auto_join_domains"])
+    ws.self_join_domains = ["dimagi.com"]
+    ws.save(update_fields=["self_join_domains"])
     runner = _runner(owner, ws)
     replace_reported_sessions(runner, ws, [_reported("cloud-runner")])
 
@@ -186,8 +187,10 @@ def test_list_auto_joins_a_domain_matching_user_with_no_membership_row():
     c = Client()
     c.force_login(newcomer)
     rows = c.get("/api/harness/sessions").json()
-    tasks = {r["emdash_task"] for r in rows}
-    assert tasks == {"cloud-runner"}
+    assert rows == []
+    # Merely being domain-eligible must never have created a membership row
+    # as a side effect of this GET.
+    assert not WorkspaceMembership.objects.filter(user=newcomer).exists()
 
 
 def test_list_is_newest_first_by_last_interacted_at():

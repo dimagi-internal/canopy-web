@@ -70,7 +70,6 @@ def _readable_or_404(request: HttpRequest, slug: str) -> Storyboard:
         raise HttpError(404, "storyboard not found")
 
     if request.user.is_authenticated:
-        wsvc.auto_join_workspaces(request.user)
         if board.workspace_id in wsvc.user_workspace_slugs(request.user):
             return board
 

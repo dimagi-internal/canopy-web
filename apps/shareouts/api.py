@@ -41,7 +41,6 @@ def list_shareouts(
     mount, every workspace the caller is a member of (the PAT resolves to a real
     user, so machine producers see their tenant's rows too)."""
     limit = clamp_limit(limit)
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     rows = services.list_shareouts(

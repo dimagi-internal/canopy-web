@@ -121,7 +121,6 @@ def _out(session: Session) -> dict:
 
 
 def _visible_slugs(request: HttpRequest) -> set[str]:
-    wsvc.auto_join_workspaces(request.user)
     pinned = getattr(request, "workspace_slug", None)
     return {pinned} if pinned else set(wsvc.user_workspace_slugs(request.user))
 

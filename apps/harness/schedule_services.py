@@ -57,7 +57,6 @@ def _resolve_agent(user, agent_slug: str, *, workspace_slug: str | None = None) 
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent is None:
         raise ScheduleNotFound(agent_slug)
-    wsvc.auto_join_workspaces(user)
     if workspace_slug and agent.workspace_id != workspace_slug:
         raise ScheduleNotFound(agent_slug)  # wrong tenant
     if not agent.workspace_id or not wsvc.is_member(user, agent.workspace_id):

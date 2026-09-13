@@ -112,7 +112,7 @@ def test_cross_workspace_dispatch_is_refused_for_a_non_member(ada):
 
     owner = get_user_model().objects.create(username="o@connect.example", email="o@connect.example")
     connect = Workspace.objects.create(
-        slug="connect", display_name="Connect", created_by=owner, auto_join_domains=[]
+        slug="connect", display_name="Connect", created_by=owner, self_join_domains=[]
     )
     hal_connect = Agent.objects.create(slug="hal", name="Hal", workspace=connect)
     item = _item(ada, dispatch=[{"target_agent": "hal", "prompt": "/hal:turn"}])

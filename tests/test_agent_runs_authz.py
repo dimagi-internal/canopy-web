@@ -40,8 +40,10 @@ def workspace(owner):
 
 @pytest.fixture()
 def stranger():
-    """Authenticated, but a member of nothing. auto_join_workspaces keys off the
-    email domain, so use one outside the auto-join set."""
+    """Authenticated, but a member of nothing. Self-join eligibility keys off
+    the email domain, so use one outside the self-join set — not that it
+    matters for membership here, since self-join is an explicit action and
+    this user never takes it."""
     return User.objects.create_user("stranger", "stranger@example.org", "pw")
 
 

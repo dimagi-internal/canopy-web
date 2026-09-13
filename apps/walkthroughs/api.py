@@ -343,7 +343,6 @@ def list_walkthroughs(
     # Scope to the caller's workspace(s): the /w/{ws} prefix pins one workspace;
     # a flat call spans every workspace the caller belongs to. Legacy rows with
     # no workspace (pre-backfill / fresh DB) stay visible on flat calls only.
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
 

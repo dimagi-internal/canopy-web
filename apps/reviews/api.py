@@ -218,10 +218,8 @@ def list_reviews(
     """
     # Workspace scoping: honor the /w/{ws} prefix when present (already
     # membership-checked by WorkspaceResolveMiddleware); on the flat mount,
-    # scope to every workspace the caller belongs to. Domain teammates are
-    # auto-joined first so the default-workspace case keeps working. Legacy
-    # rows with workspace=None stay visible on the flat mount (backfill safety).
-    wsvc.auto_join_workspaces(request.user)
+    # scope to every workspace the caller belongs to. Legacy rows with
+    # workspace=None stay visible on the flat mount (backfill safety).
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
 

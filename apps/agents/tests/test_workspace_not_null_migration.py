@@ -134,16 +134,54 @@ def test_falls_back_to_the_sole_workspace_when_no_agent_is_homed():
 def test_falls_back_to_the_default_workspace_when_there_is_no_evidence(settings):
     """Step 3: several workspaces, not one homed agent. Falls to the same
     target 0007 picked for every agent in this deployment's history — creating
-    it exactly as 0007 does, including auto_join_domains."""
+    it exactly as 0007 does, including the domain seed (now `self_join_domains`).
+
+    Unlike every other case in this file, this branch of `_resolve_target`
+    WRITES — `Workspace.objects.create(auto_join_domains=...)` — and the
+    migration is immutable, so it still spells that kwarg the pre-rename way
+    (workspaces/0008 renamed the field to `self_join_domains` well after
+    agents/0013 was written). That's safe in every real run: agents/0013
+    sorts BEFORE workspaces/0008 in Django's actual migration plan (verified
+    empirically — 0013 depends only on workspaces/0001), so the historical
+    schema `_resolve_target` runs against there still has the old name. This
+    test's OWN method — substituting the fully-migrated live registry for a
+    true historical one, safe for every other case here because they only
+    read — can't reach the DB with that same stale kwarg, since the real
+    table's column has already been renamed by the time any test runs. A
+    tiny proxy translates the one kwarg so the real, unmodified function
+    still gets exercised end to end."""
     settings.AUTH_ALLOWED_EMAIL_DOMAIN = "dimagi.com"
     owner = _user()
     _ws("alpha", owner)
     _ws("beta", owner)
 
-    assert _mod._resolve_target(global_apps) == "dimagi"
+    live_workspace_model = global_apps.get_model("workspaces", "Workspace")
+
+    class _CompatManager:
+        def __init__(self, manager):
+            self._manager = manager
+
+        def __getattr__(self, name):
+            return getattr(self._manager, name)
+
+        def create(self, **kwargs):
+            if "auto_join_domains" in kwargs:
+                kwargs["self_join_domains"] = kwargs.pop("auto_join_domains")
+            return self._manager.create(**kwargs)
+
+    class _WorkspaceProxy:
+        objects = _CompatManager(live_workspace_model._default_manager)
+
+    class _CompatApps:
+        def get_model(self, app_label, model_name):
+            if (app_label, model_name) == ("workspaces", "Workspace"):
+                return _WorkspaceProxy
+            return global_apps.get_model(app_label, model_name)
+
+    assert _mod._resolve_target(_CompatApps()) == "dimagi"
     created = Workspace.objects.get(slug="dimagi")
     assert created.created_by_id == owner.pk
-    assert created.auto_join_domains == ["dimagi.com"]
+    assert created.self_join_domains == ["dimagi.com"]
 
 
 def test_prefers_an_existing_default_workspace_over_creating_one():

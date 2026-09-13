@@ -36,10 +36,11 @@ def a_workspace(slug: str | None = None, **defaults) -> Workspace:
     """A real tenant to home test agents in. Idempotent by slug.
 
     With no slug this returns the DEFAULT workspace via the app's own
-    `ensure_default_workspace()` — including its `auto_join_domains`, which the
-    auto-join paths under test depend on — after making sure there is a user for
-    it to be owned by. A named slug gets a plain workspace with no auto-join,
-    which is what a test wants when it is checking cross-tenant isolation.
+    `ensure_default_workspace()` — including its `self_join_domains`, which the
+    self-join paths under test depend on — after making sure there is a user for
+    it to be owned by. A named slug gets a plain workspace with no self-join
+    domains, which is what a test wants when it is checking cross-tenant
+    isolation.
     """
     owner = a_user()
     if slug is None or slug == services.DEFAULT_WORKSPACE_SLUG:

@@ -25,9 +25,13 @@ def client():
 
 @pytest.fixture()
 def agent(default_workspace):
-    # Homed to the default workspace, whose auto_join_domains covers the
-    # @dimagi.com `client` user above — so the membership gate passes for the
-    # legitimate caller and these tests keep exercising CRUD, not tenancy.
+    # Homed to the default workspace. The `client` fixture's jj@dimagi.com
+    # user is created first (it's listed first in every test's params), so
+    # by the time `default_workspace` runs `ensure_default_workspace()`, jj
+    # is the DB's first user and becomes its real OWNER member — the
+    # membership gate passes for the legitimate caller via that explicit
+    # row, not via any domain matching, so these tests keep exercising CRUD,
+    # not tenancy.
     return Agent.objects.create(slug="echo", name="Echo", workspace=default_workspace)
 
 
@@ -244,22 +248,21 @@ def test_preview_rejects_a_bad_cron_without_saving_anything(client, agent):
 
 # --- tenancy: _agent_or_404's membership branch --------------------------
 #
-# The fixtures above home their agent in the DEFAULT workspace, whose
-# auto_join_domains admits any @dimagi.com caller — fine for exercising CRUD,
-# useless for exercising the gate. These tests give the agent a REAL workspace
-# with `auto_join_domains=[]` (load-bearing: `_agent_or_404` calls
-# `wsvc.auto_join_workspaces(request.user)` first, so a nonempty
-# auto_join_domains matching the outsider's email domain would silently make
-# them a member and the "non-member" test would pass while testing nothing)
-# so the membership check is the only thing standing between the caller and
-# the data.
+# The fixtures above home their agent in the DEFAULT workspace, where jj is a
+# real OWNER member (see the `agent` fixture's comment above) — fine for
+# exercising CRUD, useless for exercising the gate. These tests give the
+# agent a REAL workspace with `self_join_domains=[]` (there is no more
+# auto-join to worry about here, but an empty list keeps this workspace
+# unreachable by anything but an explicit membership row regardless) so the
+# membership check is the only thing standing between the caller and the
+# data.
 
 
 @pytest.fixture()
 def scoped_workspace():
     owner = User.objects.create_user("acme-owner", "acme-owner@dimagi.com", "pw")
     return Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=owner, auto_join_domains=[]
+        slug="acme", display_name="Acme", created_by=owner, self_join_domains=[]
     )
 
 

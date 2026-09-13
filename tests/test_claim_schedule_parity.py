@@ -46,7 +46,7 @@ def _user(name):
 
 def _ws(slug, owner, members=()):
     ws = Workspace.objects.create(
-        slug=slug, display_name=slug.title(), created_by=owner, auto_join_domains=[]
+        slug=slug, display_name=slug.title(), created_by=owner, self_join_domains=[]
     )
     for user in (owner, *members):
         WorkspaceMembership.objects.get_or_create(

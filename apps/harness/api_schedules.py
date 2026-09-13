@@ -70,7 +70,6 @@ def _visible_workspace_ids(request: HttpRequest) -> set[str]:
     anti-pattern `_visible_agent_workspace_ids` was fixed for in PR #421.
     `Agent.workspace` is NOT NULL as of agents/0013, so the set is now purely
     membership and there is no NULL to admit."""
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         return {ws}

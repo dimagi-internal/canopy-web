@@ -80,7 +80,6 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     API, not universally visible. Since agents/0013 made `Agent.workspace` NOT
     NULL the case is unrepresentable rather than merely unpopulated, so this
     reads as a plain membership check with nothing to special-case."""
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws:
         return {ws}
@@ -89,8 +88,9 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
 
 def _get_agent_or_404(request: HttpRequest, slug: str):
     """Resolve an agent, gated by workspace membership. A non-member gets the
-    same 404 as a missing agent (no existence leak). Domain users are auto-joined
-    to the agent's workspace first, so the default-workspace case keeps working."""
+    same 404 as a missing agent (no existence leak). A domain user who has not
+    explicitly joined the agent's workspace (`POST /api/workspaces/{slug}/join`)
+    is a non-member and gets exactly that 404 — there is no more auto-join."""
     agent = services.get_agent(slug)
     if agent is None:
         raise HttpError(404, f"agent '{slug}' not found")
@@ -137,12 +137,12 @@ def _agent_for_admin(request: HttpRequest, slug: str):
 
     Credentials and the vault pointer are the keys a runner resolves
     everything else from, so writing them is equivalent to controlling the
-    agent end to end. Note domain auto-join grants `EDITOR`
-    (`workspaces/services.py::auto_join_workspaces`), not `viewer` — so
-    `editor` is not a deliberate grant here, it is the default anyone in the
-    allowlisted domain already has the moment they touch an agent endpoint.
-    Owner is the only role left that still means something was deliberately
-    granted, not just walked in the door.
+    agent end to end. Note self-join grants `EDITOR`
+    (`workspaces/services.py::join_workspace`), not `viewer` — so `editor` is
+    not a deliberate grant here, it is the default anyone who has clicked
+    "join" on an allowlisted-domain workspace already has the moment they
+    touch an agent endpoint. Owner is the only role left that still means
+    something was deliberately granted, not just walked in the door.
 
     `_get_agent_or_404` runs FIRST, same ordering as `_agent_for_write`: a
     non-member gets `404`, never `403`.
@@ -174,7 +174,6 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # request's workspace (from the /w/{ws} prefix or the compat shim's default),
     # falling back to the org default so an unchanged register() (e.g. Echo's)
     # keeps working.
-    wsvc.auto_join_workspaces(request.user)
     pinned = getattr(request, "workspace_slug", None)
     home = (
         wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None

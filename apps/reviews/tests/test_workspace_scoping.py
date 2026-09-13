@@ -2,7 +2,10 @@
 
 Mirrors apps/agents/tests/test_workspace_scoping.py: create with no workspace →
 default workspace + creator membership (so the unchanged orchestrator keeps
-working); domain teammates auto-join and see it in the list; outsiders don't.
+working); a domain teammate who has NOT explicitly joined (2026-09-12:
+auto-join is gone — self-join replaces it, see
+docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md)
+does not see it in the list, same as an outsider.
 
 PLUS the visibility invariant that scoping must NOT break: an anonymous caller
 can still GET a visibility=link review detail after scoping, and submitting a
@@ -58,13 +61,20 @@ def test_create_without_workspace_assigns_default_and_keeps_creator_in():
     assert any(r["id"] == str(review.id) for r in listing)
 
 
-def test_domain_teammate_auto_joins_and_sees_review():
+def test_domain_teammate_no_longer_auto_joins_gets_empty_list():
+    """Rewrite of `test_domain_teammate_auto_joins_and_sees_review`: that
+    test asserted auto-join behaviour that no longer exists. A same-domain
+    teammate who has never explicitly joined is a non-member like any
+    other."""
     jj = _user("jj@dimagi.com", is_superuser=True)
     resp = _create_review(_client(jj))
     rid = resp.json()["id"]
     teammate = _user("t@dimagi.com")  # never explicitly added
     listing = _client(teammate).get("/api/reviews/").json()
-    assert any(r["id"] == rid for r in listing)
+    assert all(r["id"] != rid for r in listing)
+    from apps.workspaces.models import WorkspaceMembership
+
+    assert not WorkspaceMembership.objects.filter(user=teammate).exists()
 
 
 def test_outsider_does_not_see_workspace_scoped_review():
@@ -81,7 +91,7 @@ def _workspace(slug):
     owner = _user(f"owner-{slug}@{slug}.example")
     ws, _ = Workspace.objects.get_or_create(
         slug=slug,
-        defaults={"display_name": slug, "created_by": owner, "auto_join_domains": []},  # no domain auto-join
+        defaults={"display_name": slug, "created_by": owner, "self_join_domains": []},  # no self-join domain
     )
     return ws
 

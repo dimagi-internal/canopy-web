@@ -16,7 +16,7 @@ START = "2026-07-13T00:00:00Z"
 
 
 def _ws(slug, owner):
-    w = Workspace.objects.create(slug=slug, display_name=slug, created_by=owner, auto_join_domains=[])
+    w = Workspace.objects.create(slug=slug, display_name=slug, created_by=owner, self_join_domains=[])
     wsvc.ensure_member(w, owner, WorkspaceMembership.OWNER)
     return w
 
@@ -28,7 +28,7 @@ def setup():
     b = _ws("beta", owner)
     # A third workspace the owner is NOT a member of.
     stranger = User.objects.create_user("s", "s@x.com", "pw")
-    c = Workspace.objects.create(slug="gamma", display_name="g", created_by=stranger, auto_join_domains=[])
+    c = Workspace.objects.create(slug="gamma", display_name="g", created_by=stranger, self_join_domains=[])
     # Agents are referenced by slug in the schedules below; the bindings for eva
     # and hal are unused (pyflakes F841), so don't assign them. ghost is homed to
     # a workspace the owner isn't a member of, and its schedule is created

@@ -1,9 +1,11 @@
 """End-to-end workspace scoping of the live /api/projects surface.
 
 create with no workspace → default workspace + creator membership (so an
-unchanged flat client keeps working); domain teammates auto-join and see it;
-outsiders get 404 and an empty list. Also verifies the prefixed
-/api/w/{ws}/projects/ mount works for a member.
+unchanged flat client keeps working); a domain teammate who has NOT
+explicitly joined (2026-09-12: auto-join is gone — self-join replaces it,
+see docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md)
+gets the same 404 and empty list an outsider does. Also verifies the
+prefixed /api/w/{ws}/projects/ mount works for a member.
 
 Insights ARE workspace-scoped (they belong to a project, which belongs to a
 workspace) — a member of one workspace must not list, clear, or dismiss another's
@@ -58,13 +60,20 @@ def test_create_without_workspace_assigns_default_and_keeps_creator_in():
     assert _client(jj).get("/api/projects/canopy-web/actions/").status_code == 200
 
 
-def test_domain_teammate_auto_joins_and_sees_project():
+def test_domain_teammate_no_longer_auto_joins_gets_404_and_empty_list():
+    """Rewrite of `test_domain_teammate_auto_joins_and_sees_project`: that
+    test asserted auto-join behaviour that no longer exists. A same-domain
+    teammate who has never explicitly joined is a non-member like any
+    other."""
     jj = _user("jj@dimagi.com", is_superuser=True)
     _create_project(_client(jj))
     teammate = _user("t@dimagi.com")  # never explicitly added
-    assert _client(teammate).get("/api/projects/canopy-web/").status_code == 200
+    assert _client(teammate).get("/api/projects/canopy-web/").status_code == 404
     items = _client(teammate).get("/api/projects/").json()["items"]
-    assert any(p["slug"] == "canopy-web" for p in items)
+    assert all(p["slug"] != "canopy-web" for p in items)
+    from apps.workspaces.models import WorkspaceMembership
+
+    assert not WorkspaceMembership.objects.filter(user=teammate).exists()
 
 
 def test_outsider_gets_404_and_empty_list():
@@ -113,7 +122,7 @@ def _workspace(slug):
     from apps.workspaces.models import Workspace
     owner = _user(f"owner-{slug}@{slug}.example")
     ws, _ = Workspace.objects.get_or_create(
-        slug=slug, defaults={"display_name": slug, "created_by": owner, "auto_join_domains": []}
+        slug=slug, defaults={"display_name": slug, "created_by": owner, "self_join_domains": []}
     )
     return ws
 

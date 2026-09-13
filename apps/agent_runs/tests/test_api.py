@@ -17,7 +17,7 @@ from django.test import Client
 
 from apps.agent_runs.models import AgentRun, AgentRunStep
 from apps.agents.models import Agent
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 User = get_user_model()
 
@@ -26,7 +26,18 @@ pytestmark = pytest.mark.django_db
 
 # ---- helpers ----
 def _make_user(username="alice", email="alice@dimagi.com"):
-    return User.objects.create_user(username=username, email=email, password="pw")
+    user = User.objects.create_user(username=username, email=email, password="pw")
+    # Explicit membership replaces the implicit auto-join these tests used to
+    # rely on (2026-09-12: auto-join is gone — see
+    # apps.workspaces.services.join_workspace). Sharing `self_join_domains`
+    # with the "dimagi" workspace is no longer enough on its own; every test
+    # user here needs a real WorkspaceMembership row to act on its agents.
+    ws = Workspace.objects.filter(slug="dimagi").first()
+    if ws is not None:
+        WorkspaceMembership.objects.get_or_create(
+            workspace=ws, user=user, defaults={"role": WorkspaceMembership.EDITOR}
+        )
+    return user
 
 
 def _auth_client(user=None):
@@ -44,16 +55,16 @@ def workspace():
     # apps.agent_runs.api._get_agent_or_404 now fails CLOSED on an unhomed
     # agent (an agent.workspace_id IS NULL used to short-circuit the tenant
     # check to "allow" — see the fix's commit for the full story), so the
-    # `agent` fixture below must be homed like a real agent. Every test user
-    # here is @dimagi.com, so homing to the "dimagi" auto-join workspace means
-    # each fresh test user is auto-joined as a member with no extra fixture
-    # wiring per test.
+    # `agent` fixture below must be homed like a real agent. `self_join_domains`
+    # is set for realism (this mirrors the real "dimagi" default workspace),
+    # but membership itself is granted explicitly by `_make_user` below —
+    # auto-join is gone, so sharing a domain alone would no longer be enough.
     bootstrap = User.objects.create_user(
         username="workspace-bootstrap", email="bootstrap@dimagi.com", password="pw"
     )
     return Workspace.objects.create(
         slug="dimagi", display_name="Dimagi", created_by=bootstrap,
-        auto_join_domains=["dimagi.com"],
+        self_join_domains=["dimagi.com"],
     )
 
 

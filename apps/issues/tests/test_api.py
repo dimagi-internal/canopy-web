@@ -88,7 +88,7 @@ def test_a_non_member_cannot_see_get_delete_or_overwrite_another_workspaces_issu
     # An origin record owned by "connect" (created by a connect member).
     connect_owner = User.objects.create_user(username="c", email="c@connect.example", password="pw")
     connect = Workspace.objects.create(
-        slug="connect", display_name="Connect", created_by=connect_owner, auto_join_domains=[]
+        slug="connect", display_name="Connect", created_by=connect_owner, self_join_domains=[]
     )
     OriginIssue.objects.create(repo="jjackson/canopy", number=42, title="secret", workspace=connect)
 
