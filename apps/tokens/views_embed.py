@@ -27,39 +27,101 @@ over `postMessage` (see the v2 spec §3), never in this URL.
 
 from __future__ import annotations
 
+import json
+from functools import lru_cache
 from pathlib import Path
 
 from django.conf import settings
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse
+from django.urls import get_script_prefix
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.http import require_GET
 
 from .models import AppCredential
 
-#: The frame announces itself, and nothing else. `targetOrigin` is `*` for this
-#: ONE message on purpose: the frame cannot know its host's origin until the
-#: host speaks first, and the message carries no data — it is "I exist". The
-#: host replies with the token to the frame's own known origin, and the frame
-#: validates `event.origin` against its host list before accepting anything.
-#: Nothing may be posted to `*` after this point.
+#: The vite entry, as it is keyed in the build manifest.
+_EMBED_ENTRY = "src/embed/main.tsx"
+
+
+@lru_cache(maxsize=1)
+def _manifest() -> dict:
+    """Vite's build manifest, or `{}` when the frontend has not been built.
+
+    Cached because it is immutable for the life of a deployed image — a new
+    build is a new container. The cache is keyed on nothing, so a dev box that
+    rebuilds needs a server restart to see new hashes, which matches how
+    `spa_view` already behaves for `index.html`.
+    """
+    path = settings.FRONTEND_DIST_DIR / ".vite" / "manifest.json"
+    if not path.exists():
+        return {}
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def _embed_assets() -> tuple[str | None, list[str]]:
+    """`(entry js, css files)` for the in-frame app, from the build manifest.
+
+    The CSS is NOT on the entry. Both the app and the frame import
+    `src/index.css`, so vite hoists it onto a SHARED chunk and records it
+    against that chunk instead — which means resolving it requires walking the
+    entry's `imports` transitively. Reading only `entry["css"]` yields an
+    unstyled frame, and does so silently.
+    """
+    manifest = _manifest()
+    entry = manifest.get(_EMBED_ENTRY)
+    if not entry:
+        return None, []
+
+    css: list[str] = list(entry.get("css", []))
+    seen: set[str] = set()
+
+    def walk(key: str) -> None:
+        if key in seen:
+            return
+        seen.add(key)
+        chunk = manifest.get(key)
+        if not chunk:
+            return
+        css.extend(chunk.get("css", []))
+        for nested in chunk.get("imports", []):
+            walk(nested)
+
+    for imported in entry.get("imports", []):
+        walk(imported)
+
+    # De-duplicated, order preserved: two chunks can legitimately name the same
+    # stylesheet, and emitting it twice is a wasted request.
+    return entry["file"], list(dict.fromkeys(css))
+
+#: The shell is a LOADER, not the app: it carries the server-known facts the
+#: frame cannot safely learn any other way (which app, and which origins may
+#: talk to it) and then hands over to the bundle. The `ready` handshake lives
+#: in the bundle (frontend/src/embed/hostLink.ts) rather than inline here, so
+#: there is one implementation of the protocol instead of two.
 _SHELL = """<!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Canopy</title>
+{css}
 <style>
-  html, body {{ margin: 0; height: 100%; font: 14px/1.5 system-ui, sans-serif;
-                background: #1c1917; color: #e7e5e4; }}
-  .boot {{ display: grid; place-items: center; height: 100%; opacity: .7; }}
+  html, body {{ margin: 0; height: 100%; }}
+  #canopy-widget-boot {{ height: 100%; }}
+  .canopy-boot {{ display: grid; place-items: center; height: 100%;
+                  font: 14px/1.5 system-ui, sans-serif; color: #a8a29e; }}
 </style>
 </head>
 <body>
-<div class="boot" id="canopy-widget-boot">Starting&hellip;</div>
+<div id="canopy-widget-boot"><div class="canopy-boot">Starting&hellip;</div></div>
 <script>
-  window.CANOPY_EMBED = {{ app: {app!r} }};
-  parent.postMessage({{ source: "canopy-widget", type: "ready" }}, "*");
+  // Injected by the SERVER, which is the only party that can be trusted to say
+  // which origins may talk to this frame — the host is the one being
+  // authenticated, so a list it supplied would authenticate nothing.
+  window.CANOPY_EMBED = {{ app: {app}, origins: {origins} }};
 </script>
+{script}
 </body>
 </html>
 """
@@ -90,7 +152,33 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
         # is the one branch that must never fall through to a response.
         raise Http404("this app has no registered frame origins")
 
-    response = HttpResponse(_SHELL.format(app=name), content_type="text/html; charset=utf-8")
+    js, css = _embed_assets()
+    prefix = get_script_prefix().rstrip("/")
+
+    if js is None:
+        # The policy resolved but the bundle is missing — say so rather than
+        # frame a blank page. A host debugging an empty iframe has no way to
+        # tell this from a broken token.
+        body = (
+            "<!doctype html><meta charset=utf-8>"
+            "<p style='font:14px system-ui;padding:1rem'>"
+            "Canopy widget not built. Run <code>cd frontend &amp;&amp; npm run build</code>."
+            "</p>"
+        )
+    else:
+        body = _SHELL.format(
+            # json.dumps, not an f-string: these values land inside a <script>
+            # block, and an app name or origin containing a quote would
+            # otherwise end the string and inject.
+            app=json.dumps(name),
+            origins=json.dumps(origins),
+            css="\n".join(
+                f'<link rel="stylesheet" href="{prefix}/{href}">' for href in css
+            ),
+            script=f'<script type="module" src="{prefix}/{js}"></script>',
+        )
+
+    response = HttpResponse(body, content_type="text/html; charset=utf-8")
     response["Content-Security-Policy"] = "frame-ancestors " + " ".join(origins)
     # Matches config/static_cache.py's rule for anything without a
     # content-hashed name: an unhashed document is never cached, so a changed

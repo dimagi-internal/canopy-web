@@ -65,11 +65,20 @@ export interface HostBridge {
 }
 
 export class UnknownActionError extends Error {
-  constructor(readonly name: string) {
+  // See CanopyRestError in rest.ts: `erasableSyntaxOnly` forbids constructor
+  // parameter properties.
+  readonly actionName: string
+
+  constructor(name: string) {
     super(
       `no host action named ${JSON.stringify(name)} is registered. ` +
         'It may have been withdrawn because the page moved on.',
     )
+    // `actionName`, not `name`: Error already defines `name` (it is the class
+    // name used when stringifying an error), so the original field was
+    // shadowing it and would have made this print as `no host action named…`
+    // instead of `UnknownActionError`.
+    this.actionName = name
   }
 }
 
