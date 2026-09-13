@@ -16,6 +16,31 @@ and scoped to its own stack, secrets, ECR repo, target group and log groups.
 Shared infra stays shared on purpose (one ALB, one RDS, one ECS cluster, the
 two task roles) — that is a cost decision, not an accident.
 
+**The TASK EXECUTION role is the other half, and was the bigger hole.**
+`labs-jj-ecs-task-execution-role` is shared by every container in every app and
+had the AWS-managed `SecretsManagerReadWrite` attached: `secretsmanager:*` on
+`*`, so any container's startup role could read, overwrite or DELETE every
+secret in the account — plus `lambda:CreateFunction`, `s3:GetObject` and
+`cloudformation:CreateChangeSet`, none of which a task-startup role has any use
+for. Someone had carefully scoped the inline policy to `labs-jj-*`; the managed
+policy made that scoping decorative.
+
+Detached 2026-09-13. Reads are now granted only by scoped inline policies:
+`labs-jj-*` (SecretsManagerAccess, pre-existing), the three umami ARNs, and
+`canopy-web/*` + `ace-web/*` + `labs/*` (AppPrefixedSecretsRead, added first so
+there was never a window where a container could not read). Those four prefixes
+are exactly what the live task definitions reference — enumerated from ECS, not
+guessed. No secret uses a customer-managed KMS key, so nothing needed
+`kms:Decrypt`.
+
+Renaming the 34 unprefixed secrets was considered and is NOT the fix. Secrets
+Manager has no rename API (it is create + repoint every task definition +
+delete), the 34 span FOUR apps rather than one, and neither ace-web nor
+connect-labs declares secrets in CloudFormation at all — they reference
+pre-existing ARNs — so no deploy role needs a secrets grant for them. The
+isolation people expect from prefixes was really being defeated by the shared
+execution role, which is now scoped.
+
 
 Built by NARROWING the existing shared policies rather than authoring from
 scratch: omission is the dangerous failure (a missing permission breaks a
