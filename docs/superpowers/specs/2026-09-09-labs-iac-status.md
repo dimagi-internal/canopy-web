@@ -41,15 +41,44 @@ repo. If someone rebuilds that role from scratch, these vanish and deploys break
 | `cloudformation:DetectStackDrift` | the drift workflow | `CanopyWebCloudFormationDeploy` |
 | `cloudformation:DescribeStackResourceDrifts` | the drift workflow | `CanopyWebCloudFormationDeploy` |
 | `cloudformation:DescribeStackDriftDetectionStatus` on `*` | the drift workflow; takes a DETECTION ID, not a stack ARN, so a stack-scoped grant matches nothing | `CanopyWebCloudFormationDeploy` |
+| `secretsmanager:CreateSecret` + `TagResource` on `*` | adding a NEW `AWS::SecretsManager::Secret` to the template; create-time actions cannot be resource-scoped, so the policy pairs them with a resource-scoped statement for mutating existing `canopy-web/*` and `ace-web/*` secrets | `LabsAppStackSecrets` |
 
-**Seven, not four.** Two actions here (`DescribeTargetGroups`,
-`DescribeStackDriftDetectionStatus`) cannot be resource-scoped and must be
-granted on `*`. Both were first written stack-scoped, both silently denied, and
-both cost a debugging round. If you move these into a bootstrap stack, keep
-those two on `*` — "tidying" them to a stack scope breaks them without an error
-anyone will read.
+**Nine, not four**, and the last two were added on 2026-09-13 — so this list
+grows every time the template gains a resource type the role has not created
+before. That is the shape of the debt rather than an accident: the role's
+permissions are discovered one deploy failure at a time, which is exactly what
+moving them into a bootstrap stack would end.
 
-**These seven are the debt the whole spec exists to repay.** They belong in the
+The 2026-09-13 addition is the preflight paying for itself, and worth recording
+as the worked example. Adding `GithubAppClientSecret` to the template failed the
+deploy — but at the CHANGE SET stage, before anything rolled, naming both
+missing actions:
+
+```
+GithubAppClientSecret (AWS::SecretsManager::Secret)
+    needs secretsmanager:CreateSecret
+GithubAppClientSecret (AWS::SecretsManager::Secret)
+    needs secretsmanager:TagResource
+```
+
+Without the gate that is a 403 several minutes into a rollout, against a
+half-applied stack, with no statement of which action was missing. Note also
+what it did NOT protect: the migration had already run (migrations go before the
+change set, deliberately — old code against the new schema is the cheaper
+order), so labs briefly carried an unused `GitHubConnection` table. That is the
+designed behaviour and worth knowing rather than rediscovering.
+
+**Four of these cannot be resource-scoped** and must be granted on `*`:
+`DescribeTargetGroups`, `DescribeStackDriftDetectionStatus`, `CreateSecret` and
+`TagResource`. The first two were written stack-scoped, silently denied, and
+each cost a debugging round; the last two are create-time actions, where the
+resource does not exist yet to be named — which is why `LabsAppStackSecrets`
+splits into one unscoped create statement and one `canopy-web/*` + `ace-web/*`
+statement for mutating secrets that already exist. If you move any of this into
+a bootstrap stack, keep those four on `*`: "tidying" them to a stack scope
+breaks them without producing an error anyone will read.
+
+**These nine are the debt the whole spec exists to repay.** They belong in the
 per-app bootstrap stacks, which is what the unwritten plan 4 and the written
 plan 3 are for. Until then they are invisible.
 
