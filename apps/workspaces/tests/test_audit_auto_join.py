@@ -1,7 +1,7 @@
 """`audit_auto_join` management command — makes the "dimagi is the only
 auto-join workspace" invariant checkable (and repairable) in production
 instead of folklore. Report mode never mutates; `--fix` clears
-`auto_join_domains` on every workspace except `dimagi`, leaving it alone."""
+`self_join_domains` on every workspace except `dimagi`, leaving it alone."""
 from __future__ import annotations
 
 from io import StringIO
@@ -31,10 +31,10 @@ def test_reports_nothing_when_only_dimagi_has_auto_join():
     owner = _user("owner@dimagi.com")
     Workspace.objects.create(
         slug=DEFAULT_WORKSPACE_SLUG, display_name="Dimagi", created_by=owner,
-        auto_join_domains=["dimagi.com"],
+        self_join_domains=["dimagi.com"],
     )
     Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=owner, auto_join_domains=[],
+        slug="acme", display_name="Acme", created_by=owner, self_join_domains=[],
     )
     output = _run()
     assert "acme" not in output
@@ -42,11 +42,11 @@ def test_reports_nothing_when_only_dimagi_has_auto_join():
     assert DEFAULT_WORKSPACE_SLUG in output
 
 
-def test_reports_a_non_dimagi_workspace_with_auto_join_domains():
+def test_reports_a_non_dimagi_workspace_with_self_join_domains():
     owner = _user("owner@dimagi.com")
     ws = Workspace.objects.create(
         slug="acme", display_name="Acme", created_by=owner,
-        auto_join_domains=["acme.com"],
+        self_join_domains=["acme.com"],
     )
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
     other = _user("m@acme.com")
@@ -62,18 +62,18 @@ def test_fix_clears_non_dimagi_workspaces_but_leaves_dimagi_alone():
     owner = _user("owner@dimagi.com")
     dimagi = Workspace.objects.create(
         slug=DEFAULT_WORKSPACE_SLUG, display_name="Dimagi", created_by=owner,
-        auto_join_domains=["dimagi.com"],
+        self_join_domains=["dimagi.com"],
     )
     acme = Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=owner, auto_join_domains=["acme.com"],
+        slug="acme", display_name="Acme", created_by=owner, self_join_domains=["acme.com"],
     )
 
     output = _run("--fix")
 
     dimagi.refresh_from_db()
     acme.refresh_from_db()
-    assert dimagi.auto_join_domains == ["dimagi.com"]
-    assert acme.auto_join_domains == []
+    assert dimagi.self_join_domains == ["dimagi.com"]
+    assert acme.self_join_domains == []
     assert "acme" in output
     assert "cleared" in output.lower()
 
@@ -81,7 +81,7 @@ def test_fix_clears_non_dimagi_workspaces_but_leaves_dimagi_alone():
 def test_fix_is_idempotent_second_run_reports_nothing_to_fix():
     owner = _user("owner@dimagi.com")
     Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=owner, auto_join_domains=["acme.com"],
+        slug="acme", display_name="Acme", created_by=owner, self_join_domains=["acme.com"],
     )
     _run("--fix")
     second = _run("--fix")

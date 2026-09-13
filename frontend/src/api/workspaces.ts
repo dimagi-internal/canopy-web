@@ -6,6 +6,7 @@ import { problemMessage } from './problem'
 import type { components } from './generated'
 
 export type WorkspaceOut = components['schemas']['WorkspaceOut']
+export type JoinableWorkspaceOut = components['schemas']['JoinableWorkspaceOut']
 export type MemberOut = components['schemas']['MemberOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
@@ -49,6 +50,29 @@ export async function listMembers(slug: string): Promise<MemberOut[]> {
 export async function listWorkspaces(): Promise<WorkspaceOut[]> {
   const { data } = await apiV2.GET('/api/workspaces/')
   return (data as unknown as WorkspaceOut[]) ?? []
+}
+
+// The self-join surface (replaces the old implicit auto-join). `joinable`
+// is a capability list — only workspaces this caller may actually join —
+// so it's always safe to render as-is, no client-side filtering needed.
+export async function listJoinableWorkspaces(): Promise<JoinableWorkspaceOut[]> {
+  const { data } = await apiV2.GET('/api/workspaces/joinable')
+  return (data as unknown as JoinableWorkspaceOut[]) ?? []
+}
+
+// Idempotent: calling this on an already-joined workspace just returns the
+// caller's existing role (see apps.workspaces.services.join_workspace) — the
+// server never elevates on a repeat call. A 404 means either the slug
+// doesn't exist or the caller's domain doesn't match `self_join_domains`;
+// the two are indistinguishable by design (no tenant-enumeration oracle).
+export async function joinWorkspace(slug: string): Promise<WorkspaceOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/join', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to join workspace'))
+  }
+  return res.data as unknown as WorkspaceOut
 }
 
 export async function removeMember(slug: string, userId: number): Promise<void> {

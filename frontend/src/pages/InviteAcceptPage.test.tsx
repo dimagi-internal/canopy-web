@@ -85,7 +85,7 @@ describe('InviteAcceptPage', () => {
     acceptInvite.mockResolvedValue({
       slug: 'connect',
       display_name: 'Connect',
-      auto_join_domains: [],
+      self_join_domains: [],
       role: 'editor',
       created_at: new Date().toISOString(),
     })

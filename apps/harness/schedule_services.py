@@ -32,6 +32,21 @@ class ScheduleNotFound(Exception):
     from 'not yours' — existence never leaks."""
 
 
+class ScheduleForbidden(Exception):
+    """The caller is a MEMBER of the agent's workspace but holds too low a role.
+
+    Deliberately separate from ScheduleNotFound, and the distinction is the
+    whole point: 404 means "you cannot see this", 403 means "you can see it and
+    may not do this". Collapsing them would make every refusal unexplainable to
+    the person most likely to hit one — a viewer on their own team.
+    """
+
+    def __init__(self, agent_slug: str, *, required: str) -> None:
+        super().__init__(agent_slug)
+        self.agent_slug = agent_slug
+        self.required = required
+
+
 class DuplicateScheduleName(Exception):
     """The uniq_agent_schedule_name constraint was violated on create/update."""
 
@@ -40,35 +55,74 @@ class DuplicateScheduleName(Exception):
         self.name = name
 
 
-def _resolve_agent(user, agent_slug: str, *, workspace_slug: str | None = None) -> Agent:
+# The role floor for every schedule WRITE. A schedule is prompt text the runner
+# later executes as the agent, holding the agent's credentials — the same
+# reshaping tier as apps/agents/api.py::_agent_for_write, which is where the
+# rest of that surface's writes already sit. Reads (list, preview) stay at bare
+# membership: seeing when your team's agent runs is interaction, not authorship.
+WRITE_ROLE = wsvc.WorkspaceMembership.EDITOR
+
+
+def _resolve_agent(
+    user,
+    agent_slug: str,
+    *,
+    workspace_slug: str | None = None,
+    require_role: str | None = None,
+) -> Agent:
     """Resolve an agent, gated by workspace membership. Request-free twin of
     apps/harness/api.py::_agent_or_404 — the tenant-URL pin is a parameter.
 
     REST passes request.workspace_slug (preserving today's behavior); the MCP
-    passes None (membership gating only, no tenant-URL concept). Every failure
-    raises ScheduleNotFound — 404-not-403 on the REST side, no existence leak.
+    passes None (membership gating only, no tenant-URL concept). Resolution
+    failures raise ScheduleNotFound — 404-not-403 on the REST side, no existence
+    leak.
 
     Membership is checked UNCONDITIONALLY. This read `if agent.workspace_id and
     not is_member(...)`, which short-circuits to "allow" on a workspace-less
     agent — handing every authenticated caller (REST and MCP alike) that agent's
     full schedule CRUD: list, create, update, delete, run-now. `Agent.workspace`
     is NOT NULL as of agents/0013 so no such row can exist, but the fail-open
-    SHAPE is the bug that kept recurring, so it goes too."""
+    SHAPE is the bug that kept recurring, so it goes too.
+
+    `require_role` is the role floor, and it lives HERE rather than in the Ninja
+    handlers on purpose. A schedule is arbitrary prompt text that the runner
+    later executes AS the agent, with the agent's resolved credentials — and
+    `run-now` means "immediately". So schedule CRUD is the same reshaping tier
+    as `apps/agents/api.py::_agent_for_write`, not the interaction tier: bare
+    membership let a `viewer` write a prompt of their choosing and fire it. It
+    is enforced in the shared resolver because the MCP tools
+    (`create_schedule`, `update_schedule`, `delete_schedule`,
+    `run_schedule_now`) reach these services without passing through a Ninja
+    handler at all — a gate in the handlers would be a gate with the MCP
+    surface walking around it.
+
+    Ordering is resolve-then-authorize, matching `_agent_for_write`: a
+    non-member still gets ScheduleNotFound (404), and only a member who is
+    genuinely under-privileged sees ScheduleForbidden (403)."""
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent is None:
         raise ScheduleNotFound(agent_slug)
-    wsvc.auto_join_workspaces(user)
     if workspace_slug and agent.workspace_id != workspace_slug:
         raise ScheduleNotFound(agent_slug)  # wrong tenant
     if not agent.workspace_id or not wsvc.is_member(user, agent.workspace_id):
         raise ScheduleNotFound(agent_slug)
+    if require_role and not wsvc.has_role_at_least(user, agent.workspace_id, require_role):
+        raise ScheduleForbidden(agent_slug, required=require_role)
     return agent
 
 
 def _resolve_schedule(
-    user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None
+    user,
+    agent_slug: str,
+    schedule_id: int,
+    *,
+    workspace_slug: str | None = None,
+    require_role: str | None = None,
 ) -> AgentSchedule:
-    agent = _resolve_agent(user, agent_slug, workspace_slug=workspace_slug)
+    agent = _resolve_agent(
+        user, agent_slug, workspace_slug=workspace_slug, require_role=require_role
+    )
     schedule = AgentSchedule.objects.filter(pk=schedule_id, agent=agent).first()
     if schedule is None:
         raise ScheduleNotFound(f"{agent_slug}/{schedule_id}")
@@ -110,7 +164,9 @@ def list_schedules(user, agent_slug: str, *, workspace_slug: str | None = None) 
 def create_schedule(
     user, agent_slug: str, fields: dict, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
-    agent = _resolve_agent(user, agent_slug, workspace_slug=workspace_slug)
+    agent = _resolve_agent(
+        user, agent_slug, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+    )
     creator = user if getattr(user, "is_authenticated", False) else None
     try:
         # Own savepoint: an IntegrityError from uniq_agent_schedule_name must not
@@ -127,7 +183,9 @@ def create_schedule(
 def update_schedule(
     user, agent_slug: str, schedule_id: int, fields: dict, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
-    schedule = _resolve_schedule(user, agent_slug, schedule_id, workspace_slug=workspace_slug)
+    schedule = _resolve_schedule(
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+    )
     for key, value in fields.items():
         setattr(schedule, key, value)
     if fields:
@@ -146,7 +204,9 @@ def delete_schedule(
     """Retire open occurrences FIRST — see the module docstring and the spec.
     There is no Turn->AgentSchedule FK, so nothing cascades; an executing
     occurrence would otherwise hold one_executing_turn_per_agent forever."""
-    schedule = _resolve_schedule(user, agent_slug, schedule_id, workspace_slug=workspace_slug)
+    schedule = _resolve_schedule(
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+    )
     services.supersede_open_turns(schedule, reason="schedule deleted")
     schedule.delete()
 
@@ -154,7 +214,9 @@ def delete_schedule(
 def run_schedule_now(
     user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
-    schedule = _resolve_schedule(user, agent_slug, schedule_id, workspace_slug=workspace_slug)
+    schedule = _resolve_schedule(
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+    )
     services.run_schedule_now(schedule)
     return schedule
 

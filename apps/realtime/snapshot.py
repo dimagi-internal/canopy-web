@@ -24,7 +24,6 @@ def _runner_frame(runner: Runner) -> dict:
 
 
 def supervisor_snapshot(user) -> dict:
-    wsvc.auto_join_workspaces(user)
     slugs = set(wsvc.user_workspace_slugs(user))
 
     # Membership is the whole rule. This used to also admit `a.workspace_id is

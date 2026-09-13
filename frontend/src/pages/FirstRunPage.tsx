@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
-import { createWorkspace } from '@/api/workspaces'
+import { createWorkspace, joinWorkspace, listJoinableWorkspaces, type JoinableWorkspaceOut } from '@/api/workspaces'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
 /**
@@ -22,6 +22,9 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [joinable, setJoinable] = useState<JoinableWorkspaceOut[]>([])
+  const [joiningSlug, setJoiningSlug] = useState<string | null>(null)
+  const [joinError, setJoinError] = useState('')
 
   // AuthProvider resolves `useAuth()` before any route mounts (it gates on
   // `status === 'loading'` itself), so `user` is always the real MeOut here —
@@ -36,12 +39,57 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
     canCreate,
   })
 
+  // Joining is a THIRD option alongside create/needs-invite, not a
+  // replacement for either. Fetched here (not lazily on demand) because a
+  // stranded user with no workspace is exactly the audience this list exists
+  // for; `listJoinableWorkspaces` is itself a capability list (it never
+  // returns a workspace the caller cannot join, so it cannot become a tenant
+  // directory), which is what makes rendering it unconditionally safe.
+  //
+  // It is fetched in the `ready` state too — i.e. for someone who ALREADY
+  // belongs somewhere — and that is not incidental. Auto-join used to put a
+  // multi-workspace user into every workspace their domain matched; removing it
+  // left them with no in-app way to join a second one at all, which is a lost
+  // capability rather than missing polish. `/new-workspace` is where they land
+  // looking for one, so the joinable list belongs beside the create form.
+  useEffect(() => {
+    if (state === 'loading') return
+    let cancelled = false
+    listJoinableWorkspaces()
+      .then((rows) => {
+        if (!cancelled) setJoinable(rows)
+      })
+      .catch(() => {
+        // Best-effort: the join section just stays empty on failure — the
+        // create/needs-invite path below is still fully usable.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [state])
+
   if (state === 'loading') return null
   if (state === 'ready' && !alwaysOfferForm) return null
   // On /new-workspace an eligible user sees the form even though they already
   // belong somewhere; `needs-invite` still applies, because eligibility is the
   // server's call either way.
   const offerForm = shouldOfferCreateForm({ state, canCreate, alwaysOfferForm })
+
+  async function handleJoin(ws: JoinableWorkspaceOut) {
+    setJoiningSlug(ws.slug)
+    setJoinError('')
+    try {
+      const joined = await joinWorkspace(ws.slug)
+      // Same reason as submit() below: WorkspaceProvider's membership list
+      // never invalidates itself, so the brand-new membership needs an
+      // explicit refresh before the redirect lands somewhere that resolves.
+      await refresh()
+      navigate(`/w/${joined.slug}`)
+    } catch (e) {
+      setJoinError(e instanceof Error ? e.message : 'Could not join the workspace.')
+      setJoiningSlug(null)
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -76,8 +124,10 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
       <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
         {alreadyAMember ? (
           <>
-            Workspaces keep separate teams&apos; projects, agents and demos apart.
-            Create another below.
+            Workspaces keep separate teams&apos; projects, agents and demos apart.{' '}
+            {joinable.length > 0
+              ? 'Create another below, or join one your address is already allowed into.'
+              : 'Create another below.'}
           </>
         ) : (
           <>
@@ -87,6 +137,38 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
           </>
         )}
       </p>
+
+      {joinable.length > 0 ? (
+        <div className="mt-8 space-y-3">
+          <h2 className="text-sm font-semibold text-foreground">
+            {alreadyAMember ? 'Or join an existing one' : 'Join a workspace'}
+          </h2>
+          {joinError ? <p className="text-[13px] text-destructive">{joinError}</p> : null}
+          <ul className="space-y-2">
+            {joinable.map((ws) => (
+              <li
+                key={ws.slug}
+                className="flex items-center justify-between rounded-lg border border-border bg-card p-3"
+              >
+                <div>
+                  <p className="text-[13px] font-medium text-foreground">{ws.display_name}</p>
+                  <p className="text-[12px] text-muted-foreground">
+                    Your {ws.domain} address is allowed to join.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={joiningSlug === ws.slug}
+                  onClick={() => handleJoin(ws)}
+                  className="shrink-0 rounded bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {joiningSlug === ws.slug ? 'Joining…' : 'Join'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {offerForm ? (
         <form onSubmit={submit} className="mt-8 space-y-4">

@@ -1137,8 +1137,7 @@ export interface paths {
          * Clean, shareable run release page (public via ?t=<share_token>)
          * @description Anonymous-capable: the handler self-enforces access (workspace member OR a
          *     matching ``?t=`` share token) inside ``build_release`` — the middleware
-         *     allowlist only lets the request reach here. Auto-join runs for authed members
-         *     so their workspace membership resolves, mirroring the console endpoints.
+         *     allowlist only lets the request reach here.
          */
         readonly get: operations["apps_runs_api_get_run_release"];
         readonly put?: never;
@@ -1432,10 +1431,13 @@ export interface paths {
          *     *rehearsing* the onboarding path impossible: you could not walk a new
          *     operator's steps end to end without leaving a fake agent behind forever.
          *
-         *     Gated one step ABOVE creation deliberately. Any member may upsert an
-         *     agent; deleting one requires editor or owner, so a viewer cannot destroy
-         *     a fleet member's board. `_get_agent_or_404` runs first, so a non-member
-         *     gets 404 (no existence leak) rather than 403.
+         *     Gated at the same reshaping tier as everything else `_agent_for_write`
+         *     covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
+         *     where deletion was the ONLY gated write on this surface — everything else,
+         *     including the credential/vault writers, was membership-or-nothing): a
+         *     viewer cannot destroy a fleet member's board. `_agent_for_write` resolves
+         *     the agent via `_get_agent_or_404` first, so a non-member gets 404 (no
+         *     existence leak) rather than 403.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
          *     syncs, work products, schedules, items, runner assignments/drills), so
@@ -2337,6 +2339,57 @@ export interface paths {
          *       invites are the workspace's own bookkeeping and cascade with it.
          */
         readonly delete: operations["apps_workspaces_api_delete_workspace"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/joinable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Workspaces I may join
+         * @description A capability list, not a directory: only workspaces whose
+         *     `self_join_domains` matches the caller's own email domain, and only ones
+         *     they are not already a member of. Never enumerate anything else — see
+         *     `services.joinable_workspaces`.
+         */
+        readonly get: operations["apps_workspaces_api_list_joinable_workspaces"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/join": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Join a self-serve workspace
+         * @description Explicit, auditable self-join — the replacement for the old implicit
+         *     auto-join. Re-checks the domain match server-side on every call (never
+         *     trusts the slug the client offers); a slug that doesn't exist and a slug
+         *     whose `self_join_domains` doesn't match the caller return the SAME 404,
+         *     so this endpoint (deliberately callable by any signed-in non-member)
+         *     can't be used to probe which workspaces exist or which domains they
+         *     trust. Idempotent: uses `ensure_member` (create-only), so calling this a
+         *     second time — or calling it as an existing member — never changes an
+         *     existing role. See `services.join_workspace`.
+         */
+        readonly post: operations["apps_workspaces_api_join_workspace"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -8607,8 +8660,8 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
-            /** Auto Join Domains */
-            readonly auto_join_domains: readonly string[];
+            /** Self Join Domains */
+            readonly self_join_domains: readonly string[];
             /** Role */
             readonly role: string;
             /**
@@ -8623,6 +8676,20 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
+        };
+        /**
+         * JoinableWorkspaceOut
+         * @description One workspace the caller may join by explicit action — a capability
+         *     list, not a directory. `domain` is the entry of `self_join_domains` that
+         *     matched, so the UI can say why ("your dimagi.com address is allowed").
+         */
+        readonly JoinableWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Domain */
+            readonly domain: string;
         };
         /** MemberOut */
         readonly MemberOut: {
@@ -14003,6 +14070,48 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_workspaces_api_list_joinable_workspaces: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["JoinableWorkspaceOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_workspaces_api_join_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceOut"];
+                };
             };
         };
     };

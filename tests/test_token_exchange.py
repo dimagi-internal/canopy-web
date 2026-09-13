@@ -156,10 +156,10 @@ def test_exchange_provisions_membership_in_granted_workspace(cred):
 
     user = User.objects.get(email="newperson@dimagi.com")
     # Assert the GRANTED membership specifically (workspace + role), not a
-    # bare `.count() == 1` — that only "proves" confinement to one workspace
-    # because this test's DB happens to have no auto-join workspace. See
-    # test_exchange_provisioning_wins_over_auto_join_for_the_granted_workspace
-    # below for the case where an auto-join workspace is also present.
+    # bare `.count() == 1`. See
+    # test_exchange_provision_role_holds_even_on_a_self_join_eligible_workspace
+    # below for the case where the granted workspace is also self-join
+    # eligible for this domain.
     m = WorkspaceMembership.objects.get(workspace=ws, user=user)
     assert m.role == WorkspaceMembership.EDITOR
     assert m.provisioned_by_app_id == c.pk
@@ -300,18 +300,24 @@ def test_exchange_does_not_log_provisioning_when_already_a_member(cred, caplog):
 
 def test_exchange_organic_membership_has_no_provisioning_provenance(cred):
     """A membership created by something other than an app credential (e.g.
-    auto-join) must not carry provenance — only the exact grant this
-    credential made should ever be attributable to it."""
+    an explicit self-join, or any pre-existing organic row) must not carry
+    provenance — only the exact grant this credential made should ever be
+    attributable to it. Auto-join is gone (2026-09-12), so — unlike the
+    version of this test that predates that change — the organic row here
+    is created directly rather than as a side effect of the exchange call."""
     raw, c = cred
     ws = Workspace.objects.create(
-        slug="autojoined", display_name="Autojoined", created_by=c.created_by,
-        auto_join_domains=["dimagi.com"],
+        slug="joinable", display_name="Joinable", created_by=c.created_by,
+        self_join_domains=["dimagi.com"],
     )
-    # No provisioning grant on this credential — only auto-join applies.
+    user = User.objects.create_user("organic", "organic@dimagi.com", "pw")
+    wsvc.ensure_member(ws, user, WorkspaceMembership.EDITOR)
+
+    # No provisioning grant on this credential, and the exchange itself
+    # grants nothing (no more auto-join) — the pre-existing row is untouched.
     resp = _post(raw, "organic@dimagi.com")
     assert resp.status_code == 200, resp.content
 
-    user = User.objects.get(email="organic@dimagi.com")
     m = WorkspaceMembership.objects.get(workspace=ws, user=user)
     assert m.provisioned_by_app_id is None
 
@@ -347,43 +353,54 @@ def test_exchange_rate_limit_is_per_credential_not_global():
 
 
 # ──────────────────────────────────────────────────────────────────────
-# F3 (2026-07-26 security review): provisioning must run BEFORE the
-# domain-wide auto-join step, so an explicit provision_role grant isn't
-# silently overridden when the granted workspace is also an auto-join
-# workspace for this domain (auto-join always joins at editor).
+# F3 (2026-07-26 security review): provisioning used to have to run BEFORE
+# the domain-wide auto-join step, so an explicit provision_role grant wasn't
+# silently overridden when the granted workspace was also an auto-join
+# workspace for this domain. Auto-join itself is gone (2026-09-12) — nothing
+# else in the exchange path can grant membership at all now — but the
+# invariant these tests pin (an explicit provision_role grant holds, and
+# nothing outside the grant leaks membership elsewhere) still matters, so
+# they're rewritten rather than deleted.
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_exchange_provisioning_wins_over_auto_join_for_the_granted_workspace(cred):
+def test_exchange_provision_role_holds_even_on_a_self_join_eligible_workspace(cred):
+    """A workspace whose `self_join_domains` matches this caller's domain
+    must not change what an explicit `provision_role` grant does — self-join
+    eligibility is not a second, competing grant path; only an explicit
+    `POST /join` (never something token-exchange does on its own) acts on
+    it."""
     raw, c = cred
     ws = Workspace.objects.create(
         slug="connect", display_name="Connect", created_by=c.created_by,
-        auto_join_domains=["dimagi.com"],
+        self_join_domains=["dimagi.com"],
     )
     _grant(c, ws, WorkspaceMembership.VIEWER)
 
-    resp = _post(raw, "autojoin@dimagi.com")
+    resp = _post(raw, "selfjoinable@dimagi.com")
     assert resp.status_code == 200, resp.content
     assert resp.json()["workspace"] == "connect"
 
-    user = User.objects.get(email="autojoin@dimagi.com")
+    user = User.objects.get(email="selfjoinable@dimagi.com")
     m = WorkspaceMembership.objects.get(workspace=ws, user=user)
-    # Without the fix this would be "editor" — auto-join running first would
-    # have created the row before the explicit viewer grant got a chance to.
     assert m.role == WorkspaceMembership.VIEWER
     assert m.provisioned_by_app_id == c.pk
 
 
-def test_exchange_auto_join_still_applies_to_other_domain_workspaces(cred):
-    """The reorder must not break auto-join for workspaces OTHER than the
-    granted one — only the granted workspace's role is protected."""
+def test_exchange_grants_nothing_in_other_domain_workspaces(cred):
+    """Rewritten from the auto-join-era `..._still_applies_to_other_domain_
+    workspaces`: with auto-join gone, a workspace OTHER than the one this
+    credential provisions must end up with NO membership for the exchanged
+    user, even if that other workspace's `self_join_domains` matches their
+    email domain — self-join is something a user does explicitly, never a
+    side effect of a token exchange."""
     raw, c = cred
     granted_ws = Workspace.objects.create(
         slug="connect", display_name="Connect", created_by=c.created_by)
     _grant(c, granted_ws, WorkspaceMembership.VIEWER)
     other_ws = Workspace.objects.create(
         slug="dimagi", display_name="Dimagi", created_by=c.created_by,
-        auto_join_domains=["dimagi.com"],
+        self_join_domains=["dimagi.com"],
     )
 
     resp = _post(raw, "bothws@dimagi.com")
@@ -393,6 +410,4 @@ def test_exchange_auto_join_still_applies_to_other_domain_workspaces(cred):
     assert WorkspaceMembership.objects.get(workspace=granted_ws, user=user).role == (
         WorkspaceMembership.VIEWER
     )
-    assert WorkspaceMembership.objects.get(workspace=other_ws, user=user).role == (
-        WorkspaceMembership.EDITOR
-    )
+    assert not WorkspaceMembership.objects.filter(workspace=other_ws, user=user).exists()

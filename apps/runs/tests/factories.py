@@ -16,8 +16,8 @@ def make_user(email="owner@dimagi.com"):
     return User.objects.get_or_create(username=email, defaults={"email": email})[0]
 
 
-def make_workspace(slug, *, creator=None, auto_join_domains=None):
-    """A tenant for scoping tests. ``auto_join_domains`` defaults to empty so a
+def make_workspace(slug, *, creator=None, self_join_domains=None):
+    """A tenant for scoping tests. ``self_join_domains`` defaults to empty so a
     workspace only gains the members a test adds explicitly."""
     creator = creator or make_user(f"creator-{slug}@dimagi.com")
     ws, _ = Workspace.objects.get_or_create(
@@ -25,7 +25,7 @@ def make_workspace(slug, *, creator=None, auto_join_domains=None):
         defaults={
             "display_name": slug,
             "created_by": creator,
-            "auto_join_domains": auto_join_domains or [],
+            "self_join_domains": self_join_domains or [],
         },
     )
     return ws

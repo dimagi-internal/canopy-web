@@ -218,10 +218,8 @@ def list_reviews(
     """
     # Workspace scoping: honor the /w/{ws} prefix when present (already
     # membership-checked by WorkspaceResolveMiddleware); on the flat mount,
-    # scope to every workspace the caller belongs to. Domain teammates are
-    # auto-joined first so the default-workspace case keeps working. Legacy
-    # rows with workspace=None stay visible on the flat mount (backfill safety).
-    wsvc.auto_join_workspaces(request.user)
+    # scope to every workspace the caller belongs to. Legacy rows with
+    # workspace=None stay visible on the flat mount (backfill safety).
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
 
@@ -313,15 +311,17 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
                 422, f"{field} exceeds the {limit}-character limit", type_=TYPE_VALIDATION
             )
 
-    # Assign the owning workspace: the /w/{ws} prefix pins it (membership already
-    # verified upstream); else fall back to the org default so an unchanged
-    # orchestrator call keeps working. ensure_member keeps the creator's access.
-    pinned = getattr(request, "workspace_slug", None)
-    ws = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if ws is not None and request.user.is_authenticated:
-        wsvc.ensure_member(ws, request.user)
+    # Assign the owning workspace — one the caller is ALREADY in. This used to
+    # `ensure_member` them into the org default, making a review create a way to
+    # gain EDITOR of it; see wsvc.creation_workspace.
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise ProblemError(
+            422,
+            "No workspace to create this review in",
+            type_=TYPE_VALIDATION,
+            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+        )
 
     review = ReviewRequest.objects.create(
         run_id=run_id,

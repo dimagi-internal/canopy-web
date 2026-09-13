@@ -12,6 +12,7 @@ from apps.workspaces import services as wsvc
 from apps.api.errors import (
     TYPE_CONFLICT,
     TYPE_NOT_FOUND,
+    TYPE_VALIDATION,
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
@@ -120,7 +121,6 @@ def _scoped_project_queryset(request: HttpRequest):
     prefix) filter to exactly that tenant; on the flat mount filter to every
     workspace the caller is a member of, plus any still-unscoped (null) rows.
     """
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     qs = Project.objects.all()
     if ws:
@@ -136,7 +136,6 @@ def _member_project(request: HttpRequest, slug: str) -> Project | None:
     project = Project.objects.filter(slug=slug).first()
     if project is None:
         return None
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws and project.workspace_id != ws:
         return None  # wrong tenant
@@ -158,15 +157,19 @@ def _get_project_or_404_ninja(request: HttpRequest, slug: str) -> Project:
 
 
 def _resolve_create_workspace(request: HttpRequest):
-    """Resolve the workspace a newly created project belongs to and ensure the
-    caller is a member. Uses the pinned `/api/w/{ws}` workspace when present,
-    else the org default (so an unchanged flat client keeps working)."""
-    pinned = getattr(request, "workspace_slug", None)
-    ws = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if ws is not None:
-        wsvc.ensure_member(ws, request.user)
+    """The workspace a newly created project belongs to — one the caller is
+    ALREADY in. See `wsvc.creation_workspace` for the resolution order and for
+    what this used to do instead (`ensure_member`, which granted EDITOR of the
+    org default to any authenticated caller as a side effect of creating a
+    project)."""
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise ProblemError(
+            422,
+            "No workspace to create this in",
+            type_=TYPE_VALIDATION,
+            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+        )
     return ws
 
 

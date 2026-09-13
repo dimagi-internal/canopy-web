@@ -100,10 +100,10 @@ def token_exchange(request, payload: TokenExchangeIn):
             app.name, email, request.META.get("REMOTE_ADDR"),
         )
         raise HttpError(403, "delegation not allowed for this account")
-    # F6 (2026-07-26 security review): JIT user creation, provisioning, and
-    # auto-join are one all-or-nothing write — a failure partway through
-    # (e.g. the auto-join loop) must not leave a JIT user or a provisioned
-    # membership committed with nothing else to show for it.
+    # F6 (2026-07-26 security review): JIT user creation and provisioning are
+    # one all-or-nothing write — a failure partway through must not leave a
+    # JIT user or a provisioned membership committed with nothing else to
+    # show for it.
     workspace_slug = None
     with transaction.atomic():
         if user is None:
@@ -119,14 +119,7 @@ def token_exchange(request, payload: TokenExchangeIn):
         # exchange (invalid credential / disallowed domain / inactive user)
         # never reaches this line, so it can never leave a membership behind.
         # create-only (`ensure_member` is get_or_create): an existing
-        # member's role is never raised or lowered by an app.
-        #
-        # Runs BEFORE auto_join_workspaces (F3): if `provision_workspace`
-        # also happens to be an auto-join workspace for this domain, the
-        # explicit `provision_role` grant must win — creating the row here
-        # first makes the later auto-join call a no-op against it, rather
-        # than auto-join silently creating it at `editor` first and making
-        # a `viewer` grant a no-op instead. See
+        # member's role is never raised or lowered by an app. See
         # AppCredential's docstring and docs/archive/plans/
         # 2026-07-26-tenant-scoped-provisioning.md.
         if app.provision_workspace_id:
@@ -143,8 +136,6 @@ def token_exchange(request, payload: TokenExchangeIn):
                     "workspace=%s, role=%s)",
                     app.name, email, workspace_slug, app.provision_role,
                 )
-
-        wsvc.auto_join_workspaces(user)
 
     AppCredential.objects.filter(pk=app.pk).update(last_used_at=timezone.now())
     raw_token, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl)

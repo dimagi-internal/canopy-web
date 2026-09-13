@@ -2074,16 +2074,13 @@ def list_visible_sessions(user) -> list[SessionView]:
     The last two overlap by design: a runner that stops heartbeating also stops
     reporting, so the strictest of the two wins and a dead box's rows go quiet fast.
 
-    auto_join_workspaces runs first, mirroring list_turns: this is a flat-path
-    handler (GET /api/harness/sessions), so WorkspaceResolveMiddleware's
-    tenant-prefix auto-join never fires for it. Without this call, a
-    domain-matching teammate who hasn't hit any other endpoint yet has no
-    WorkspaceMembership row and user_workspace_slugs(user) returns empty,
-    silently hiding their workspace's sessions instead of listing them.
+    A domain-matching teammate who has not clicked "join" on the workspace
+    (`POST /api/workspaces/{slug}/join`) has no WorkspaceMembership row, so
+    `user_workspace_slugs(user)` returns empty and their workspace's sessions
+    are correctly invisible to them — no more silent auto-join here either.
     """
     from apps.canopy_sessions.models import RunnerBinding, Session
 
-    wsvc.auto_join_workspaces(user)
     ws_slugs = wsvc.user_workspace_slugs(user)
     bindings = (
         RunnerBinding.objects.filter(

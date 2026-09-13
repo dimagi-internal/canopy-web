@@ -100,7 +100,6 @@ def _get_agent_or_404(request, slug: str):
     agent = services.get_agent(slug)
     if agent is None:
         raise HttpError(404, f"agent '{slug}' not found")
-    wsvc.auto_join_workspaces(request.user)
     ws = getattr(request, "workspace_slug", None)
     if ws and agent.workspace_id != ws:
         raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant

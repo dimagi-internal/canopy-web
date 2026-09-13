@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { COMPONENTS, ONE_SENTENCE } from '@/guide/components'
-import { USER_PATHS } from '@/guide/paths'
+import { USER_ROLES } from '@/guide/paths'
 import { getPublicStats, type PublicStats } from '@/api/publicStats'
 import { apiUrl } from '@/api/base'
 
@@ -64,12 +64,13 @@ export function AboutPage() {
         </section>
 
         <section className="mt-12">
-          <h2 className="text-sm font-semibold text-foreground">Five ways in</h2>
+          <h2 className="text-sm font-semibold text-foreground">Four roles</h2>
           <div className="mt-4 space-y-3">
-            {USER_PATHS.map((p) => (
+            {USER_ROLES.map((p) => (
               <div key={p.id} className="rounded-lg border border-border bg-card p-4">
                 <h3 className="text-[13px] font-semibold text-foreground">{p.title}</h3>
                 <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
+              <p className="mt-1 text-[11px] text-warning">Enforced by: {p.enforcement}</p>
                 <p className="mt-2 text-[13px] text-foreground-secondary">{p.startHere}</p>
                 {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
                 <div className="mt-2 flex flex-wrap gap-2">

@@ -172,16 +172,13 @@ class AppCredential(models.Model):
     `WorkspaceMembership.role` (which `ROLE_RANK[...]` would otherwise
     KeyError on downstream, e.g. in `accept_invite`).
 
-    Ordering with domain-wide auto-join: the exchange applies this
-    credential's provisioning grant BEFORE `apps.workspaces.services
-    .auto_join_workspaces`, so if `provision_workspace` also happens to be
-    an auto-join workspace for the user's domain, the explicit
-    `provision_role` wins (creates the row first) and the later auto-join
-    call is a no-op against it (`ensure_member` is create-only). Without
-    this ordering, auto-join running first would silently create the row at
-    `editor` regardless of a `viewer` grant — `provision_role` would not be
-    a durable ceiling. See docs/archive/plans/
-    2026-07-26-tenant-scoped-provisioning.md (design + F3 fix).
+    `provision_role` is a durable ceiling: `ensure_member` is create-only, so
+    once this grant creates the membership, nothing (including a later
+    explicit self-join via `POST /api/workspaces/{slug}/join`) can raise or
+    lower the role it set. There is no more domain-wide auto-join to race
+    against — see docs/archive/plans/
+    2026-07-26-tenant-scoped-provisioning.md (design + F3 fix, from when
+    there was).
     """
 
     PROVISION_ROLE_CHOICES = [

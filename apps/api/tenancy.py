@@ -52,7 +52,6 @@ class WorkspaceResolveMiddleware:
             user = getattr(request, "user", None)
             if user is not None and user.is_authenticated:
                 ws = m.group("ws")
-                wsvc.auto_join_workspaces(user)  # domain teammates join on first touch
                 if not wsvc.is_member(user, ws):
                     return _problem_404(f"workspace '{ws}' not found")
                 request.workspace_slug = ws  # type: ignore[attr-defined]

@@ -23,12 +23,12 @@ def _user(email="a@dimagi.com"):
 def test_workspace_holds_members_and_settings():
     u = _user()
     ws = Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=u, auto_join_domains=["acme.com"]
+        slug="acme", display_name="Acme", created_by=u, self_join_domains=["acme.com"]
     )
     m = WorkspaceMembership.objects.create(workspace=ws, user=u, role="owner")
     assert ws.memberships.count() == 1
     assert m.role == "owner"
-    assert ws.auto_join_domains == ["acme.com"]
+    assert ws.self_join_domains == ["acme.com"]
     assert ws.settings == {}
     # the ace-specific Drive coupling is dropped in the framework port
     assert not hasattr(ws, "drive_root_folder_id")

@@ -63,10 +63,11 @@ def test_another_tenants_agent_is_invisible(client):
     tests/test_agent_workspace_not_null.py). Cross-tenant is what is left to
     prove."""
     stranger_owner = User.objects.create_user("stranger", "stranger@dimagi.com", "pw")
-    # auto_join_domains=[] is load-bearing: the gate auto-joins the caller
-    # first, so a domain-matching workspace would silently admit them.
+    # self_join_domains=[] keeps this workspace unreachable by anything but an
+    # explicit membership row — there is no more auto-join to silently admit
+    # a domain-matching caller.
     other = Workspace.objects.create(
-        slug="other", display_name="Other", created_by=stranger_owner, auto_join_domains=[]
+        slug="other", display_name="Other", created_by=stranger_owner, self_join_domains=[]
     )
     Agent.objects.create(slug="secret", name="Secret", workspace=other)
 

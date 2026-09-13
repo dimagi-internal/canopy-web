@@ -34,9 +34,7 @@ def _workspace_slugs(request: HttpRequest) -> set[str]:
     """The caller's in-scope workspace slugs, mirroring the agents surface: a
     ``/api/w/{ws}/`` prefix pins one workspace (already membership-gated by
     ``WorkspaceResolveMiddleware``); a flat ``/api/`` call spans every workspace
-    the user belongs to. Domain teammates are auto-joined first so the default
-    workspace keeps resolving."""
-    wsvc.auto_join_workspaces(request.user)
+    the user belongs to."""
     ws = getattr(request, "workspace_slug", None)
     return {ws} if ws else wsvc.user_workspace_slugs(request.user)
 
@@ -93,10 +91,7 @@ def get_run(request: HttpRequest, run_id: str) -> RunPackageOut:
 def get_run_release(request: HttpRequest, run_id: str) -> RunReleaseOut:
     """Anonymous-capable: the handler self-enforces access (workspace member OR a
     matching ``?t=`` share token) inside ``build_release`` — the middleware
-    allowlist only lets the request reach here. Auto-join runs for authed members
-    so their workspace membership resolves, mirroring the console endpoints."""
-    if request.user.is_authenticated:
-        wsvc.auto_join_workspaces(request.user)
+    allowlist only lets the request reach here."""
     data = aggregate.build_release(run_id, request)
     if data is None:
         raise ProblemError(404, "Run not found", type_=TYPE_NOT_FOUND)

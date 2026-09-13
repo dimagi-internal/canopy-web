@@ -1,8 +1,10 @@
 """End-to-end scoping of the live /api/agents surface — the Echo-safety net.
 
 register() with no workspace → default workspace + creator membership (so Echo's
-unchanged client keeps working); domain teammates auto-join and see it; outsiders
-get 404 and an empty list.
+unchanged client keeps working); a domain teammate who has NOT explicitly
+joined (2026-09-12: auto-join is gone — self-join replaces it, see
+docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md) gets
+the same 404 and empty list an outsider does.
 """
 from __future__ import annotations
 
@@ -52,13 +54,23 @@ def test_register_without_workspace_assigns_default_and_keeps_creator_in():
     assert _client(jj).get("/api/agents/echo/tasks/").status_code == 200
 
 
-def test_domain_teammate_auto_joins_and_sees_agent():
+def test_domain_teammate_no_longer_auto_joins_gets_404_and_empty_list():
+    """Rewrite of `test_domain_teammate_auto_joins_and_sees_agent`: that test
+    asserted auto-join behaviour that no longer exists. A same-domain
+    teammate who has never explicitly joined (`POST /api/workspaces/{slug}
+    /join`) is a non-member like any other, and gets the same 404 / empty
+    list an outsider does — see `test_outsider_gets_404_and_empty_list`."""
     jj = _user("jj@dimagi.com", is_superuser=True)
     _register_echo(_client(jj))
     teammate = _user("t@dimagi.com")  # never explicitly added
-    assert _client(teammate).get("/api/agents/echo/").status_code == 200
+    assert _client(teammate).get("/api/agents/echo/").status_code == 404
     items = _client(teammate).get("/api/agents/").json()["items"]
-    assert any(a["slug"] == "echo" for a in items)
+    assert all(a["slug"] != "echo" for a in items)
+    # And merely hitting these endpoints must not have created a membership
+    # row as a side effect (that side effect is exactly what was removed).
+    from apps.workspaces.models import WorkspaceMembership
+
+    assert not WorkspaceMembership.objects.filter(user=teammate).exists()
 
 
 def test_outsider_gets_404_and_empty_list():
@@ -72,11 +84,11 @@ def test_outsider_gets_404_and_empty_list():
 
 # ---- explicit homing (payload.workspace) — the "move echo to connect" path ----
 
-def _make_ws(slug, owner, auto_join=()):
+def _make_ws(slug, owner, self_join=()):
     from apps.workspaces.models import Workspace
     return Workspace.objects.create(
         slug=slug, display_name=slug.title(), created_by=owner,
-        auto_join_domains=list(auto_join),
+        self_join_domains=list(self_join),
     )
 
 
@@ -108,7 +120,7 @@ def test_register_with_unknown_workspace_404s_and_does_not_move():
 def test_register_with_nonmember_workspace_404s_and_does_not_move():
     jj = _user("jj@dimagi.com", is_superuser=True)
     other = _user("owner@other.com")
-    _make_ws("private", other)  # exists, but jj is not a member (no auto-join)
+    _make_ws("private", other)  # exists, but jj is not a member (no self-join domain)
     c = _client(jj)
     _register_echo(c)
     r = _post(c, "/api/agents/", {"slug": "echo", "name": "Echo", "workspace": "private"})

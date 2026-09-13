@@ -36,12 +36,12 @@ def _client(u):
     return c
 
 
-def _workspace(slug, owner, *, auto_join=("dimagi.com",)):
+def _workspace(slug, owner, *, self_join=("dimagi.com",)):
     ws = Workspace.objects.create(
         slug=slug,
         display_name=slug.title(),
         created_by=owner,
-        auto_join_domains=list(auto_join),
+        self_join_domains=list(self_join),
     )
     WorkspaceMembership.objects.get_or_create(
         workspace=ws, user=owner, defaults={"role": WorkspaceMembership.OWNER}
@@ -78,20 +78,26 @@ def test_outsider_does_not_see_the_walkthrough():
     ws = _workspace("dimagi", jj)
     w = _make(jj, ws, title="Mine")
 
-    # An outsider on a different domain never auto-joins `dimagi`.
+    # An outsider on a different domain never self-joins `dimagi`.
     outsider = _user("x@other.com")
     items = _client(outsider).get("/api/walkthroughs/").json()
     assert all(item["id"] != str(w.id) for item in items)
 
 
-def test_domain_teammate_auto_joins_and_sees_walkthrough():
+def test_domain_teammate_no_longer_auto_joins_gets_empty_list():
+    """Rewrite of `test_domain_teammate_auto_joins_and_sees_walkthrough`:
+    that test asserted auto-join behaviour that no longer exists. A
+    same-domain teammate who has never explicitly joined
+    (`POST /api/workspaces/dimagi/join`) is a non-member like any other,
+    even though `dimagi`'s `self_join_domains` would let them join."""
     jj = _user("jj@dimagi.com", is_superuser=True)
     ws = _workspace("dimagi", jj)
     w = _make(jj, ws, title="Mine")
 
     teammate = _user("t@dimagi.com")  # never explicitly added
     items = _client(teammate).get("/api/walkthroughs/").json()
-    assert any(item["id"] == str(w.id) for item in items)
+    assert all(item["id"] != str(w.id) for item in items)
+    assert not WorkspaceMembership.objects.filter(user=teammate).exists()
 
 
 @override_settings(REQUIRE_AUTH=True)
@@ -114,7 +120,7 @@ def test_non_member_cannot_get_private_detail_or_stream_content():
     # A private walkthrough in "connect" must 404 for a dimagi-only user on both the
     # detail read and the content stream — no cross-workspace metadata or file bytes.
     connect_owner = _user("owner@connect.example")
-    connect = _workspace("connect", connect_owner, auto_join=())  # no dimagi auto-join
+    connect = _workspace("connect", connect_owner, self_join=())  # no dimagi self-join
     w = _make(connect_owner, connect, title="Secret")  # default (private) visibility
 
     jj = _user("jj@dimagi.com", is_superuser=True)  # member of dimagi only

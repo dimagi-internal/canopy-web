@@ -1,9 +1,11 @@
 """Tenancy service helpers — the non-breaking glue for scoping agents to a
-workspace: a default workspace, domain auto-join, and membership lookups.
+workspace: a default workspace, self-join, and membership lookups.
 
-Runtime counterparts to the one-time backfill data migration. Auto-join is what
-keeps NEW domain users (and the board UI) seeing the default workspace's agents
-after scoping turns on.
+Runtime counterparts to the one-time backfill data migration. Self-join
+(`joinable_workspaces` / `join_workspace`) is the explicit, auditable
+replacement for the old implicit `auto_join_workspaces`: a domain match makes
+a workspace JOINABLE, not joined — the user must click. See
+`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`.
 """
 from __future__ import annotations
 
@@ -50,7 +52,7 @@ def ensure_default_workspace() -> Workspace | None:
         slug=DEFAULT_WORKSPACE_SLUG,
         display_name=DEFAULT_WORKSPACE_NAME,
         created_by=owner,
-        auto_join_domains=allowed_domains(),
+        self_join_domains=allowed_domains(),
     )
     ensure_member(ws, owner, WorkspaceMembership.OWNER)
     return ws
@@ -73,15 +75,57 @@ def ensure_member(
     return m, created
 
 
-def auto_join_workspaces(user) -> None:
-    """Add `user` (as editor) to every workspace whose auto_join_domains include
-    their email domain. Cheap + idempotent; safe to call per request."""
+class JoinError(Exception):
+    """Raised by `join_workspace` when the slug doesn't exist, or exists but
+    the caller's email domain doesn't match its `self_join_domains`. The API
+    layer maps BOTH cases to the same 404 — see `join_workspace`'s
+    docstring for why that collapsing is deliberate, not an oversight."""
+
+
+def joinable_workspaces(user) -> list[tuple[Workspace, str]]:
+    """Workspaces `user` may join by explicit action: their email domain is
+    in `self_join_domains` AND they are not already a member. Returns
+    `(workspace, matched_domain)` pairs. A capability list, not a directory —
+    never includes a workspace the caller cannot join, so this cannot become
+    a way to enumerate tenants."""
     domain = _email_domain(getattr(user, "email", ""))
     if not domain:
-        return
-    for ws in Workspace.objects.exclude(auto_join_domains=[]):
-        if domain in [d.lower() for d in (ws.auto_join_domains or [])]:
-            ensure_member(ws, user, WorkspaceMembership.EDITOR)
+        return []
+    already = user_workspace_slugs(user)
+    out: list[tuple[Workspace, str]] = []
+    for ws in Workspace.objects.exclude(self_join_domains=[]):
+        if ws.slug in already:
+            continue
+        if domain in [d.lower() for d in (ws.self_join_domains or [])]:
+            out.append((ws, domain))
+    return out
+
+
+def join_workspace(user, slug: str) -> Workspace:
+    """Explicit, auditable self-join — the replacement for the old implicit
+    `auto_join_workspaces`. Re-checks the domain match server-side (never
+    trusts a slug the client offers): a nonexistent slug and a slug whose
+    `self_join_domains` doesn't match the caller both raise `JoinError`,
+    collapsing to the SAME 404 at the API layer — a 403 on the second case
+    would let any signed-in user probe which workspaces exist and which
+    domains they trust, on an endpoint whose whole purpose is being callable
+    by non-members.
+
+    Grants EDITOR via `ensure_member`, which is CREATE-ONLY: declaring "any
+    dimagi.com user may join" already IS the trust decision (matching what
+    `auto_join_workspaces` used to grant), so the click adds consent + an
+    audit trail rather than a second trust gate — and because `ensure_member`
+    never raises an existing member's role, an existing `viewer` who calls
+    this stays a `viewer` rather than being promoted to `editor`. This is
+    NOT an elevation path."""
+    ws = Workspace.objects.filter(slug=slug).first()
+    if ws is None:
+        raise JoinError(slug)
+    domain = _email_domain(getattr(user, "email", ""))
+    if not domain or domain not in [d.lower() for d in (ws.self_join_domains or [])]:
+        raise JoinError(slug)
+    ensure_member(ws, user, WorkspaceMembership.EDITOR)
+    return ws
 
 
 def user_workspace_slugs(user) -> set[str]:
@@ -92,6 +136,38 @@ def user_workspace_slugs(user) -> set[str]:
 
 def is_member(user, slug: str) -> bool:
     return WorkspaceMembership.objects.filter(user=user, workspace_id=slug).exists()
+
+
+def member_role(user, workspace) -> str | None:
+    """The caller's role in `workspace` (a `Workspace` or a bare slug), or
+    `None` if they are not a member at all.
+
+    The single place a ROLE — as opposed to bare membership — is read, so every
+    gate that distinguishes viewer from editor agrees on where that comes from.
+    `is_member(user, slug)` is exactly `member_role(...) is not None`; it stays
+    because most call sites only need the boolean and reading it as one is
+    clearer than comparing against None.
+
+    Takes a bare `user` rather than a request so the request-free service
+    layers (notably `apps/harness/schedule_services.py`, which the MCP tools
+    call directly) can use the same reader the Ninja handlers do — the MCP
+    invariant is that both surfaces run through one implementation, and an
+    authorization check is the last thing that should have two."""
+    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
+    m = WorkspaceMembership.objects.filter(user=user, workspace_id=workspace_id).first()
+    return m.role if m else None
+
+
+def has_role_at_least(user, workspace, minimum: str) -> bool:
+    """Does the caller hold `minimum` or better in `workspace`?
+
+    Reads the ladder off `WorkspaceMembership.ROLE_RANK` rather than a
+    hand-written set per call site, so adding a role between two existing ones
+    does not silently widen a gate that happened to spell out its members."""
+    role = member_role(user, workspace)
+    if role is None:
+        return False
+    return WorkspaceMembership.ROLE_RANK.get(role, -1) >= WorkspaceMembership.ROLE_RANK[minimum]
 
 
 def request_workspace_slugs(request) -> set[str]:
@@ -112,10 +188,6 @@ def request_workspace_slugs(request) -> set[str]:
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return set()
-    # Domain teammates join their org's workspaces on first touch of any scoped
-    # endpoint — the same "join on first touch" this repo already does per-handler,
-    # centralized here so by-id gates and lists agree on who's a member.
-    auto_join_workspaces(user)
     return user_workspace_slugs(user)
 
 
@@ -131,7 +203,6 @@ def workspace_slugs_for_user_id(user_id) -> set[str]:
     user = get_user_model().objects.filter(pk=user_id).first()
     if user is None:
         return set()
-    auto_join_workspaces(user)
     return user_workspace_slugs(user)
 
 
@@ -148,6 +219,60 @@ def user_default_workspace(user) -> Workspace | None:
         WorkspaceMembership.objects.filter(user=user).select_related("workspace")[:2]
     )
     return rows[0].workspace if len(rows) == 1 else None
+
+
+def creation_workspace(request) -> Workspace | None:
+    """The workspace a CREATE lands in — resolved only from tenants the caller
+    is already in. `None` means "cannot be resolved"; the caller turns that
+    into a 422.
+
+    THIS REPLACED THE IMPLICIT-ENROLMENT SHAPE, which five create endpoints had
+    each hand-rolled a copy of (projects, shareouts, walkthroughs, reviews,
+    issues):
+
+        ws = pinned or ensure_default_workspace()
+        ensure_member(ws, request.user)          # <- grants EDITOR
+
+    On the flat mount `request.workspace_slug` is None, so `ws` was the org
+    default (`dimagi`) *regardless of who was calling*, and `ensure_member`
+    then granted them EDITOR of it as a side effect of posting a shareout.
+    That was strictly broader than the self-join feature it coexisted with:
+    `join_workspace` at least requires the caller's email domain to be in
+    `self_join_domains`, while this required nothing at all. An
+    invite-admitted user — whose defining property is that they are NOT on the
+    domain allowlist, and who correctly gets `[]` from `/joinable` and 404 from
+    `POST /join` — became an editor of `dimagi` by creating one row, and from
+    there passed every editor gate on the agent fleet.
+
+    It also made `docs/architecture/roles.md` wrong where it says there are
+    three ways into a workspace and "no automatic join". There are now three.
+
+    Resolution order, all four legs membership-bound:
+
+    1. Pinned `/api/w/{ws}/…` — `WorkspaceResolveMiddleware` already gated
+       membership before setting `workspace_slug`, so this needs no recheck.
+    2. The org default, IF the caller is a member. This is the leg that keeps
+       every existing flat caller landing exactly where it lands today (the
+       PAT/plugin fleet posts flat, and its humans are `dimagi` members), so
+       the fix is not a behaviour change for anyone legitimate.
+    3. Otherwise the caller's sole membership — unambiguous, so nothing is
+       being guessed on their behalf.
+    4. Otherwise `None`: they belong to nothing, or to several workspaces with
+       no org-default membership to break the tie. Both want an error rather
+       than a guess, and neither leaks anything the caller does not know.
+    """
+    pinned = getattr(request, "workspace_slug", None)
+    if pinned:
+        ws = Workspace.objects.filter(slug=pinned).first()
+        if ws is not None:
+            return ws
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    default = ensure_default_workspace()
+    if default is not None and is_member(user, default.slug):
+        return default
+    return user_default_workspace(user)
 
 
 def current_workspace(user, explicit: str | None = None) -> Workspace:

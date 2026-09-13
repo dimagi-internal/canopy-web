@@ -1,14 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { USER_PATHS } from './paths'
+// `?raw` rather than node:fs — the frontend tsconfig carries no Node types,
+// and this is the pattern src/auth/publicLinkRoutes.test.ts already uses to
+// compare source files.
+import guideSrc from '../pages/GuidePage.tsx?raw'
+import aboutSrc from '../pages/AboutPage.tsx?raw'
+import { USER_ROLES } from './paths'
 import { describedPaths } from './surfaces'
 
-describe('USER_PATHS', () => {
-  it('describes the five ways in', () => {
-    expect(USER_PATHS).toHaveLength(5)
+describe('USER_ROLES', () => {
+  it('describes the four roles as a ladder', () => {
+    expect(USER_ROLES).toHaveLength(4)
   })
 
   it('has unique ids', () => {
-    const ids = USER_PATHS.map((p) => p.id)
+    const ids = USER_ROLES.map((p) => p.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
 
@@ -16,7 +21,7 @@ describe('USER_PATHS', () => {
     // The coupling that keeps the public page honest: it cannot promise a
     // surface the guide does not describe.
     const known = describedPaths()
-    const dangling = USER_PATHS.flatMap((p) => p.surfaces.filter((s) => !known.has(s)))
+    const dangling = USER_ROLES.flatMap((p) => p.surfaces.filter((s) => !known.has(s)))
     expect(dangling, `paths referencing undocumented surfaces: ${dangling.join(', ')}`).toEqual([])
   })
 
@@ -26,14 +31,35 @@ describe('USER_PATHS', () => {
     // silently exempting it from "must be documented" rather than deciding
     // that on purpose. If a genuinely external entry point is ever needed,
     // that is a deliberate exception to carve out here, not a default.
-    const nonRoutes = USER_PATHS.flatMap((p) => p.surfaces.filter((s) => !s.startsWith('/')))
+    const nonRoutes = USER_ROLES.flatMap((p) => p.surfaces.filter((s) => !s.startsWith('/')))
     expect(nonRoutes, `non-route surface references: ${nonRoutes.join(', ')}`).toEqual([])
   })
 
   it('tells every path where to start', () => {
-    for (const p of USER_PATHS) {
+    for (const p of USER_ROLES) {
       expect(p.startHere, `${p.id} has no starting point`).toBeTruthy()
       expect(p.who, `${p.id} does not say who it is for`).toBeTruthy()
+    }
+  })
+
+  it('says what enforces every tier', () => {
+    // The field exists because these tiers are fully enforced on the agents
+    // surface and only partly elsewhere. A role rendered without its
+    // enforcement note is an aspirational claim.
+    for (const r of USER_ROLES) {
+      expect(r.enforcement, `${r.id} does not say what enforces it`).toBeTruthy()
+    }
+  })
+
+  it('renders every field it declares — no field guarded but invisible', () => {
+    // The defect this catches, from experience: a required field plus a test
+    // asserting it is non-empty, which no page ever renders. The test then
+    // guards data no reader can see, and `enforcement` in particular exists to
+    // stop these tiers reading as a clean ladder when they are only partly
+    // enforced. A caveat nobody can see is not a caveat.
+    for (const field of ['title', 'who', 'enforcement', 'startHere', 'surfaces'] as const) {
+      expect(guideSrc, `GuidePage never renders UserRole.${field}`).toContain(`.${field}`)
+      expect(aboutSrc, `AboutPage never renders UserRole.${field}`).toContain(`.${field}`)
     }
   })
 })

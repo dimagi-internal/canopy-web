@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { guideGroups } from '@/guide/grouping'
-import { USER_PATHS } from '@/guide/paths'
+import { USER_ROLES } from '@/guide/paths'
 
 /**
  * The in-app guide: what every surface is, generated from guide/surfaces.ts and
@@ -33,13 +33,14 @@ export function GuidePage() {
 
       <section className="mt-8">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Five ways in — pick the one that&apos;s you
+          Four roles — find yours
         </h2>
         <ul className="mt-3 space-y-3">
-          {USER_PATHS.map((p) => (
+          {USER_ROLES.map((p) => (
             <li key={p.id} className="rounded-lg border border-border bg-card p-3">
               <h3 className="text-sm font-semibold text-foreground">{p.title}</h3>
               <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
+              <p className="mt-1 text-[11px] text-warning">Enforced by: {p.enforcement}</p>
               <p className="mt-1.5 text-[13px] text-foreground-secondary">{p.startHere}</p>
               {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
               <div className="mt-2 flex flex-wrap gap-2">

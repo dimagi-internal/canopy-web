@@ -28,8 +28,10 @@ def workspace(owner):
 
 @pytest.fixture()
 def stranger():
-    """Authenticated, but a member of nothing. auto_join_workspaces keys off the
-    email domain, so use one outside the auto-join set."""
+    """Authenticated, but a member of nothing. Self-join eligibility keys off
+    the email domain, so use one outside the self-join set — not that it
+    matters for membership here, since self-join is an explicit action and
+    this user never takes it."""
     return User.objects.create_user("stranger", "stranger@example.org", "pw")
 
 
@@ -223,7 +225,7 @@ def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, 
     so claiming for it is no escalation.
     """
     sibling = Workspace.objects.create(
-        slug="connect", display_name="Connect", created_by=owner, auto_join_domains=[]
+        slug="connect", display_name="Connect", created_by=owner, self_join_domains=[]
     )
     WorkspaceMembership.objects.create(
         user=owner, workspace=sibling, role=WorkspaceMembership.OWNER

@@ -19,6 +19,7 @@ from .schemas import (
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
+    JoinableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
     SharedVaultIn,
@@ -66,7 +67,7 @@ def _out(ws: Workspace, role: str) -> WorkspaceOut:
     return WorkspaceOut(
         slug=ws.slug,
         display_name=ws.display_name,
-        auto_join_domains=ws.auto_join_domains,
+        self_join_domains=ws.self_join_domains,
         role=role,
         created_at=ws.created_at,
     )
@@ -115,7 +116,7 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
         slug=payload.slug,
         display_name=payload.display_name,
         created_by=request.user,
-        # auto_join_domains is deliberately NOT settable from the request —
+        # self_join_domains is deliberately NOT settable from the request —
         # see WorkspaceCreateIn. Only `ensure_default_workspace()` sets it.
     )
     WorkspaceMembership.objects.create(
@@ -140,6 +141,39 @@ def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
 def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     m = _membership_or_404(request.user, slug)
     return _out(m.workspace, m.role)
+
+
+@router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",
+            openapi_extra={"x-mcp-expose": True})
+def list_joinable_workspaces(request: HttpRequest) -> list[JoinableWorkspaceOut]:
+    """A capability list, not a directory: only workspaces whose
+    `self_join_domains` matches the caller's own email domain, and only ones
+    they are not already a member of. Never enumerate anything else — see
+    `services.joinable_workspaces`."""
+    return [
+        JoinableWorkspaceOut(slug=ws.slug, display_name=ws.display_name, domain=domain)
+        for ws, domain in services.joinable_workspaces(request.user)
+    ]
+
+
+@router.post("/{slug}/join", response=WorkspaceOut, summary="Join a self-serve workspace",
+             openapi_extra={"x-mcp-expose": True})
+def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
+    """Explicit, auditable self-join — the replacement for the old implicit
+    auto-join. Re-checks the domain match server-side on every call (never
+    trusts the slug the client offers); a slug that doesn't exist and a slug
+    whose `self_join_domains` doesn't match the caller return the SAME 404,
+    so this endpoint (deliberately callable by any signed-in non-member)
+    can't be used to probe which workspaces exist or which domains they
+    trust. Idempotent: uses `ensure_member` (create-only), so calling this a
+    second time — or calling it as an existing member — never changes an
+    existing role. See `services.join_workspace`."""
+    try:
+        ws = services.join_workspace(request.user, slug)
+    except services.JoinError:
+        raise HttpError(404, f"workspace '{slug}' not found") from None
+    m = _membership_or_404(request.user, ws.slug)
+    return _out(ws, m.role)
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",

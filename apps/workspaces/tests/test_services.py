@@ -1,5 +1,6 @@
-"""Tenancy service helpers: the default workspace + domain auto-join — the glue
-that makes scoping non-breaking (existing + new domain users keep access)."""
+"""Tenancy service helpers: the default workspace + explicit self-join — the
+glue that makes scoping non-breaking (existing + new domain users keep a path
+to access, but only by clicking join)."""
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,7 @@ def test_ensure_default_workspace_is_idempotent_and_domain_seeded(settings):
     assert ws is not None
     assert ws.slug == services.DEFAULT_WORKSPACE_SLUG
     assert ws.created_by == su
-    assert ws.auto_join_domains == ["dimagi.com", "dimagi-ai.com"]
+    assert ws.self_join_domains == ["dimagi.com", "dimagi-ai.com"]
     # owner is an owner-member; idempotent
     assert WorkspaceMembership.objects.get(workspace=ws, user=su).role == "owner"
     assert services.ensure_default_workspace().pk == ws.pk
@@ -30,20 +31,47 @@ def test_ensure_default_workspace_none_without_users():
     assert services.ensure_default_workspace() is None
 
 
-def test_auto_join_adds_matching_domain_user_only(settings):
+# `auto_join_workspaces` is gone (2026-09-12: self-join replaces implicit
+# auto-join — see docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md).
+# These two tests rewrite what `test_auto_join_adds_matching_domain_user_only`
+# used to assert (that merely having a matching email domain silently granted
+# membership) into the new explicit contract: a domain match makes a
+# workspace JOINABLE, and only `join_workspace` — an explicit action —
+# actually grants it.
+def test_joinable_workspaces_lists_matching_domain_only(settings):
     settings.AUTH_ALLOWED_EMAIL_DOMAIN = "dimagi.com"
     User.objects.create(username="su", email="su@dimagi.com", is_superuser=True)
     services.ensure_default_workspace()
 
     insider = User.objects.create(username="i", email="i@dimagi.com")
-    services.auto_join_workspaces(insider)
+    joinable = services.joinable_workspaces(insider)
+    assert [ws.slug for ws, _domain in joinable] == [services.DEFAULT_WORKSPACE_SLUG]
+    # Merely being domain-eligible grants nothing by itself — no membership row.
+    assert not WorkspaceMembership.objects.filter(user=insider).exists()
+
+    outsider = User.objects.create(username="o", email="o@other.com")
+    assert services.joinable_workspaces(outsider) == []
+
+
+def test_join_workspace_grants_editor_and_is_domain_gated(settings):
+    settings.AUTH_ALLOWED_EMAIL_DOMAIN = "dimagi.com"
+    User.objects.create(username="su", email="su@dimagi.com", is_superuser=True)
+    ws = services.ensure_default_workspace()
+
+    insider = User.objects.create(username="i", email="i@dimagi.com")
+    joined = services.join_workspace(insider, ws.slug)
+    assert joined.pk == ws.pk
     assert WorkspaceMembership.objects.get(
         workspace_id=services.DEFAULT_WORKSPACE_SLUG, user=insider
     ).role == "editor"
 
     outsider = User.objects.create(username="o", email="o@other.com")
-    services.auto_join_workspaces(outsider)
+    with pytest.raises(services.JoinError):
+        services.join_workspace(outsider, ws.slug)
     assert not WorkspaceMembership.objects.filter(user=outsider).exists()
+
+    with pytest.raises(services.JoinError):
+        services.join_workspace(insider, "no-such-workspace")
 
 
 def test_user_workspace_slugs_and_is_member(settings):

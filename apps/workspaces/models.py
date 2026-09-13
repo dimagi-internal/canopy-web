@@ -92,11 +92,12 @@ class Workspace(models.Model):
                   "needs, e.g. Canopy-Shared. Blank falls back to the box default.",
     )
     shared_op_sa_token_enc = models.TextField(blank=True, default="")
-    auto_join_domains = models.JSONField(
+    self_join_domains = models.JSONField(
         default=list,
         blank=True,
-        help_text="Email domains (lowercased, no leading '@') whose users are "
-        "auto-added as editor on first login.",
+        help_text="Email domains (lowercased, no leading '@') whose users may JOIN "
+        "this workspace themselves, by explicit action. Not automatic — see "
+        "POST /api/workspaces/{slug}/join.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

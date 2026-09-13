@@ -76,9 +76,10 @@ def test_turns_are_invisible_for_another_tenants_agent(authed_client):
 
     services.upsert_agent(
         SimpleNamespace(slug="secret", name="Secret", description="", persona="", email="", avatar_url=""),
-        # auto_join_domains=[] is load-bearing: _get_agent_or_404 auto-joins the
-        # caller first, so a domain-matching workspace would silently admit them.
-        workspace=a_workspace("other-tenant", auto_join_domains=[]),
+        # self_join_domains=[] keeps this workspace reachable only by an
+        # explicit membership row — there is no more auto-join to silently
+        # admit a domain-matching caller.
+        workspace=a_workspace("other-tenant", self_join_domains=[]),
     )
     resp = authed_client.get("/api/agents/secret/turns/?limit=10")
     assert resp.status_code == 404
