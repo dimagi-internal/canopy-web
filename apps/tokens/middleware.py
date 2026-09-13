@@ -65,4 +65,13 @@ class BearerTokenAuthMiddleware:
         dtok = DelegatedToken.lookup(raw)
         if dtok is not None and dtok.user.is_active:
             request.user = dtok.user
+            # WHICH app is acting, for the surfaces whose answer depends on it
+            # (`/api/embed/agents`). Kept here rather than re-resolved per view
+            # so the app can only ever come from the token that authenticated
+            # the request — never from a path, query or body the caller controls,
+            # which is what stops one host reading another's agent allowlist.
+            # `None` on every other auth path (session, PAT): there is no app
+            # behind a browser, and those surfaces must refuse rather than
+            # default to something.
+            request.delegated_app = dtok.app
             request._dont_enforce_csrf_checks = True

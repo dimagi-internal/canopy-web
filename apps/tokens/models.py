@@ -229,6 +229,51 @@ class AppCredential(models.Model):
         ).first()
 
 
+class AppCredentialAgent(models.Model):
+    """One agent an embedding app is allowed to offer.
+
+    The widget's picker asks a THREE-way question — agent x host x user — and
+    nothing modelled it. `AppCredential` covers app x tenant (its domains and
+    provisioning grant); `Agent.workspace` covers agent x tenant. The edge
+    between an app and an agent did not exist, so a host chose its agent in its
+    own settings (ace-web's `CANOPY_AGENT_SLUG`, default "ace") and canopy had
+    no record of, or say in, the choice — which is also why canopy could not
+    answer "which agents do I have here".
+
+    Explicit rows rather than a list of slugs on `AppCredential`, for the reason
+    `RunnerAssignment` replaced self-declared `capabilities.agents`: a real FK
+    cannot name an agent that no longer exists, and it is queryable from both
+    ends. And server-side only, following `provision_workspace` — the app is
+    resolved from the bearer token, never from request data, so one host cannot
+    borrow another's allowlist.
+
+    Not exclusive: the same agent may be offered by several apps.
+
+    Keyed on `Agent` because that is what exists today. When an agent gains
+    per-tenant/per-user INSTANCES this becomes the instance FK, and the
+    intersection in `embed_api` keeps its shape — it just matches on any of an
+    agent's tenants instead of its one.
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="allowed_agents")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="embedding_apps")
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "app_credential_agents"
+        ordering = ["app_id", "agent_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["app", "agent"], name="one_row_per_app_agent")
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.app.name}:{self.agent_id}"
+
+
 class DelegatedToken(models.Model):
     """Short-lived bearer minted by token exchange: <app> acting as <user>.
     DB-backed (not JWT) so it is revocable and the table is the audit trail."""
@@ -260,7 +305,7 @@ class DelegatedToken(models.Model):
         if not raw:
             return None
         return (
-            cls.objects.select_related("user")
+            cls.objects.select_related("user", "app")
             .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(),
                     expires_at__gt=timezone.now())
             .first()

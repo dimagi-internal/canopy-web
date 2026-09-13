@@ -36,3 +36,22 @@ class PersonalTokenCreateIn(StrictModel):
 class PersonalTokenCreatedOut(PersonalTokenOut):
     """Returned exactly once at creation — includes the raw token."""
     raw: str
+
+
+class EmbedAgentOut(StrictModel):
+    """One agent an embedding app may offer the caller — `GET /api/embed/agents`.
+
+    Deliberately thin: what a picker needs to render a choice, and nothing that
+    describes how the agent RUNS. An embedded widget is the least trusted
+    surface canopy has, so runtime detail (repo, engine, secret-reference names,
+    runner assignments) stays on the owner-only agent routes.
+
+    `workspace` is included because it is the one non-cosmetic field — it tells
+    the host which tenant a session started with this agent will belong to.
+    """
+
+    slug: str
+    name: str
+    description: str
+    avatar_url: str
+    workspace: str
