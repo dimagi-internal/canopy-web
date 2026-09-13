@@ -232,8 +232,8 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
     three places — the deliberate ways into a workspace — and this fails on a
     new caller rather than waiting for the next audit to find it.
     """
+    import ast
     import pathlib
-    import re
 
     root = pathlib.Path(__file__).resolve().parent.parent
     allowed = {
@@ -255,8 +255,19 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
         rel = str(path.relative_to(root))
         if rel in allowed or "/migrations/" in rel or "/tests/" in rel:
             continue
-        if re.search(r"\bensure_member\s*\(", path.read_text()):
-            offenders.append(rel)
+        # Parsed, not grepped. A regex over source text also matches the word
+        # inside a comment or docstring — and the comments explaining why this
+        # rule exists necessarily quote the call they are about, so a text
+        # search fails on the very files that document the fix. Only a real
+        # Call node counts.
+        tree = ast.parse(path.read_text(), filename=rel)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name == "ensure_member":
+                offenders.append(f"{rel}:{node.lineno}")
     assert not offenders, (
         f"{offenders} call ensure_member outside the deliberate join paths — "
         "creating a row must not be a way to join a workspace. Use "

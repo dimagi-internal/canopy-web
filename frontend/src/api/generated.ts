@@ -1234,9 +1234,8 @@ export interface paths {
          * @description Create a batch of briefings. Re-posting the same period from the same
          *     source replaces the prior rows (see services.upsert_shareouts).
          *
-         *     Rows are assigned to the request's workspace (the /w/{ws} prefix, or the org
-         *     default when unspecified) and the creator is kept a member so their own
-         *     listing keeps showing what they just posted.
+         *     Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
+         *     pins it, otherwise it resolves to your default. 422 if you belong to none.
          */
         readonly post: operations["apps_shareouts_api_create_shareouts"];
         readonly delete?: never;
