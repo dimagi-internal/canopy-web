@@ -11,7 +11,7 @@ from ninja import Router, Status
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 from apps.workspaces import services as wsvc
 
@@ -49,19 +49,15 @@ def _get_or_404(request: HttpRequest, repo_slug: str, number: int) -> OriginIssu
 
 def _assign_workspace(request: HttpRequest, agent_slug: str):
     """An origin record belongs to its authoring agent's workspace when the caller
-    is a member of it (agent-authored provenance); otherwise the caller's pinned /
-    default workspace — so nobody files a record into a workspace they're not in."""
+    is a member of it (agent-authored provenance); otherwise a workspace the
+    caller is ALREADY in — so nobody files a record into a workspace they're not
+    in, and filing one is not itself a way to join a workspace. The fallback
+    used to `ensure_member`; see wsvc.creation_workspace."""
     slugs = wsvc.request_workspace_slugs(request)
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent and agent.workspace_id in slugs:
         return agent.workspace
-    pinned = getattr(request, "workspace_slug", None)
-    ws = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if ws is not None and request.user.is_authenticated:
-        wsvc.ensure_member(ws, request.user)
-    return ws
+    return wsvc.creation_workspace(request)
 
 
 @router.post("/", response={200: OriginIssueOut, 201: OriginIssueOut}, summary="Upsert an origin record")
@@ -82,7 +78,23 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
 
     defaults = dict(data)
     if existing is None:
-        defaults["workspace"] = _assign_workspace(request, data.get("agent") or "")
+        ws = _assign_workspace(request, data.get("agent") or "")
+        if ws is None:
+            # Never create an unhomed record. `_visible` keeps a null-workspace
+            # row readable by ANY authenticated caller (a legacy carve-out), so
+            # "could not resolve a tenant" must be a refusal rather than a
+            # fallback into that carve-out — that is the NULL-means-allow shape
+            # that has bitten this codebase repeatedly.
+            raise ProblemError(
+                422,
+                "No workspace to file this record in",
+                type_=TYPE_VALIDATION,
+                detail=(
+                    "you do not belong to a workspace that can own this; "
+                    "ask an owner for an invite"
+                ),
+            )
+        defaults["workspace"] = ws
     obj, created = OriginIssue.objects.update_or_create(repo=repo, number=number, defaults=defaults)
     return Status(201 if created else 200, _out(obj))
 

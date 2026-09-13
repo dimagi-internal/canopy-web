@@ -7,6 +7,7 @@ from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
@@ -67,15 +68,19 @@ def create_shareouts(
     """Create a batch of briefings. Re-posting the same period from the same
     source replaces the prior rows (see services.upsert_shareouts).
 
-    Rows are assigned to the request's workspace (the /w/{ws} prefix, or the org
-    default when unspecified) and the creator is kept a member so their own
-    listing keeps showing what they just posted."""
-    pinned = getattr(request, "workspace_slug", None)
-    ws = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if ws is not None:
-        wsvc.ensure_member(ws, request.user)
+    Rows are assigned to a workspace the caller is ALREADY in — the /w{ws}
+    prefix pins it, else the org default when they are a member of it, else
+    their sole membership (`wsvc.creation_workspace`). This used to call
+    `ensure_member`, which made posting a shareout a way to BECOME an editor of
+    the org default; see that helper's docstring."""
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise ProblemError(
+            422,
+            "No workspace to post shareouts in",
+            type_=TYPE_VALIDATION,
+            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+        )
     result = services.upsert_shareouts(payload.shareouts, workspace=ws)
     return Status(201, ShareoutBatchOut(**result))
 

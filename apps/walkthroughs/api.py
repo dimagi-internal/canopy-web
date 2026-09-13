@@ -23,6 +23,7 @@ from apps.api.errors import (
     TYPE_FORBIDDEN,
     TYPE_NOT_FOUND,
     TYPE_PAYLOAD_TOO_LARGE,
+    TYPE_VALIDATION,
     ProblemError,
 )
 
@@ -225,15 +226,17 @@ def upload_walkthrough(
             ),
         )
 
-    # Resolve the owning workspace (tenant root). Scope to the request's
-    # workspace (from the /w/{ws} prefix), else the org default so an unchanged
-    # uploader keeps working; the creator is ensured a member either way.
-    pinned = getattr(request, "workspace_slug", None)
-    ws = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if ws is not None:
-        wsvc.ensure_member(ws, request.user)  # creator keeps access
+    # Resolve the owning workspace (tenant root) — one the uploader is ALREADY
+    # in. This used to `ensure_member` the caller into the org default, making
+    # an upload a way to gain EDITOR of it; see wsvc.creation_workspace.
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise ProblemError(
+            422,
+            "No workspace to upload into",
+            type_=TYPE_VALIDATION,
+            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+        )
 
     # Create ORM row first — if Drive fails, delete to avoid orphan row.
     w = Walkthrough.objects.create(

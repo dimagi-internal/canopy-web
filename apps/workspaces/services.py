@@ -221,6 +221,60 @@ def user_default_workspace(user) -> Workspace | None:
     return rows[0].workspace if len(rows) == 1 else None
 
 
+def creation_workspace(request) -> Workspace | None:
+    """The workspace a CREATE lands in — resolved only from tenants the caller
+    is already in. `None` means "cannot be resolved"; the caller turns that
+    into a 422.
+
+    THIS REPLACED THE IMPLICIT-ENROLMENT SHAPE, which five create endpoints had
+    each hand-rolled a copy of (projects, shareouts, walkthroughs, reviews,
+    issues):
+
+        ws = pinned or ensure_default_workspace()
+        ensure_member(ws, request.user)          # <- grants EDITOR
+
+    On the flat mount `request.workspace_slug` is None, so `ws` was the org
+    default (`dimagi`) *regardless of who was calling*, and `ensure_member`
+    then granted them EDITOR of it as a side effect of posting a shareout.
+    That was strictly broader than the self-join feature it coexisted with:
+    `join_workspace` at least requires the caller's email domain to be in
+    `self_join_domains`, while this required nothing at all. An
+    invite-admitted user — whose defining property is that they are NOT on the
+    domain allowlist, and who correctly gets `[]` from `/joinable` and 404 from
+    `POST /join` — became an editor of `dimagi` by creating one row, and from
+    there passed every editor gate on the agent fleet.
+
+    It also made `docs/architecture/roles.md` wrong where it says there are
+    three ways into a workspace and "no automatic join". There are now three.
+
+    Resolution order, all four legs membership-bound:
+
+    1. Pinned `/api/w/{ws}/…` — `WorkspaceResolveMiddleware` already gated
+       membership before setting `workspace_slug`, so this needs no recheck.
+    2. The org default, IF the caller is a member. This is the leg that keeps
+       every existing flat caller landing exactly where it lands today (the
+       PAT/plugin fleet posts flat, and its humans are `dimagi` members), so
+       the fix is not a behaviour change for anyone legitimate.
+    3. Otherwise the caller's sole membership — unambiguous, so nothing is
+       being guessed on their behalf.
+    4. Otherwise `None`: they belong to nothing, or to several workspaces with
+       no org-default membership to break the tie. Both want an error rather
+       than a guess, and neither leaks anything the caller does not know.
+    """
+    pinned = getattr(request, "workspace_slug", None)
+    if pinned:
+        ws = Workspace.objects.filter(slug=pinned).first()
+        if ws is not None:
+            return ws
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    default = ensure_default_workspace()
+    if default is not None and is_member(user, default.slug):
+        return default
+    return user_default_workspace(user)
+
+
 def current_workspace(user, explicit: str | None = None) -> Workspace:
     """Resolve the workspace a caller is acting in.
 
