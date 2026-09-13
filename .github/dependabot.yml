@@ -1,0 +1,32 @@
+# Keep the cross-repo dependency current without anyone remembering to.
+#
+# WHY THIS EXISTS AT ALL. canopy-web depends on `canopy-agent-factory`, which is
+# published from dimagi-internal/canopy — a repo past 0.2.4xx that cuts releases
+# constantly. The dependency is pinned `>=1,<2`, so a compatible release is
+# already allowed; what it needs is for `uv.lock` to actually move, and a human
+# remembering to run `uv lock --upgrade-package` reliably is not a plan.
+# tests/test_agent_factory_contract.py is what makes an automatic bump safe to
+# review quickly: a breaking surface change fails CI on the Dependabot PR rather
+# than in production.
+#
+# Deliberately NARROW. This is not a general "upgrade everything weekly" policy —
+# canopy-web has a large dependency tree and that would produce noise nobody
+# reads, which is worse than no automation because it trains people to ignore the
+# PRs. Only the cross-repo package is watched here. Widen it if and when someone
+# actually wants the rest.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Everything except the package this file exists for.
+    ignore:
+      - dependency-name: "*"
+    allow:
+      - dependency-name: "canopy-agent-factory"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 2

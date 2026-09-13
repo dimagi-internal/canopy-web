@@ -42,6 +42,7 @@ dependencies = [
     # runners' copies drifted apart in the first place.
     "canopy-transcript",
     "pywebpush>=2.3.0",
+    "canopy-agent-factory>=1,<2",
 ]
 
 [project.optional-dependencies]
