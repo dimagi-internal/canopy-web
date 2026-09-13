@@ -268,6 +268,7 @@ Design **specs** (the "why" record) live in `docs/superpowers/specs/`. The execu
 
 - `docs/architecture/api-surface.md` — **every route canopy-web serves, with the reasoning**. Extracted from this file 2026-08-10 (it was 56% of a doc loaded into every session). Read it whenever you touch the API.
 - `docs/architecture/mcp-surface.md` — MCP server surface: module layout, dual-auth model, audit + rate-limit, tool inventory
+- `docs/architecture/embedding-a-canopy-agent.md` — **how a host product embeds a canopy agent**: the two things a host builds (one token endpoint, one script tag), how to register the app + its frame origins + its allowed agents, how to shape the host page's context, and the ACL walked hop by hop. The handoff doc for a host team — `tests/test_embedding_doc_is_true.py` pins its commands, flags and routes so it cannot rot silently.
 - `docs/superpowers/specs/2026-04-10-project-workbench-design.md` — Workbench design spec
 - `docs/superpowers/specs/2026-04-14-google-oauth-auth-gate-design.md` — OAuth gate design spec
 - `docs/superpowers/specs/2026-05-26-walkthrough-sharing-design.md` — Walkthrough sharing design spec
