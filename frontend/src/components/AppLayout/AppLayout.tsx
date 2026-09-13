@@ -16,6 +16,7 @@ import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
+import { CanopyWidget } from '@/widget/CanopyWidget'
 import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
 
 const BACKENDS = [
@@ -421,6 +422,11 @@ function AppShell() {
         // the header above already did this.
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8"><Outlet /></main>
       )}
+      {/* Inside the authenticated shell only: it mints a token for the signed-in
+          user, and a launcher on a chrome-less public viewer (/share, /storyboard,
+          /invite) would be both useless and wrong. Renders nothing unless the
+          deployment turns it on — see GET /api/embed/self. */}
+      <CanopyWidget />
     </div>
   )
 }
