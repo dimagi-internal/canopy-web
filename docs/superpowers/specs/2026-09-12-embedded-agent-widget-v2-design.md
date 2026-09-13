@@ -147,7 +147,49 @@ This is independent of removing canopy-web's own login gate.
 `BearerTokenAuthMiddleware` resolves delegated tokens upstream of
 `LoginRequiredMiddleware`, so widget users work whether that gate stays or goes.
 
-## 6. Tenancy: user-driven, with provisioning as onboarding
+## 5a. Workspace membership implies trust
+
+**A workspace must not contain untrusted co-tenants.** Anyone with membership is
+trusted by everyone else in it. This is an invariant, not a default, and several
+things follow from it that pulled the opposite way while it was unstated:
+
+- **Runner-discovered sessions stay visible to the whole tenant** (§9 leg 3),
+  and must not be narrowed by role. An agent's own emdash sessions land in
+  `agent.workspace` (`harness/services.py`: `workspace=workspace or
+  (agent.workspace ...)`) — the same workspace a user must join to see that
+  agent at all. Under the invariant that is fine; a draft of this spec proposed
+  gating leg 3 on role to defend against a co-tenant the invariant says cannot
+  exist.
+- **An open host must NOT set `provision_workspace`.** Auto-provisioning every
+  user of a host into a tenant is precisely how untrusted co-tenants would get
+  created. Membership is granted deliberately (invite), not as a side effect of
+  opening a widget.
+- **A user with no membership correctly sees nothing.** `current_workspace`
+  raising for a user with zero memberships is the intended state, not an error
+  to design around — they have not been given an agent to talk to. The widget
+  should say so plainly rather than treating it as a failure.
+
+`provision_workspace` remains right for a host whose users are *all* trusted for
+that tenant — ace-web's internal Workbench is that case. It is the wrong tool
+for open signup.
+
+**Untrusted usage is therefore a different capability, not a weaker membership.**
+If canopy needs to serve users who are not trusted co-tenants, that path runs
+*without* workspace membership — no tenant data, against an agent explicitly
+published for it — rather than by adding a lower-privileged member role. v1 of
+this spec serves trusted users only.
+
+**Open question this leaves (deliberately unanswered here): dynamic tenants.**
+If each untrusted-or-separate user needs their own tenant, note that
+`Agent.workspace` is a single NOT NULL FK with **no shared, template, or global
+agent concept anywhere** — so a freshly created tenant starts with zero agents
+and nothing can lend it one. Dynamic tenant creation therefore needs either
+per-tenant agent instances or a new cross-tenant sharing concept. The NOT NULL
+is itself a deliberate security invariant (six tenancy predicates independently
+grew `workspace_id IS NULL`-means-allow legs while it was nullable), so it
+should not be loosened to get there.
+
+## 6. Tenancy: user-driven, with provisioning only where users are trusted
 
 Two things were conflated in early drafting and must stay separate:
 
@@ -160,10 +202,13 @@ Two things were conflated in early drafting and must stay separate:
   `ValueError("no unambiguous workspace for user; specify one")` for both 0 and
   2+. So onboarding needs an answer or the first session cannot be created.
 
-`AppCredential.provision_workspace` is that answer, and it is safe for this
-because it is **additive**: `ensure_member` is `get_or_create` and *"an existing
-member's role is never raised or lowered by an app."* It grants a landing tenant
-to someone who has none; it cannot repin someone who already has their own.
+`AppCredential.provision_workspace` answers it **only for a host whose users
+are all trusted for that tenant** (§5a). It is additive — `ensure_member` is
+`get_or_create` and *"an existing member's role is never raised or lowered by an
+app"* — so it cannot repin someone who already has their own tenancy. But
+additive is not the same as safe: for an open host it would manufacture exactly
+the untrusted co-tenants §5a forbids, so an open host leaves it unset and a
+user without membership sees nothing.
 
 Resolution order for a new session, therefore: the user's sole membership if
 they have exactly one → **ask them** if they have several (`GET /api/workspaces/`
