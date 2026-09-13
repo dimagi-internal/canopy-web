@@ -277,5 +277,3 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     },
   }
 }
-
-export default { init }

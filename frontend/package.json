@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:widget",
     "gen:api": "openapi-typescript http://localhost:8000/api/openapi.json --output src/api/generated.ts --immutable",
     "gen:api:local": "openapi-typescript openapi.json --output src/api/generated.ts --immutable",
     "lint": "eslint .",
     "test:e2e": "playwright test",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:widget": "vite build --config vite.widget.config.ts"
   },
   "workspaces": [
     "packages/*"
