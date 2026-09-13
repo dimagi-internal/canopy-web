@@ -4,48 +4,82 @@ import {
   disconnectGitHub,
   getGitHubConnection,
   gitHubConnectPath,
+  listGitHubInstallations,
   type GitHubConnectionOut,
+  type GitHubInstallationOut,
 } from '@/api/github'
 import { Button } from 'canopy-ui/ui'
 
 /**
- * Connect a GitHub account, so creating an agent can create its repo.
+ * Connect GitHub, so an agent's repository can be pushed to on your behalf.
  *
  * Sits beside "Connect Claude Subscription" because it is the same shape of
- * thing: a per-user grant to a third party that canopy holds on your behalf.
+ * thing: a per-user grant to a third party that canopy holds for you.
  *
- * WHAT THE COPY IS FOR. The scope guidance is not decoration. The permission
- * this app requests (`Administration: write`, needed to create a repository at
- * all) sounds alarming, and the thing that makes it safe is a choice the user
- * makes on GitHub's own screen, not here: picking "Only select repositories"
- * means canopy reaches the repos it creates for you and nothing else, because
- * GitHub automatically grants an app access to repositories it created. Left
- * unsaid, most people will click "All repositories" — it reads like the
- * default — and grant far more than this needs. So it is said, at the moment
- * of choosing, rather than in a doc nobody opens.
+ * AUTHORIZING IS NOT THE SAME AS INSTALLING, and this panel's whole structure
+ * exists because of that. GitHub has two separate consent flows:
+ *
+ *  - authorize — "may this app act as you?" Identity and a token. No
+ *    repository picker.
+ *  - install — "which account, and which repositories?" This is where access
+ *    is actually granted, and GitHub owns that screen: we cannot render it, and
+ *    should not be able to, since a third party drawing "which repos do you
+ *    grant?" is a phishing surface.
+ *
+ * The first version of this panel sent people to authorize and then treated
+ * `connected: true` as success. Measured on labs 2026-09-13: a user authorized
+ * cleanly, the panel said "Connected as @jjackson", and they had access to ZERO
+ * repositories — so nothing could be pushed and the UI said everything was
+ * fine. Connect now starts the INSTALL flow (which authorizes in the same
+ * trip), and "connected" is no longer treated as sufficient: the installation
+ * list is fetched and an empty one is reported as unfinished setup.
  */
 export function GitHubPanel() {
   const [conn, setConn] = useState<GitHubConnectionOut | null>(null)
+  // `null` = not looked up yet. An empty ARRAY is a real, meaningful answer
+  // (authorized but granted nothing), so the two cannot share a representation.
+  const [installs, setInstalls] = useState<GitHubInstallationOut[] | null>(null)
+  const [installsError, setInstallsError] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [params, setParams] = useSearchParams()
 
-  // The callback comes back as a full-page load at /settings?github=… — the
-  // OAuth flow leaves the SPA, so this is how the result gets reported.
+  // The callback returns as a full-page load at /settings?github=… — the OAuth
+  // flow leaves the SPA, so this is the only way the result reaches us.
   const outcome = params.get('github')
   const outcomeDetail = params.get('detail') ?? ''
 
   useEffect(() => {
+    let cancelled = false
     getGitHubConnection()
-      .then(setConn)
-      .catch(() => setError('Could not read the GitHub connection.'))
+      .then((c) => {
+        if (cancelled) return
+        setConn(c)
+        // Only meaningful when there is a usable grant to ask with. This is
+        // the one fact the status endpoint cannot report — it never calls
+        // GitHub, deliberately, so that /settings does not become slow or
+        // fail because of a third party.
+        if (!c.connected || c.needs_reconnect) {
+          setInstalls(null)
+          return
+        }
+        listGitHubInstallations()
+          .then((rows) => { if (!cancelled) setInstalls(rows) })
+          .catch((e) => {
+            if (cancelled) return
+            setInstalls(null)
+            setInstallsError(
+              e instanceof Error ? e.message : 'Could not check your GitHub installations.',
+            )
+          })
+      })
+      .catch(() => { if (!cancelled) setError('Could not read the GitHub connection.') })
+    return () => { cancelled = true }
   }, [outcome])
 
   function dismissOutcome() {
     const next = new URLSearchParams(params)
-    next.delete('github')
-    next.delete('detail')
-    next.delete('login')
+    for (const k of ['github', 'detail', 'login']) next.delete(k)
     setParams(next, { replace: true })
   }
 
@@ -55,6 +89,7 @@ export function GitHubPanel() {
     try {
       await disconnectGitHub()
       setConn(await getGitHubConnection())
+      setInstalls(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not disconnect GitHub.')
     } finally {
@@ -64,120 +99,178 @@ export function GitHubPanel() {
 
   if (conn === null) return null
 
-  // Nothing to offer and no button that could work — say so rather than
-  // rendering a Connect that dead-ends. This is the state of a fresh checkout
-  // and of any deployment where the client secret has not been set yet.
   if (!conn.configured) {
     return (
-      <div className="rounded-xl border border-border bg-card p-5 space-y-2">
+      <Card>
         <h2 className="text-sm font-semibold text-foreground">GitHub</h2>
         <p className="text-sm text-muted-foreground">
-          GitHub is not set up on this deployment, so creating an agent cannot create its
+          GitHub is not set up on this deployment, so canopy cannot push an agent&apos;s
           repository yet. An administrator needs to configure the GitHub App credentials.
         </p>
-      </div>
+      </Card>
     )
   }
 
+  const connected = conn.connected && !conn.needs_reconnect
+  // Authorized, but granted access to nothing. Not an edge case: it is what you
+  // get by authorizing without installing, and it looks identical to success
+  // unless the panel says otherwise.
+  const noRepoAccess = connected && installs !== null && installs.length === 0
+
   return (
-    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+    <Card>
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connect GitHub</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Creating an agent creates a real repository for it. Connect GitHub once and canopy
-          can do that on your behalf.
+          An agent lives in its own repository. Connect GitHub once and canopy can push to
+          the repositories you choose, on your behalf.
         </p>
       </div>
 
       {outcome === 'connected' && (
-        <StatusNote tone="success" onDismiss={dismissOutcome}>
-          GitHub connected.
-        </StatusNote>
+        <Note tone="success" onDismiss={dismissOutcome}>GitHub connected.</Note>
       )}
       {outcome === 'installation_updated' && (
-        <StatusNote tone="info" onDismiss={dismissOutcome}>
-          Your GitHub installation was updated. The owner list on the create-agent form will
-          pick it up.
-        </StatusNote>
+        <Note tone="info" onDismiss={dismissOutcome}>
+          Your GitHub installation was updated.
+        </Note>
+      )}
+      {outcome === 'install_without_code' && (
+        <Note tone="error" onDismiss={dismissOutcome}>
+          GitHub installed the app but sent back no authorization code. The app is missing
+          &ldquo;Request user authorization (OAuth) during installation&rdquo; — an
+          administrator needs to enable it in the GitHub App settings.
+        </Note>
       )}
       {outcome === 'error' && (
-        <StatusNote tone="error" onDismiss={dismissOutcome}>
+        <Note tone="error" onDismiss={dismissOutcome}>
           {outcomeDetail || 'Connecting GitHub failed. Try again.'}
-        </StatusNote>
+        </Note>
       )}
 
       {error && <p className="text-[13px] text-destructive">{error}</p>}
 
-      {conn.connected && !conn.needs_reconnect ? (
-        <div className="flex items-center justify-between gap-4">
-          <p className="text-[13px] text-foreground-secondary">
-            Connected as{' '}
-            <span className="font-medium text-foreground">@{conn.github_login}</span>
-          </p>
-          <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={busy}>
-            {busy ? 'Disconnecting…' : 'Disconnect'}
-          </Button>
-        </div>
-      ) : (
+      {!connected ? (
         <div className="space-y-3">
           {conn.connected && conn.needs_reconnect && (
             <p className="text-[13px] text-warning">
-              Your GitHub connection expired or was revoked. Reconnect it to create agents.
+              Your GitHub connection expired or was revoked. Reconnect it to keep your agents
+              pushing.
             </p>
           )}
-          <p className="text-[13px] text-muted-foreground">
-            On GitHub&apos;s screen, choose{' '}
-            <span className="font-medium text-foreground">Only select repositories</span>.
-            Canopy is automatically given access to the agent repositories it creates for you,
-            so it does not need access to anything you already have.
-          </p>
-          {/* A real anchor, not a Button with onClick: this is a full-page
-              navigation out of the SPA (GitHub has to show its own consent
-              screen), and a link keeps middle-click and "copy link" working. */}
-          <a
-            href={gitHubConnectPath()}
-            className="inline-flex items-center rounded bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            {conn.connected ? 'Reconnect GitHub' : 'Connect GitHub'}
-          </a>
+          <ScopeAdvice />
+          <ConnectLink label={conn.connected ? 'Reconnect GitHub' : 'Connect GitHub'} />
         </div>
-      )}
-
-      {conn.connected && conn.install_url && (
-        <p className="text-[12px] text-muted-foreground">
-          Need canopy to create repos in an organisation?{' '}
-          <a
-            href={conn.install_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary hover:underline"
-          >
-            Install it there
-          </a>
-          , then it appears in the owner list when you create an agent.
-        </p>
+      ) : noRepoAccess ? (
+        <div className="space-y-3 rounded border border-warning/30 bg-warning/10 p-3">
+          <p className="text-[13px] font-medium text-warning">
+            Nearly there — canopy has no repository access yet.
+          </p>
+          <p className="text-[13px] text-foreground-secondary">
+            You&apos;re signed in as{' '}
+            <span className="font-medium text-foreground">@{conn.github_login}</span>, but you
+            haven&apos;t granted access to any repositories. Authorizing and installing are
+            separate steps on GitHub, and only the install step asks about repositories.
+          </p>
+          <ConnectLink label="Choose repositories" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-[13px] text-foreground-secondary">
+              Connected as{' '}
+              <span className="font-medium text-foreground">@{conn.github_login}</span>
+            </p>
+            <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={busy}>
+              {busy ? 'Disconnecting…' : 'Disconnect'}
+            </Button>
+          </div>
+          {installs && installs.length > 0 && (
+            <p className="text-[13px] text-muted-foreground">
+              Repository access granted on{' '}
+              <span className="font-medium text-foreground">
+                {installs.map((i) => i.account_login).join(', ')}
+              </span>
+              .
+            </p>
+          )}
+          {installsError && (
+            <p className="text-[13px] text-muted-foreground">{installsError}</p>
+          )}
+          {conn.install_url && (
+            <p className="text-[12px] text-muted-foreground">
+              Need canopy in another account or organisation?{' '}
+              <a
+                href={conn.install_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Install it there
+              </a>
+              .
+            </p>
+          )}
+        </div>
       )}
 
       {conn.connected && (
         <p className="text-[12px] text-foreground-subtle">
-          Disconnecting removes canopy&apos;s copy of the grant. To revoke it on GitHub&apos;s
-          side as well, use{' '}
+          Disconnecting removes canopy&apos;s copy of the grant. To revoke it on
+          GitHub&apos;s side too, use{' '}
           <a
-            href="https://github.com/settings/applications"
+            href="https://github.com/settings/installations"
             target="_blank"
             rel="noreferrer"
             className="text-primary hover:underline"
           >
-            your GitHub authorized apps
+            your GitHub installations
           </a>
           .
         </p>
       )}
-    </div>
+    </Card>
   )
 }
 
-function StatusNote({
+/**
+ * The scope guidance, shown on the buttons that lead to the INSTALL flow —
+ * which is the only screen where the choice it describes actually appears.
+ * Putting it on the authorize button (the first version) described a picker the
+ * user was never shown.
+ */
+function ScopeAdvice() {
+  return (
+    <p className="text-[13px] text-muted-foreground">
+      GitHub will ask which repositories to grant. Choose{' '}
+      <span className="font-medium text-foreground">Only select repositories</span> and pick
+      just the ones you want agents working in — canopy cannot create or delete
+      repositories, so it only ever reaches what you list here.
+    </p>
+  )
+}
+
+/**
+ * A real anchor, not a Button with onClick: this is a full-page navigation out
+ * of the SPA (GitHub has to show its own consent screen), and a link keeps
+ * middle-click and "copy link" working.
+ */
+function ConnectLink({ label }: { label: string }) {
+  return (
+    <a
+      href={gitHubConnectPath()}
+      className="inline-flex items-center rounded bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
+    >
+      {label}
+    </a>
+  )
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return <div className="rounded-xl border border-border bg-card p-5 space-y-4">{children}</div>
+}
+
+function Note({
   tone,
   children,
   onDismiss,

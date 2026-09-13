@@ -393,15 +393,18 @@ class GitHubConnection(models.Model):
     needs GitHub gets an installation token instead (see
     `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`).
 
-    SCOPE IS THE INSTALLATION'S, NOT THIS ROW'S. The app requests
-    `Administration: write` so it can create a repository, but which
-    repositories that reaches is chosen by the user at install time. GitHub:
-    "If the GitHub App creates any repositories later, the app will
-    automatically be granted access to those repositories as well." So a user
-    who picks "Only select repositories" and selects nothing still gets working
-    agent creation, and canopy ends up able to reach the repos it created and
-    nothing else. That property is what makes the permission acceptable, and
-    the connect UI says so at the point of choosing.
+    SCOPE IS THE INSTALLATION'S, NOT THIS ROW'S. This row records that a person
+    authorized canopy; which repositories that reaches is a separate, explicit
+    choice they make on GitHub's own installation screen. The two are different
+    grants and a connection can exist with zero repository access — see
+    `github_app.install_url`.
+
+    There is deliberately no `Administration: write` in the app's permission
+    set, so canopy cannot create or delete a repository. That is what lets ONE
+    narrow grant serve both pushing an agent's initial scaffold and every later
+    agent commit: a user access token cannot be down-scoped, so any permission
+    the app holds is a permission every runner token holds, and repo-delete in
+    the hands of an autonomous agent is not a risk worth a saved click.
     """
 
     user = models.OneToOneField(
