@@ -92,18 +92,38 @@ class GitHubAuthError(Exception):
 class Installation:
     """One place this person has installed the app — an account or an org.
 
-    `account_login` is what the owner dropdown shows and what
-    `POST /orgs/{login}/repos` is addressed to; `is_org` decides which create
-    endpoint to call.
+    `account_login` is what the owner picker shows and what an org-addressed
+    call is aimed at; `is_org` distinguishes a personal account from an org.
+
+    `repository_selection` and `repositories` exist so a user can VERIFY the
+    grant they made. The panel used to report only the account — "access
+    granted on dimagi-internal" — for an installation scoped to a single repo,
+    which reads like the whole organisation and overstates the grant to the
+    person reading it. Since the advice canopy gives is "pick only the repos you
+    want agents in", it has to then show what was picked, or that advice is
+    unverifiable.
     """
 
     installation_id: int
     account_login: str
     account_type: str  # "User" | "Organization"
+    # "selected" | "all", straight from GitHub. The single most useful field
+    # here: it answers "did I actually scope this?" without counting rows.
+    repository_selection: str = "selected"
+    # Full names ("owner/repo"). Empty when `repository_selection == "all"`,
+    # where enumerating is pointless and potentially thousands of rows.
+    repositories: tuple[str, ...] = ()
+    # What GitHub reports as the total, which may exceed len(repositories) if
+    # the grant is larger than one page.
+    repository_count: int = 0
 
     @property
     def is_org(self) -> bool:
         return self.account_type == "Organization"
+
+    @property
+    def grants_all_repositories(self) -> bool:
+        return self.repository_selection == "all"
 
 
 def client_id() -> str:
@@ -403,12 +423,51 @@ def list_installations(user) -> list[Installation]:
         login = account.get("login") or ""
         if not login:
             continue
+        selection = row.get("repository_selection") or "selected"
+        inst_id = int(row.get("id") or 0)
+        repos: tuple[str, ...] = ()
+        count = 0
+        if selection != "all":
+            # One extra call per installation, and only for scoped grants. In
+            # practice that is one or two calls; for an "all repositories"
+            # grant it would be a pointless walk through everything the person
+            # can see, so it is skipped and the UI says "all" instead.
+            repos, count = _installation_repositories(token, inst_id)
         out.append(Installation(
-            installation_id=int(row.get("id") or 0),
+            installation_id=inst_id,
             account_login=login,
             account_type=account.get("type") or "User",
+            repository_selection=selection,
+            repositories=repos,
+            repository_count=count,
         ))
     return out
+
+
+def _installation_repositories(token: str, installation_id: int) -> tuple[tuple[str, ...], int]:
+    """The repositories one installation actually reaches.
+
+    Best-effort: a failure here degrades to "no names, count 0" rather than
+    failing the whole list, because knowing WHICH accounts are installed is
+    more important than knowing which repos, and an installation the user can
+    see is better than an error page.
+    """
+    try:
+        resp = requests.get(
+            f"{GITHUB_API}/user/installations/{installation_id}/repositories",
+            headers=_auth_headers(token),
+            params={"per_page": 100},
+            timeout=HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return (), 0
+        body = resp.json()
+    except requests.RequestException:
+        return (), 0
+    names = tuple(
+        r.get("full_name") or "" for r in body.get("repositories", []) if r.get("full_name")
+    )
+    return names, int(body.get("total_count") or len(names))
 
 
 def disconnect(user) -> bool:

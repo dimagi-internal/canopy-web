@@ -136,6 +136,9 @@ def github_installations(request: HttpRequest) -> list[GitHubInstallationOut]:
             "account_login": r.account_login,
             "account_type": r.account_type,
             "is_org": r.is_org,
+            "repository_selection": r.repository_selection,
+            "repositories": list(r.repositories),
+            "repository_count": r.repository_count,
         })
         for r in rows
     ]

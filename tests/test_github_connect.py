@@ -442,3 +442,119 @@ def test_the_whole_surface_requires_a_login(configured):
     anon = Client()
     for path in ("/api/tokens/github", "/api/tokens/github/installations"):
         assert anon.get(path).status_code in (401, 403), path
+
+
+# --- what the grant actually reaches ------------------------------------------
+# The panel used to report only the ACCOUNT: "access granted on dimagi-internal"
+# for an installation scoped to one repository. That reads like the whole
+# organisation and overstates the grant to whoever is reading it — and since
+# canopy's own advice is "pick only the repos you want agents in", it has to
+# then show what was picked or that advice cannot be checked.
+
+
+def _sequential_get(*bodies):
+    """Distinct responses per call, so the installations lookup and the
+    per-installation repository lookup can be told apart."""
+    resps = []
+    for body in bodies:
+        status = 200
+        if isinstance(body, tuple):
+            body, status = body
+        r = mock.Mock()
+        r.status_code = status
+        r.json.return_value = body
+        r.raise_for_status.return_value = None
+        resps.append(r)
+    return mock.patch("apps.tokens.github_app.requests.get", side_effect=resps)
+
+
+def test_a_scoped_installation_reports_the_repositories_it_reaches(user, configured):
+    """The real shape from labs 2026-09-13: one org, one repo."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_1"),
+    )
+    installs = {"installations": [{
+        "id": 161425953,
+        "account": {"login": "dimagi-internal", "type": "Organization"},
+        "repository_selection": "selected",
+    }]}
+    repos = {"total_count": 1, "repositories": [{"full_name": "dimagi-internal/ace"}]}
+    with _fake_post(_token_response()), _sequential_get(installs, repos):
+        rows = github_app.list_installations(user)
+    assert len(rows) == 1
+    assert rows[0].repository_selection == "selected"
+    assert rows[0].repositories == ("dimagi-internal/ace",)
+    assert rows[0].repository_count == 1
+    assert rows[0].grants_all_repositories is False
+
+
+def test_an_all_repositories_grant_is_flagged_and_not_enumerated(user, configured):
+    """Walking every repo the account can see would be pointless and huge.
+
+    It is also the grant the connect advice exists to steer people away from,
+    so the UI needs to distinguish it rather than render a very long list.
+    """
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_1"),
+    )
+    installs = {"installations": [{
+        "id": 7,
+        "account": {"login": "jjackson", "type": "User"},
+        "repository_selection": "all",
+    }]}
+    # Exactly ONE get: the installations call. A second would mean we tried to
+    # enumerate an "all" grant.
+    with _fake_post(_token_response()), _sequential_get(installs) as get:
+        rows = github_app.list_installations(user)
+    assert get.call_count == 1
+    assert rows[0].grants_all_repositories is True
+    assert rows[0].repositories == ()
+
+
+def test_a_failed_repository_lookup_degrades_instead_of_failing_the_list(user, configured):
+    """Knowing WHICH accounts are installed matters more than which repos.
+
+    A 500 from the per-installation call must not turn the whole panel into an
+    error — the account list is still the thing the owner picker needs.
+    """
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_1"),
+    )
+    installs = {"installations": [{
+        "id": 9,
+        "account": {"login": "dimagi-internal", "type": "Organization"},
+        "repository_selection": "selected",
+    }]}
+    with _fake_post(_token_response()), _sequential_get(installs, ({}, 500)):
+        rows = github_app.list_installations(user)
+    assert len(rows) == 1
+    assert rows[0].account_login == "dimagi-internal"
+    assert rows[0].repositories == ()
+    assert rows[0].repository_count == 0
+
+
+def test_the_endpoint_serializes_the_repositories(client, user, configured):
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_1"),
+    )
+    installs = {"installations": [{
+        "id": 161425953,
+        "account": {"login": "dimagi-internal", "type": "Organization"},
+        "repository_selection": "selected",
+    }]}
+    repos = {"total_count": 1, "repositories": [{"full_name": "dimagi-internal/ace"}]}
+    with _fake_post(_token_response()), _sequential_get(installs, repos):
+        body = client.get("/api/tokens/github/installations").json()
+    assert body == [{
+        "installation_id": 161425953,
+        "account_login": "dimagi-internal",
+        "account_type": "Organization",
+        "is_org": True,
+        "repository_selection": "selected",
+        "repositories": ["dimagi-internal/ace"],
+        "repository_count": 1,
+    }]

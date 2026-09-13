@@ -5225,6 +5225,23 @@ export interface components {
             readonly account_type: string;
             /** Is Org */
             readonly is_org: boolean;
+            /**
+             * Repository Selection
+             * @description "selected" or "all", from GitHub. Answers "did I actually scope this?" — an "all" grant reaches every repository the installing account can see, which is what the connect advice tells people to avoid, so the UI flags it rather than listing thousands of names.
+             * @default selected
+             */
+            readonly repository_selection: string;
+            /**
+             * Repositories
+             * @description Full names ("owner/repo") this installation reaches. Empty when `repository_selection` is "all" (enumerating is pointless there) and when the per-installation lookup failed, which degrades to no names rather than failing the whole list.
+             */
+            readonly repositories?: readonly string[];
+            /**
+             * Repository Count
+             * @description GitHub's reported total, which can exceed len(repositories) when the grant spans more than one page.
+             * @default 0
+             */
+            readonly repository_count: number;
         };
         /** FeedbackIngestOut */
         readonly FeedbackIngestOut: {
