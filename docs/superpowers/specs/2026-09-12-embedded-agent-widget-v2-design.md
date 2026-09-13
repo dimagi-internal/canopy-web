@@ -225,28 +225,35 @@ saved-runs' `snapshot_inputs`) — a snapshot at session-open, not a continuousl
 synced channel. Continuous sync (CopilotKit's `useCopilotReadable` is the
 reference shape) is future work and is not needed to prove this.
 
-## 9. ACL prerequisite: participation must gate by-id reads
+## 9. ACL prerequisite: by-id reads must agree with the list (shipped, #749)
 
-`_session_or_404` checks the workspace and nothing else:
+`_session_or_404` gated on workspace membership alone, so any co-tenant holding
+a session UUID could read a conversation the **list** already refused to show
+them — across all 14 endpoints that resolve through that one helper.
 
-```python
-if session.workspace_id not in _visible_slugs(request):
-    raise HttpError(404, "session not found")
-```
+An earlier draft of this section said "enforce `SessionParticipant` on by-id
+reads." **Implementing it proved that wrong**, and it would have broken the
+product: `harness/services.py` creates runner-discovered sessions with no
+`created_by` and no participant row, so requiring participation makes every
+emdash-discovered session unreachable by *everyone*.
 
-So any member of a workspace can read any session in it by UUID — while the
-**list** is already correctly narrowed to
-`Q(created_by=request.user) | Q(runner_binding__isnull=False)`. `SessionParticipant`,
-whose own docstring calls it *"the authority for access and role"*, is never
-consulted there.
+Worse, the list's own predicate was wrong in a way that directly defeats this
+spec. It keyed co-tenant visibility on having a `RunnerBinding` — and a **web**
+session acquires a binding the moment a runner picks it up. So **every widget
+session would have become co-tenant-readable as soon as it started running.**
+That was confirmed by a failing test, not reasoned about.
 
-In-app that may have been intentional: canopy sessions are deliberately
-multiplayer (co-edited draft, presence). But *multiplayer by invitation* and
-*readable by any co-tenant holding the id* are different things, and a widget
-dropped into a host product widens who holds session UUIDs enormously — while
-users of a chat bubble will assume privacy. **Enforcing `SessionParticipant` on
-by-id reads is a prerequisite**, not a follow-up, and it uses a primitive that
-already exists.
+`origin` is the property that actually separates "nobody in-app created this"
+from "someone did". Three ways in, no fourth: you created it; you are a
+`SessionParticipant`; or it is a runner-*discovered* session a runner is
+actually reporting. Both callers now read one predicate
+(`apps/canopy_sessions/access.py`) with a parity test asserting they agree —
+the guard shape `test_claim_schedule_parity` uses.
+
+Known trade-off, documented at the predicate: `created_by` is `SET_NULL`, so
+deleting a user drops their web sessions out of the API rather than opening them
+to every co-tenant. Losing them from a list is the cheaper mistake than
+publishing a departed colleague's private chats.
 
 ## 10. Honest limits of v1
 
