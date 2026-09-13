@@ -309,6 +309,17 @@ Resources:
             # neither is a secret; the client secret is in Secrets Manager.
             - { Name: GITHUB_APP_CLIENT_ID, Value: "Iv23li0buZMWuemM5QQO" }
             - { Name: GITHUB_APP_SLUG, Value: "canopy-agents" }
+            # Canopy offering its own agent on its own pages. This is an
+            # AppCredential NAME, not a secret — the credential is never
+            # exchanged here, because the host and canopy are one process (see
+            # apps/tokens/embed_api.py::embed_self_token).
+            #
+            # Safe to set BEFORE the credential exists: `_self_app()` resolves a
+            # name that matches no live credential to None, so /api/embed/self
+            # reports disabled and the frontend mounts nothing. Registering the
+            # credential in the admin is what actually turns the widget on, and
+            # revoking it turns it off again without a deploy.
+            - { Name: EMBED_SELF_APP, Value: "canopy-web" }
           Secrets:
             # Name MUST be SECRET_KEY — that's what config/settings/base.py reads.
             # (It was DJANGO_SECRET_KEY, which nothing read, so prod silently fell
