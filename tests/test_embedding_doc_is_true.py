@@ -113,3 +113,36 @@ def test_the_action_gap_is_still_disclosed_or_still_closed(doc):
             "'cannot yet call a host action' warning from the doc and from §5"
         )
     assert disclosed, "actions still are not wired to the agent, but the doc no longer says so"
+
+
+def test_every_internal_link_points_at_a_real_heading():
+    """The doc routes the reader by anchor ("see §7"), so a renumbered section
+    silently sends them nowhere. Cheap to check, invisible when broken."""
+    import re
+
+    text = DOC.read_text()
+    headings = re.findall(r"^#{2,3} (.+)$", text, re.M)
+
+    def slug(heading: str) -> str:
+        s = re.sub(r"[^\w\s-]", "", heading.lower())
+        return re.sub(r"\s+", "-", s.strip())
+
+    available = {slug(h) for h in headings}
+    used = set(re.findall(r"\]\(#([^)]+)\)", text))
+    assert not (used - available), f"broken anchors: {sorted(used - available)}"
+
+
+def test_the_step_numbering_matches_the_checklist():
+    """The doc's promise is "do these in order". Sections that drift out of
+    step with the checklist break that, and it happened once while writing it.
+    """
+    import re
+
+    text = DOC.read_text()
+    # Checklist rows link to their own section: | [3](#3-add-one-backend-endpoint) | …
+    checklist = re.findall(r"\|\s*\[(\d+)\]\(#(\d+)-[^)]*\)", text)
+    for shown, anchored in checklist:
+        assert shown == anchored, (
+            f"checklist row {shown} links to section {anchored} — the numbering drifted"
+        )
+    assert len(checklist) == 6, f"expected 6 steps, found {len(checklist)}"
