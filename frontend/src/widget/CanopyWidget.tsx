@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { apiV2 } from '@/api/client.v2'
 import { API_BASE, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
+import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions'
 
 /**
  * canopy-web embedding its own widget.
@@ -27,9 +28,20 @@ import { buildPageContext } from './pageContext'
  * and a launcher on a chrome-less public viewer would be wrong anyway.
  */
 
+interface ActionOptions {
+  description?: string
+  parameters?: Record<string, unknown>
+}
+
 interface WidgetHandle {
   destroy(): void
   provideContext(fn: () => unknown): void
+  registerAction(
+    name: string,
+    run: (args: Record<string, unknown>) => unknown | Promise<unknown>,
+    options?: ActionOptions,
+  ): void
+  unregisterAction(name: string): void
 }
 
 interface CanopyGlobal {
@@ -72,9 +84,13 @@ export function CanopyWidget() {
   const pathRef = useRef(location.pathname)
   pathRef.current = location.pathname
   const handleRef = useRef<WidgetHandle | null>(null)
+  /** Names currently mirrored into the widget, so a withdrawn action is
+   *  actually withdrawn rather than left callable. */
+  const declared = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
+    let unsubscribe: (() => void) | null = null
 
     async function mount() {
       const { data, response } = await apiV2.GET('/api/embed/self')
@@ -98,6 +114,30 @@ export function CanopyWidget() {
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.
       handle.provideContext(() => buildPageContext(pathRef.current))
+
+      // Mirror the page's registry into the widget, and keep mirroring as the
+      // user navigates. Declared with SCHEMAS, because an agent that knows an
+      // action exists but not how to call it is barely better off than one
+      // that does not know at all.
+      const sync = (specs: ReturnType<typeof currentSpecs>) => {
+        for (const name of declared.current) {
+          if (!specs.some((s) => s.name === name)) handle.unregisterAction(name)
+        }
+        declared.current = new Set(specs.map((s) => s.name))
+        for (const spec of specs) {
+          handle.registerAction(
+            spec.name,
+            // Resolved at CALL time, not registration: the page that answers
+            // must be the one on screen now, not the one that was mounted when
+            // the widget started.
+            (args) => runPageAction(spec.name, args),
+            { description: spec.description, parameters: spec.parameters },
+          )
+        }
+      }
+      sync(currentSpecs())
+      unsubscribe = onPageActionsChanged(sync)
+
       handleRef.current = handle
     }
 
@@ -108,6 +148,7 @@ export function CanopyWidget() {
 
     return () => {
       cancelled = true
+      unsubscribe?.()
       handleRef.current?.destroy()
       handleRef.current = null
     }

@@ -15,6 +15,21 @@
 
 export const SOURCE = 'canopy-widget' as const
 
+/**
+ * One thing the host's page can be asked to do.
+ *
+ * `parameters` is JSON-Schema and is the reason this is a spec rather than a
+ * bare name: an agent cannot call `dismissInsights` without being told it takes
+ * `{ids: number[]}`. Names alone force the agent to learn the call shape from
+ * prose, which is exactly what a tool schema exists to prevent.
+ */
+export interface ActionSpec {
+  name: string
+  description?: string
+  /** JSON-Schema for the arguments object. */
+  parameters?: Record<string, unknown>
+}
+
 /** frame → host */
 export type FrameMessage =
   /** "I exist" — the only message posted before origins are known, and the only
@@ -45,7 +60,7 @@ export type HostMessage =
       token: string
       agent?: string
       metadata?: Record<string, unknown>
-      actions: string[]
+      actions: ActionSpec[]
     }
   | { source: typeof SOURCE; type: 'token'; id: string; token: string }
   | { source: typeof SOURCE; type: 'token-error'; id: string; message: string }
@@ -53,7 +68,7 @@ export type HostMessage =
   | { source: typeof SOURCE; type: 'action-result'; id: string; result: unknown }
   | { source: typeof SOURCE; type: 'action-error'; id: string; message: string }
   /** The set of callable actions changed while the panel was open. */
-  | { source: typeof SOURCE; type: 'actions'; actions: string[] }
+  | { source: typeof SOURCE; type: 'actions'; actions: ActionSpec[] }
   | { source: typeof SOURCE; type: 'visibility'; open: boolean }
 
 export function isFrameMessage(data: unknown): data is FrameMessage {

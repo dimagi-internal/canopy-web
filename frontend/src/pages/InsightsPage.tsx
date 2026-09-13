@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { usePageContext } from '@/widget/usePageContext'
+import { usePageAction } from '@/widget/usePageAction'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -85,6 +87,14 @@ function SkeletonCard({ delay }: { delay: number }) {
   )
 }
 
+/** Whole days since `iso`. NaN-safe: an unparseable timestamp reads as 0 rather
+ *  than poisoning the list the agent reasons over. */
+function ageInDays(iso: string): number {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return 0
+  return Math.floor((Date.now() - then) / 86_400_000)
+}
+
 export function InsightsPage() {
   const [insights, setInsights] = useState<Insight[]>([])
   const [loading, setLoading] = useState(true)
@@ -122,6 +132,74 @@ export function InsightsPage() {
       // silent
     }
   }
+
+  // --- what the embedded agent can see and do here -------------------------
+  //
+  // This page is the reason the widget exists for Jonathan: it accumulates
+  // stale entries he legitimately wants closed, and saying "close these" is
+  // cheap in front of the list and expensive anywhere else.
+  //
+  // The agent could already bulk-clear by FILTER (clear_insights is
+  // MCP-exposed), but not dismiss a chosen set, and it cannot see which
+  // insights are on screen — the active filter, the project narrowing, what
+  // has already been triaged. That selection is page-local, which is what
+  // makes this a bridge case rather than a server one.
+
+  usePageContext(() => ({
+    filter: activeFilter,
+    project_filter: projectFilter || null,
+    visible_count: insights.length,
+    // Ages in DAYS, not timestamps: staleness is the question being asked, and
+    // a date makes the agent do arithmetic before it can answer.
+    insights: insights.map((i) => ({
+      id: i.id,
+      project: i.project_slug,
+      category: parseInsightCategory(i.content),
+      text: parseInsightBody(i.content).slice(0, 300),
+      source: i.source,
+      age_days: ageInDays(i.created_at),
+    })),
+  }))
+
+  usePageAction(
+    'dismissInsights',
+    async (args) => {
+      const ids = (args.ids as number[] | undefined) ?? []
+      const visible = new Set(insights.map((i) => i.id))
+      // Only what is actually on screen. The agent was handed this list, so an
+      // id outside it means the page moved on — dismissing it anyway would act
+      // on something the user is no longer looking at.
+      const unknown = ids.filter((id) => !visible.has(id))
+      if (unknown.length) {
+        throw new Error(
+          `not on this page: ${unknown.join(', ')}. The list may have changed since you read it.`,
+        )
+      }
+      const dismissed: number[] = []
+      for (const id of ids) {
+        await insightsApi.dismiss(id)
+        dismissed.push(id)
+      }
+      setInsights((prev) => prev.filter((i) => !dismissed.includes(i.id)))
+      return { dismissed: dismissed.length, ids: dismissed }
+    },
+    {
+      description:
+        'Dismiss specific insights from the list the user is currently viewing. ' +
+        'Only ids present in the page context can be dismissed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          ids: {
+            type: 'array',
+            items: { type: 'integer' },
+            description: 'Insight ids, taken from the page context',
+          },
+        },
+        required: ['ids'],
+      },
+    },
+  )
 
   function clearProjectFilter() {
     const next = new URLSearchParams(searchParams)
