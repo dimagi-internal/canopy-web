@@ -923,6 +923,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agents this embedding app may offer to this user
+         * @description The INTERSECTION of two independent grants, both required:
+         *
+         *     1. an `AppCredentialAgent` row — an admin allowed this app to offer the
+         *        agent;
+         *     2. membership of the agent's tenant — the caller can actually reach it.
+         *
+         *     Neither is sufficient. (1) alone would let a host offer an agent to someone
+         *     with no access to it; (2) alone is just "every agent you can see", which
+         *     ignores what the host was permitted to embed.
+         *
+         *     Fails closed in the ordinary way: an app with no rows offers nothing, the
+         *     same way an empty `allowed_delegation_domains` vouches for nobody.
+         */
+        readonly get: operations["apps_tokens_embed_api_list_embeddable_agents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/reviews/": {
         readonly parameters: {
             readonly query?: never;
@@ -5664,6 +5695,30 @@ export interface components {
              * @default 3600
              */
             readonly ttl_seconds: number;
+        };
+        /**
+         * EmbedAgentOut
+         * @description One agent an embedding app may offer the caller — `GET /api/embed/agents`.
+         *
+         *     Deliberately thin: what a picker needs to render a choice, and nothing that
+         *     describes how the agent RUNS. An embedded widget is the least trusted
+         *     surface canopy has, so runtime detail (repo, engine, secret-reference names,
+         *     runner assignments) stays on the owner-only agent routes.
+         *
+         *     `workspace` is included because it is the one non-cosmetic field — it tells
+         *     the host which tenant a session started with this agent will belong to.
+         */
+        readonly EmbedAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Avatar Url */
+            readonly avatar_url: string;
+            /** Workspace */
+            readonly workspace: string;
         };
         /**
          * ReviewListItemOut
@@ -11726,6 +11781,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TokenExchangeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_embed_api_list_embeddable_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["EmbedAgentOut"][];
                 };
             };
         };
