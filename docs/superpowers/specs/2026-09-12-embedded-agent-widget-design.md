@@ -1,6 +1,13 @@
 # Embedded agent widget — canopy as a cross-product chat substrate
 
-**Status:** Draft for review · **Date:** 2026-09-12 · **Author:** Jonathan + Claude
+**Status:** SUPERSEDED by
+[`2026-09-12-embedded-agent-widget-v2-design.md`](2026-09-12-embedded-agent-widget-v2-design.md)
+· **Date:** 2026-09-12 · **Author:** Jonathan + Claude
+
+> **Superseded the same day it merged.** Reading the target codebase invalidated
+> §2 (one agent per host), §3 (`npm install canopy-ui` — labs is React 18, and
+> is not a React SPA) and §5 (deferring a generic embed). Kept as the record of
+> how the design got there; v2 is the current one.
 
 > Generalizes the ace-web ↔ canopy-web chat cutover
 > (`2026-07-25-ace-web-canopy-chat-cutover-design.md`) into a repeatable pattern
