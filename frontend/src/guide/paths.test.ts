@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest'
+// `?raw` rather than node:fs — the frontend tsconfig carries no Node types,
+// and this is the pattern src/auth/publicLinkRoutes.test.ts already uses to
+// compare source files.
+import guideSrc from '../pages/GuidePage.tsx?raw'
+import aboutSrc from '../pages/AboutPage.tsx?raw'
 import { USER_ROLES } from './paths'
 import { describedPaths } from './surfaces'
 
@@ -43,6 +48,18 @@ describe('USER_ROLES', () => {
     // enforcement note is an aspirational claim.
     for (const r of USER_ROLES) {
       expect(r.enforcement, `${r.id} does not say what enforces it`).toBeTruthy()
+    }
+  })
+
+  it('renders every field it declares — no field guarded but invisible', () => {
+    // The defect this catches, from experience: a required field plus a test
+    // asserting it is non-empty, which no page ever renders. The test then
+    // guards data no reader can see, and `enforcement` in particular exists to
+    // stop these tiers reading as a clean ladder when they are only partly
+    // enforced. A caveat nobody can see is not a caveat.
+    for (const field of ['title', 'who', 'enforcement', 'startHere', 'surfaces'] as const) {
+      expect(guideSrc, `GuidePage never renders UserRole.${field}`).toContain(`.${field}`)
+      expect(aboutSrc, `AboutPage never renders UserRole.${field}`).toContain(`.${field}`)
     }
   })
 })

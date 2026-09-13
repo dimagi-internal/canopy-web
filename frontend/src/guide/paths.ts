@@ -49,7 +49,7 @@ export const USER_ROLES: UserRole[] = [
     id: 'user',
     title: 'User — you interact with an agent',
     who: 'Someone with work to hand to an agent, or a question waiting on them.',
-    enforcement: 'Workspace member. Any role, including `viewer`.',
+    enforcement: 'Workspace member. Any role, including viewer.',
     startHere: 'Open Chats in a workspace and start a chat with an agent.',
     surfaces: ['/w/:workspace/chat', '/w/:workspace/chat/:id', '/supervisor'],
     note:
@@ -61,7 +61,7 @@ export const USER_ROLES: UserRole[] = [
     id: 'author',
     title: 'Author — you build and run',
     who: 'Someone shaping what an agent is, not just what it is doing today.',
-    enforcement: '`editor` on the agents surface. Membership-only elsewhere (a known gap).',
+    enforcement: 'Editor on the agents surface. Membership-only elsewhere — a known gap.',
     startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:
@@ -72,7 +72,7 @@ export const USER_ROLES: UserRole[] = [
     id: 'administrator',
     title: 'Administrator — you own the workspace',
     who: 'Whoever decides who else gets in, and holds the keys.',
-    enforcement: '`owner`. Enforced throughout workspace admin and on agent credentials.',
+    enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
     startHere: 'Open Members to invite someone, or Settings to mint an access token.',
     surfaces: ['/w/:workspace/members', '/w/:workspace/inbound', '/settings'],
     note:

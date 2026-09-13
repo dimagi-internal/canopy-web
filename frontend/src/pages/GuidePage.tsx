@@ -40,6 +40,7 @@ export function GuidePage() {
             <li key={p.id} className="rounded-lg border border-border bg-card p-3">
               <h3 className="text-sm font-semibold text-foreground">{p.title}</h3>
               <p className="mt-0.5 text-[12px] text-muted-foreground">{p.who}</p>
+              <p className="mt-1 text-[11px] text-warning">Enforced by: {p.enforcement}</p>
               <p className="mt-1.5 text-[13px] text-foreground-secondary">{p.startHere}</p>
               {p.note ? <p className="mt-1 text-[12px] text-foreground-subtle">{p.note}</p> : null}
               <div className="mt-2 flex flex-wrap gap-2">
