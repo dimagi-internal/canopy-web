@@ -8,6 +8,7 @@ from django.views.generic import RedirectView
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.views_embed import embed_chat
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import csrf_view, health_check, spa_view
 
@@ -18,6 +19,12 @@ urlpatterns = [
     path("api/csrf/", csrf_view, name="csrf"),
     path("api/debug/", include("apps.common.urls_debug")),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
+    # The embed shell — the ONE framable canopy page. A bare view because it
+    # sets per-request response headers (frame-ancestors from the app's
+    # registered origins) and is X-Frame-Options-exempt; see
+    # apps/tokens/views_embed.py for why the exemption is safe. Declared before
+    # the SPA catch-all, whose negative lookahead does not exclude `embed/`.
+    path("embed/chat", embed_chat, name="embed-chat"),
     # <str:> (not <uuid:>) so a malformed id is handled by the view (bare 404)
     # instead of falling through to the SPA catch-all and painting the whole app
     # inside a failed content embed. The view 404s any id it can't resolve.
