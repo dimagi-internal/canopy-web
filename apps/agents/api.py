@@ -861,14 +861,14 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     this agent routes to may report for it. A readiness signal anyone could
     write is a readiness signal nobody can trust — and this one is meant to be
     trusted over the control plane's own record of what it stored.
-
-    Deliberately NOT `_agent_for_write` on top of that. `caller_runs_agent` is
-    strictly tighter than any role check, so a role gate here adds no security
-    — but it does add a way for readiness reporting to start 403-ing: a runner
-    whose pairing human happens to hold `viewer` would go silent, and a machine
-    saying "I could not materialize this" is exactly the signal you least want
-    to lose. Reporting what a box observed is not reshaping the agent.
     """
+    # Membership + `caller_runs_agent`, and deliberately NOT `_agent_for_write`
+    # on top: `caller_runs_agent` is strictly tighter than any role check, so a
+    # role gate adds no security here — but it does add a way for readiness
+    # reporting to start 403-ing, when a runner's pairing human happens to hold
+    # `viewer`. A machine saying "I could not materialize this" is the last
+    # signal to lose, and reporting what a box observed is not reshaping the
+    # agent.
     agent = _get_agent_or_404(request, slug)
     if not services.caller_runs_agent(request.user, agent):
         raise HttpError(403, "no live runner you pair is assigned to this agent")

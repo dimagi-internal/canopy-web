@@ -68,11 +68,14 @@ def create_shareouts(
     """Create a batch of briefings. Re-posting the same period from the same
     source replaces the prior rows (see services.upsert_shareouts).
 
-    Rows are assigned to a workspace the caller is ALREADY in — the /w{ws}
-    prefix pins it, else the org default when they are a member of it, else
-    their sole membership (`wsvc.creation_workspace`). This used to call
-    `ensure_member`, which made posting a shareout a way to BECOME an editor of
-    the org default; see that helper's docstring."""
+    Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
+    pins it, otherwise it resolves to your default. 422 if you belong to none.
+    """
+    # Resolution is `wsvc.creation_workspace`, which only ever returns a tenant
+    # the caller is already in. This used to be `pinned or
+    # ensure_default_workspace()` followed by `ensure_member(ws, request.user)`
+    # — which on the flat mount made posting a shareout a way to BECOME an
+    # editor of the org default. See that helper's docstring for the full shape.
     ws = wsvc.creation_workspace(request)
     if ws is None:
         raise ProblemError(
