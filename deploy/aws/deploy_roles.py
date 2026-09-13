@@ -60,7 +60,7 @@ APPS = {
     "canopy-web": {
         # canopy-web was transferred into the org, so GitHub mints the IMMUTABLE
         # subject. The name-based form silently fails AssumeRoleWithWebIdentity.
-        "sub": f"repo:dimagi-internal@272902307/canopy-web@1193139337:*",
+        "sub": "repo:dimagi-internal@272902307/canopy-web@1193139337:*",
         "stack": "canopy-web",
         "secret_prefix": "canopy-web/",
         "ecr": ["labs-jj-canopy-web"],
