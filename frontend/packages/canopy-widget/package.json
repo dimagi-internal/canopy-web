@@ -1,0 +1,21 @@
+{
+  "name": "@canopy/widget",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Drop-in canopy agent widget: one script tag, overlay / inline / docked, framework-free.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dimagi-internal/canopy-web.git",
+    "directory": "frontend/packages/canopy-widget"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "files": [
+    "src"
+  ]
+}
