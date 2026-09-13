@@ -15,6 +15,7 @@ precisely the parameter that must not exist.
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -23,7 +24,8 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.workspaces import services as wsvc
 
-from .schemas import EmbedAgentOut
+from .models import AppCredential, DelegatedToken
+from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut
 
 embed_router = Router(auth=session_auth, tags=["embed"])
 
@@ -87,3 +89,69 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
         )
         for a in rows
     ]
+
+
+# --- canopy-web embedding its own widget ------------------------------------
+#
+# The one host that is also canopy. Worth having despite the oddity: the
+# reason to embed an agent is to talk to it about what is on the page, and the
+# pages where that is most useful — a stale agent inbox, a feature set worth
+# deprecating — are canopy's own. This is the only way to use it where the
+# work is.
+#
+# It does NOT exercise the cross-origin boundary (the frame is same-origin
+# here), so it is dogfooding for the UI, the context and the session lifecycle,
+# not for the origin discipline. That still needs a real third-party host.
+
+
+def _self_app() -> AppCredential | None:
+    """The credential canopy-web offers on its own pages, or None when off.
+
+    Off by default (`EMBED_SELF_APP` empty): this mounts a chat panel on every
+    authenticated page, which no deployment should grow by surprise. A name
+    that does not resolve to a live credential is also None rather than an
+    error — a misconfigured setting should leave the widget absent, not break
+    every page that asks about it.
+    """
+    name = (getattr(settings, "EMBED_SELF_APP", "") or "").strip()
+    if not name:
+        return None
+    return AppCredential.objects.filter(name=name, revoked_at__isnull=True).first()
+
+
+@embed_router.get("/self", response=EmbedSelfOut,
+                  summary="Whether canopy-web offers the widget on its own pages")
+def embed_self(request: HttpRequest) -> EmbedSelfOut:
+    """Drives the frontend's decision to mount the widget at all.
+
+    Deliberately says nothing about *which* agents are available — that is
+    `/api/embed/agents`, which answers for the caller and is the only place
+    that intersects the app's allowlist with the viewer's memberships.
+    """
+    app = _self_app()
+    return EmbedSelfOut(
+        enabled=app is not None,
+        app=app.name if app else "",
+        agent=(getattr(settings, "EMBED_SELF_AGENT", "") or "").strip(),
+    )
+
+
+@embed_router.post("/token", response=EmbedSelfTokenOut,
+                   summary="Mint a delegated token for the caller, for canopy's own widget")
+def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
+    """The host-side token endpoint every embedder needs — for the host that is
+    canopy itself.
+
+    Issued DIRECTLY rather than through `POST /api/auth/token-exchange`. A
+    third-party host must exchange because it holds a secret and canopy has to
+    verify the assertion; here the two are one process, so there is no
+    assertion to verify and no reason for canopy to hold a credential in order
+    to talk to itself. It is not weaker: the endpoint is session-authenticated,
+    so the caller already IS the user the token acts for, and the token it
+    receives is the same short-lived revocable row any host would get.
+    """
+    app = _self_app()
+    if app is None:
+        raise HttpError(404, "canopy-web does not offer the widget on its own pages")
+    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=3600)
+    return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat())

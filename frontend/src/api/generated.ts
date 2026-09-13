@@ -1017,6 +1017,59 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/self": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether canopy-web offers the widget on its own pages
+         * @description Drives the frontend's decision to mount the widget at all.
+         *
+         *     Deliberately says nothing about *which* agents are available — that is
+         *     `/api/embed/agents`, which answers for the caller and is the only place
+         *     that intersects the app's allowlist with the viewer's memberships.
+         */
+        readonly get: operations["apps_tokens_embed_api_embed_self"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mint a delegated token for the caller, for canopy's own widget
+         * @description The host-side token endpoint every embedder needs — for the host that is
+         *     canopy itself.
+         *
+         *     Issued DIRECTLY rather than through `POST /api/auth/token-exchange`. A
+         *     third-party host must exchange because it holds a secret and canopy has to
+         *     verify the assertion; here the two are one process, so there is no
+         *     assertion to verify and no reason for canopy to hold a credential in order
+         *     to talk to itself. It is not weaker: the endpoint is session-authenticated,
+         *     so the caller already IS the user the token acts for, and the token it
+         *     receives is the same short-lived revocable row any host would get.
+         */
+        readonly post: operations["apps_tokens_embed_api_embed_self_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/reviews/": {
         readonly parameters: {
             readonly query?: never;
@@ -5893,6 +5946,35 @@ export interface components {
             readonly avatar_url: string;
             /** Workspace */
             readonly workspace: string;
+        };
+        /**
+         * EmbedSelfOut
+         * @description `GET /api/embed/self` — whether canopy offers the widget on its own pages.
+         *
+         *     Its own endpoint rather than a field on `/api/me/` because it is a
+         *     deployment setting, not a property of the user, and the frontend reads it
+         *     once to decide whether to mount anything at all.
+         */
+        readonly EmbedSelfOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /** App */
+            readonly app: string;
+            /** Agent */
+            readonly agent: string;
+        };
+        /**
+         * EmbedSelfTokenOut
+         * @description `POST /api/embed/token` — a delegated token for the caller.
+         *
+         *     Same shape a third-party host's own token endpoint returns to its page, so
+         *     the frontend code path is identical whether the host is canopy or not.
+         */
+        readonly EmbedSelfTokenOut: {
+            /** Token */
+            readonly token: string;
+            /** Expires At */
+            readonly expires_at: string;
         };
         /**
          * ReviewListItemOut
@@ -12047,6 +12129,46 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["EmbedAgentOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_embed_api_embed_self: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedSelfOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_embed_api_embed_self_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedSelfTokenOut"];
                 };
             };
         };

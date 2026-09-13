@@ -208,6 +208,27 @@ WHITENOISE_ADD_HEADERS_FUNCTION = add_cache_headers
 # Frontend SPA build output (served by catch-all view; WhiteNoise handles assets)
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
+# --- Dogfooding the embedded widget inside canopy-web itself ----------------
+# The name of a registered AppCredential whose agents canopy-web offers on its
+# OWN pages, so the widget can be used where the work is: notice a stale agent
+# inbox, or a feature set worth deprecating, and say so while looking at it
+# rather than re-finding the context later.
+#
+# Empty = off, and off is the default: this mounts a chat panel on every
+# authenticated page, which no deployment should grow by surprise. It also
+# needs a credential that exists, with an agent allowed and the deployment's
+# own origin registered — see docs/architecture/embedding-a-canopy-agent.md.
+#
+# Note this is the ONE host that does not exchange a credential over HTTP: the
+# host and canopy are the same process, so the token is issued directly. That
+# deliberately skips the exchange step, which is a host-side concern and not
+# what this mount exists to exercise.
+EMBED_SELF_APP = env("EMBED_SELF_APP", default="")
+# Optional: skip the agent picker by naming one. It must still be allowed for
+# the app AND in a workspace the viewer belongs to — the widget shows nothing
+# otherwise, which is the same fail-closed path as any other host.
+EMBED_SELF_AGENT = env("EMBED_SELF_AGENT", default="")
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

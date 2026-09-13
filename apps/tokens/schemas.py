@@ -112,3 +112,28 @@ class GitHubInstallationOut(StrictModel):
     account_login: str
     account_type: str
     is_org: bool
+
+
+class EmbedSelfOut(StrictModel):
+    """`GET /api/embed/self` — whether canopy offers the widget on its own pages.
+
+    Its own endpoint rather than a field on `/api/me/` because it is a
+    deployment setting, not a property of the user, and the frontend reads it
+    once to decide whether to mount anything at all.
+    """
+
+    enabled: bool
+    app: str
+    #: Optional preselected agent; empty means show the picker.
+    agent: str
+
+
+class EmbedSelfTokenOut(StrictModel):
+    """`POST /api/embed/token` — a delegated token for the caller.
+
+    Same shape a third-party host's own token endpoint returns to its page, so
+    the frontend code path is identical whether the host is canopy or not.
+    """
+
+    token: str
+    expires_at: str

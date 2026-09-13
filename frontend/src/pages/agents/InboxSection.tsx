@@ -4,7 +4,16 @@ import { listItems, type ItemOut } from '@/api/items'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ITEM_BAND, ITEM_KIND_RANK, type ItemKind } from '@/lib/itemBands'
 import { ItemCard } from '@/components/items/ItemCard'
+import { usePageContext } from '@/widget/usePageContext'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
+
+/** Whole days since `iso`. `NaN`-safe: an unparseable timestamp yields 0 rather
+ *  than poisoning a Math.max over the whole list. */
+function ageInDays(iso: string): number {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return 0
+  return Math.floor((Date.now() - then) / 86_400_000)
+}
 
 // One agent's inbox: its OPEN items, ranked Review -> Question, each decidable in
 // place. This is the per-agent counterpart of /supervisor's fleet ItemInbox; both
@@ -73,6 +82,24 @@ export function InboxSection() {
   }, [agent.slug, reload])
 
   const count = items?.length ?? 0
+
+  // Hand the embedded agent what is actually in this inbox, with ages — the
+  // whole point being that "this inbox has gone stale" is a claim about the
+  // data, which the URL cannot express. Ages in days rather than timestamps
+  // because staleness is the question being asked, and a date makes the agent
+  // do arithmetic before it can answer it.
+  usePageContext(() => ({
+    open_item_count: count,
+    oldest_open_item_age_days: items?.length
+      ? Math.max(...items.map((i) => ageInDays(i.created_at)))
+      : null,
+    open_items: (items ?? []).map((i) => ({
+      id: i.id,
+      kind: i.kind,
+      title: i.title,
+      age_days: ageInDays(i.created_at),
+    })),
+  }))
 
   return (
     <div className="max-w-4xl px-6 py-8">
