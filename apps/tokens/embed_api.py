@@ -54,19 +54,22 @@ def _acting_app(request: HttpRequest):
 @embed_router.get("/agents", response=list[EmbedAgentOut],
                   summary="Agents this embedding app may offer to this user")
 def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
-    """The INTERSECTION of two independent grants, both required:
+    """Agents this embedding app may offer, that you can also reach.
 
-    1. an `AppCredentialAgent` row — an admin allowed this app to offer the
-       agent;
-    2. membership of the agent's tenant — the caller can actually reach it.
+    Two conditions apply, and an agent appears only if both hold: an
+    administrator has allowed this app to offer it, and you are a member of the
+    workspace that owns it. So an empty list means one of those is missing —
+    most often that nothing has been allowed for this app yet.
 
-    Neither is sufficient. (1) alone would let a host offer an agent to someone
-    with no access to it; (2) alone is just "every agent you can see", which
-    ignores what the host was permitted to embed.
-
-    Fails closed in the ordinary way: an app with no rows offers nothing, the
-    same way an empty `allowed_delegation_domains` vouches for nobody.
+    Each row carries the workspace a session started with that agent will
+    belong to.
     """
+    # Rationale (deliberately NOT in the docstring — a route's docstring is its
+    # published OpenAPI description; see #757). Neither condition is sufficient
+    # alone: the allowlist alone would let a host offer an agent to someone with
+    # no access to it, and membership alone is just "every agent you can see",
+    # which ignores what the host was permitted to embed. Fails closed the same
+    # way an empty `allowed_delegation_domains` vouches for nobody.
     app = _acting_app(request)
     reachable = wsvc.user_workspace_slugs(request.user)
     rows = (

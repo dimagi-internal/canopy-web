@@ -45,6 +45,11 @@ from .schemas import (
     ResetSummaryOut,
 )
 
+#: Reserved, server-owned metadata key: the embedding app a session was created
+#: through. Named once so the writer (create) and the reader (list filter)
+#: cannot drift onto different spellings.
+EMBED_APP_KEY = "embed_app"
+
 router = Router(auth=session_auth, tags=["chat"])
 
 
@@ -165,6 +170,22 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         if agent is None or agent.workspace_id != workspace.slug:
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
     metadata = dict(payload.metadata)
+    # `embed_app` is SERVER-OWNED: it records which registered embedding app
+    # created this session, and it is taken from the delegated token rather
+    # than the request body, so one host's widget cannot create or list under
+    # another host's name. A client-supplied value is discarded on every auth
+    # path — including a browser session, where there is no app at all, because
+    # otherwise the gate would only be as strong as the auth path a caller
+    # chose to use.
+    #
+    # `origin_key` is deliberately NOT touched. It is a finer, host-chosen
+    # scope (ace-web derives one per ace workspace from a membership-checked
+    # path) and it answers a different question; overriding it would break that
+    # for no gain. See tests/test_embed_session_provenance.py.
+    metadata.pop(EMBED_APP_KEY, None)
+    acting_app = getattr(request, "delegated_app", None)
+    if acting_app is not None:
+        metadata[EMBED_APP_KEY] = acting_app.name
     if payload.runner_id:
         # Directed new chat: stashed for the session's first send to pin onto
         # (as long as it's still unbound at that point) — see services.send_message.
@@ -180,7 +201,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
 def list_sessions(
     request: HttpRequest, state: str = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
-    origin_key: str = "",
+    origin_key: str = "", embed_app: str = "",
 ):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
@@ -228,6 +249,12 @@ def list_sessions(
         rows = rows.filter(metadata__source=source)
     if origin_key:
         rows = rows.filter(metadata__origin_key=origin_key)
+    # Which embedding app created the session — stamped server-side from the
+    # delegated token at create (see create_session), so unlike `origin_key`
+    # this one cannot have been chosen by whoever wrote the row. Opt-in: an
+    # unfiltered list is unchanged, so canopy's own UI does not quietly narrow.
+    if embed_app:
+        rows = rows.filter(**{f"metadata__{EMBED_APP_KEY}": embed_app})
     if opp_slug:
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:

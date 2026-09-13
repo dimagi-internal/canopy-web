@@ -932,18 +932,15 @@ export interface paths {
         };
         /**
          * Agents this embedding app may offer to this user
-         * @description The INTERSECTION of two independent grants, both required:
+         * @description Agents this embedding app may offer, that you can also reach.
          *
-         *     1. an `AppCredentialAgent` row — an admin allowed this app to offer the
-         *        agent;
-         *     2. membership of the agent's tenant — the caller can actually reach it.
+         *     Two conditions apply, and an agent appears only if both hold: an
+         *     administrator has allowed this app to offer it, and you are a member of the
+         *     workspace that owns it. So an empty list means one of those is missing —
+         *     most often that nothing has been allowed for this app yet.
          *
-         *     Neither is sufficient. (1) alone would let a host offer an agent to someone
-         *     with no access to it; (2) alone is just "every agent you can see", which
-         *     ignores what the host was permitted to embed.
-         *
-         *     Fails closed in the ordinary way: an app with no rows offers nothing, the
-         *     same way an empty `allowed_delegation_domains` vouches for nobody.
+         *     Each row carries the workspace a session started with that agent will
+         *     belong to.
          */
         readonly get: operations["apps_tokens_embed_api_list_embeddable_agents"];
         readonly put?: never;
@@ -15685,6 +15682,7 @@ export interface operations {
                 readonly opp_slug?: string;
                 readonly opp_run_id?: string;
                 readonly origin_key?: string;
+                readonly embed_app?: string;
             };
             readonly header?: never;
             readonly path?: never;
