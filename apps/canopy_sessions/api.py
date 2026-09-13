@@ -22,7 +22,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
-from . import attachment_storage, serializers, services
+from . import access, attachment_storage, serializers, services
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
@@ -127,9 +127,16 @@ def _visible_slugs(request: HttpRequest) -> set[str]:
 
 
 def _session_or_404(request: HttpRequest, session_id: uuid.UUID) -> Session:
+    # Two gates, in order: the tenant, then who within it. The second used to be
+    # missing entirely, so a co-tenant with a UUID could read any conversation
+    # in the workspace — including one the LIST correctly hid from them. Both
+    # now read the same predicate (`access.visible_session_q`), and
+    # tests/test_session_by_id_access.py asserts they agree.
     session = get_object_or_404(
         Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
-        .annotate(_last_msg_at=Max("messages__created_at")),
+        .annotate(_last_msg_at=Max("messages__created_at"))
+        .filter(access.visible_session_q(request.user))
+        .distinct(),
         pk=session_id,
     )
     if session.workspace_id not in _visible_slugs(request):
@@ -197,7 +204,13 @@ def list_sessions(
     rows = (
         Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
         .filter(workspace_id__in=slugs)
-        .filter(Q(created_by=request.user) | Q(runner_binding__isnull=False))
+        # Same predicate the by-id read uses — see apps/canopy_sessions/access.py
+        # for why this is not `runner_binding__isnull=False` any more (a WEB
+        # session gets a binding as soon as a runner picks it up, which used to
+        # hand it to every co-tenant). `.distinct()` because the participant leg
+        # joins a reverse FK.
+        .filter(access.visible_session_q(request.user))
+        .distinct()
     )
     # Embedder filters (Task 9): an embedder (e.g. ace-web) narrows the shared
     # session list to the sessions it cares about, keyed on the opaque
