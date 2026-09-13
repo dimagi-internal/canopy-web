@@ -26,11 +26,19 @@ export interface EmbedBootstrap {
   origins: string[]
 }
 
+/** One thing the host page can be asked to do. `parameters` is JSON-Schema —
+ *  without it the agent knows the action exists but not how to call it. */
+export interface ActionSpec {
+  name: string
+  description?: string
+  parameters?: Record<string, unknown>
+}
+
 export interface HostInit {
   token: string
   agent?: string
   metadata?: Record<string, unknown>
-  actions: string[]
+  actions: ActionSpec[]
 }
 
 const SOURCE = 'canopy-widget'
@@ -48,9 +56,9 @@ export interface HostLink {
   requestContext(): Promise<Record<string, unknown>>
   /** Run one of the host's registered actions. Rejects on refusal. */
   runAction(name: string, args?: Record<string, unknown>): Promise<unknown>
-  /** Action names the host currently offers; updates as the host registers. */
-  actions(): string[]
-  onActionsChanged(listener: (names: string[]) => void): () => void
+  /** What the host currently offers, with schemas; updates as it registers. */
+  actions(): ActionSpec[]
+  onActionsChanged(listener: (specs: ActionSpec[]) => void): () => void
   /** Ask the host to close the panel (our own close button). */
   requestClose(): void
   /** Ask for a panel height, in the modes where the host owns it. */
@@ -81,8 +89,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     initReject = reject
   })
 
-  let actionNames: string[] = []
-  const actionListeners = new Set<(names: string[]) => void>()
+  let actionSpecs: ActionSpec[] = []
+  const actionListeners = new Set<(specs: ActionSpec[]) => void>()
 
   /** The parent's origin, learned from the first accepted message. Until then
    *  there is nothing to reply to — every outbound message except `ready` is a
@@ -139,9 +147,9 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
           token: String(data.token ?? ''),
           agent: data.agent ? String(data.agent) : undefined,
           metadata: (data.metadata as Record<string, unknown> | undefined) ?? {},
-          actions: Array.isArray(data.actions) ? (data.actions as string[]) : [],
+          actions: Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : [],
         })
-        actionNames = Array.isArray(data.actions) ? (data.actions as string[]) : []
+        actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
         return
       case 'token':
         settle(String(data.id), 'resolve', {
@@ -170,8 +178,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         settle(String(data.id), 'reject', new Error(String(data.message ?? 'action refused')))
         return
       case 'actions':
-        actionNames = Array.isArray(data.actions) ? (data.actions as string[]) : []
-        actionListeners.forEach((l) => l(actionNames))
+        actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
+        actionListeners.forEach((l) => l(actionSpecs))
         return
       default:
         return
@@ -189,7 +197,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     requestToken: () => ask<{ token: string; expiresAt: string }>({ type: 'token-request' }),
     requestContext: () => ask<Record<string, unknown>>({ type: 'context-request' }),
     runAction: (name, args) => ask({ type: 'action-request', name, args: args ?? {} }),
-    actions: () => actionNames,
+    actions: () => actionSpecs,
     onActionsChanged(listener) {
       actionListeners.add(listener)
       return () => actionListeners.delete(listener)

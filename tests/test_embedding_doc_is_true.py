@@ -93,26 +93,25 @@ def test_documented_admin_url_resolves(doc):
     resolve(url)
 
 
-def test_the_action_gap_is_still_disclosed_or_still_closed(doc):
-    """The doc leads with "the agent cannot yet call a host action".
+def test_the_doc_matches_whether_actions_actually_work(doc):
+    """The doc must not describe a capability the code does not have, or warn
+    about a gap that has been closed.
 
-    That warning is load-bearing — a host planning around actions would build
-    against nothing. When the gap closes, this test fails and the disclosure
-    must come out; until then it must stay in. Either way the doc cannot drift
-    away from the truth silently.
+    This started life as "the gap is still disclosed" and fired exactly once,
+    the moment the frame gained `runAction` — which is what it was for. It now
+    pins the other direction: actions work, so the doc says so, and if the
+    frame ever stops calling them the doc has to stop claiming it.
     """
     frame_app = DOC.parent.parent.parent / "frontend" / "src" / "embed" / "EmbedApp.tsx"
-    # Absent on a branch that predates the in-frame app, in which case the
-    # agent certainly cannot act — so the disclosure is required either way.
     agent_can_act = frame_app.exists() and "runAction" in frame_app.read_text()
-    disclosed = "cannot yet call a host action" in doc
+    claims_it_works = "Agent actions work" in doc
+    warns_it_does_not = "cannot yet call a host action" in doc
 
     if agent_can_act:
-        pytest.fail(
-            "the frame now calls runAction, so the agent CAN act — remove the "
-            "'cannot yet call a host action' warning from the doc and from §5"
-        )
-    assert disclosed, "actions still are not wired to the agent, but the doc no longer says so"
+        assert claims_it_works, "the frame calls runAction but the doc does not say actions work"
+        assert not warns_it_does_not, "the gap is closed but the doc still warns about it"
+    else:
+        assert warns_it_does_not, "the frame cannot act, and the doc must say so"
 
 
 def test_every_internal_link_points_at_a_real_heading():

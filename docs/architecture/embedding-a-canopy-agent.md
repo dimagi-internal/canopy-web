@@ -12,10 +12,10 @@ see.
 
 **Two things to know before you start, because they change what you build:**
 
-1. **Do not wire up agent actions.** `registerAction` exists and works, but the
-   agent **cannot yet call a host action** — nothing invokes it. See
-   [§7](#7-what-not-to-build-yet). Give the agent context; do not build
-   write-paths for it.
+1. **Agent actions work, and they are MCP tools.** What you declare with
+   `registerAction` appears in the agent's tool list with your JSON-Schema —
+   you do not implement MCP, canopy translates. They run **only while the page
+   is open**; see [§7](#7-how-actions-reach-the-agent-and-what-they-cannot-do) for what that rules out.
 2. **Register your local dev origin too** (`http://localhost:8000`, or whatever
    you serve on), or the widget will not load on your machine. See
    [§1](#1-register-your-app-in-canopy).
@@ -245,33 +245,46 @@ In a browser, on your page, signed in as an ordinary user:
 
 ---
 
-## 7. What NOT to build yet
+## 7. How actions reach the agent, and what they cannot do
 
-### Agent actions
+You declare an action once, in JS:
 
-`widget.registerAction(name, fn)` exists, is tested, and the host↔frame plumbing
-is complete. **But nothing calls it.** The in-frame app never tells the agent
-which actions exist and never invokes one, so an action you register today is
-reachable by nothing.
+```js
+widget.registerAction('dismissInsights', async ({ ids }) => { … }, {
+  description: 'Dismiss insights from the list the user is viewing',
+  parameters: {
+    type: 'object',
+    properties: { ids: { type: 'array', items: { type: 'integer' } } },
+    required: ['ids'],
+  },
+})
+```
 
-This is not a switch waiting to be flipped — two pieces are missing:
+canopy turns that into an **MCP tool** (`page_dismissInsights`) on its own MCP
+server, scoped to that user, with your schema as the tool's `inputSchema`. The
+agent discovers and calls it like any other tool. **You never implement MCP** —
+and because it is MCP, any MCP-speaking agent gets it, not only canopy's.
 
-- **A parameter schema.** The bridge passes action *names* only. An agent cannot
-  call `recordStockCount` without being told it takes
-  `{supply_point_id, commodity, quantity}`.
-- **An agent-facing surface** for the agent to emit a call and receive a result.
+A browser page cannot be an MCP server (it cannot accept an inbound
+connection), so canopy is the server and your page is the executor behind it:
+canopy advertises, the agent calls, canopy rings the session's socket, your
+callback runs in the user's tab, and the result is POSTed back.
 
-**So:** give the agent context, let it answer questions and draft things, and
-let the user act. If your page needs an agent that writes, say so — that is
-canopy-side work, not something to work around here.
+**Throw to refuse.** A thrown error reaches the agent as a readable refusal;
+returning something falsy reads as success, and it will carry on as though the
+page changed.
 
-### Anything that outlives the tab
+### What this rules out
 
-Context runs in the user's browser. An agent cannot read your page after the
-user navigates away, and there is no server-side path for it to act later. Do
-not design a flow that depends on one.
-
----
+- **Actions need the page open.** They run in the user's tab, as that user —
+  which is what makes the access story airtight, and means an agent cannot act
+  after they navigate away. An action on a closed page fails with `no_page` or
+  `timeout`; it is **never queued**, because a tab may never return and a
+  deferred action would fire into a different screen.
+- **Tool names are namespaced** `page_*`, so a page cannot shadow a canopy tool.
+- **Two tabs declaring the same action** expose one tool — the newest wins, and
+  the chosen session is named in the tool description so a wrong guess is
+  visible rather than silent.
 
 ## 8. Reference: how access control resolves
 
@@ -306,8 +319,8 @@ page is open.
 
 ## 9. Reference: known limits
 
-- **The agent cannot call host actions** (§7).
-- **Context needs the page open** (§7).
+- **Actions and context both need the page open** (§7). There is no
+  server-side path for an agent to act on your page later.
 - **The domain allowlist is narrow today.** Token exchange requires the email's
   domain in both your credential's allowed domains *and* canopy's own login
   allowlist, which is currently Dimagi-only. A partner user on another domain
@@ -331,7 +344,7 @@ sets expectations.
 | CopilotKit | Here | Difference |
 | --- | --- | --- |
 | `useCopilotReadable` | `provideContext` | Theirs is per-component and continuously synced; ours is one page-level snapshot at open |
-| `useCopilotAction` | `registerAction` | Theirs has parameter schemas, in-chat rendering, and human-in-the-loop confirmation. Ours has names and a function — and no agent-facing caller yet |
+| `useCopilotAction` | `registerAction` | Both take a JSON-Schema. Theirs adds in-chat rendering and human-in-the-loop confirmation; ours surfaces as an MCP tool, so any MCP agent can call it |
 | `CopilotPopup` / `CopilotSidebar` | `mode: 'overlay' / 'docked'` | Equivalent, but framework-free rather than React components |
 | `CopilotRuntime` → an LLM | a canopy `Agent` on a runner | **The big one.** Theirs orchestrates a model call. Ours routes to a persistent agent with its own identity, mailbox, repo, credentials and tools |
 
