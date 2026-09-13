@@ -79,6 +79,24 @@ class Session(models.Model):
     ordinal_scheme = models.PositiveSmallIntegerField(default=0)
     # Opaque product linkage (e.g. {"opp_slug": "..."}) — never interpreted here.
     metadata = models.JSONField(default=dict, blank=True)
+    #: What the attached page says it can do — the host's `registerAction`
+    #: declarations, as a list of `{name, description, parameters}` where
+    #: `parameters` is JSON-Schema.
+    #:
+    #: On the SESSION rather than the RunnerBinding because it describes the
+    #: PAGE a viewer has open, not the runner backing the conversation. A
+    #: session can be live with no page attached (the agent working alone), and
+    #: then it correctly declares nothing.
+    #:
+    #: Modelled on ACP's client capabilities: the client tells the agent what it
+    #: can be asked to do, and the agent calls it over the session. canopy takes
+    #: the SHAPE rather than the wire format — the same move the ACP spec made
+    #: for the laptop, which "keeps CDP+emdash and gains only the SHAPE".
+    #:
+    #: Replaced wholesale on each declaration, never merged: a page has one
+    #: current set of capabilities, and a leftover action from the page the user
+    #: navigated away from is one the agent would call into nothing.
+    page_actions_available = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -156,6 +174,70 @@ class SessionParticipant(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"participant:{self.session_id.hex[:8]}:{self.user_id}:{self.role}"
+
+
+class PageAction(models.Model):
+    """One agent-initiated call into the page a user is looking at.
+
+    **Why a row and not just a frame.** `RunnerBinding.pending_answer`'s
+    docstring records what a frame-only verb costs: a control frame published
+    while the consumer is away lands in a group with nobody listening and is
+    discarded, the caller reads success, and nothing happens — "the purest form
+    of clicking does nothing". A page action has the same shape and a worse
+    failure, because the agent would report having closed twelve insights that
+    are still there. So the frame is the doorbell and this is the record.
+
+    **Why it is NOT drained like `pending_answer`.** A runner comes back and
+    drains its queue; a browser tab may simply never return. Queuing would turn
+    "I cannot do that" into a lie that resolves at an unpredictable moment, so
+    an unanswered action EXPIRES rather than waiting — see `status`. The agent
+    is told the page was not open, which is true and actionable.
+
+    Scoped to a session because that is what the page and the agent share: the
+    user is looking at a page, that page is attached to this session, and the
+    agent driving the session is the only one who may call into it.
+    """
+
+    PENDING, DONE, FAILED, EXPIRED = "pending", "done", "failed", "expired"
+    STATUS_CHOICES = [
+        (PENDING, "Pending"), (DONE, "Done"),
+        (FAILED, "Failed"), (EXPIRED, "Expired"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        Session, on_delete=models.CASCADE, related_name="page_actions"
+    )
+    #: The host-declared action name, e.g. "dismissInsights".
+    name = models.CharField(max_length=120)
+    #: Arguments as the agent supplied them. Validated against the host's
+    #: declared JSON-Schema before the row is written, so a stored row is one
+    #: the page agreed to accept.
+    args = models.JSONField(default=dict, blank=True)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    #: Whatever the host's callback returned, JSON-encodable.
+    result = models.JSONField(null=True, blank=True, default=None)
+    #: A host refusal ("this count is closed") or an execution error. A refusal
+    #: is a FAILED action with a reason, never a silent success — an agent that
+    #: cannot tell those apart carries on as though the page changed.
+    error = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    #: Who the action ran as. The page executes in this user's browser session,
+    #: so this is also the identity whose permissions actually applied.
+    requested_for = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+
+    class Meta:
+        db_table = "session_page_actions"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["session", "status"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"page-action:{self.name}:{self.status}"
 
 
 class Draft(models.Model):

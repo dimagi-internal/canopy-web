@@ -241,3 +241,56 @@ class MenuAnswerIn(Schema):
     #: the declared questions, so a hole has to be expressible or every later
     #: answer shifts onto the wrong question.
     texts: list[str | None] | None = None
+
+
+# --- page actions: the host's capabilities, and calls into them --------------
+
+
+class PageActionSpec(Schema):
+    """One thing the attached page says it can do.
+
+    `parameters` is JSON-Schema, written by the HOST and passed through
+    uninterpreted — canopy is not the party that knows what a host's action
+    means. It is what lets an agent call `dismissInsights` knowing it takes
+    `{ids: number[]}`, rather than being told in prose.
+    """
+
+    name: str
+    description: str = ""
+    parameters: dict = {}
+
+
+class PageActionsDeclareIn(Schema):
+    """What the page can do, replacing any previous declaration.
+
+    Wholesale, never merged: a page has one current set of capabilities, and an
+    action left over from a page the user navigated away from is one the agent
+    would call into nothing.
+    """
+
+    actions: list[PageActionSpec] = []
+
+
+class PageActionInvokeIn(Schema):
+    name: str
+    args: dict = {}
+
+
+class PageActionOut(Schema):
+    id: str
+    name: str
+    status: str
+    result: object | None = None
+    error: str = ""
+
+
+class PageActionResultIn(Schema):
+    """The page reporting back.
+
+    `error` non-empty means the host's callback refused or threw. A refusal is
+    a FAILED action carrying its reason, never a quiet success — an agent that
+    cannot tell those apart continues as though the page changed.
+    """
+
+    result: object | None = None
+    error: str = ""

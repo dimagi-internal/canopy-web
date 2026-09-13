@@ -4274,6 +4274,81 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/page-actions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the attached page can do
+         * @description How the agent discovers its options. An empty list means no page is
+         *     attached — not that the page can do nothing.
+         */
+        readonly get: operations["apps_canopy_sessions_api_list_page_actions"];
+        /**
+         * Declare what the attached page can do
+         * @description Called by the page itself as it mounts, and whenever its actions change.
+         *
+         *     Replaces the declaration wholesale — see `set_declared_actions` for why
+         *     merging would leave the agent able to call into a page the user has left.
+         */
+        readonly put: operations["apps_canopy_sessions_api_declare_page_actions"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/page-actions/invoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask the attached page to run an action
+         * @description Blocks until the page answers, or refuses with a reason.
+         *
+         *     Every non-success is an error with a `code` the caller can branch on
+         *     (`no_page`, `unknown_action`, `bad_arguments`, `timeout`, `refused`) — a
+         *     caller must never be able to read "the tab was closed" as "done".
+         */
+        readonly post: operations["apps_canopy_sessions_api_invoke_page_action"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/page-actions/{action_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The page reporting an action's outcome
+         * @description Posted by the page after it runs the callback.
+         *
+         *     Membership-gated like every other by-id read, and scoped to the session, so
+         *     one page cannot resolve another's action.
+         */
+        readonly post: operations["apps_canopy_sessions_api_resolve_page_action"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -10473,6 +10548,91 @@ export interface components {
             /** Message Id */
             readonly message_id?: string | null;
         };
+        /**
+         * PageActionSpec
+         * @description One thing the attached page says it can do.
+         *
+         *     `parameters` is JSON-Schema, written by the HOST and passed through
+         *     uninterpreted — canopy is not the party that knows what a host's action
+         *     means. It is what lets an agent call `dismissInsights` knowing it takes
+         *     `{ids: number[]}`, rather than being told in prose.
+         */
+        readonly PageActionSpec: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Parameters
+             * @default {}
+             */
+            readonly parameters: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * PageActionsDeclareIn
+         * @description What the page can do, replacing any previous declaration.
+         *
+         *     Wholesale, never merged: a page has one current set of capabilities, and an
+         *     action left over from a page the user navigated away from is one the agent
+         *     would call into nothing.
+         */
+        readonly PageActionsDeclareIn: {
+            /**
+             * Actions
+             * @default []
+             */
+            readonly actions: readonly components["schemas"]["PageActionSpec"][];
+        };
+        /** PageActionOut */
+        readonly PageActionOut: {
+            /** Id */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /** Result */
+            readonly result?: unknown | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /** PageActionInvokeIn */
+        readonly PageActionInvokeIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Args
+             * @default {}
+             */
+            readonly args: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * PageActionResultIn
+         * @description The page reporting back.
+         *
+         *     `error` non-empty means the host's callback refused or threw. A refusal is
+         *     a FAILED action carrying its reason, never a quiet success — an agent that
+         *     cannot tell those apart continues as though the page changed.
+         */
+        readonly PageActionResultIn: {
+            /** Result */
+            readonly result?: unknown | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -16460,6 +16620,107 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_list_page_actions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_declare_page_actions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageActionsDeclareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_invoke_page_action: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageActionInvokeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageActionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_resolve_page_action: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly action_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageActionResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageActionOut"];
+                };
             };
         };
     };
