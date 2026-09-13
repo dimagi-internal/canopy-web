@@ -227,6 +227,29 @@ export default defineConfig({
     }),
     assertShellIsNotCacheFirst(),
   ],
+  build: {
+    // Two entries, not one. The widget's IFRAME app is built alongside the SPA
+    // rather than as a separate bundle so its chunks land in the same
+    // `dist/assets/` directory — which means WhiteNoise already serves them
+    // (WHITENOISE_ROOT = FRONTEND_DIST_DIR) and the existing immutable-cache
+    // rule in config/static_cache.py already applies to their hashed names. A
+    // separate outDir would have needed a new route, a new cache rule, and a
+    // path-traversal-safe file view.
+    //
+    // Sharing the build also shares React and canopy-ui between the app and
+    // the frame, instead of shipping a second copy of both.
+    //
+    // `manifest: true` because the shell is rendered by DJANGO and has to
+    // resolve these hashed filenames server-side — see
+    // apps/tokens/views_embed.py.
+    manifest: true,
+    rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, 'index.html'),
+        embed: path.resolve(__dirname, 'src/embed/main.tsx'),
+      },
+    },
+  },
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },

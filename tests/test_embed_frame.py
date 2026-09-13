@@ -40,6 +40,40 @@ def _get(app_name="connect-labs"):
     return Client().get(f"/embed/chat?app={app_name}")
 
 
+@pytest.fixture
+def built_frontend(settings, tmp_path):
+    """Stand in a built frontend so the shell renders its real body.
+
+    CI's backend job does not run `npm run build`, so `_embed_assets()` finds
+    no manifest and `embed_chat` serves its "not built" page instead — which is
+    correct behaviour and made three tests below pass locally (where a build
+    existed) and fail in CI. The manifest shape mirrors a real vite build,
+    including CSS hoisted onto a SHARED chunk rather than the entry, because
+    that is the case the resolver exists to handle.
+    """
+    import json as _json
+    from apps.tokens import views_embed
+
+    vite = tmp_path / ".vite"
+    vite.mkdir()
+    (vite / "manifest.json").write_text(_json.dumps({
+        "src/embed/main.tsx": {
+            "file": "assets/embed-TEST01.js",
+            "isEntry": True,
+            "imports": ["_shared-TEST02.js"],
+        },
+        "_shared-TEST02.js": {
+            "file": "assets/shared-TEST02.js",
+            "css": ["assets/shared-TEST03.css"],
+        },
+    }))
+    settings.FRONTEND_DIST_DIR = tmp_path
+    # The manifest read is lru_cached for the life of the process, so a test
+    # that changes the setting must drop it or it reads a neighbour's.
+    views_embed._manifest.cache_clear()
+    yield tmp_path
+    views_embed._manifest.cache_clear()
+
 # --- the framing policy ---------------------------------------------------
 
 
@@ -134,13 +168,16 @@ def test_the_shell_is_not_the_app_and_pulls_in_no_service_worker():
     assert '<div id="root"' not in body
 
 
-def test_the_shell_announces_itself_to_the_parent():
-    """First half of the credential handshake: the host cannot know when to
-    send a token until the frame says it exists."""
+def test_the_shell_loads_the_in_frame_bundle():
+    """The shell is a loader, not the app. The `ready` handshake moved into the
+    bundle (frontend/src/embed/hostLink.ts) so the protocol has ONE
+    implementation rather than one inline here and one in TypeScript."""
     _app()
     body = _get().content.decode()
-    assert "canopy-widget" in body
-    assert "postMessage" in body
+    # Either a module script for the built bundle, or the honest "not built"
+    # page — never a silently blank frame, which a host cannot tell from a
+    # broken token.
+    assert 'type="module"' in body or "npm run build" in body
 
 
 def test_the_shell_is_never_cached():
@@ -290,27 +327,34 @@ def test_widget_js_is_not_app_scoped(settings, tmp_path):
     assert Client().get("/embed/widget.js").status_code == 200
 
 
-def test_the_shell_posts_exactly_the_message_the_loader_listens_for():
-    """A cross-language contract with nothing but convention holding it.
+def test_the_shell_hands_over_the_origins_the_frame_must_validate_against(built_frontend):
+    """The server is the only party that can say this.
 
-    The shell is rendered by Python; the loader that receives this is
-    TypeScript (`packages/canopy-widget/src/protocol.ts`, `SOURCE` and the
-    `ready` kind). Nothing in either toolchain checks the other, so a rename on
-    one side would leave the widget loading forever with no error — the loader
-    drops anything whose `source` it does not recognise, by design.
+    The frame is framed only by registered origins (frame-ancestors), but that
+    constrains who may EMBED it, not who may postMessage AT it — any window
+    with a handle can post. So the frame validates `event.origin` against a
+    list, and the list has to come from here: a list the host supplied would
+    authenticate the very party being authenticated.
     """
-    _app()
+    _app(origins=[LABS, "https://labs-staging.dimagi.com"])
     body = _get().content.decode()
-    # The exact literals protocol.ts matches on.
-    assert '"canopy-widget"' in body or "'canopy-widget'" in body or "canopy-widget" in body
-    assert 'source: "canopy-widget"' in body
-    assert 'type: "ready"' in body
-    # And it must be posted to the PARENT — a frame that posts to itself
-    # announces nothing.
-    assert "parent.postMessage(" in body
+    assert "window.CANOPY_EMBED" in body
+    assert LABS in body
+    assert "https://labs-staging.dimagi.com" in body
 
 
-def test_the_shell_tells_the_frame_which_app_it_is():
+def test_the_shell_json_encodes_injected_values(built_frontend):
+    """These land inside a <script> block. An app name or origin carrying a
+    quote would otherwise close the string and inject."""
+    app = _app()
+    AppCredential.objects.filter(pk=app.pk).update(name='ev"il')
+    body = Client().get('/embed/chat?app=ev"il').content.decode()
+    # json.dumps escapes it; an f-string would have emitted a bare quote.
+    assert 'ev\\"il' in body or 'ev\"il' in body
+    assert '{ app: ev"il' not in body
+
+
+def test_the_shell_tells_the_frame_which_app_it_is(built_frontend):
     """The in-frame app needs to know, and it cannot read the query string of a
     URL the host controls any more safely than the server can hand it over."""
     _app()

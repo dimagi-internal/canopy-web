@@ -60,11 +60,17 @@ export interface RestConfig {
 }
 
 export class CanopyRestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly path: string,
-  ) {
+  // Written out rather than declared as constructor parameter properties: the
+  // app's tsconfig sets `erasableSyntaxOnly`, which forbids them. Nothing under
+  // src/ imported this package until the embed entry did, so the whole package
+  // was type-checked for the first time then — and did not compile.
+  readonly status: number
+  readonly path: string
+
+  constructor(status: number, path: string) {
     super(`canopy request failed (${status}): ${path}`)
+    this.status = status
+    this.path = path
   }
 }
 
