@@ -22,10 +22,15 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
-from . import access, attachment_storage, serializers, services
+from . import access, attachment_storage, page_actions, serializers, services
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
+    PageActionInvokeIn,
+    PageActionOut,
+    PageActionResultIn,
+    PageActionsDeclareIn,
+    PageActionSpec,
     BackfillStateOut,
     MessageOut,
     MenuAnswerIn,
@@ -624,3 +629,80 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
         attachment_storage.delete(attachment.storage_key)
     attachment.delete()
     return 204, None
+
+
+# --- page actions -----------------------------------------------------------
+#
+# An embedded host declares what its page can do; the agent driving the session
+# calls one. Deliberately NOT MCP: canopy's MCP tools are static Python
+# functions scoped to a connection, while these are declared by a host at
+# runtime, scoped to one session, and valid only while a tab is open. ACP
+# already models this shape — a client advertises capabilities and the agent
+# invokes them over the session — so canopy takes the shape rather than the
+# wire format. See apps/canopy_sessions/page_actions.py.
+
+
+@router.put("/{session_id}/page-actions", response=list[PageActionSpec],
+            summary="Declare what the attached page can do")
+def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
+                         payload: PageActionsDeclareIn) -> list[PageActionSpec]:
+    """Called by the page itself as it mounts, and whenever its actions change.
+
+    Replaces the declaration wholesale — see `set_declared_actions` for why
+    merging would leave the agent able to call into a page the user has left.
+    """
+    session = _session_or_404(request, session_id)
+    page_actions.set_declared_actions(
+        session, [a.dict() for a in payload.actions]
+    )
+    return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
+
+
+@router.get("/{session_id}/page-actions", response=list[PageActionSpec],
+            summary="What the attached page can do")
+def list_page_actions(request: HttpRequest, session_id: uuid.UUID) -> list[PageActionSpec]:
+    """How the agent discovers its options. An empty list means no page is
+    attached — not that the page can do nothing."""
+    session = _session_or_404(request, session_id)
+    return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
+
+
+@router.post("/{session_id}/page-actions/invoke", response=PageActionOut,
+             summary="Ask the attached page to run an action")
+def invoke_page_action(request: HttpRequest, session_id: uuid.UUID,
+                       payload: PageActionInvokeIn) -> PageActionOut:
+    """Blocks until the page answers, or refuses with a reason.
+
+    Every non-success is an error with a `code` the caller can branch on
+    (`no_page`, `unknown_action`, `bad_arguments`, `timeout`, `refused`) — a
+    caller must never be able to read "the tab was closed" as "done".
+    """
+    session = _session_or_404(request, session_id)
+    try:
+        action = page_actions.request_action(
+            session=session, name=payload.name, args=payload.args, user=request.user
+        )
+    except page_actions.PageActionError as exc:
+        # 409: the request was well-formed, the PAGE could not satisfy it.
+        raise HttpError(422 if exc.code == "bad_arguments" else 409,
+                        f"{exc.code}: {exc.message}")
+    return PageActionOut(id=str(action.id), name=action.name, status=action.status,
+                         result=action.result, error=action.error)
+
+
+@router.post("/{session_id}/page-actions/{action_id}/result", response=PageActionOut,
+             summary="The page reporting an action's outcome")
+def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: uuid.UUID,
+                        payload: PageActionResultIn) -> PageActionOut:
+    """Posted by the page after it runs the callback.
+
+    Membership-gated like every other by-id read, and scoped to the session, so
+    one page cannot resolve another's action.
+    """
+    session = _session_or_404(request, session_id)
+    action = session.page_actions.filter(pk=action_id).first()
+    if action is None:
+        raise HttpError(404, "no such page action on this session")
+    action = page_actions.resolve(action, result=payload.result, error=payload.error)
+    return PageActionOut(id=str(action.id), name=action.name, status=action.status,
+                         result=action.result, error=action.error)

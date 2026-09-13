@@ -305,6 +305,17 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "data": {"message_id": message.get("message_id"), "partial_len": message.get("partial_len", 0)},
         })
 
+    async def session_page_action(self, message):
+        """The agent is asking the attached page to do something.
+
+        Only the doorbell — `PageAction` is the record, and the page answers by
+        POSTing the result rather than over this socket. A frame published to a
+        group with no consumer is silently discarded (see
+        `RunnerBinding.pending_answer`), so a page that never hears this simply
+        leaves the row to expire and the agent is told the page was not open.
+        """
+        await self.send_json({"event": "session.page_action", "data": message["action"]})
+
     async def session_stop(self, message):
         # "requested" comes from here, the moment we publish to the runner.
         # "stopped"/"failed" come from the runner itself, up the session stream
