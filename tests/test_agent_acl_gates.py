@@ -7,8 +7,8 @@ endpoint (that mechanism is gone as of the same design's self-join phase —
 see `apps.workspaces.services.join_workspace` — but `editor` is still the
 role a self-join grants, so it remains the role this file's tests exercise).
 The credential/vault writers had no role check at all. See
-`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`
-and `PHASE0-BRIEF.md`.
+`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`,
+whose Phase 0 this implements.
 
 Per-endpoint coverage would be one test per line; these pin the TIERS instead:
 - `_agent_for_write` (editor/owner) — reshaping the agent
@@ -137,15 +137,95 @@ def test_viewer_succeeds_on_a_get(acl):
     assert res.status_code == 200, res.content
 
 
-def test_viewer_succeeds_on_a_task_command(acl):
-    task = AgentTask.objects.create(agent=acl["agent"], ext_id="t1", title="Task 1")
-    acl["client"].force_login(acl["viewer"])
-    res = acl["client"].post(
+def _command(client, task, kind, payload=None):
+    return client.post(
         f"/api/agents/aclbot/tasks/{task.id}/commands",
-        data={"kind": "comment", "payload": {"note": "looks fine"}},
+        data={"kind": kind, "payload": payload or {}},
         content_type="application/json",
     )
-    assert res.status_code == 201, res.content
+
+
+@pytest.fixture
+def task(acl):
+    return AgentTask.objects.create(agent=acl["agent"], ext_id="t1", title="Task 1")
+
+
+@pytest.mark.parametrize("kind,payload", [
+    ("comment", {"note": "looks fine"}),
+    ("accept", {}),
+    ("decline", {"reason": "not now"}),
+])
+def test_viewer_may_still_decide_an_item(acl, task, kind, payload):
+    """The interaction tier, and the reason this endpoint is not simply gated.
+
+    Commenting on a task and accepting or declining one are DECIDING an item
+    that is already on the board — exactly what the User tier exists for
+    ("decide an item, read the board"). Gating these would take the one thing a
+    viewer is for away from them.
+    """
+    acl["client"].force_login(acl["viewer"])
+    assert _command(acl["client"], task, kind, payload).status_code == 201
+
+
+@pytest.mark.parametrize("kind,payload", [
+    ("edit", {"title": "rewritten by a viewer"}),
+    ("reassign", {"assignee": "someone-else"}),
+    ("done", {}),
+    ("dispatch", {}),
+])
+def test_viewer_refused_on_a_reshaping_command(acl, task, kind, payload):
+    """The bypass this closes, and it was a door beside a gate that already existed.
+
+    `PATCH /tasks/{id}/` is gated at `_agent_for_write`, and `kind: "edit"`
+    reaches the SAME mutation through `services.create_command` — it sets
+    title/next_action/plan/owner/assigned on the task and saves. So a viewer
+    refused on the PATCH could perform it verbatim through the command queue.
+    `done` rewrites status, `reassign` moves who holds the task, and `dispatch`
+    queues fresh agent work.
+
+    This is pinned per kind rather than once, because the gate is a membership
+    test on a SET: adding a kind to `AgentTaskCommand.KIND_CHOICES` without
+    adding it to `_RESHAPING_COMMAND_KINDS` silently lands it at the
+    interaction tier, and a parametrized test is what makes that visible.
+    """
+    acl["client"].force_login(acl["viewer"])
+    res = _command(acl["client"], task, kind, payload)
+    assert res.status_code == 403, res.content
+    task.refresh_from_db()
+    assert task.title == "Task 1", "the refused command mutated the task anyway"
+
+
+def test_editor_may_edit_via_a_command(acl, task):
+    """The other half: the gate must not break the tier it belongs to."""
+    acl["client"].force_login(acl["editor"])
+    assert _command(acl["client"], task, "edit", {"title": "retitled"}).status_code == 201
+    task.refresh_from_db()
+    assert task.title == "retitled"
+
+
+def test_non_member_gets_404_on_a_reshaping_command(acl, task):
+    """Resolve-then-authorize survives the kind branch."""
+    acl["client"].force_login(acl["nonmember"])
+    assert _command(acl["client"], task, "edit", {"title": "x"}).status_code == 404
+
+
+def test_every_command_kind_is_deliberately_tiered():
+    """No kind may be left untiered by accident.
+
+    The gate reads a set of RESHAPING kinds and treats everything else as
+    interaction — which fails OPEN for a kind nobody classified. This asserts
+    the two tiers partition `KIND_CHOICES`, so adding a kind forces a decision
+    here rather than defaulting it to the viewer tier in silence.
+    """
+    from apps.agents.api import _RESHAPING_COMMAND_KINDS
+    from apps.agents.models import AgentTaskCommand
+
+    all_kinds = {k for k, _ in AgentTaskCommand.KIND_CHOICES}
+    interaction = {AgentTaskCommand.ACCEPT, AgentTaskCommand.DECLINE, AgentTaskCommand.COMMENT}
+    assert _RESHAPING_COMMAND_KINDS | interaction == all_kinds, (
+        f"unclassified command kinds: {all_kinds - (_RESHAPING_COMMAND_KINDS | interaction)}"
+    )
+    assert not (_RESHAPING_COMMAND_KINDS & interaction)
 
 
 # --- non-member: 404, never 403, on an owner endpoint --------------------------
@@ -163,3 +243,50 @@ def test_non_member_gets_404_not_403_on_write_tier_endpoint(acl):
     acl["client"].force_login(acl["nonmember"])
     res = _patch_turn_mode(acl["client"])
     assert res.status_code == 404, res.content
+
+
+# --- upsert: a non-member must not learn a slug is taken -----------------------
+
+def test_upsert_of_another_tenants_agent_gives_404_not_403(acl):
+    """`Agent.slug` is globally unique, which made this route an oracle.
+
+    `POST /api/agents/` gates on the EXISTING agent's own workspace (so a
+    caller cannot reshape another tenant's agent by defaulting into their own).
+    That gate was correct and is what closed a real cross-tenant write — but it
+    answered 403 to a NON-member, and 403-vs-201 on a globally unique slug tells
+    you whether an agent by that name exists in a tenant you cannot see. Any
+    editor of any workspace could enumerate the fleet's names one guess at a
+    time.
+
+    A non-member now gets the same 404 `GET /api/agents/aclbot/` gives them.
+    """
+    other_ws = a_workspace("oracle-probe-ws")
+    prober = a_member(other_ws, email="prober@dimagi.com", role=WorkspaceMembership.OWNER)
+    acl["client"].force_login(prober)
+    res = acl["client"].post(
+        "/api/agents/",
+        data={"slug": "aclbot", "name": "Mine Now"},
+        content_type="application/json",
+    )
+    assert res.status_code == 404, res.content
+    acl["agent"].refresh_from_db()
+    assert acl["agent"].name == "ACL Bot", "another tenant's agent was overwritten"
+    assert acl["agent"].workspace_id == WS_SLUG
+
+
+def test_upsert_of_a_free_slug_still_says_403_for_an_under_privileged_member(acl):
+    """The 404 is scoped to an EXISTING agent, and that scoping matters.
+
+    On a genuine create there is nothing to leak — the caller already knows the
+    slug is free — so 404-ing them would be a lie about the only fact in
+    evidence. A viewer in the target workspace gets a 403 that tells them
+    something true and actionable about their own tenant.
+    """
+    acl["client"].force_login(acl["viewer"])
+    res = acl["client"].post(
+        "/api/agents/",
+        data={"slug": "brand-new-bot", "name": "New"},
+        content_type="application/json",
+    )
+    assert res.status_code == 403, res.content
+    assert not Agent.objects.filter(slug="brand-new-bot").exists()

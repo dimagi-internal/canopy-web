@@ -12,6 +12,7 @@ from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
 from . import services
+from .models import AgentTaskCommand
 from .schemas import (
     AgentCommandApplyIn,
     AgentCredentialsIn,
@@ -191,7 +192,27 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # brand-new agent.
     existing = services.get_agent(payload.slug)
     target_ws = existing.workspace if existing is not None else home
-    if _caller_role(request, target_ws) not in _EDITOR_OR_OWNER:
+    role = _caller_role(request, target_ws)
+    if existing is not None and role is None:
+        # Resolve-then-authorize, the ordering `_agent_for_write` gets for free
+        # from `_get_agent_or_404`. It has to be spelled out here because this
+        # route takes the slug in the BODY, so there may be no agent to resolve
+        # at all.
+        #
+        # `Agent.slug` is globally UNIQUE, so answering 403 to a non-member of
+        # the existing agent's workspace made this route an oracle over the
+        # entire slug namespace: 201 means the slug is free, 403 means an agent
+        # by that name exists in a tenant you cannot see. Every editor of any
+        # workspace could enumerate the fleet's names. A non-member now gets
+        # the same 404 `GET /{slug}/` would give them — no existence leak —
+        # while a member holding only `viewer` still gets 403 below, which
+        # tells them something true about their own tenant.
+        #
+        # Scoped to `existing is not None` deliberately: on a genuine CREATE
+        # there is nothing to leak, and 404-ing a create would be a lie about
+        # the only fact the caller already knows.
+        raise HttpError(404, f"agent '{payload.slug}' not found")
+    if role not in _EDITOR_OR_OWNER:
         raise HttpError(403, "creating or editing an agent requires the editor or owner role")
 
     agent = services.upsert_agent(payload, workspace=home)
@@ -208,7 +229,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
             raise HttpError(403, "moving an agent requires the editor or owner role in the destination workspace")
         agent.workspace = ws
         agent.save(update_fields=["workspace"])
-    wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
+    # No `ensure_member` here any more, and it is not an omission: since the
+    # role gate above, every path that reaches this line has already required
+    # editor-or-owner in `agent.workspace` — on a create, on an edit, and in the
+    # destination of a move. So the call could only ever be a no-op, while
+    # reading as though registration were a way to join a tenant. That shape is
+    # exactly what `wsvc.creation_workspace`'s docstring is about.
     return Status(201, AgentOut.model_validate(agent))
 
 
@@ -632,11 +658,34 @@ def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTask
 
 
 # ---- task commands (the board's action queue) ----
+#
+# Which command kinds are a RESHAPE rather than an interaction. `PATCH
+# /tasks/{id}/` is gated at `_agent_for_write`, and `kind: "edit"` performs the
+# identical mutation through `services.create_command` — so gating one and not
+# the other left the gate with a door beside it. A viewer refused on the PATCH
+# could rewrite title/next_action/plan/owner/assigned via the command queue.
+#
+# The line is the role ladder's own: `accept` / `decline` / `comment` are
+# DECIDING an item that is already on the board, which is what the User tier
+# exists for ("decide an item, read the board"). `edit` rewrites the task's
+# text, `reassign` moves who holds it, `done` declares the work finished, and
+# `dispatch` queues fresh agent work — all reshapes, all editor.
+_RESHAPING_COMMAND_KINDS = frozenset({
+    AgentTaskCommand.EDIT,
+    AgentTaskCommand.REASSIGN,
+    AgentTaskCommand.DONE,
+    AgentTaskCommand.DISPATCH,
+})
+
+
 @router.post("/{slug}/tasks/{task_id}/commands", response={201: CommandResultOut},
              summary="Post a board action (accept/decline/dispatch/…) on a task",
              openapi_extra={"x-mcp-expose": True})
 def post_command(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskCommandIn) -> Status:
-    agent = _get_agent_or_404(request, slug)
+    if payload.kind in _RESHAPING_COMMAND_KINDS:
+        agent = _agent_for_write(request, slug)
+    else:
+        agent = _get_agent_or_404(request, slug)
     task = _get_task_or_404(agent, task_id)
     created_by = payload.created_by or getattr(request.user, "email", "")
     cmd = services.create_command(agent, task, payload.kind, payload.payload, created_by)
@@ -812,8 +861,15 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     this agent routes to may report for it. A readiness signal anyone could
     write is a readiness signal nobody can trust — and this one is meant to be
     trusted over the control plane's own record of what it stored.
+
+    Deliberately NOT `_agent_for_write` on top of that. `caller_runs_agent` is
+    strictly tighter than any role check, so a role gate here adds no security
+    — but it does add a way for readiness reporting to start 403-ing: a runner
+    whose pairing human happens to hold `viewer` would go silent, and a machine
+    saying "I could not materialize this" is exactly the signal you least want
+    to lose. Reporting what a box observed is not reshaping the agent.
     """
-    agent = _agent_for_write(request, slug)
+    agent = _get_agent_or_404(request, slug)
     if not services.caller_runs_agent(request.user, agent):
         raise HttpError(403, "no live runner you pair is assigned to this agent")
     r = services.record_bootstrap_report(

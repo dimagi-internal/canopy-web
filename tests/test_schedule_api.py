@@ -16,8 +16,19 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture()
-def client():
+def client(default_workspace):
+    """An OWNER of the agent's workspace — the legitimate CRUD caller.
+
+    The membership is granted EXPLICITLY. This used to rely on jj being the
+    DB's first user (and so `ensure_default_workspace()`'s owner) purely
+    because the `client` fixture was listed before `default_workspace` in every
+    test's parameter list — reorder the params and the gate stopped being
+    exercised with nothing failing to say so. Schedule CRUD now requires
+    `editor` or better, so the role these tests run as is load-bearing and has
+    to be stated.
+    """
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    wsvc.ensure_member(default_workspace, user, WorkspaceMembership.OWNER)
     c = Client()
     c.force_login(user)
     return c
@@ -25,14 +36,17 @@ def client():
 
 @pytest.fixture()
 def agent(default_workspace):
-    # Homed to the default workspace. The `client` fixture's jj@dimagi.com
-    # user is created first (it's listed first in every test's params), so
-    # by the time `default_workspace` runs `ensure_default_workspace()`, jj
-    # is the DB's first user and becomes its real OWNER member — the
-    # membership gate passes for the legitimate caller via that explicit
-    # row, not via any domain matching, so these tests keep exercising CRUD,
-    # not tenancy.
     return Agent.objects.create(slug="echo", name="Echo", workspace=default_workspace)
+
+
+@pytest.fixture()
+def viewer(default_workspace):
+    """A member who may WATCH the fleet but not author for it."""
+    user = User.objects.create_user("vee", "vee@dimagi.com", "pw")
+    wsvc.ensure_member(default_workspace, user, WorkspaceMembership.VIEWER)
+    c = Client()
+    c.force_login(user)
+    return c
 
 
 def _create(client, **over):
@@ -347,3 +361,86 @@ def test_member_of_the_agents_workspace_can_reach_every_route(scoped_workspace, 
     delete_resp = c.delete(base + f"{sid}")
     assert delete_resp.status_code == 204
     assert AgentSchedule.objects.filter(agent=scoped_agent).count() == 0
+
+
+# --- role gates ---------------------------------------------------------------
+# A schedule is prompt text the runner later executes AS the agent, holding the
+# agent's credentials, and `run-now` means immediately. Schedule CRUD had NO
+# role gate at all: bare membership let a viewer write a prompt of their
+# choosing and fire it. This is the reshaping tier, same as the rest of the
+# agent surface's writes.
+
+
+def test_viewer_cannot_create_a_schedule(viewer, agent):
+    res = _create(viewer)
+    assert res.status_code == 403, res.content
+    assert not AgentSchedule.objects.exists()
+
+
+def test_viewer_cannot_run_a_schedule_now(client, viewer, agent):
+    """The exploit's payload half, and the reason this is not merely untidy.
+
+    Create is gated above, so a viewer cannot plant the prompt — but `run-now`
+    on an EXISTING schedule fires that schedule's prompt as the agent, off
+    cycle, on demand. Both halves have to close.
+    """
+    sid = _create(client).json()["id"]
+    res = viewer.post(f"/api/agents/echo/schedules/{sid}/run-now")
+    assert res.status_code == 403, res.content
+    assert not Turn.objects.exists(), "a viewer's run-now enqueued a turn anyway"
+
+
+def test_viewer_cannot_update_or_delete_a_schedule(client, viewer, agent):
+    sid = _create(client).json()["id"]
+    patched = viewer.patch(
+        f"/api/agents/echo/schedules/{sid}",
+        {"prompt": "/echo:exfiltrate"}, content_type="application/json",
+    )
+    assert patched.status_code == 403, patched.content
+    assert viewer.delete(f"/api/agents/echo/schedules/{sid}").status_code == 403
+    assert AgentSchedule.objects.get(pk=sid).prompt == "/echo:manager-report"
+
+
+def test_viewer_may_still_read_schedules_and_preview_cron(client, viewer, agent):
+    """Reads stay at bare membership, deliberately.
+
+    Seeing when your team's agent runs — and asking what a cron expression
+    would mean — is interaction, not authorship. A viewer who cannot read the
+    schedule list cannot do the one job the tier exists for.
+    """
+    _create(client)
+    listing = viewer.get("/api/agents/echo/schedules/")
+    assert listing.status_code == 200, listing.content
+    assert listing.json()["total"] == 1
+    preview = viewer.post(
+        "/api/agents/echo/schedules/preview",
+        {"cron": "0 9 * * 5", "timezone": "UTC"}, content_type="application/json",
+    )
+    assert preview.status_code == 200, preview.content
+
+
+def test_non_member_gets_404_not_403_on_schedule_create(agent):
+    """Resolve-then-authorize: a non-member must not learn the agent exists."""
+    outsider = User.objects.create_user("out", "out@example.com", "pw")
+    c = Client()
+    c.force_login(outsider)
+    assert _create(c).status_code == 404
+
+
+def test_the_mcp_tools_inherit_the_same_gate(viewer, agent):
+    """Why the gate lives in `_resolve_agent` and not in the Ninja handlers.
+
+    The MCP schedule tools call `schedule_services` directly — they never pass
+    through a route — so a gate in the handlers would be a gate the MCP surface
+    walks around. The repo's stated MCP invariant is that both surfaces run one
+    implementation; an authorization check is the last thing that may have two.
+    """
+    from apps.harness import schedule_services as ss
+
+    user = User.objects.get(email="vee@dimagi.com")
+    with pytest.raises(ss.ScheduleForbidden):
+        ss.create_schedule(user, "echo", {
+            "name": "via mcp", "prompt": "/echo:anything",
+            "cron": "0 9 * * 5", "timezone": "UTC",
+        })
+    assert not AgentSchedule.objects.exists()

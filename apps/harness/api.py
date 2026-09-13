@@ -147,6 +147,28 @@ def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     return agent
 
 
+def _agent_for_write_or_404(request: HttpRequest, slug: str) -> Agent:
+    """An agent whose EXECUTION the caller may drive. Editor or owner.
+
+    Harness-local twin of `apps.agents.api._agent_for_write`, duplicated for
+    the same reason `_agent_or_404` is: api modules must not depend on each
+    other, and the harness is framework-tier. Both read the role through the
+    one shared reader (`wsvc.member_role`), so the duplication is of the CALL,
+    not of what "editor" means.
+
+    Enqueuing a turn is the executing half of the author tier — it is arbitrary
+    prompt text run as the agent, holding the agent's resolved credentials, and
+    bare membership let a `viewer` do it. Resolve-then-authorize: a non-member
+    gets `_agent_or_404`'s 404 and never a 403.
+    """
+    agent = _agent_or_404(request, slug)
+    if not wsvc.has_role_at_least(
+        request.user, agent.workspace_id, wsvc.WorkspaceMembership.EDITOR
+    ):
+        raise HttpError(403, "running a turn for this agent requires the editor or owner role")
+    return agent
+
+
 def _runner_owned_q(request: HttpRequest) -> Q:
     """Ownership: the caller paired it, or nobody did (legacy-ungated)."""
     return Q(paired_by=request.user) | Q(paired_by__isnull=True)
@@ -1171,7 +1193,13 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
 
     agent = workspace = None
     if payload.agent_slug:
-        agent = _agent_or_404(request, payload.agent_slug)
+        # Editor, not bare membership: this enqueues arbitrary prompt text to be
+        # executed AS the agent with the agent's credentials, which is the
+        # author/executor tier by the role ladder's own definition. Project and
+        # session turns are deliberately NOT gated the same way — a session turn
+        # is what a chat send produces, and talking to an agent is exactly what
+        # the interaction tier is for.
+        agent = _agent_for_write_or_404(request, payload.agent_slug)
     else:
         # A project turn carries its own tenant.
         ws_slug = getattr(request, "workspace_slug", None)
@@ -1437,6 +1465,17 @@ def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     deliberately not wired to this route yet.
     """
     turn = _turn_or_404(request, turn_id)
+    # Same tier as the enqueue that produced it: an AGENT turn is the author
+    # tier, so a viewer who cannot dispatch one may not withdraw one either.
+    #
+    # The session carve-out is STRUCTURAL rather than a condition spelled out
+    # here — `turn_targets_agent_xor_project_xor_session` makes a session turn
+    # carry `agent=NULL` and derive its agent through `chat_session`, so this
+    # branch cannot see one. That is the right outcome: a viewer may chat, so a
+    # viewer must be able to take back a misfired send, which is the misfire
+    # case the phone composer exists for. Project turns likewise have no agent.
+    if turn.agent_id:
+        _agent_for_write_or_404(request, turn.agent.slug)
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent
     cancelled = services.cancel_queued_turn(turn)

@@ -8,8 +8,9 @@ tenant path /api/w/{ws}/agents/... works via WorkspaceResolveMiddleware.
 
 The handlers are thin: they resolve + serialize via schedule_services (the
 request-free layer the MCP tools also call, so the two surfaces can't drift),
-mapping its domain exceptions to HTTP — ScheduleNotFound -> 404, and
-DuplicateScheduleName -> the repo's 409 uniqueness convention. The savepoint +
+mapping its domain exceptions to HTTP — ScheduleNotFound -> 404,
+ScheduleForbidden -> 403, and DuplicateScheduleName -> the repo's 409
+uniqueness convention. The savepoint +
 supersede logic lives in the service, so these handlers no longer touch the ORM.
 """
 from __future__ import annotations
@@ -45,6 +46,12 @@ def _pin(request: HttpRequest) -> str | None:
 
 def _not_found(exc: ss.ScheduleNotFound) -> HttpError:
     return HttpError(404, "not found")
+
+
+def _forbidden(exc: ss.ScheduleForbidden) -> HttpError:
+    """A member holding too low a role. 403, and it says which role is needed —
+    a refusal a viewer cannot act on is a refusal they will report as a bug."""
+    return HttpError(403, f"this action requires the {exc.required} or owner role")
 
 
 def _duplicate_name(name: str) -> ProblemError:
@@ -118,6 +125,8 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
         schedule = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
         raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
     except ss.DuplicateScheduleName as exc:
         raise _duplicate_name(exc.name) from None
     return Status(201, ScheduleOut(**ss.serialize_schedule(schedule)))
@@ -163,6 +172,8 @@ def update_schedule(
         schedule = ss.update_schedule(request.user, slug, schedule_id, fields, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
         raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
     except ss.DuplicateScheduleName as exc:
         raise _duplicate_name(exc.name) from None
     return ScheduleOut(**ss.serialize_schedule(schedule))
@@ -176,6 +187,8 @@ def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status
         ss.delete_schedule(request.user, slug, schedule_id, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
         raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
     return Status(204, None)
 
 
@@ -187,4 +200,6 @@ def run_now(request: HttpRequest, slug: str, schedule_id: int) -> Status:
         schedule = ss.run_schedule_now(request.user, slug, schedule_id, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
         raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
     return Status(202, ScheduleOut(**ss.serialize_schedule(schedule)))

@@ -138,6 +138,38 @@ def is_member(user, slug: str) -> bool:
     return WorkspaceMembership.objects.filter(user=user, workspace_id=slug).exists()
 
 
+def member_role(user, workspace) -> str | None:
+    """The caller's role in `workspace` (a `Workspace` or a bare slug), or
+    `None` if they are not a member at all.
+
+    The single place a ROLE — as opposed to bare membership — is read, so every
+    gate that distinguishes viewer from editor agrees on where that comes from.
+    `is_member(user, slug)` is exactly `member_role(...) is not None`; it stays
+    because most call sites only need the boolean and reading it as one is
+    clearer than comparing against None.
+
+    Takes a bare `user` rather than a request so the request-free service
+    layers (notably `apps/harness/schedule_services.py`, which the MCP tools
+    call directly) can use the same reader the Ninja handlers do — the MCP
+    invariant is that both surfaces run through one implementation, and an
+    authorization check is the last thing that should have two."""
+    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
+    m = WorkspaceMembership.objects.filter(user=user, workspace_id=workspace_id).first()
+    return m.role if m else None
+
+
+def has_role_at_least(user, workspace, minimum: str) -> bool:
+    """Does the caller hold `minimum` or better in `workspace`?
+
+    Reads the ladder off `WorkspaceMembership.ROLE_RANK` rather than a
+    hand-written set per call site, so adding a role between two existing ones
+    does not silently widen a gate that happened to spell out its members."""
+    role = member_role(user, workspace)
+    if role is None:
+        return False
+    return WorkspaceMembership.ROLE_RANK.get(role, -1) >= WorkspaceMembership.ROLE_RANK[minimum]
+
+
 def request_workspace_slugs(request) -> set[str]:
     """The workspace slugs THIS request may act within — the single place a flat
     (`/api/…`) handler gets its tenant scope, so scoping can't drift per endpoint.
