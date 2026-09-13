@@ -8,7 +8,7 @@ from django.views.generic import RedirectView
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
-from apps.tokens.views_embed import embed_chat
+from apps.tokens.views_embed import embed_chat, embed_widget_js
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import csrf_view, health_check, spa_view
 
@@ -25,6 +25,10 @@ urlpatterns = [
     # apps/tokens/views_embed.py for why the exemption is safe. Declared before
     # the SPA catch-all, whose negative lookahead does not exclude `embed/`.
     path("embed/chat", embed_chat, name="embed-chat"),
+    # The loader a host names in its <script> tag. Served from the frontend
+    # build like index.html is, not via staticfiles — this is the one URL third
+    # parties hard-code, so it must not move with a static prefix.
+    path("embed/widget.js", embed_widget_js, name="embed-widget-js"),
     # <str:> (not <uuid:>) so a malformed id is handled by the view (bare 404)
     # instead of falling through to the SPA catch-all and painting the whole app
     # inside a failed content embed. The view 404s any id it can't resolve.

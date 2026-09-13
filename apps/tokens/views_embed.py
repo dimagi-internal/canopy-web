@@ -27,7 +27,10 @@ over `postMessage` (see the v2 spec §3), never in this URL.
 
 from __future__ import annotations
 
-from django.http import Http404, HttpRequest, HttpResponse
+from pathlib import Path
+
+from django.conf import settings
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.http import require_GET
 
@@ -93,5 +96,40 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
     # content-hashed name: an unhashed document is never cached, so a changed
     # policy (or a revoked app) takes effect on the next load rather than
     # whenever a proxy feels like it.
+    response["Cache-Control"] = "no-cache"
+    return response
+
+
+@require_GET
+def embed_widget_js(request: HttpRequest) -> HttpResponse:
+    """Serve the widget loader — the file a host names in its `<script>` tag.
+
+    Read straight out of the frontend build the way `config.views.spa_view`
+    reads `index.html`, rather than relying on a static-files mapping: this is
+    the one URL third parties hard-code, so it should not be able to break
+    because a collectstatic step or a WhiteNoise prefix moved.
+
+    Deliberately NOT framing-related and NOT app-scoped. It is a plain script
+    with no secrets and no per-app behaviour — `canopy.init({app: …})` selects
+    the app at call time, and the framing policy is enforced on the SHELL the
+    frame loads (see `embed_chat`). A `<script src>` needs no CORS header, so
+    none is sent.
+
+    `no-cache` because the filename is fixed and cannot be content-hashed —
+    hosts hard-code it, so a new loader has to reach them without their editing
+    anything. That matches config/static_cache.py's rule for every unhashed
+    file, and it costs a 304 rather than a download.
+    """
+    path: Path = settings.FRONTEND_DIST_DIR / "embed" / "widget.js"
+    if not path.exists():
+        # Same shape as spa_view's missing-build response: a plain-text 503 that
+        # names the command, because the alternative is a host debugging a
+        # silent 404 in someone else's page.
+        return HttpResponse(
+            "Widget loader not built. Run `cd frontend && npm run build:widget`.",
+            status=503,
+            content_type="text/plain",
+        )
+    response = FileResponse(open(path, "rb"), content_type="text/javascript")
     response["Cache-Control"] = "no-cache"
     return response

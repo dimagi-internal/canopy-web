@@ -231,3 +231,89 @@ def test_command_list_flags_a_stored_value_that_is_being_ignored():
     AppCredential.objects.filter(pk=app.pk).update(allowed_frame_origins=[LABS, "*"])
     out = _run("--name", "connect-labs", "--list")
     assert "IGNORED" in out
+
+
+# --- the loader script a host hard-codes -----------------------------------
+
+
+def test_widget_js_is_served_from_the_build():
+    r = Client().get("/embed/widget.js")
+    # Either the real artifact (a dev box that has built it) or the honest 503
+    # below — never a 404, which in someone else's page is undebuggable.
+    assert r.status_code in (200, 503)
+
+
+def test_widget_js_says_what_to_run_when_it_is_not_built(settings, tmp_path):
+    settings.FRONTEND_DIST_DIR = tmp_path
+    r = Client().get("/embed/widget.js")
+    assert r.status_code == 503
+    assert "npm run build:widget" in r.content.decode()
+
+
+def test_widget_js_is_javascript_and_revalidates(settings, tmp_path):
+    embed = tmp_path / "embed"
+    embed.mkdir()
+    (embed / "widget.js").write_text("var canopy=(function(){return{}})();")
+    settings.FRONTEND_DIST_DIR = tmp_path
+
+    r = Client().get("/embed/widget.js")
+
+    assert r.status_code == 200
+    assert "javascript" in r["Content-Type"]
+    # Fixed filename, so it cannot be content-hashed: a host must pick up a new
+    # loader without editing their script tag.
+    assert r["Cache-Control"] == "no-cache"
+
+
+def test_widget_js_needs_no_login(settings, tmp_path):
+    """It is loaded by a <script> tag on a third-party page, where a redirect to
+    Google would simply mean the widget never appears."""
+    embed = tmp_path / "embed"
+    embed.mkdir()
+    (embed / "widget.js").write_text("var canopy={};")
+    settings.FRONTEND_DIST_DIR = tmp_path
+
+    r = Client().get("/embed/widget.js")
+
+    assert r.status_code == 200
+    assert "accounts" not in r.get("Location", "")
+
+
+def test_widget_js_is_not_app_scoped(settings, tmp_path):
+    """No ?app= — the loader is one plain script for every host; `canopy.init`
+    picks the app at call time, and the framing policy is enforced on the shell."""
+    embed = tmp_path / "embed"
+    embed.mkdir()
+    (embed / "widget.js").write_text("var canopy={};")
+    settings.FRONTEND_DIST_DIR = tmp_path
+
+    assert Client().get("/embed/widget.js").status_code == 200
+
+
+def test_the_shell_posts_exactly_the_message_the_loader_listens_for():
+    """A cross-language contract with nothing but convention holding it.
+
+    The shell is rendered by Python; the loader that receives this is
+    TypeScript (`packages/canopy-widget/src/protocol.ts`, `SOURCE` and the
+    `ready` kind). Nothing in either toolchain checks the other, so a rename on
+    one side would leave the widget loading forever with no error — the loader
+    drops anything whose `source` it does not recognise, by design.
+    """
+    _app()
+    body = _get().content.decode()
+    # The exact literals protocol.ts matches on.
+    assert '"canopy-widget"' in body or "'canopy-widget'" in body or "canopy-widget" in body
+    assert 'source: "canopy-widget"' in body
+    assert 'type: "ready"' in body
+    # And it must be posted to the PARENT — a frame that posts to itself
+    # announces nothing.
+    assert "parent.postMessage(" in body
+
+
+def test_the_shell_tells_the_frame_which_app_it_is():
+    """The in-frame app needs to know, and it cannot read the query string of a
+    URL the host controls any more safely than the server can hand it over."""
+    _app()
+    body = _get().content.decode()
+    assert "window.CANOPY_EMBED" in body
+    assert "connect-labs" in body
