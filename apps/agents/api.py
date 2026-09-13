@@ -99,6 +99,60 @@ def _get_agent_or_404(request: HttpRequest, slug: str):
     return agent
 
 
+def _caller_role(request: HttpRequest, workspace) -> str | None:
+    """The caller's `WorkspaceMembership.role` in `workspace` (a `Workspace`
+    instance or a bare slug), or `None` if they aren't a member at all.
+
+    The single place a role — as opposed to bare membership — is read, so
+    every write gate below agrees on where that comes from."""
+    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
+    membership = wsvc.WorkspaceMembership.objects.filter(
+        user=request.user, workspace_id=workspace_id
+    ).first()
+    return membership.role if membership else None
+
+
+_EDITOR_OR_OWNER = {wsvc.WorkspaceMembership.EDITOR, wsvc.WorkspaceMembership.OWNER}
+
+
+def _agent_for_write(request: HttpRequest, slug: str):
+    """An agent the caller may RESHAPE — create, edit, schedule, route, publish.
+
+    The author/executor tier. Separate from `_get_agent_or_404` (membership,
+    the interaction tier) because a `viewer` may talk to an agent and read its
+    board without being able to change what the agent IS.
+
+    `_get_agent_or_404` runs FIRST, so a non-member still gets `404` and never
+    a `403` — no existence leak. Follows the ordering already established at
+    `delete_agent` (below): resolve-then-authorize, never the other way.
+    """
+    agent = _get_agent_or_404(request, slug)
+    if _caller_role(request, agent.workspace_id) not in _EDITOR_OR_OWNER:
+        raise HttpError(403, "this action requires the editor or owner role")
+    return agent
+
+
+def _agent_for_admin(request: HttpRequest, slug: str):
+    """An agent whose SECRETS or existence the caller may change. Owner only.
+
+    Credentials and the vault pointer are the keys a runner resolves
+    everything else from, so writing them is equivalent to controlling the
+    agent end to end. Note domain auto-join grants `EDITOR`
+    (`workspaces/services.py::auto_join_workspaces`), not `viewer` — so
+    `editor` is not a deliberate grant here, it is the default anyone in the
+    allowlisted domain already has the moment they touch an agent endpoint.
+    Owner is the only role left that still means something was deliberately
+    granted, not just walked in the door.
+
+    `_get_agent_or_404` runs FIRST, same ordering as `_agent_for_write`: a
+    non-member gets `404`, never `403`.
+    """
+    agent = _get_agent_or_404(request, slug)
+    if _caller_role(request, agent.workspace_id) != wsvc.WorkspaceMembership.OWNER:
+        raise HttpError(403, "this action requires the owner role")
+    return agent
+
+
 @router.get("/", response=Page[AgentOut], summary="List agents",
             openapi_extra={"x-mcp-expose": True})
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
@@ -129,14 +183,30 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # Only reachable on a DB with no users at all, which an authenticated
         # request cannot be. Fail with a real message rather than an IntegrityError.
         raise HttpError(422, "no workspace available to home this agent in")
+
+    # This is the reshaping tier (same as _agent_for_write), but there is no
+    # existing agent to resolve through _get_agent_or_404 on a create — so the
+    # gate is against the TARGET workspace directly: an already-existing
+    # agent's CURRENT home (this write reshapes that tenant's row, whatever
+    # workspace the caller happens to default into), or `home` for a
+    # brand-new agent.
+    existing = services.get_agent(payload.slug)
+    target_ws = existing.workspace if existing is not None else home
+    if _caller_role(request, target_ws) not in _EDITOR_OR_OWNER:
+        raise HttpError(403, "creating or editing an agent requires the editor or owner role")
+
     agent = services.upsert_agent(payload, workspace=home)
     explicit = (payload.workspace or "").strip()
     if explicit and agent.workspace_id != explicit:
-        # Explicit home: may MOVE an already-homed agent. Membership-gated; a
-        # missing workspace and a non-member get the same 404 (no existence leak).
+        # Explicit home: may MOVE an already-homed agent. A missing workspace
+        # and a non-member get the same 404 (no existence leak); moving also
+        # requires editor/owner in the DESTINATION — moving a tenant's agent
+        # is a reshape like everything else this tier gates.
         ws = wsvc.Workspace.objects.filter(slug=explicit).first()
         if ws is None or not wsvc.is_member(request.user, explicit):
             raise HttpError(404, f"workspace '{explicit}' not found")
+        if _caller_role(request, ws) not in _EDITOR_OR_OWNER:
+            raise HttpError(403, "moving an agent requires the editor or owner role in the destination workspace")
         agent.workspace = ws
         agent.save(update_fields=["workspace"])
     wsvc.ensure_member(agent.workspace, request.user)  # creator keeps access
@@ -162,23 +232,20 @@ def delete_agent(request: HttpRequest, slug: str):
     *rehearsing* the onboarding path impossible: you could not walk a new
     operator's steps end to end without leaving a fake agent behind forever.
 
-    Gated one step ABOVE creation deliberately. Any member may upsert an
-    agent; deleting one requires editor or owner, so a viewer cannot destroy
-    a fleet member's board. `_get_agent_or_404` runs first, so a non-member
-    gets 404 (no existence leak) rather than 403.
+    Gated at the same reshaping tier as everything else `_agent_for_write`
+    covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
+    where deletion was the ONLY gated write on this surface — everything else,
+    including the credential/vault writers, was membership-or-nothing): a
+    viewer cannot destroy a fleet member's board. `_agent_for_write` resolves
+    the agent via `_get_agent_or_404` first, so a non-member gets 404 (no
+    existence leak) rather than 403.
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
     syncs, work products, schedules, items, runner assignments/drills), so
     this is a real delete rather than a soft flag — nothing is left dangling
     and nothing blocks it.
     """
-    agent = _get_agent_or_404(request, slug)
-    membership = wsvc.WorkspaceMembership.objects.filter(
-        user=request.user, workspace_id=agent.workspace_id
-    ).first()
-    allowed = {wsvc.WorkspaceMembership.OWNER, wsvc.WorkspaceMembership.EDITOR}
-    if membership is None or membership.role not in allowed:
-        raise HttpError(403, "deleting an agent requires the editor or owner role")
+    agent = _agent_for_write(request, slug)
     agent.delete()
     return Status(204, None)
 
@@ -197,7 +264,7 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
     bad = [k for k in payload.runner_preference if k not in valid]
     if bad:
         raise HttpError(422, f"unknown runner kind(s): {', '.join(bad)}")
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     agent.runner_preference = list(payload.runner_preference)
     agent.save(update_fields=["runner_preference", "updated_at"])
     return AgentDetailOut.model_validate(services.agent_detail(agent))
@@ -210,7 +277,7 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
     A human decision made from the board; the agent-repo upsert (POST /) cannot
     touch this field."""
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
     return AgentDetailOut.model_validate(services.agent_detail(agent))
@@ -270,7 +337,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     from apps.harness.api import _runner_visibility_q
     from apps.harness.models import Runner, RunnerAssignment
 
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
 
     if (payload.runner_ids is None) == (payload.runners is None):
         raise HttpError(422, "provide exactly one of runner_ids or runners")
@@ -380,7 +447,7 @@ def replace_agent_runner_rules(
     from apps.harness.api import _runner_visibility_q
     from apps.harness.models import Runner, RunnerAssignment
 
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
 
     # Normalize BEFORE validating or storing, so a rule pasted straight out of a
     # mail client ("Sarvesh Tewari <STewari@Dimagi.com>") matches a turn whose
@@ -454,7 +521,7 @@ def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentS
              summary="Post a Google-Doc sync (idempotent per period+source)",
              openapi_extra={"x-mcp-expose": True})
 def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     sync = services.upsert_sync(agent, payload)
     return Status(201, AgentSyncOut.model_validate(sync))
 
@@ -465,7 +532,7 @@ def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status
 def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
     """POST upserts per (period, source), so re-posting only corrects a sync for the
     SAME window — a sync filed under the wrong period is otherwise unreachable."""
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     if not services.delete_sync(agent, sync_id):
         raise HttpError(404, f"sync {sync_id} not found for agent '{slug}'")
     return Status(204, None)
@@ -485,7 +552,7 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
              summary="Package a turn (idempotent per cli_session_id)",
              openapi_extra={"x-mcp-expose": True})
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     turn = services.upsert_turn(agent, payload)
     return Status(201, AgentTurnOut.model_validate(turn))
 
@@ -505,7 +572,7 @@ def list_work_products(request: HttpRequest, slug: str, limit: int = 200) -> Pag
              summary="Add/update work products (upsert by url)",
              openapi_extra={"x-mcp-expose": True})
 def add_work_products(request: HttpRequest, slug: str, payload: AgentWorkProductBatchIn) -> CountOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     result = services.upsert_work_products(agent, payload.work_products)
     return CountOut(**result)
 
@@ -521,7 +588,7 @@ def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
 @router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",
             openapi_extra={"x-mcp-expose": True})
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
 
@@ -538,7 +605,7 @@ def list_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
              summary="Upsert the agent's tasks from the (legacy) source sheet",
              openapi_extra={"x-mcp-expose": True})
 def sync_tasks(request: HttpRequest, slug: str, payload: AgentTaskSyncIn) -> CountOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     return CountOut(**services.sync_tasks(agent, payload.tasks))
 
 
@@ -552,14 +619,14 @@ def _get_task_or_404(agent, task_id: int):
 @router.post("/{slug}/tasks/", response={201: AgentTaskOut}, summary="Create a task",
              openapi_extra={"x-mcp-expose": True})
 def create_task(request: HttpRequest, slug: str, payload: AgentTaskIn) -> Status:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     return Status(201, AgentTaskOut.model_validate(services.create_task(agent, payload)))
 
 
 @router.patch("/{slug}/tasks/{task_id}/", response=AgentTaskOut, summary="Update a task",
               openapi_extra={"x-mcp-expose": True})
 def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskPatch) -> AgentTaskOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     task = _get_task_or_404(agent, task_id)
     data = payload.model_dump(exclude_unset=True)
     return AgentTaskOut.model_validate(services.patch_task(task, data))
@@ -609,7 +676,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     There is no read counterpart on purpose — the response is the MASKED status,
     so even the caller who just wrote a value cannot read one back through the
     browser."""
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_admin(request, slug)
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
     except ValueError as exc:
@@ -692,7 +759,7 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     A single fleet-wide token would be simpler to operate and would make
     canopy-web worth attacking for every agent's secrets at once; this bounds a
     compromise to the one agent whose key was taken (Jonathan, 2026-09-06)."""
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_admin(request, slug)
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )
@@ -704,7 +771,7 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)
     return services.agent_credential_status(agent)
 
@@ -747,7 +814,7 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     write is a readiness signal nobody can trust — and this one is meant to be
     trusted over the control plane's own record of what it stored.
     """
-    agent = _get_agent_or_404(request, slug)
+    agent = _agent_for_write(request, slug)
     if not services.caller_runs_agent(request.user, agent):
         raise HttpError(403, "no live runner you pair is assigned to this agent")
     r = services.record_bootstrap_report(
