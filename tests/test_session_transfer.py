@@ -46,9 +46,18 @@ def _ctx():
     return user, ws, cloud, laptop, c
 
 
-def _bound_session(ws, runner, *, indices=(0, 64, 128)):
-    """A session live on `runner` with some transcript-ordinal history."""
-    s = Session.objects.create(workspace=ws, project="canopy-web", title="widget design")
+def _bound_session(ws, runner, *, indices=(0, 64, 128), created_by=None):
+    """A session live on `runner` with some transcript-ordinal history.
+
+    `created_by` is set because a real web-origin session always has one
+    (`services.create_session` passes it and adds an OWNER participant); a
+    creator-less WEB session only arises when a user is deleted, since
+    `Session.created_by` is `on_delete=SET_NULL`. Leaving it NULL here made the
+    fixture describe a shape the app cannot produce, which the session-access
+    predicate (`apps/canopy_sessions/access.py`) then correctly refused.
+    """
+    s = Session.objects.create(workspace=ws, project="canopy-web", title="widget design",
+                               created_by=created_by or ws.created_by)
     RunnerBinding.objects.create(
         session=s, runner=runner, session_key="a-task", emdash_project="canopy-web",
         host=runner.host, transcript_id="old-transcript-uuid", thread_key=str(s.id),
