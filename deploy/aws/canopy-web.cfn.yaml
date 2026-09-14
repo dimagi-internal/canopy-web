@@ -319,7 +319,6 @@ Resources:
             # reports disabled and the frontend mounts nothing. Registering the
             # credential in the admin is what actually turns the widget on, and
             # revoking it turns it off again without a deploy.
-            - { Name: EMBED_SELF_APP, Value: "canopy-web" }
           Secrets:
             # Name MUST be SECRET_KEY — that's what config/settings/base.py reads.
             # (It was DJANGO_SECRET_KEY, which nothing read, so prod silently fell

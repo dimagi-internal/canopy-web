@@ -32,9 +32,13 @@ export async function connectApp(
   body: {
     name: string
     origins: string[]
-    delegation_domains: string[]
     agents: string[]
     public_keys: string[]
+    show_on_canopy_pages: boolean
+    /** Always empty. The server refuses anything else — a site vouches for its
+     *  own contacts with a signing key now, not for an email domain. Sent
+     *  because the schema still declares it. */
+    delegation_domains: string[]
   },
 ): Promise<ConnectedAppCreated> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -52,6 +56,7 @@ export async function updateConnectedApp(
     delegation_domains?: string[]
     agents?: string[]
     public_keys?: string[]
+    show_on_canopy_pages?: boolean
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.PATCH('/api/workspaces/{slug}/connected-apps/{app_id}', {
@@ -74,15 +79,4 @@ export async function disconnectApp(slug: string, appId: number): Promise<void> 
     params: { path: { slug, app_id: appId } },
   })
   await unwrap<void>(res, 'Could not disconnect the site')
-}
-
-/** Turn canopy's own widget on here. The origin is taken from the request
- *  server-side — it is the address you are looking at, and the one value that
- *  cannot be typed wrong. */
-export async function enableSelfWidget(slug: string, agents: string[]): Promise<ConnectedApp> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/enable-self', {
-    params: { path: { slug } },
-    body: { agents },
-  })
-  return unwrap<ConnectedApp>(res, 'Could not turn on the widget')
 }

@@ -33,8 +33,9 @@ _STATUS = {
     "duplicate_name": 409,
     "bad_name": 422,
     "bad_origin": 422,
-    "bad_domain": 422,
+    "no_vouching": 422,
     "bad_key": 422,
+    "already_shown": 409,
     "unknown_agent": 422,
 }
 
@@ -61,7 +62,7 @@ class ConnectedAppOut(Schema):
     #: tell which key they are about to retire.
     public_keys: list[str]
     signs_assertions: bool
-    is_self: bool
+    shows_on_canopy_pages: bool
     created_at: str
     last_used_at: str | None
     revoked: bool
@@ -80,9 +81,13 @@ class SecretOut(Schema):
 class ConnectIn(Schema):
     name: str
     origins: list[str] = []
-    delegation_domains: list[str] = []
     agents: list[str] = []
     public_keys: list[str] = []
+    #: Accepted and required to be empty — see `embed_apps._no_domains_here`.
+    #: Kept in the schema rather than removed so an older client gets the
+    #: reason rather than a silent drop.
+    delegation_domains: list[str] = []
+    show_on_canopy_pages: bool = False
 
 
 class UpdateIn(Schema):
@@ -90,10 +95,7 @@ class UpdateIn(Schema):
     delegation_domains: list[str] | None = None
     agents: list[str] | None = None
     public_keys: list[str] | None = None
-
-
-class EnableSelfIn(Schema):
-    agents: list[str] = []
+    show_on_canopy_pages: bool | None = None
 
 
 def _out(app: AppCredential) -> ConnectedAppOut:
@@ -111,11 +113,21 @@ def _out(app: AppCredential) -> ConnectedAppOut:
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
         ],
-        is_self=app.name == embed_apps.self_app_name(),
+        shows_on_canopy_pages=app.show_on_canopy_pages,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
     )
+
+
+def _own_origin(request: HttpRequest) -> str:
+    """canopy's own origin, as this request saw it.
+
+    Scheme + host + port and no path, which is exactly what `frame-ancestors`
+    takes. From the request rather than a form field because it is the address
+    the person is looking at — the one value that cannot be typed wrong.
+    """
+    return f"{request.scheme}://{request.get_host()}"
 
 
 def _refuse(exc: embed_apps.EmbedAppError):
@@ -152,6 +164,10 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             origins=payload.origins, domains=payload.delegation_domains,
             agents=payload.agents, public_keys=payload.public_keys,
         )
+        if payload.show_on_canopy_pages:
+            embed_apps.set_show_on_canopy_pages(
+                app=app, on=True, origin=_own_origin(request)
+            )
     except embed_apps.EmbedAppError as exc:
         audit(event=EmbedAuditLog.CONNECT, request=request, app_name=payload.name,
               actor=request.user, ok=False, reason=exc.code)
@@ -160,37 +176,6 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
           detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
                  f"agents={payload.agents}")
     return Status(201, ConnectedAppCreatedOut(app=_out(app), secret=raw))
-
-
-# Registered BEFORE the `{app_id}` routes on purpose. Django matches URL
-# patterns in order, and `enable-self` sits exactly where an id goes — with the
-# id route first, the button 405s and reads as a missing feature. (Ninja does
-# not narrow `app_id: int` to a numeric path converter, so the types do not
-# separate them for us; a test asserts the POST reaches this view.)
-@connected_apps_router.post("/{slug}/connected-apps/enable-self",
-                            response=ConnectedAppOut,
-                            summary="Turn on canopy's widget on canopy's own pages")
-def enable_self_widget(request: HttpRequest, slug: str, payload: EnableSelfIn) -> ConnectedAppOut:
-    """One act, because every input is a fact about canopy rather than a choice.
-
-    The origin is taken from THIS request, not from the body. It is the only
-    value that is certainly right — it is the address the person is looking at —
-    and taking it from the caller would let a form typo produce a connection
-    that silently never frames.
-    """
-    # Scheme + host + port, with no path: exactly what `frame-ancestors` takes.
-    origin = f"{request.scheme}://{request.get_host()}"
-    try:
-        _raw, app = embed_apps.enable_self(
-            user=request.user, workspace_slug=slug, origin=origin, agents=payload.agents,
-        )
-    except embed_apps.EmbedAppError as exc:
-        audit(event=EmbedAuditLog.CONNECT, request=request, actor=request.user,
-              ok=False, reason=exc.code, detail="enable-self")
-        raise _refuse(exc)
-    audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
-          detail=f"enable-self origin={origin} agents={payload.agents}")
-    return _out(app)
 
 
 @connected_apps_router.patch("/{slug}/connected-apps/{app_id}", response=ConnectedAppOut,
@@ -204,6 +189,10 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
             domains=payload.delegation_domains, agents=payload.agents,
             public_keys=payload.public_keys,
         )
+        if payload.show_on_canopy_pages is not None:
+            embed_apps.set_show_on_canopy_pages(
+                app=app, on=payload.show_on_canopy_pages, origin=_own_origin(request)
+            )
     except embed_apps.EmbedAppError as exc:
         audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
               ok=False, reason=exc.code)

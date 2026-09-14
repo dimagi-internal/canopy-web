@@ -29,58 +29,61 @@ def _user():
     return user, c
 
 
-def _app(name="canopy-web"):
+def _app(name="canopy-web", *, shown=True):
+    """A connected site, optionally the one canopy shows on its own pages.
+
+    `shown` is a column now, not a name matched against `EMBED_SELF_APP`. The
+    setting is gone: it made canopy a special case, and a name that did not
+    match produced no widget and no error on either side.
+    """
     admin = User.objects.create_user(f"a-{name}", f"a-{name}@dimagi.com", "pw")
-    return AppCredential.create_credential(
+    app = AppCredential.create_credential(
         name=name, domains=["dimagi.com"], created_by=admin,
     )[1]
+    if shown:
+        app.show_on_canopy_pages = True
+        app.save(update_fields=["show_on_canopy_pages"])
+    return app
 
 
-def test_off_by_default(settings):
-    settings.EMBED_SELF_APP = ""
+def test_off_by_default():
     _user_, c = _user()
     assert c.get("/api/embed/self").json() == {"enabled": False, "app": "", "agent": ""}
 
 
-def test_the_token_endpoint_404s_when_off(settings):
-    settings.EMBED_SELF_APP = ""
+def test_the_token_endpoint_404s_when_off():
     _user_, c = _user()
     assert c.post("/api/embed/token").status_code == 404
 
 
-def test_enabled_when_the_named_app_exists(settings):
+def test_enabled_when_the_named_app_exists():
     _app()
-    settings.EMBED_SELF_APP = "canopy-web"
-    settings.EMBED_SELF_AGENT = "echo"
     _user_, c = _user()
     assert c.get("/api/embed/self").json() == {
         "enabled": True,
         "app": "canopy-web",
-        "agent": "echo",
+        "agent": "",
     }
 
 
-def test_a_setting_naming_a_missing_app_is_absent_not_broken(settings):
+def test_a_setting_naming_a_missing_app_is_absent_not_broken():
     """A typo in a deployment setting should leave the widget off, not 500 the
     status call every page makes."""
-    settings.EMBED_SELF_APP = "typo-here"
     _user_, c = _user()
     assert c.get("/api/embed/self").json()["enabled"] is False
     assert c.post("/api/embed/token").status_code == 404
 
 
-def test_a_revoked_app_turns_it_off(settings):
+def test_a_revoked_app_turns_it_off():
     app = _app()
-    settings.EMBED_SELF_APP = "canopy-web"
     AppCredential.objects.filter(pk=app.pk).update(revoked_at=timezone.now())
     _user_, c = _user()
     assert c.get("/api/embed/self").json()["enabled"] is False
     assert c.post("/api/embed/token").status_code == 404
 
 
-def test_the_token_is_minted_for_the_caller_and_actually_works(settings):
+def test_the_token_is_minted_for_the_caller_and_actually_works():
     app = _app()
-    settings.EMBED_SELF_APP = "canopy-web"
     user, c = _user()
 
     body = c.post("/api/embed/token").json()
@@ -92,10 +95,9 @@ def test_the_token_is_minted_for_the_caller_and_actually_works(settings):
     assert resolved.app == app
 
 
-def test_the_minted_token_authenticates_the_embed_surface(settings):
+def test_the_minted_token_authenticates_the_embed_surface():
     """End to end: what the widget will actually do with it."""
     _app()
-    settings.EMBED_SELF_APP = "canopy-web"
     _user_, c = _user()
     raw = c.post("/api/embed/token").json()["token"]
 
@@ -107,20 +109,18 @@ def test_the_minted_token_authenticates_the_embed_surface(settings):
     assert response.json() == []
 
 
-def test_anonymous_callers_get_nothing(settings):
+def test_anonymous_callers_get_nothing():
     """Session-authed: the endpoint mints for `request.user`, so there must be
     one."""
     _app()
-    settings.EMBED_SELF_APP = "canopy-web"
     anon = Client()
     assert anon.post("/api/embed/token").status_code in (302, 401, 403)
 
 
-def test_it_does_not_mint_for_an_email_the_caller_supplies(settings):
+def test_it_does_not_mint_for_an_email_the_caller_supplies():
     """Unlike a third-party host there is no `acting_as_email` here at all —
     the caller IS the user. A body must not be able to redirect it."""
     _app()
-    settings.EMBED_SELF_APP = "canopy-web"
     user, c = _user()
     User.objects.create_user("victim", "victim@dimagi.com", "pw")
 

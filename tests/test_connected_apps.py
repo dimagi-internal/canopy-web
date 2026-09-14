@@ -148,32 +148,10 @@ def test_several_environments_can_be_connected_at_once():
     assert r.json()["app"]["origins"] == [LABS, "http://localhost:8000"]
 
 
-# --- delegation domains, the strong grant -------------------------------------
-
-
-def test_you_can_vouch_for_your_own_domain():
-    _user, _ws, c = _ctx()
-    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": ["dimagi.com"]})
-    assert r.status_code == 201
-    assert r.json()["app"]["delegation_domains"] == ["dimagi.com"]
-
-
-def test_you_cannot_vouch_for_a_domain_that_is_not_yours():
-    """The grant lets the holder act as ANY canopy user in the domain, so it is
-    bounded by the reach the owner already has."""
-    _user, _ws, c = _ctx()
-
-    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": ["example.com"]})
-
-    assert r.status_code == 422
-    assert "your own email domain" in r.content.decode()
-    assert not AppCredential.objects.filter(name="x").exists()
-
-
-def test_an_address_is_not_a_domain():
-    _user, _ws, c = _ctx()
-    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": ["jj@dimagi.com"]})
-    assert r.status_code == 422
+# --- delegation domains: the capability this page used to have ---------------
+# The tests that pinned its bounds ("you may vouch only for your own domain")
+# are gone with the capability, replaced by the refusal below and by
+# tests/test_contact_assertions.py, which covers what took its place.
 
 
 def test_no_domains_is_the_default_and_is_a_real_configuration():
@@ -263,95 +241,115 @@ def test_a_name_that_would_not_survive_a_url_is_refused():
     assert _connect(c, {"name": "my app!", "origins": [LABS]}).status_code == 422
 
 
-# --- canopy's own widget, in one act ------------------------------------------
+# --- canopy's own pages are just another connected site ----------------------
 
 
-def test_enabling_canopys_own_widget_needs_no_decisions(settings):
-    """Name, empty delegation list and the frame origin are all facts about
-    canopy, not choices. Asking produced the two ways this goes wrong: a name
-    that does not match `EMBED_SELF_APP` (nothing mounts, nothing says why) and
-    a delegation domain granted by reflex."""
-    settings.EMBED_SELF_APP = "canopy-web"
+def test_ticking_the_box_makes_canopy_show_that_apps_panel():
+    """No special name, no setting. `EMBED_SELF_APP` made canopy a special case
+    twice: the page needed its own section, and a name that did not match the
+    setting produced no widget and no error on either side."""
     _user, ws, c = _ctx()
     _agent(ws, "echo")
 
-    r = c.post("/api/workspaces/w1/connected-apps/enable-self",
-               data={"agents": ["echo"]}, content_type="application/json")
+    body = _connect(c, {"name": "canopy-itself", "origins": [LABS],
+                        "agents": ["echo"], "show_on_canopy_pages": True}).json()
 
-    assert r.status_code == 200, r.content
-    app = AppCredential.objects.get(name="canopy-web")
-    assert app.allowed_delegation_domains == []
-    # The origin comes from the request, the one value certainly right.
-    assert app.frame_origins() == ["http://testserver"]
-    assert r.json()["is_self"] is True
-    # And the shell now serves, which is the whole point.
-    assert Client().get("/embed/chat?app=canopy-web").status_code == 200
+    assert body["app"]["shows_on_canopy_pages"] is True
+    assert AppCredential.objects.get(name="canopy-itself").show_on_canopy_pages
 
 
-def test_enabling_twice_adds_the_second_environment_rather_than_failing(settings):
-    settings.EMBED_SELF_APP = "canopy-web"
-    # The second call arrives on the real host; without this Django rejects it
-    # at ALLOWED_HOSTS and the test would pass or fail for the wrong reason.
-    settings.ALLOWED_HOSTS = [*settings.ALLOWED_HOSTS, "labs.connect.dimagi.com"]
+def test_ticking_it_also_adds_canopys_own_origin():
+    """The two are not independent: `frame-ancestors` is built from the URL
+    list, so a ticked app without canopy's origin is on by every visible
+    measure and dead in the browser."""
     _user, _ws, c = _ctx()
-    c.post("/api/workspaces/w1/connected-apps/enable-self",
-           data={}, content_type="application/json")
 
-    c.post("/api/workspaces/w1/connected-apps/enable-self",
-           data={}, content_type="application/json", HTTP_HOST="labs.connect.dimagi.com")
+    _connect(c, {"name": "x", "origins": [], "show_on_canopy_pages": True})
 
-    origins = AppCredential.objects.get(name="canopy-web").frame_origins()
-    assert origins == ["http://testserver", "http://labs.connect.dimagi.com"]
+    assert "http://testserver" in AppCredential.objects.get(name="x").frame_origins()
+    # And the shell serves, which is the only proof that matters.
+    assert Client().get("/embed/chat?app=x").status_code == 200
 
 
-def test_enabling_adopts_a_row_left_over_from_the_admin(settings):
-    """Otherwise the one credential that already exists is the one nobody can
-    edit."""
-    settings.EMBED_SELF_APP = "canopy-web"
+def test_only_one_app_may_show_there():
     _user, _ws, c = _ctx()
-    AppCredential.create_credential(name="canopy-web", domains=[], created_by=None)
+    _connect(c, {"name": "first", "origins": [LABS], "show_on_canopy_pages": True})
 
-    c.post("/api/workspaces/w1/connected-apps/enable-self",
-           data={}, content_type="application/json")
+    r = _connect(c, {"name": "second", "origins": [LABS], "show_on_canopy_pages": True})
 
-    assert AppCredential.objects.get(name="canopy-web").workspace_id == "w1"
-    assert len(c.get("/api/workspaces/w1/connected-apps").json()) == 1
-
-
-def test_a_deployment_that_does_not_offer_the_self_widget_says_so(settings):
-    settings.EMBED_SELF_APP = ""
-    _user, _ws, c = _ctx()
-    r = c.post("/api/workspaces/w1/connected-apps/enable-self",
-               data={}, content_type="application/json")
     assert r.status_code == 409
-    assert "EMBED_SELF_APP" in r.content.decode()
+    assert b"first" in r.content, "the refusal should name the app already using it"
 
 
-def test_enable_self_is_not_shadowed_by_the_by_id_route(settings):
-    """`enable-self` sits exactly where an app id goes.
+def test_it_can_be_turned_off_again():
+    _user, _ws, c = _ctx()
+    app_id = _connect(c, {"name": "x", "origins": [LABS],
+                          "show_on_canopy_pages": True}).json()["app"]["id"]
 
-    It WAS shadowed: Ninja does not narrow `app_id: int` to a numeric path
-    converter, so the by-id route matched the literal string first and the POST
-    came back 405 (`Allow: PATCH, DELETE`) — which reads as a missing feature,
-    not a routing bug. Asserting `resolve()` succeeds is not enough; it
-    succeeded, on the wrong view.
-    """
-    settings.EMBED_SELF_APP = "canopy-web"
+    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+                data={"show_on_canopy_pages": False}, content_type="application/json")
+
+    assert r.json()["shows_on_canopy_pages"] is False
+
+
+def test_the_widget_is_off_when_no_app_shows_there():
+    """Off is the default, and it stays the default: this mounts a chat panel
+    on every authenticated page, which no deployment should grow by surprise."""
+    user, _ws, c = _ctx()
+    _connect(c)
+
+    assert c.get("/api/embed/self").json()["enabled"] is False
+
+
+def test_the_widget_reports_the_app_that_shows_there():
+    _user, _ws, c = _ctx()
+    _connect(c, {"name": "x", "origins": [LABS], "show_on_canopy_pages": True})
+
+    body = c.get("/api/embed/self").json()
+
+    assert body == {"enabled": True, "app": "x", "agent": ""}
+
+
+def test_a_revoked_app_stops_showing_there():
+    _user, _ws, c = _ctx()
+    app_id = _connect(c, {"name": "x", "origins": [LABS],
+                          "show_on_canopy_pages": True}).json()["app"]["id"]
+
+    c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
+
+    assert c.get("/api/embed/self").json()["enabled"] is False
+
+
+# --- vouching for a domain is no longer something this page can do -----------
+
+
+def test_the_page_refuses_to_grant_a_delegation_domain():
+    """Replaced by signed assertions: a site vouches for its own contacts, in
+    its own namespace, which cannot reach canopy's user population at all."""
     _user, _ws, c = _ctx()
 
-    r = c.post("/api/workspaces/w1/connected-apps/enable-self",
-               data={}, content_type="application/json")
+    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": ["dimagi.com"]})
 
-    assert r.status_code == 200, f"shadowed by the by-id route: {r.status_code}"
+    assert r.status_code == 422
+    assert b"signing key" in r.content, "the refusal should say what to do instead"
+    assert not AppCredential.objects.filter(name="x").exists()
 
 
-def test_only_an_owner_can_turn_it_on(settings):
-    settings.EMBED_SELF_APP = "canopy-web"
-    _user, _ws, c = _ctx(role=WorkspaceMembership.EDITOR)
-    r = c.post("/api/workspaces/w1/connected-apps/enable-self",
-               data={}, content_type="application/json")
-    assert r.status_code == 403
-    assert not AppCredential.objects.exists()
+def test_an_empty_domain_list_is_still_accepted():
+    """So an older client that sends the key keeps working."""
+    _user, _ws, c = _ctx()
+    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": []})
+    assert r.status_code == 201
+
+
+def test_an_existing_grant_is_left_alone():
+    """ace-web's credential predates this page and is managed elsewhere;
+    removing the capability here must not revoke what it already has."""
+    _user, _ws, _c = _ctx()
+    _raw, legacy = AppCredential.create_credential(
+        name="ace-web", domains=["dimagi.com"], created_by=None
+    )
+    assert legacy.allowed_delegation_domains == ["dimagi.com"]
 
 
 # --- the service layer's own guard --------------------------------------------

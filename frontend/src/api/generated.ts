@@ -2801,31 +2801,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps/enable-self": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Turn on canopy's widget on canopy's own pages
-         * @description One act, because every input is a fact about canopy rather than a choice.
-         *
-         *     The origin is taken from THIS request, not from the body. It is the only
-         *     value that is certainly right — it is the address the person is looking at —
-         *     and taking it from the caller would let a form typo produce a connection
-         *     that silently never frames.
-         */
-        readonly post: operations["apps_tokens_connected_apps_api_enable_self_widget"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/workspaces/{slug}/connected-apps/{app_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -9488,8 +9463,8 @@ export interface components {
             readonly public_keys: readonly string[];
             /** Signs Assertions */
             readonly signs_assertions: boolean;
-            /** Is Self */
-            readonly is_self: boolean;
+            /** Shows On Canopy Pages */
+            readonly shows_on_canopy_pages: boolean;
             /** Created At */
             readonly created_at: string;
             /** Last Used At */
@@ -9513,11 +9488,6 @@ export interface components {
              */
             readonly origins: readonly string[];
             /**
-             * Delegation Domains
-             * @default []
-             */
-            readonly delegation_domains: readonly string[];
-            /**
              * Agents
              * @default []
              */
@@ -9527,14 +9497,16 @@ export interface components {
              * @default []
              */
             readonly public_keys: readonly string[];
-        };
-        /** EnableSelfIn */
-        readonly EnableSelfIn: {
             /**
-             * Agents
+             * Delegation Domains
              * @default []
              */
-            readonly agents: readonly string[];
+            readonly delegation_domains: readonly string[];
+            /**
+             * Show On Canopy Pages
+             * @default false
+             */
+            readonly show_on_canopy_pages: boolean;
         };
         /** UpdateIn */
         readonly UpdateIn: {
@@ -9546,6 +9518,8 @@ export interface components {
             readonly agents?: readonly string[] | null;
             /** Public Keys */
             readonly public_keys?: readonly string[] | null;
+            /** Show On Canopy Pages */
+            readonly show_on_canopy_pages?: boolean | null;
         };
         /** SecretOut */
         readonly SecretOut: {
@@ -15629,32 +15603,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectedAppCreatedOut"];
-                };
-            };
-        };
-    };
-    readonly apps_tokens_connected_apps_api_enable_self_widget: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["EnableSelfIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
                 };
             };
         };
