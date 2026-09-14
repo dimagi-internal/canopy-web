@@ -45,6 +45,15 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
+    "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
+    # The contact surface. A contact token deliberately produces no
+    # `request.user`, so every one of these would bounce to a login page that
+    # a person with no canopy account can never complete. Listed as a PREFIX
+    # and nothing else is: this is the entire set of operations a contact may
+    # reach, and adding one is a deliberate act of putting it under /api/contact/.
+    # The routes self-enforce via `contact_auth`, which requires the principal
+    # this middleware cannot see.
+    "/api/contact/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a

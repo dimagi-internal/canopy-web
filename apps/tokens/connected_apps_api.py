@@ -34,6 +34,7 @@ _STATUS = {
     "bad_name": 422,
     "bad_origin": 422,
     "bad_domain": 422,
+    "bad_key": 422,
     "unknown_agent": 422,
 }
 
@@ -55,6 +56,11 @@ class ConnectedAppOut(Schema):
     origins: list[str]
     delegation_domains: list[str]
     agents: list[ConnectedAgentOut]
+    #: Registered PEM public keys. Returned in full — they are public by
+    #: definition, and showing only a count would leave an operator unable to
+    #: tell which key they are about to retire.
+    public_keys: list[str]
+    signs_assertions: bool
     is_self: bool
     created_at: str
     last_used_at: str | None
@@ -76,12 +82,14 @@ class ConnectIn(Schema):
     origins: list[str] = []
     delegation_domains: list[str] = []
     agents: list[str] = []
+    public_keys: list[str] = []
 
 
 class UpdateIn(Schema):
     origins: list[str] | None = None
     delegation_domains: list[str] | None = None
     agents: list[str] | None = None
+    public_keys: list[str] | None = None
 
 
 class EnableSelfIn(Schema):
@@ -97,6 +105,8 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         # in force, which is the confusion `frame_origins()` exists to prevent.
         origins=app.frame_origins(),
         delegation_domains=list(app.allowed_delegation_domains or []),
+        public_keys=list(app.public_keys or []),
+        signs_assertions=bool(app.public_keys),
         agents=[
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
@@ -140,7 +150,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
         raw, app = embed_apps.register(
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, domains=payload.delegation_domains,
-            agents=payload.agents,
+            agents=payload.agents, public_keys=payload.public_keys,
         )
     except embed_apps.EmbedAppError as exc:
         audit(event=EmbedAuditLog.CONNECT, request=request, app_name=payload.name,
@@ -192,6 +202,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
         embed_apps.update(
             user=request.user, app=app, origins=payload.origins,
             domains=payload.delegation_domains, agents=payload.agents,
+            public_keys=payload.public_keys,
         )
     except embed_apps.EmbedAppError as exc:
         audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,

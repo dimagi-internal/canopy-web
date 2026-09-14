@@ -236,6 +236,21 @@ class AppCredential(models.Model):
     #: XFO-exempt page with a permissive or malformed `frame-ancestors` is
     #: frameable by anyone.
     allowed_frame_origins = models.JSONField(default=list, blank=True)
+    #: PEM public keys this app signs its visitor assertions with.
+    #:
+    #: A LIST because rotation has to be possible without a flag day: publish
+    #: the new key alongside the old, switch the signer, then drop the old one.
+    #: A single column would make every rotation an outage.
+    #:
+    #: Public keys only, and `assertions.ALLOWED_ALGORITHMS` is asymmetric-only
+    #: for the reason that matters: with a symmetric algorithm the verification
+    #: key IS the signing key, so a column called "public" would hold the
+    #: ability to forge.
+    #:
+    #: Empty means this app cannot make signed assertions — it is not a
+    #: degraded mode, it is the absence of the capability, and
+    #: `assertions.verify` refuses rather than falling back to anything weaker.
+    public_keys = models.JSONField(default=list, blank=True)
     provision_workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.SET_NULL,
@@ -583,3 +598,76 @@ class EmbedAuditLog(models.Model):
     def __str__(self):
         status = "ok" if self.ok else f"REFUSED({self.reason})"
         return f"[{status}] {self.event} {self.app_name} -> {self.subject_email}"
+
+
+class ContactToken(models.Model):
+    """A bearer for a CONTACT — someone with no canopy account at all.
+
+    **Deliberately a separate model from `DelegatedToken`, not a nullable user
+    on it.** A `DelegatedToken` resolves to a `User`, and every surface
+    downstream applies that user's ACL. A contact has no ACL to apply, so a
+    contact arriving through the same lookup would not be a smaller permission
+    — it would be an unspecified one, and the code that received it was written
+    for principals that have memberships.
+
+    That is not hypothetical here. `Agent.workspace` was nullable once and six
+    separate predicates independently grew a `workspace_id IS NULL` leg meaning
+    *allow*, because a row with no tenant met code written for rows that have
+    one (ARCHITECTURE.md). Two types cannot make that mistake: nothing that
+    asks for a user can be handed a contact by accident.
+
+    Same shape as `DelegatedToken` otherwise, and for the same reasons: opaque
+    and hashed at rest so the table is not a credential store, short-lived, and
+    resolvable only while both the app and the person behind it are in good
+    standing.
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="contact_tokens")
+    contact = models.ForeignKey(
+        "contacts.Contact", on_delete=models.CASCADE, related_name="tokens",
+    )
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "contact_tokens"
+        ordering = ["-created_at"]
+
+    @classmethod
+    def issue(cls, *, app, contact, ttl_seconds):
+        from django.utils import timezone
+
+        raw = secrets.token_urlsafe(32)
+        token = cls.objects.create(
+            app=app, contact=contact,
+            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
+        )
+        return raw, token
+
+    @classmethod
+    def lookup(cls, raw):
+        """Resolve a raw contact token, or None.
+
+        Three independent reasons to refuse, all in the one query so no caller
+        can implement two of them: the token expired, the site was
+        disconnected, or this particular person was blocked. The third is the
+        reason blocking exists — refusing one visitor without disconnecting a
+        whole site — and putting it here means it takes effect on the next
+        request rather than whenever a view remembers to check.
+        """
+        from django.utils import timezone
+
+        if not raw:
+            return None
+        return (
+            cls.objects.select_related("contact", "contact__workspace", "app")
+            .filter(
+                token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+                expires_at__gt=timezone.now(),
+                app__revoked_at__isnull=True,
+                contact__blocked_at__isnull=True,
+            )
+            .first()
+        )

@@ -159,6 +159,45 @@ def _clean_domains(domains, *, actor) -> list[str]:
     return cleaned
 
 
+def _clean_keys(keys) -> list[str]:
+    """Accept only PEM PUBLIC keys, and say so when something else is pasted.
+
+    Two mistakes are worth catching at the door rather than at the next
+    assertion. Pasting a PRIVATE key is the dangerous one — it would work, and
+    the site's signing key would then be sitting in canopy's database, undoing
+    the entire reason for using signatures. Pasting something unparseable is
+    merely useless, but it fails at a moment far from the paste: assertions
+    stop verifying and nothing points back here.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    if not isinstance(keys, list):
+        raise EmbedAppError("bad_key", "expected a list of PEM public keys")
+    cleaned: list[str] = []
+    for raw in keys:
+        pem = (raw or "").strip() if isinstance(raw, str) else ""
+        if not pem:
+            continue
+        if "PRIVATE KEY" in pem:
+            raise EmbedAppError(
+                "bad_key",
+                "that is a PRIVATE key. Keep it on your own server and paste the "
+                "PUBLIC half here — canopy holding your signing key would undo "
+                "the whole point of signing.",
+            )
+        try:
+            serialization.load_pem_public_key(pem.encode())
+        except Exception as exc:  # noqa: BLE001
+            raise EmbedAppError(
+                "bad_key",
+                f"could not read that as a PEM public key ({exc}). It should start "
+                "with -----BEGIN PUBLIC KEY-----.",
+            ) from exc
+        if pem not in cleaned:
+            cleaned.append(pem)
+    return cleaned
+
+
 def set_agents(app: AppCredential, slugs: list[str]) -> None:
     """Replace the agents this app may offer.
 
@@ -188,7 +227,8 @@ def set_agents(app: AppCredential, slugs: list[str]) -> None:
 
 
 def register(*, user, workspace_slug: str, name: str, origins: list[str],
-             domains: list[str] | None = None, agents: list[str] | None = None
+             domains: list[str] | None = None, agents: list[str] | None = None,
+             public_keys: list[str] | None = None,
              ) -> tuple[str, AppCredential]:
     """Register an app and return `(raw secret, row)`. The secret is shown once."""
     require_owner(user, workspace_slug)
@@ -209,18 +249,21 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
 
     cleaned_origins = _clean_origins(origins)
     cleaned_domains = _clean_domains(domains or [], actor=user)
+    cleaned_keys = _clean_keys(public_keys or [])
 
     raw, app = AppCredential.create_credential(
         name=name, domains=cleaned_domains, created_by=user,
     )
     app.workspace_id = workspace_slug
     app.allowed_frame_origins = cleaned_origins
-    app.save(update_fields=["workspace", "allowed_frame_origins"])
+    app.public_keys = cleaned_keys
+    app.save(update_fields=["workspace", "allowed_frame_origins", "public_keys"])
     set_agents(app, agents or [])
     return raw, app
 
 
-def update(*, user, app: AppCredential, origins=None, domains=None, agents=None) -> AppCredential:
+def update(*, user, app: AppCredential, origins=None, domains=None, agents=None,
+           public_keys=None) -> AppCredential:
     """Change what an already-registered app may do. Every field is optional."""
     fields: list[str] = []
     if origins is not None:
@@ -229,6 +272,9 @@ def update(*, user, app: AppCredential, origins=None, domains=None, agents=None)
     if domains is not None:
         app.allowed_delegation_domains = _clean_domains(domains, actor=user)
         fields.append("allowed_delegation_domains")
+    if public_keys is not None:
+        app.public_keys = _clean_keys(public_keys)
+        fields.append("public_keys")
     if fields:
         app.save(update_fields=fields)
     if agents is not None:

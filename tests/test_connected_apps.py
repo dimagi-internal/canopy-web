@@ -361,3 +361,76 @@ def test_owned_workspace_slugs_excludes_editor_memberships():
     _user, ws, _c = _ctx()
     editor = _member(ws, "ed@dimagi.com", WorkspaceMembership.EDITOR)
     assert embed_apps.owned_workspace_slugs(editor) == set()
+
+
+# --- signing keys -------------------------------------------------------------
+
+
+def _keypair():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    priv = ed25519.Ed25519PrivateKey.generate()
+    return (
+        priv.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode(),
+        priv.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode(),
+    )
+
+
+def test_a_site_can_register_a_signing_key():
+    _user, _ws, c = _ctx()
+    _priv, pub = _keypair()
+
+    body = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub]}).json()
+
+    assert body["app"]["signs_assertions"] is True
+    # Stored normalised (PEM keeps a trailing newline; the stored form strips
+    # it), so compare like for like rather than pinning the incidental.
+    assert AppCredential.objects.get(name="x").public_keys == [pub.strip()]
+
+
+def test_pasting_a_PRIVATE_key_is_refused_loudly():
+    """The dangerous mistake, because it would WORK — and the site's signing
+    key would then be sitting in canopy's database, undoing the whole reason
+    for using signatures."""
+    _user, _ws, c = _ctx()
+    priv, _pub = _keypair()
+
+    r = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [priv]})
+
+    assert r.status_code == 422
+    assert b"PRIVATE key" in r.content
+    assert not AppCredential.objects.filter(name="x").exists()
+
+
+def test_an_unreadable_key_is_refused_at_the_paste():
+    """Otherwise it fails far from here — assertions stop verifying and nothing
+    points back to this field."""
+    _user, _ws, c = _ctx()
+    r = _connect(c, {"name": "x", "origins": [LABS], "public_keys": ["hunter2"]})
+    assert r.status_code == 422
+    assert b"PEM public key" in r.content
+
+
+def test_keys_can_be_rotated_by_editing():
+    _user, _ws, c = _ctx()
+    _p1, pub1 = _keypair()
+    _p2, pub2 = _keypair()
+    app_id = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub1]}).json()["app"]["id"]
+
+    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+                data={"public_keys": [pub1, pub2]}, content_type="application/json")
+
+    assert len(r.json()["public_keys"]) == 2
+
+
+def test_a_site_with_no_key_says_so():
+    _user, _ws, c = _ctx()
+    assert _connect(c).json()["app"]["signs_assertions"] is False

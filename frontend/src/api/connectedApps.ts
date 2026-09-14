@@ -29,7 +29,13 @@ export async function listConnectedApps(slug: string): Promise<ConnectedApp[]> {
 
 export async function connectApp(
   slug: string,
-  body: { name: string; origins: string[]; delegation_domains: string[]; agents: string[] },
+  body: {
+    name: string
+    origins: string[]
+    delegation_domains: string[]
+    agents: string[]
+    public_keys: string[]
+  },
 ): Promise<ConnectedAppCreated> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
     params: { path: { slug } },
@@ -41,7 +47,12 @@ export async function connectApp(
 export async function updateConnectedApp(
   slug: string,
   appId: number,
-  body: { origins?: string[]; delegation_domains?: string[]; agents?: string[] },
+  body: {
+    origins?: string[]
+    delegation_domains?: string[]
+    agents?: string[]
+    public_keys?: string[]
+  },
 ): Promise<ConnectedApp> {
   const res = await apiV2.PATCH('/api/workspaces/{slug}/connected-apps/{app_id}', {
     params: { path: { slug, app_id: appId } },

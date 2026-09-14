@@ -36,6 +36,21 @@ export function parseOrigins(raw: string): string[] {
     .filter(Boolean)
 }
 
+/** Split a textarea of PEM blocks into a list.
+ *
+ *  Several keys is the normal state during a rotation, not an edge case: you
+ *  publish the new one beside the old, switch the signer, then remove the old.
+ *  Splitting on the END marker rather than on blank lines keeps a key whose
+ *  base64 body happens to contain one. */
+export function parseKeys(raw: string): string[] {
+  const END = '-----END PUBLIC KEY-----'
+  return raw
+    .split(END)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.includes('BEGIN'))
+    .map((chunk) => `${chunk}\n${END}`)
+}
+
 /** The origin of the page you are on, which is the value the self-widget needs
  *  and the likeliest thing someone wants for a first connection. */
 export function currentOrigin(): string {
@@ -136,6 +151,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [origins, setOrigins] = useState('')
   const [vouch, setVouch] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
+  const [signingKey, setSigningKey] = useState('')
 
   const reload = useCallback(async () => {
     if (!slug) return
@@ -186,11 +202,13 @@ export function ConnectedAppsPage(): JSX.Element | null {
         // ("does your site sign users in?") is the one being asked.
         delegation_domains: vouch && myDomain ? [myDomain] : [],
         agents: picked,
+        public_keys: parseKeys(signingKey),
       })
       setSecret(created.secret)
       setName('')
       setOrigins('')
       setPicked([])
+      setSigningKey('')
     })
   }
 
@@ -351,6 +369,26 @@ export function ConnectedAppsPage(): JSX.Element | null {
             <span className="text-xs text-foreground-secondary">Agents it may offer</span>
             <AgentPicker agents={agents} selected={picked} onChange={setPicked} />
           </div>
+
+          <label className="block space-y-1">
+            <span className="text-xs text-foreground-secondary">
+              Signing key (optional)
+            </span>
+            <textarea
+              value={signingKey}
+              onChange={(e) => setSigningKey(e.target.value)}
+              rows={4}
+              placeholder={'-----BEGIN PUBLIC KEY-----\n…\n-----END PUBLIC KEY-----'}
+              className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
+            />
+            <span className="block text-xs text-muted-foreground">
+              The <strong>public</strong> half only — keep the private key on your own
+              server. With one registered, your site vouches for each visitor by signing
+              a short-lived statement about them instead of holding a shared secret that
+              could speak for anyone. Paste several during a rotation; all of them
+              verify until you remove the old one.
+            </span>
+          </label>
 
           {/* Asked as a question about the site, not as a domain field. The
               server only ever grants the acting owner's own domain and refuses

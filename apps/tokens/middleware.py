@@ -6,6 +6,11 @@ the resolved user onto the request. Downstream middleware
 (`LoginRequiredMiddleware`) + Ninja's `DjangoSessionAuth` then see a
 real authenticated user, identical to a session-cookie flow.
 
+Three token types resolve here, and only two of them produce a `request.user`.
+A `ContactToken` names somebody with no canopy account — it sets
+`request.contact` and deliberately leaves the request anonymous, so nothing
+written for users can be handed one by accident. See `ContactToken`'s docstring.
+
 CSRF: Bearer-authenticated requests are stateless and not vulnerable to
 cross-site forgery, but Django's `CsrfViewMiddleware` doesn't know that
 — it only short-circuits on session cookies. We set
@@ -47,7 +52,7 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
-        from apps.tokens.models import DelegatedToken, PersonalToken
+        from apps.tokens.models import ContactToken, DelegatedToken, PersonalToken
 
         if not already_signed_in:
             token = PersonalToken.lookup(raw)
@@ -56,6 +61,18 @@ class BearerTokenAuthMiddleware:
                 request.user = token.user
                 request._dont_enforce_csrf_checks = True
                 return
+
+        # A CONTACT token first, because it is the one that must never be
+        # mistaken for a user. It resolves to no `request.user` at all, so
+        # `LoginRequiredMiddleware` refuses every path except the ones
+        # explicitly opened to contacts — the surface fails closed by default
+        # rather than by each view remembering to check.
+        ctok = ContactToken.lookup(raw)
+        if ctok is not None:
+            request.contact = ctok.contact
+            request.delegated_app = ctok.app
+            request._dont_enforce_csrf_checks = True
+            return
 
         dtok = DelegatedToken.lookup(raw)
         if dtok is None or not dtok.user.is_active:
