@@ -46,21 +46,58 @@ from django.db import models
 class Contact(models.Model):
     """One person, as known to one workspace."""
 
-    #: Ordered weakest to strongest — see `email_auth.grade_of`. Stored as the
-    #: grade rather than the raw header so a routing rule can compare tiers
-    #: without re-parsing, and kept as an ordered list so "at least DKIM" is
-    #: expressible.
+    #: How well this person's identity was established, on ONE ladder shared by
+    #: every channel — see `email_auth.grade_of` for the mail side.
+    #:
+    #: A person can reach an agent by email or through an embedded widget, and
+    #: both arrive as an ASSERTION by a third party: a mail server saying who
+    #: sent a message, a host saying who its visitor is. They are the same kind
+    #: of statement, so they are graded on the same scale rather than getting a
+    #: second notion of trust that rules would then have to know about.
+    #:
+    #: The names are channel-specific labels on shared TIERS; `TIER_*` below
+    #: are the tier-level constants a routing rule should use, so a rule reads
+    #: "at least a signed assertion" instead of naming somebody else's channel.
     AUTH_NONE = "none"
+    # Tier 1 — something authorised the delivery, but says nothing verifiable
+    # about WHICH person.
     AUTH_SPF = "spf"
+    AUTH_APP_SECRET = "app_secret"
+    # Tier 2 — a signature covers this specific message or visitor.
     AUTH_DKIM = "dkim"
+    AUTH_APP_SIGNED = "app_signed"
+    # Tier 3 — the signature is also tied to the identity the reader sees.
     AUTH_DMARC = "dmarc"
+    AUTH_APP_SIGNED_ORIGIN = "app_signed_origin"
     AUTH_CHOICES = [
         (AUTH_NONE, "Unverified"),
         (AUTH_SPF, "SPF only (envelope sender)"),
+        (AUTH_APP_SECRET, "App credential (proves the app, not the person)"),
         (AUTH_DKIM, "DKIM signed"),
+        (AUTH_APP_SIGNED, "Signed assertion from the app"),
         (AUTH_DMARC, "DMARC aligned"),
+        (AUTH_APP_SIGNED_ORIGIN, "Signed assertion from a framed origin"),
     ]
-    AUTH_RANK = {AUTH_NONE: 0, AUTH_SPF: 1, AUTH_DKIM: 2, AUTH_DMARC: 3}
+    AUTH_RANK = {
+        AUTH_NONE: 0,
+        AUTH_SPF: 1, AUTH_APP_SECRET: 1,
+        AUTH_DKIM: 2, AUTH_APP_SIGNED: 2,
+        AUTH_DMARC: 3, AUTH_APP_SIGNED_ORIGIN: 3,
+    }
+    #: Tier-level aliases. Prefer these in a rule: `auth_at_least(TIER_SIGNED)`
+    #: keeps working when a channel adds a label, where naming `AUTH_DKIM`
+    #: quietly means "or anything an unrelated channel happens to rank 2".
+    TIER_ASSERTED = AUTH_SPF          # 1
+    TIER_SIGNED = AUTH_DKIM           # 2
+    TIER_SIGNED_ALIGNED = AUTH_DMARC  # 3
+
+    #: How canopy came to know this person.
+    SOURCE_EMAIL = "email"
+    SOURCE_EMBED = "embed"
+    SOURCE_CHOICES = [
+        (SOURCE_EMAIL, "Wrote to an agent's inbox"),
+        (SOURCE_EMBED, "Used an agent embedded in a connected site"),
+    ]
 
     workspace = models.ForeignKey(
         "workspaces.Workspace",
@@ -70,10 +107,44 @@ class Contact(models.Model):
         "two workspaces has two contacts, deliberately — merging them would "
         "leak one tenant's dealings into another.",
     )
-    email = models.EmailField(
-        help_text="Lowercased. The identity as ASSERTED — see `auth_result` for "
-        "whether the sending domain backed it up.",
+    source = models.CharField(
+        max_length=8, choices=SOURCE_CHOICES, default=SOURCE_EMAIL,
+        help_text="Which channel this person arrived through. Not cosmetic: it "
+        "says which identity column is the real key, and therefore what a "
+        "duplicate would even mean.",
     )
+    email = models.EmailField(
+        blank=True, default="",
+        help_text="Lowercased. The identity as ASSERTED — see `auth_result` for "
+        "how well it was backed up. BLANK is normal for a widget visitor: a "
+        "host identifies its people by its own id and may never know an "
+        "address, and demanding one would have forced a fake. On an embed "
+        "contact this is a DESCRIPTION rather than a key: it is unique only "
+        "where the email channel established it.",
+    )
+
+    #: The app that vouched for this person, for a contact that arrived through
+    #: an embedded widget. Null for email contacts.
+    #:
+    #: `PROTECT` rather than `CASCADE`: disconnecting a site must not delete the
+    #: record of everyone it introduced. That is the same reasoning the audit
+    #: log uses — a trail that vanishes with its subject is not a trail — and
+    #: the deliberate consequence is that a site with contacts cannot be hard
+    #: deleted, only revoked, which is what `Disconnect` already does.
+    app = models.ForeignKey(
+        "tokens.AppCredential",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="contacts",
+    )
+    #: The host's OWN id for this person, opaque to canopy.
+    #:
+    #: Scoped by `app`, so it cannot collide with another host's ids or with
+    #: canopy's users. That namespace isolation is why a host vouching for its
+    #: own contacts is a strictly smaller grant than one asserting email
+    #: addresses, which reach into canopy's user population.
+    external_id = models.CharField(max_length=200, blank=True, default="")
     display_name = models.CharField(max_length=200, blank=True, default="")
 
     user = models.ForeignKey(
@@ -90,14 +161,14 @@ class Contact(models.Model):
 
     # --- what the mail server said ------------------------------------------
     auth_result = models.CharField(
-        max_length=8, choices=AUTH_CHOICES, default=AUTH_NONE,
+        max_length=20, choices=AUTH_CHOICES, default=AUTH_NONE,
         help_text="The BEST grade seen from this address so far. Best rather "
         "than latest: one forwarded message that breaks SPF should not "
         "downgrade a correspondent, and a rule asking 'has this domain ever "
         "proved itself' wants the high-water mark.",
     )
     last_auth_result = models.CharField(
-        max_length=8, choices=AUTH_CHOICES, default=AUTH_NONE,
+        max_length=20, choices=AUTH_CHOICES, default=AUTH_NONE,
         help_text="The grade on the most recent message. Kept beside the best "
         "one because a DROP is the interesting signal — a correspondent who "
         "always passed DMARC and suddenly does not is worth noticing.",
@@ -121,29 +192,90 @@ class Contact(models.Model):
         "nothing here may be the thing that grants.",
     )
 
+    #: Set to stop this person reaching an agent at all.
+    #:
+    #: A contact is the one principal an outsider can cause canopy to create —
+    #: an inbound email or a host assertion is enough — so there has to be a way
+    #: to say no to a specific person without disconnecting the whole site or
+    #: closing the mailbox. Blocking grants nothing back either: it is a refusal
+    #: at the door, checked wherever a contact would otherwise be acted on.
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    blocked_reason = models.CharField(max_length=200, blank=True, default="")
+
     first_seen_at = models.DateTimeField(auto_now_add=True)
     last_seen_at = models.DateTimeField(auto_now=True)
     message_count = models.PositiveIntegerField(
-        default=0, help_text="Inbound messages attributed to this contact.",
+        default=0, help_text="Interactions attributed to this contact — inbound "
+        "messages, and widget conversations started.",
     )
 
     class Meta:
         constraints = [
+            # An address is unique only where it IS the identity, which is the
+            # email channel. Two reasons, and the second is the one that bit:
+            # every address-less widget contact would otherwise collide on the
+            # empty string; and a widget contact carrying a host-asserted
+            # address would collide with the real email contact for that
+            # person, so recording what the host claimed would be impossible
+            # exactly when it is most interesting.
+            #
+            # A widget contact's `email` is therefore a DESCRIPTION, not a key
+            # — ungraded, host-supplied, and matching on it is precisely the
+            # believing-the-assertion mistake the grade exists to prevent.
             models.UniqueConstraint(
-                fields=["workspace", "email"], name="uniq_contact_per_workspace_email",
+                fields=["workspace", "email"],
+                condition=~models.Q(email="") & models.Q(source="email"),
+                name="uniq_contact_per_workspace_email",
+            ),
+            # The host's own namespace. Scoped by app, so two sites may use the
+            # same id for different people without meeting.
+            models.UniqueConstraint(
+                fields=["workspace", "app", "external_id"],
+                condition=~models.Q(external_id=""),
+                name="uniq_contact_per_app_external_id",
             ),
         ]
-        indexes = [models.Index(fields=["workspace", "last_seen_at"])]
+        indexes = [
+            models.Index(fields=["workspace", "last_seen_at"]),
+            models.Index(fields=["app", "external_id"]),
+        ]
         ordering = ["-last_seen_at"]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.email} @{self.workspace_id}"
+        return f"{self.identity} @{self.workspace_id}"
+
+    @property
+    def identity(self) -> str:
+        """Whatever canopy actually has to go on, for logs and display.
+
+        An email contact has an address; a widget contact may only have the
+        host's id. Falling back rather than showing a blank keeps a row
+        identifiable in an audit view, which is where it matters most.
+        """
+        # Keyed on SOURCE, not on which column happens to be populated. An
+        # embed contact may carry a host-asserted address, and showing that as
+        # its identity would present an ungraded claim as though it were the
+        # thing canopy matched on.
+        if self.source == self.SOURCE_EMBED and self.external_id:
+            return f"{self.app.name if self.app_id else '?'}:{self.external_id}"
+        if self.email:
+            return self.email
+        return f"contact-{self.pk}"
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.blocked_at is not None
 
     def auth_at_least(self, grade: str) -> bool:
-        """Has this contact ever authenticated at `grade` or better?
+        """Has this contact ever authenticated at `grade`'s tier or better?
 
         The comparison a routing rule wants. Reads the ladder off `AUTH_RANK`
         rather than spelling out a set per call site, so inserting a tier does
         not silently widen a rule that happened to enumerate its members.
+
+        `grade` may be any label; only its TIER is compared, which is what lets
+        one rule serve both channels. Prefer the `TIER_*` aliases at a call
+        site — naming `AUTH_DKIM` reads as an email rule and would surprise
+        whoever later finds it matching a widget visitor.
         """
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
