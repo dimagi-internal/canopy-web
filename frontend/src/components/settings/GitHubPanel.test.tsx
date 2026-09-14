@@ -45,6 +45,19 @@ function conn(over: Record<string, unknown> = {}) {
   }
 }
 
+/**
+ * Long enough to cover the panel's 1.5s re-check of an empty installation list.
+ *
+ * REAL timers on purpose. These two tests used `vi.useFakeTimers()` plus
+ * `advanceTimersByTimeAsync`, which was flaky: the retry is scheduled from
+ * inside a promise callback, so whether the timer exists yet depends on
+ * microtask flush order relative to the advance — it passed alone and in most
+ * full runs, and failed intermittently under load. A test that fails once in
+ * five runs is worse than a slow one, and it also makes every OTHER failure in
+ * the suite suspect. ~1.6s twice is the price.
+ */
+const WAIT = { timeout: 4000 }
+
 function mount(search = '') {
   return render(
     <MemoryRouter initialEntries={[`/settings${search}`]}>
@@ -91,21 +104,17 @@ describe('GitHubPanel', () => {
     // so `connected: true` with an empty installation list means a valid token
     // that can reach nothing. Measured on labs 2026-09-13: the panel said
     // "Connected as @jjackson" while nothing could be pushed.
-    vi.useFakeTimers()
-    try {
-      asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
-      // Empty BOTH times — so this is a settled answer, not the post-install
-      // lag the re-check exists for.
-      instMock.mockResolvedValue([])
-      mount()
-      await vi.advanceTimersByTimeAsync(1600)
-      expect(screen.getByText(/no repository access yet/i)).toBeTruthy()
-      expect(screen.getByText(/Choose repositories/)).toBeTruthy()
-      // And it must NOT read as finished.
-      expect(screen.queryByRole('button', { name: /^disconnect$/i })).toBeNull()
-    } finally {
-      vi.useRealTimers()
-    }
+    asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+    // Empty BOTH times — a settled answer, not the post-install lag the
+    // re-check exists for.
+    instMock.mockResolvedValue([])
+    mount()
+    // Real timers with a generous find, deliberately: see the note at the
+    // bottom of this file on why fake timers were removed here.
+    expect(await screen.findByText(/no repository access yet/i, undefined, WAIT)).toBeTruthy()
+    expect(screen.getByText(/Choose repositories/)).toBeTruthy()
+    // And it must NOT read as finished.
+    expect(screen.queryByRole('button', { name: /^disconnect$/i })).toBeNull()
   })
 
   it('names the REPOSITORIES, not just the account', async () => {
@@ -158,20 +167,16 @@ describe('GitHubPanel', () => {
     // from the install screen did not yet list the brand-new installation.
     // Believing that momentary empty answer shows an alarming state that is
     // not true.
-    vi.useFakeTimers()
-    try {
-      asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
-      instMock.mockResolvedValueOnce([]).mockResolvedValueOnce(ONE_INSTALL)
-      mount()
-      // Let the first read resolve. The warning must NOT be on screen yet.
-      await vi.advanceTimersByTimeAsync(0)
-      expect(screen.queryByText(/no repository access yet/i)).toBeNull()
-      await vi.advanceTimersByTimeAsync(1600)
-      expect(screen.getByText('jjackson/demo')).toBeTruthy()
-      expect(instMock).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.useRealTimers()
-    }
+    asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
+    instMock.mockResolvedValueOnce([]).mockResolvedValueOnce(ONE_INSTALL)
+    mount()
+    // The populated second read wins, and the warning never appears. Asserting
+    // the END state rather than trying to catch the intermediate one: the gap
+    // between the first resolve and the retry is exactly the timing this test
+    // must not depend on.
+    expect(await screen.findByText('jjackson/demo', undefined, WAIT)).toBeTruthy()
+    expect(screen.queryByText(/no repository access yet/i)).toBeNull()
+    expect(instMock).toHaveBeenCalledTimes(2)
   })
 
   it('does not ask GitHub for installations when there is no usable grant', async () => {
