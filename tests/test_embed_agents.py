@@ -123,7 +123,13 @@ def test_revoked_app_credential_offers_nothing():
     from django.utils import timezone
     AppCredential.objects.filter(pk=app.pk).update(revoked_at=timezone.now())
 
-    assert Client().get("/api/embed/agents", **headers).status_code == 403
+    # 401, not 403: a revoked app's live tokens no longer authenticate AT ALL
+    # (`DelegatedToken.lookup`), so the refusal now happens at the door and
+    # covers every bearer-authenticated surface rather than this one endpoint.
+    # It used to be 403 from `_acting_app`, which was the only place that
+    # re-checked — and that made the gap look closed while every other route
+    # kept serving the token for up to an hour.
+    assert Client().get("/api/embed/agents", **headers).status_code == 401
 
 
 def test_the_same_agent_may_be_offered_by_two_apps():

@@ -46,9 +46,12 @@ def _acting_app(request: HttpRequest):
     if app is None:
         raise HttpError(403, "this endpoint answers for an embedding app; present a delegated token")
     if app.revoked_at is not None:
-        # `AppCredential.lookup` already refuses a revoked credential at
-        # exchange, so this covers the window where a token outlives the
-        # revocation of the app that minted it.
+        # Defence in depth, and no longer the load-bearing check: since
+        # `DelegatedToken.lookup` filters on the app's revocation, a revoked
+        # app's token does not authenticate anywhere, so this is unreachable
+        # through the normal path. It was the ONLY place that re-checked, which
+        # is what made the gap look closed — every other bearer-authenticated
+        # route kept serving such a token for up to an hour.
         raise HttpError(403, "this embedding app's credential has been revoked")
     return app
 

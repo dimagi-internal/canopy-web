@@ -387,13 +387,27 @@ class DelegatedToken(models.Model):
 
     @classmethod
     def lookup(cls, raw):
+        """Resolve a raw delegated token, or None.
+
+        Checks the APP's revocation as well as the token's expiry. Without that
+        second clause, disconnecting a site did not disconnect it: revoking an
+        `AppCredential` stopped it minting anything new and 404'd its embed
+        shell, but every token it had already minted kept authenticating for up
+        to its full hour. An open widget carried on reading and writing as the
+        user, and the one endpoint that did check (`/api/embed/agents`, via
+        `_acting_app`) made the gap look closed.
+
+        Revocation is reached for when a secret has leaked. A control that
+        takes an hour to take effect is not the control the button promises.
+        """
         from django.utils import timezone
         if not raw:
             return None
         return (
             cls.objects.select_related("user", "app")
             .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(),
-                    expires_at__gt=timezone.now())
+                    expires_at__gt=timezone.now(),
+                    app__revoked_at__isnull=True)
             .first()
         )
 
