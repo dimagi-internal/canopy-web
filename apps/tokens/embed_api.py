@@ -24,10 +24,21 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.workspaces import services as wsvc
 
-from .models import AppCredential, DelegatedToken
+from .audit import record as audit
+from .models import AppCredential, DelegatedToken, EmbedAuditLog
+from .rate_limit import MintRateLimitError, check_mint_limit
 from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut
 
 embed_router = Router(auth=session_auth, tags=["embed"])
+
+#: How long a widget's delegated token lives.
+#:
+#: Fifteen minutes, not an hour. The client refetches when a token is within
+#: `REFRESH_SKEW_MS` (5 min) of expiring, so a shorter life costs one extra mint
+#: every ten minutes per open panel and nothing else — while cutting how long a
+#: token that leaks out of a browser stays usable. It cannot go much below this:
+#: at a TTL under the skew, every single call would refetch.
+TOKEN_TTL_SECONDS = 15 * 60
 
 
 def _acting_app(request: HttpRequest):
@@ -156,5 +167,18 @@ def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
     app = _self_app()
     if app is None:
         raise HttpError(404, "canopy-web does not offer the widget on its own pages")
-    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=3600)
+
+    # Cheaper to abuse than exchange in one specific way: it needs only a
+    # stolen session cookie rather than an app secret, and every call writes a
+    # `DelegatedToken` row. Keyed per user, who is who it mints for.
+    try:
+        check_mint_limit(request.user.pk)
+    except MintRateLimitError as exc:
+        audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
+              ok=False, reason="rate_limited")
+        raise HttpError(429, str(exc))
+
+    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS)
+    audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
+          detail=f"ttl={TOKEN_TTL_SECONDS}s")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat())

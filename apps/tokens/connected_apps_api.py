@@ -19,7 +19,8 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import embed_apps
-from .models import AppCredential
+from .audit import record as audit
+from .models import AppCredential, EmbedAuditLog
 
 connected_apps_router = Router(auth=session_auth, tags=["connected apps"])
 
@@ -142,7 +143,12 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             agents=payload.agents,
         )
     except embed_apps.EmbedAppError as exc:
+        audit(event=EmbedAuditLog.CONNECT, request=request, app_name=payload.name,
+              actor=request.user, ok=False, reason=exc.code)
         raise _refuse(exc)
+    audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
+          detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
+                 f"agents={payload.agents}")
     return Status(201, ConnectedAppCreatedOut(app=_out(app), secret=raw))
 
 
@@ -169,7 +175,11 @@ def enable_self_widget(request: HttpRequest, slug: str, payload: EnableSelfIn) -
             user=request.user, workspace_slug=slug, origin=origin, agents=payload.agents,
         )
     except embed_apps.EmbedAppError as exc:
+        audit(event=EmbedAuditLog.CONNECT, request=request, actor=request.user,
+              ok=False, reason=exc.code, detail="enable-self")
         raise _refuse(exc)
+    audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
+          detail=f"enable-self origin={origin} agents={payload.agents}")
     return _out(app)
 
 
@@ -184,8 +194,15 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
             domains=payload.delegation_domains, agents=payload.agents,
         )
     except embed_apps.EmbedAppError as exc:
+        audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
+              ok=False, reason=exc.code)
         raise _refuse(exc)
     app.refresh_from_db()
+    # What it is NOW, not what was asked for: a partial payload leaves the rest
+    # untouched, and the trail has to say what the app can actually do.
+    audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
+          detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
+                 f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
 
 
@@ -195,7 +212,9 @@ def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
     """The previous secret stops working immediately — that is the point of the
     button, since it is reached for when the old one has leaked."""
     app = _app_or_404(request, slug, app_id)
-    return SecretOut(secret=embed_apps.rotate(app))
+    secret = embed_apps.rotate(app)
+    audit(event=EmbedAuditLog.ROTATE, request=request, app=app, actor=request.user)
+    return SecretOut(secret=secret)
 
 
 @connected_apps_router.delete("/{slug}/connected-apps/{app_id}", response={204: None},
@@ -203,5 +222,7 @@ def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
 def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
     """Revoked rather than deleted: the row is the audit trail of what was once
     allowed to embed an agent, and its embed shell 404s from this moment."""
-    embed_apps.revoke(_app_or_404(request, slug, app_id))
+    app = _app_or_404(request, slug, app_id)
+    embed_apps.revoke(app)
+    audit(event=EmbedAuditLog.DISCONNECT, request=request, app=app, actor=request.user)
     return Status(204, None)

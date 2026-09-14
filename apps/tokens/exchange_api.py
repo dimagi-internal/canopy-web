@@ -18,6 +18,8 @@ from apps.common.auth_domains import allowed_email_domains
 from apps.workspaces import services as wsvc
 
 from .models import AppCredential, DelegatedToken
+from .audit import record as audit
+from .models import EmbedAuditLog
 from .rate_limit import ExchangeRateLimitError, check_exchange_limit
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,11 @@ def token_exchange(request, payload: TokenExchangeIn):
             "token-exchange rejected: invalid app credential (acting_as=%s, ip=%s)",
             payload.acting_as_email, request.META.get("REMOTE_ADDR"),
         )
+        # No app to attribute it to, which is itself the thing worth recording:
+        # a run of these is someone trying secrets against the endpoint.
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, ok=False,
+              reason="invalid_credential",
+              detail=f"asserted {payload.acting_as_email}")
         raise HttpError(401, "invalid app credential")
 
     # F2 (2026-07-26 security review): this endpoint is `auth=None` and, since
@@ -76,6 +83,8 @@ def token_exchange(request, payload: TokenExchangeIn):
             "token-exchange rejected: rate limit exceeded (app=%s, ip=%s)",
             app.name, request.META.get("REMOTE_ADDR"),
         )
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="rate_limited", detail=f"asserted {payload.acting_as_email}")
         raise HttpError(429, "token-exchange rate limit exceeded")
 
     email = payload.acting_as_email.strip().lower()
@@ -86,6 +95,8 @@ def token_exchange(request, payload: TokenExchangeIn):
             "token-exchange rejected: domain not allowed (app=%s, domain=%s, ip=%s)",
             app.name, domain, request.META.get("REMOTE_ADDR"),
         )
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="domain_not_allowed", detail=f"asserted {email}")
         raise HttpError(403, "delegation not allowed for this domain")
 
     ttl = max(TTL_MIN, min(int(payload.ttl_seconds or TTL_DEFAULT), TTL_MAX))
@@ -99,6 +110,8 @@ def token_exchange(request, payload: TokenExchangeIn):
             "token-exchange rejected: inactive account (app=%s, email=%s, ip=%s)",
             app.name, email, request.META.get("REMOTE_ADDR"),
         )
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
+              ok=False, reason="inactive_account")
         raise HttpError(403, "delegation not allowed for this account")
     # F6 (2026-07-26 security review): JIT user creation and provisioning are
     # one all-or-nothing write — a failure partway through must not leave a
@@ -139,4 +152,9 @@ def token_exchange(request, payload: TokenExchangeIn):
 
     AppCredential.objects.filter(pk=app.pk).update(last_used_at=timezone.now())
     raw_token, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl)
+    # THE row that matters: an app was believed about who someone is. Written
+    # after the token exists, so the log never claims an identity was handed
+    # over when the write that hands it over failed.
+    audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
+          detail=f"ttl={ttl}s" + (f" provisioned={workspace_slug}" if workspace_slug else ""))
     return {"token": raw_token, "expires_at": token.expires_at, "workspace": workspace_slug}
