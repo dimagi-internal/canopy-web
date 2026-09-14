@@ -39,39 +39,56 @@ class BearerTokenAuthMiddleware:
 
     @staticmethod
     def _authenticate(request: HttpRequest) -> None:
-        user = getattr(request, "user", None)
-        if user is not None and getattr(user, "is_authenticated", False):
-            return
-
         header = request.META.get("HTTP_AUTHORIZATION", "")
-        if not header.startswith("Bearer "):
-            return
-
-        raw = header[len("Bearer "):].strip()
+        raw = header[len("Bearer "):].strip() if header.startswith("Bearer ") else ""
         if not raw:
             return
 
-        from apps.tokens.models import PersonalToken
+        user = getattr(request, "user", None)
+        already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
-        token = PersonalToken.lookup(raw)
-        if token is not None:
-            PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
-            request.user = token.user
-            request._dont_enforce_csrf_checks = True
-            return
+        from apps.tokens.models import DelegatedToken, PersonalToken
 
-        from apps.tokens.models import DelegatedToken
+        if not already_signed_in:
+            token = PersonalToken.lookup(raw)
+            if token is not None:
+                PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
+                request.user = token.user
+                request._dont_enforce_csrf_checks = True
+                return
 
         dtok = DelegatedToken.lookup(raw)
-        if dtok is not None and dtok.user.is_active:
+        if dtok is None or not dtok.user.is_active:
+            return
+
+        # WHICH app is acting, for the surfaces whose answer depends on it
+        # (`/api/embed/agents`). Kept here rather than re-resolved per view so
+        # the app can only ever come from the token that authenticated the
+        # request — never from a path, query or body the caller controls, which
+        # is what stops one host reading another's agent allowlist. `None` on
+        # every other auth path: there is no app behind a plain browser
+        # request, and those surfaces must refuse rather than default.
+        #
+        # Stamped even when a SESSION already signed this request in, which is
+        # not a detail: canopy embedding its own widget is same-origin, so the
+        # browser attaches canopy's session cookie to the frame's XHRs. The
+        # early return this used to take meant the `Authorization` header was
+        # never read on exactly that path — `delegated_app` stayed None and
+        # `/api/embed/agents` answered 403 to the one deployment we shipped it
+        # for. Cross-origin hosts never saw it, because no cookie rides along.
+        request.delegated_app = dtok.app
+
+        # Identity stays with the session when there is one. The token was
+        # minted FOR that user by `/api/embed/token`, so they agree in practice;
+        # where they somehow did not, the person at the browser is the safer
+        # answer, and it is the one every other view on this request already saw.
+        if not already_signed_in:
             request.user = dtok.user
-            # WHICH app is acting, for the surfaces whose answer depends on it
-            # (`/api/embed/agents`). Kept here rather than re-resolved per view
-            # so the app can only ever come from the token that authenticated
-            # the request — never from a path, query or body the caller controls,
-            # which is what stops one host reading another's agent allowlist.
-            # `None` on every other auth path (session, PAT): there is no app
-            # behind a browser, and those surfaces must refuse rather than
-            # default to something.
-            request.delegated_app = dtok.app
-            request._dont_enforce_csrf_checks = True
+
+        # Safe with or without a session, and required with one: the frame
+        # authenticates by header and holds no CSRF cookie for canopy, so its
+        # writes (declaring page actions, posting a result) would 403 otherwise.
+        # The exemption is granted only against a VALID delegated token, and a
+        # cross-site attacker cannot set an `Authorization` header on a request
+        # the browser will send without a preflight canopy would refuse.
+        request._dont_enforce_csrf_checks = True
