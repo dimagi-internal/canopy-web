@@ -68,6 +68,32 @@ change set, deliberately — old code against the new schema is the cheaper
 order), so labs briefly carried an unused `GitHubConnection` table. That is the
 designed behaviour and worth knowing rather than rediscovering.
 
+**The ECS task-execution role was narrowed on 2026-09-13**, and that one is worth
+recording as a fix rather than a debt. `labs-jj-ecs-task-execution-role` carried the
+AWS-managed `SecretsManagerReadWrite` policy, which grants read **and write** on every
+secret in the account — so a container compromise in any of the five services reached all
+41 secrets plus the ability to overwrite them. An inline policy scoped to `labs-jj-*` was
+already there, which says someone intended scoping and the managed policy silently made it
+irrelevant.
+
+It is now `GetSecretValue` only, over exactly four prefixes — `labs-jj-*` (existing
+`SecretsManagerAccess`) plus `canopy-web/*`, `ace-web/*` and `labs/*` (new
+`AppPrefixedSecretsRead`). Write is gone entirely: an execution role has no business
+writing a secret.
+
+The ORDER matters if this is ever redone. All seven ACTIVE task-definition families share
+this one role, and `canopy-web/*` and `ace-web/*` were NOT covered by the pre-existing
+inline policy — so detaching the managed policy first would have stopped those containers
+starting on their next roll, silently, until someone deployed. Enumerate every
+`containerDefinitions[].secrets[].valueFrom` across all families, grant those prefixes,
+and only then detach.
+
+Verified by simulating `GetSecretValue` against all **41** distinct secret ARNs the active
+task definitions reference: all allowed. And the hole is genuinely closed — an unrelated
+secret and a `PutSecretValue` on a needed one both return `implicitDeny`. Spot-checking
+four prefixes would not have been evidence; the whole point is that a missed prefix fails
+only at the next container start.
+
 **Four of these cannot be resource-scoped** and must be granted on `*`:
 `DescribeTargetGroups`, `DescribeStackDriftDetectionStatus`, `CreateSecret` and
 `TagResource`. The first two were written stack-scoped, silently denied, and
