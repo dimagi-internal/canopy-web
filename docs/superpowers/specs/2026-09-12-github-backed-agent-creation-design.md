@@ -1,11 +1,17 @@
 # GitHub-backed agent creation — "create agent" means a real repo, from a browser
 
 **Date:** 2026-09-12
-**Status:** Design — **not implemented**, and blocked on one manual step: registering the
-public GitHub App (owner + callback URL), which needs a browser and a keyboard. The
-packaging half IS done — `canopy-agent-factory` 1.0.0 is on PyPI, declared as a dependency
-here, pinned by `tests/test_agent_factory_contract.py` and watched by Dependabot — so the
-scaffolding rail is waiting on its consumer: nothing in `apps/` imports the factory yet.
+**Status:** The **GRANT is built and live** (PRs #765, #770, #771 — 2026-09-13); agent
+CREATION is not. The app is registered as `canopy-agents`, public, and `/settings` →
+Connect GitHub works end to end against real GitHub. What remains is the create-agent form
+and the push, which is why `canopy-agent-factory` 1.0.0 — on PyPI, declared here, pinned
+by `tests/test_agent_factory_contract.py` and watched by Dependabot — still has no
+consumer: nothing in `apps/` imports it yet.
+
+**Two decisions below were REVERSED by building it.** §Decisions 1 and 6 are superseded —
+see "What building it changed". The permission set is narrower, the user creates the
+repository, and the grant that came out of this is also the intended RUNNER credential
+rather than something to keep away from runners.
 **Companion:** `2026-09-12-opening-canopy-to-other-people-design.md` — first run, the
 self-documenting app, the public explainer. That spec's agents empty state is what this
 one turns into a button.
@@ -85,9 +91,12 @@ Sources: [GitHub Apps vs OAuth Apps](https://docs.github.com/en/apps/oauth-apps/
 
 ## Decisions
 
-1. **A public GitHub App with `Administration: write`, `Contents: write`, `Metadata: read`.**
-   Nothing broader. `Contents: write` is what pushes the scaffold; `Administration: write`
-   is what creates the repo.
+1. ~~**A public GitHub App with `Administration: write`, `Contents: write`,
+   `Metadata: read`.**~~ **SUPERSEDED** — the app holds `Contents: write`,
+   `Workflows: write`, `Pull requests: write`, `Issues: write`, `Metadata: read`, and
+   deliberately **no `Administration`**. Public is still right (a private app refuses
+   sign-in from outside the owning org, which would defeat "not just Dimagi users").
+   See "What building it changed".
 2. **The grant is per-user, and it does not go in the agent vault.** The credentials spec
    puts per-user secrets explicitly out of scope — *"`chrome-sales` acts on behalf of the
    dispatching human, not the agent… an agent vault is the wrong home and this does not
@@ -112,8 +121,10 @@ Sources: [GitHub Apps vs OAuth Apps](https://docs.github.com/en/apps/oauth-apps/
    GitHub template repo (the scaffold would then exist twice and drift), and dispatching a
    turn to a runner (zero new credentials, but a brand-new user has no runner, so the
    first agent could never be created — which is the entire point of the web path).
-6. **Create the repo empty, then push the scaffold.** Keeps the GitHub call trivial and
-   keeps the scaffold's content entirely inside the factory package.
+6. ~~**Create the repo empty, then push the scaffold.**~~ **SUPERSEDED** — the USER
+   creates the empty repo and canopy pushes into it. The scaffold's content still lives
+   entirely inside the factory package, which was the durable half of this decision.
+   See "What building it changed".
 
 ## Shape
 
@@ -122,13 +133,59 @@ Sources: [GitHub Apps vs OAuth Apps](https://docs.github.com/en/apps/oauth-apps/
 2. The callback stores the encrypted refresh token against the user and records their
    GitHub login.
 3. `/w/:ws/agents` **Create agent** asks for: slug, display name, owner (from
-   installations), and visibility.
-4. Server side: run the factory → create the repo → push → `POST`-equivalent write of the
-   `Agent` row with its `repo_url` → return the agent's workspace URL.
-5. Failure is partial by nature (a repo can exist while the push fails). The operation
-   reports which steps completed and is safe to retry: creating an agent whose repo
-   already exists adopts it rather than erroring, matching `POST /api/agents/`'s existing
-   upsert-by-slug semantics.
+   installations), and the **existing empty repository** to push into.
+4. Server side: run the factory → push into the user's repo → `POST`-equivalent write of
+   the `Agent` row with its `repo_url` → return the agent's workspace URL. Before pushing,
+   `GET /repos/{owner}/{repo}` with the user's token confirms canopy can actually see it;
+   a 404 means the repo exists but was not added to the installation, which is the step
+   people will forget, and it gets a precise message plus a link rather than a push
+   failure.
+5. Failure is partial by nature (the `Agent` row can be written while the push fails).
+   The operation reports which steps completed and is safe to retry: creating an agent
+   whose repo already exists adopts it rather than erroring, matching `POST /api/agents/`'s
+   existing upsert-by-slug semantics.
+
+## What building it changed
+
+Three things the design got wrong, each found by running it rather than by review.
+
+**No `Administration: write`, because the user creates the repo.** Creating a repository
+needs that permission and there is no narrow path to it — "create from a template"
+(`POST /repos/{owner}/{repo}/generate`) needs `Administration: write` AND `Contents: read`
+together, so it buys nothing. And a **user access token cannot be down-scoped**: unlike an
+installation token, there is no way to mint a reduced one, so it always carries the app's
+full permission set. Holding `Administration: write` therefore meant every runner token
+could DELETE repositories, in the hands of agents running Claude Code with permissions
+bypassed. Trading one click for that is a bad trade, so the user creates a blank repo and
+canopy only ever pushes.
+
+The cost is honest: it is three steps (create the repo, **add it to the installation**,
+tell canopy), and the middle one is the one people forget — a repo you just made is not
+auto-added when the install is scoped, because GitHub only auto-grants access to repos the
+app itself created.
+
+**This IS the runner credential.** §"Out of scope" originally kept runner GitHub access
+away from this grant. That was wrong once `Administration` went: a user access token is
+the only GitHub credential that is inherently per-person, where an installation token is
+per-INSTALLATION and therefore shared by everyone in an org — which is the shared-PAT model
+(`Canopy-Shared/github-token`) this is meant to replace. Runners never hold a durable
+credential; they ask canopy-web for a fresh 8-hour token per use, because the refresh token
+rotates and exactly one process may refresh it. The open question that leaves is **whose
+behalf** a given piece of agent work is on: obvious for a chat session, `created_by` for a
+schedule, unclear for inbound mail. That is the next design, not this one.
+
+**Authorizing is not installing.** The connect flow first pointed at
+`/login/oauth/authorize`, which asks "may this app act as you?" and shows no repository
+picker at all. Measured on labs: a user authorized cleanly, the panel said "Connected as
+@jjackson", and `list_installations` returned 0 — a valid token with access to nothing,
+reported as success. Connect now starts `/apps/{slug}/installations/new`, which asks for
+the repositories and (because the app requests user authorization during installation)
+authorizes in the same trip. The picker has to stay on GitHub — a third party drawing
+"which repos do you grant?" is a phishing surface — but it should be one trip, not two.
+
+A corollary worth keeping: `connected` is not sufficient state. The panel reads the
+installation list and treats an empty one as unfinished setup, re-checking once because
+GitHub does not list a brand-new installation immediately.
 
 ## What is still not a button after this
 
@@ -155,8 +212,12 @@ nobody concludes their new agent is finished.
 
 ## Out of scope
 
-- **Anything the agent itself pushes.** After creation, the agent's own commits go through
-  its runner's `gh` auth. This credential is for provisioning only, used once.
+- ~~**Anything the agent itself pushes.**~~ **REVERSED** — see "What building it changed".
+  This was written when the app held `Administration: write` and was therefore too
+  dangerous to hand a runner. Without it, this grant is exactly what agent pushes should
+  use: per-person, narrow, and revocable, replacing the single shared
+  `Canopy-Shared/github-token` every box uses today. Still out of scope for THIS spec —
+  the token endpoint and the "on whose behalf" chain are a separate design.
 - **Repo settings beyond creation** — rulesets, merge queue, branch protection. The
   factory can gain them later; `Administration: write` already permits it.
 - **Deleting or transferring repos.** Not requested, and a destructive capability on a
