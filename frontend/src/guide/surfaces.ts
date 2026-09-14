@@ -132,6 +132,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
   },
   {
+    path: '/w/:workspace/connected-apps',
+    title: 'Connected sites',
+    audience: 'Workspace owner embedding an agent in a website',
+    what: "Which websites may host one of this workspace's agents: the URLs allowed to frame the widget, the agents each site may offer, and the secret a site with its own sign-in uses to vouch for its users. Also the one-click switch that puts the agent panel on canopy's own pages.",
+    actions: ["Turn on the agent panel on canopy's own pages", 'Connect another site by URL', 'Choose which agents a site may offer', 'Issue a new secret', 'Disconnect a site'],
+  },
+  {
     path: '/w/:workspace/inbound',
     title: 'Inbound push',
     audience: 'Workspace owner setting up email-triggered agents',

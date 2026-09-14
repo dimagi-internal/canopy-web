@@ -93,7 +93,7 @@ export const USER_ROLES: UserRole[] = [
     who: 'Whoever decides who else gets in, and holds the keys.',
     enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
     startHere: 'Open Members to invite someone, or an agent\'s Credentials tab to hold its keys.',
-    surfaces: ['/w/:workspace/members', '/w/:workspace/inbound'],
+    surfaces: ['/w/:workspace/members', '/w/:workspace/connected-apps', '/w/:workspace/inbound'],
     note:
       'Members and invites, agent credentials, the shared vault, inbound configuration. ' +
       'Credentials are owner-only because they are the keys a runner resolves everything ' +
