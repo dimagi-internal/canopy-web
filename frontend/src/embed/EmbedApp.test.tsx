@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EmbedApp } from './EmbedApp'
@@ -52,11 +52,31 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // UNMOUNT FIRST, and this is the fix for a real flake rather than tidiness.
+  // Without it every component stays mounted for the rest of the file, and its
+  // in-flight promises keep running: a previous test's session create would
+  // resolve during a LATER test and fire its follow-up attach, which landed in
+  // that test's freshly-reset `calls` array. Symptom, seen in CI on an
+  // unrelated docs PR: "shows the picker rather than guessing" failing with a
+  // captured POST to /api/canopy-sessions/sess-1/attach — a request the test
+  // it was attributed to never made. This file was the only one in the repo
+  // rendering components without cleanup.
+  cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
-const created = () => calls.find((c) => c.init?.method === 'POST' && c.url.includes('canopy-sessions'))
+/**
+ * The session-CREATE request, if one was made.
+ *
+ * Matches the collection endpoint specifically. Matching any POST containing
+ * "canopy-sessions" also matched `POST /api/canopy-sessions/{id}/attach`, so
+ * `expect(created()).toBeUndefined()` could fail on an attach — a request that
+ * is not a create and that the failing test had not made. A helper named
+ * `created` should not answer true for something else.
+ */
+const created = () =>
+  calls.find((c) => c.init?.method === 'POST' && /\/canopy-sessions\/$/.test(c.url))
 
 describe('starting a conversation', () => {
   it('creates the session in the AGENT\'s workspace, not the caller\'s default', async () => {
