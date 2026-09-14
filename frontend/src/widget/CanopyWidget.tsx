@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { apiV2 } from '@/api/client.v2'
-import { API_BASE, apiUrl } from '@/api/base'
+import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
 import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions'
 
@@ -107,6 +107,10 @@ export function CanopyWidget() {
         baseUrl: API_BASE,
         app: config.app,
         tokenUrl: apiUrl('/api/embed/token'),
+        // Not `csrftoken`: the /canopy labs tenant path-scopes the cookie so it
+        // cannot collide with its sibling apps on the shared host. Left at the
+        // default the mint 403s and the widget never starts.
+        csrfCookieName: CSRF_COOKIE_NAME,
         ...(config.agent ? { agent: config.agent } : {}),
         mode: 'overlay',
         launcherLabel: 'Ask canopy',

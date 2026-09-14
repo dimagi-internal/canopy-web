@@ -142,7 +142,11 @@ def canopy_token(request):
 
 The widget calls this endpoint with `credentials: 'same-origin'` and sends an
 `X-CSRFToken` header if you set a `csrftoken` cookie, so your normal session
-auth and CSRF protection apply unchanged.
+auth and CSRF protection apply unchanged. **If you renamed that cookie** — which
+a Django app served under a path prefix on a shared host has to do, or it
+collides with its siblings — pass the real name as `csrfCookieName` in step 4.
+Leave it wrong and the header is simply absent: the mint 403s and the widget
+never starts, with nothing on the page to say why.
 
 ---
 
@@ -156,6 +160,8 @@ auth and CSRF protection apply unchanged.
     app: 'connect-labs',              // the Name from step 1
     tokenUrl: '/labs/canopy/token',   // the endpoint from step 3
     mode: 'docked',
+    // Only if your CSRF cookie is not named `csrftoken`:
+    // csrfCookieName: 'csrftoken_labs',
   })
 </script>
 ```

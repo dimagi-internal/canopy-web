@@ -91,3 +91,16 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
 export function originOf(baseUrl: string, pageOrigin: string): string {
   return new URL(baseUrl, pageOrigin).origin
 }
+
+/** Read one cookie out of a `document.cookie` string.
+ *
+ *  Pure (the string is passed in) so the name-matching is unit-testable without
+ *  a DOM, and so the name can be escaped in one place: a cookie name is host
+ *  configuration, and interpolating it straight into a `RegExp` lets a dot or a
+ *  `+` in it match something it should not.
+ */
+export function readCookie(cookieString: string, name: string): string {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`(?:^|;\\s*)${escaped}=([^;]*)`).exec(cookieString)
+  return match ? decodeURIComponent(match[1]) : ''
+}
