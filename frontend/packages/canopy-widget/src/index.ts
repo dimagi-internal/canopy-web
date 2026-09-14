@@ -40,7 +40,14 @@
  */
 
 import { createChrome, type Chrome, type DisplayMode } from './chrome'
-import { SOURCE, isFrameMessage, originOf, type ActionSpec, type HostMessage } from './protocol'
+import {
+  SOURCE,
+  isFrameMessage,
+  originOf,
+  readCookie,
+  type ActionSpec,
+  type HostMessage,
+} from './protocol'
 
 export type { DisplayMode } from './chrome'
 export type { ActionSpec } from './protocol'
@@ -63,6 +70,15 @@ export interface CanopyWidgetOptions {
   /** Preselect an agent, skipping the picker. Must be one the app is allowed
    *  to offer AND the user can reach — canopy decides, not this. */
   agent?: string
+  /** Name of the host's CSRF cookie, when it uses Django's double-submit
+   *  scheme. Defaults to Django's own default, `csrftoken`.
+   *
+   *  It has to be an option rather than a constant, because the name is not
+   *  fixed: a Django app served under a path prefix on a SHARED host must
+   *  rename the cookie or it collides with its siblings (canopy on labs uses
+   *  `csrftoken_canopy`). With the wrong name the header is simply absent, the
+   *  mint 403s, and the widget shows an unexplained failure to start. */
+  csrfCookieName?: string
   /** Opaque metadata stamped on sessions this widget creates. */
   metadata?: Record<string, unknown>
   launcherLabel?: string
@@ -156,8 +172,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
    *  forced into ours. */
   function csrfHeader(): Record<string, string> {
     if (typeof document === 'undefined') return {}
-    const match = /(?:^|;\s*)csrftoken=([^;]+)/.exec(document.cookie)
-    return match ? { 'X-CSRFToken': decodeURIComponent(match[1]) } : {}
+    const token = readCookie(document.cookie, options.csrfCookieName || 'csrftoken')
+    return token ? { 'X-CSRFToken': token } : {}
   }
 
   async function onMessage(event: MessageEvent): Promise<void> {

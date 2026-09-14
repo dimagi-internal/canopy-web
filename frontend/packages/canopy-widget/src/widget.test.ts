@@ -212,6 +212,35 @@ describe('the credential path', () => {
     expect(init_.headers['X-CSRFToken']).toBe('abc123')
   })
 
+  it('reads the cookie name the host named, not Django\'s default', async () => {
+    // THE bug this option exists for. A Django app served under a path prefix
+    // on a shared host has to rename its CSRF cookie or it collides with its
+    // siblings — canopy on labs uses `csrftoken_canopy`. Hard-coding
+    // `csrftoken` meant no header at all, a 403 from the mint, and a widget
+    // that silently never started on the one deployment it was built for.
+    document.cookie = 'csrftoken=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    document.cookie = 'csrftoken_canopy=scoped-value'
+
+    const { fromFrame } = widgetHarness({ csrfCookieName: 'csrftoken_canopy' })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const [, init_] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(init_.headers['X-CSRFToken']).toBe('scoped-value')
+  })
+
+  it('does not pick up a cookie whose name merely resembles the configured one', async () => {
+    // `csrftoken` is a prefix of `csrftoken_canopy`, so an unanchored match
+    // would send the wrong app's token — a 403 that looks like a login problem.
+    document.cookie = 'csrftoken_canopy=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    document.cookie = 'csrftoken=root-tenant'
+
+    const { fromFrame } = widgetHarness({ csrfCookieName: 'csrftoken_canopy' })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const [, init_] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(init_.headers['X-CSRFToken']).toBeUndefined()
+  })
+
   it('answers a refresh request with a fresh mint, keyed by id', async () => {
     const { fromFrame, sent } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'token-request', id: 'r1' })
