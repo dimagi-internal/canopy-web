@@ -361,3 +361,56 @@ def test_the_identity_columns_still_cannot_be_edited():
     assert r.status_code == 422
     contact.refresh_from_db()
     assert contact.external_id == "u-42"
+
+
+def _logged(monkeypatch) -> list[str]:
+    """Every message the services module logs, independent of Django's logging
+    config — `caplog` sees nothing here because the app logger does not
+    propagate to root, and a test that silently captures nothing would pass no
+    matter what the code did.
+    """
+    from apps.contacts import services as svc
+
+    lines: list[str] = []
+
+    class Spy:
+        def info(self, msg, *args):
+            lines.append(msg % args if args else msg)
+
+        def __getattr__(self, _name):
+            return lambda *a, **k: None
+
+    monkeypatch.setattr(svc, "logger", Spy())
+    return lines
+
+
+def test_a_persons_own_identifier_does_not_reach_the_application_log(monkeypatch):
+    """CodeQL flagged this, and it was right for a reason worth keeping.
+
+    `external_id` is chosen by the host and canopy cannot know what it is — an
+    opaque uuid for one site, an email or a phone number for the next. The
+    database row holds it under an ACL; an application log is read by more
+    people, retained by different rules, and shipped somewhere else. The pk
+    correlates just as well.
+    """
+    lines = _logged(monkeypatch)
+    ws, app = _ws(), _app()
+
+    services.record_embed_visitor(
+        workspace=ws, app=app, external_id="alice@partner.example",
+        email="alice@partner.example",
+    )
+
+    logged = " ".join(lines)
+    assert logged, "nothing was logged, so this test would pass for the wrong reason"
+    assert "alice@partner.example" not in logged
+    assert str(Contact.objects.get().pk) in logged
+
+
+def test_nor_does_an_email_contacts_address(monkeypatch):
+    lines = _logged(monkeypatch)
+    ws = _ws()
+
+    services.record_inbound_sender(workspace=ws, address="p@llo.org")
+
+    assert lines and "p@llo.org" not in " ".join(lines)
