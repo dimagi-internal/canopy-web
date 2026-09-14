@@ -75,8 +75,18 @@ afterEach(() => {
  * is not a create and that the failing test had not made. A helper named
  * `created` should not answer true for something else.
  */
+/** The request that started a conversation, on EITHER surface.
+ *
+ *  A member's goes to `…/canopy-sessions/` and a contact's to
+ *  `/api/contact/sessions`. Still anchored at the end so it cannot match a
+ *  sub-resource like `…/sess-1/attach` — the property #785 added this regex
+ *  for. */
 const created = () =>
-  calls.find((c) => c.init?.method === 'POST' && /\/canopy-sessions\/$/.test(c.url))
+  calls.find(
+    (c) =>
+      c.init?.method === 'POST' &&
+      (/\/canopy-sessions\/$/.test(c.url) || /\/contact\/sessions$/.test(c.url)),
+  )
 
 describe('starting a conversation', () => {
   it('creates the session in the AGENT\'s workspace, not the caller\'s default', async () => {
@@ -111,5 +121,82 @@ describe('starting a conversation', () => {
     expect(await screen.findByText('Echo')).toBeTruthy()
     expect(screen.getByText('Hal')).toBeTruthy()
     expect(created()).toBeUndefined()
+  })
+})
+
+describe('a contact behind the frame', () => {
+  const ME: {
+    contact_id: number
+    display_name: string
+    app: string
+    agents: { slug: string; name: string; description: string }[]
+  } = {
+    contact_id: 7,
+    display_name: 'Amina',
+    app: 'connect-labs',
+    agents: [{ slug: 'echo', name: 'Echo', description: '' }],
+  }
+
+  function asContact() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const path = String(url)
+        if (path.includes('/api/embed/agents')) {
+          // What the login middleware answers a request with no user.
+          return { ok: false, status: 401, json: async () => ({}) } as Response
+        }
+        if (path.includes('/api/contact/me')) {
+          return { ok: true, status: 200, json: async () => ME } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-c' }) } as Response
+      }),
+    )
+  }
+
+  it('starts its conversation on the contact surface, not the tenant one', async () => {
+    // The tenant path would 401: a contact has no workspace and no membership,
+    // so `/api/w/{ws}/canopy-sessions/` is not a route they can reach.
+    asContact()
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'echo', actions: [] }) })}
+        app="connect-labs"
+      />,
+    )
+
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(created()!.url).toContain('/api/contact/sessions')
+    expect(created()!.url).not.toContain('/api/w/')
+  })
+
+  it('asks the embed surface first, so a user pays nothing for the probe', async () => {
+    asContact()
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/api/contact/me'))).toBe(true))
+    // First out is the user surface. The contact call comes after — with the
+    // client's own one-shot 401 retry in between, which is why this asserts on
+    // order rather than on an index.
+    expect(calls[0].url).toContain('/api/embed/agents')
+    const probe = calls.findIndex((c) => c.url.includes('/api/embed/agents'))
+    const fallback = calls.findIndex((c) => c.url.includes('/api/contact/me'))
+    expect(probe).toBeLessThan(fallback)
+  })
+
+  it('offers the agents the site vouched it may', async () => {
+    // Two, because with exactly one the frame skips the picker and opens the
+    // conversation — correct behaviour, and it made the one-agent version of
+    // this test look broken.
+    ME.agents = [
+      { slug: 'echo', name: 'Echo', description: '' },
+      { slug: 'hal', name: 'Hal', description: '' },
+    ]
+    asContact()
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+
+    expect(await screen.findByText('Echo')).toBeTruthy()
+    expect(screen.getByText('Hal')).toBeTruthy()
   })
 })

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildContextPreamble } from './contextPreamble'
 import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
+import { resolvePrincipal, type Principal } from './principal'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -39,6 +40,7 @@ interface Props {
 export function EmbedApp({ link, app }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'connecting' })
   const [init, setInit] = useState<HostInit | null>(null)
+  const [principal, setPrincipal] = useState<Principal | null>(null)
   const clientRef = useRef<CanopyClient | null>(null)
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
@@ -91,8 +93,13 @@ export function EmbedApp({ link, app }: Props) {
         }
         if (cancelled) return
 
-        const agents = (await client.rest.listAgents()) as EmbedAgent[]
+        // WHO is behind this frame, before asking anything else: a user and a
+        // contact reach entirely different surfaces. Discovered rather than
+        // configured — see principal.ts.
+        const who = await resolvePrincipal((path) => client.rest.json(path))
         if (cancelled) return
+        setPrincipal(who)
+        const agents = who.agents as EmbedAgent[]
 
         if (agents.length === 0) {
           setPhase({
@@ -111,7 +118,7 @@ export function EmbedApp({ link, app }: Props) {
           (agents.length === 1 ? agents[0] : null)
 
         if (preselected) {
-          await openSession(preselected, hostInit)
+          await openSession(preselected, hostInit, who)
           return
         }
         setPhase({ kind: 'choosing', agents })
@@ -131,8 +138,23 @@ export function EmbedApp({ link, app }: Props) {
   }, [link])
 
   const openSession = useCallback(
-    async (agent: EmbedAgent, hostInit: HostInit) => {
+    // `who` is PASSED, not read from state. It is resolved and used in the same
+    // async flow, and `setPrincipal` has not committed by then — so reading the
+    // state here sent a contact down the tenant path, to
+    // `/api/w/undefined/canopy-sessions/`. Caught by a test; invisible in the UI,
+    // which would only have shown "could not start a conversation".
+    async (agent: EmbedAgent, hostInit: HostInit, who: Principal | null) => {
       try {
+        if (who?.kind === 'contact') {
+          // A contact has no workspace to scope by and no membership to check;
+          // the site's allowlist is the whole gate, and canopy applies it.
+          const started = await client.rest.json<{ id: string }>('/api/contact/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ agent_slug: agent.slug }),
+          })
+          setPhase({ kind: 'chatting', sessionId: started.id })
+          return
+        }
         // The TENANT-scoped path, with the workspace the picker's own row
         // named. The flat `/api/canopy-sessions/` resolves to the caller's
         // DEFAULT workspace, and `create_session` then 404s any agent that is
@@ -189,7 +211,7 @@ export function EmbedApp({ link, app }: Props) {
           <button
             key={agent.slug}
             type="button"
-            onClick={() => init && void openSession(agent, init)}
+            onClick={() => init && void openSession(agent, init, principal)}
             className="rounded-lg border border-border bg-card p-3 text-left hover:bg-muted"
           >
             <span className="block text-sm text-foreground">{agent.name}</span>
@@ -208,6 +230,7 @@ export function EmbedApp({ link, app }: Props) {
       client={client}
       link={link}
       contextPreamble={pendingContext}
+      readOnlySocket={principal?.kind === 'contact'}
     />
   )
 }
@@ -216,17 +239,46 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div className="grid h-full place-items-center p-4 text-muted-foreground">{children}</div>
 }
 
+/** The local composer body, in the shape the shared panel already reads.
+ *
+ *  A member's draft is a server row that several people co-edit; a contact's
+ *  cannot be, because every field that makes it multiplayer is keyed on a user
+ *  id they do not have. Presenting theirs as a `Draft` keeps the shared kit
+ *  from having to learn about a second principal for a difference that is
+ *  entirely about where the text lives.
+ */
+function contactDraft(body: string) {
+  return {
+    id: 'local',
+    slot: 'next' as const,
+    status: 'open' as const,
+    body,
+    version: 0,
+    last_editor: 0,
+    last_edit_at: '',
+  }
+}
+
 function EmbedChat({
   sessionId,
   client,
   link,
   contextPreamble,
+  readOnlySocket = false,
 }: {
   sessionId: string
   client: CanopyClient
   link: HostLink
   contextPreamble: React.MutableRefObject<string | null>
+  /** A contact's socket LISTENS. Presence and the co-edited draft are keyed on
+   *  a user id they do not have, so the composer is local and the send goes
+   *  over HTTP — see apps/canopy_sessions/consumers.py. */
+  readOnlySocket?: boolean
 }) {
+  // Only used on the contact path. A member's draft is server-side and
+  // co-edited; a contact's cannot be, so it lives here.
+  const [localDraft, setLocalDraft] = useState('')
+  const [sending, setSending] = useState(false)
   const wsUrl = useCallback(
     () => client.sessionSocketUrl(sessionId) ?? '',
     [client, sessionId],
@@ -289,6 +341,21 @@ function EmbedChat({
     }
   }, [client, sessionId])
 
+  const onSendAsContact = useCallback(() => {
+    const preamble = contextPreamble.current
+    const body = preamble ? `${preamble}\n\n${localDraft}` : localDraft
+    if (!body.trim() || sending) return
+    contextPreamble.current = null
+    setSending(true)
+    void client.rest
+      .json(`/api/contact/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: 'POST',
+        body: JSON.stringify({ text: body }),
+      })
+      .then(() => setLocalDraft(''))
+      .finally(() => setSending(false))
+  }, [client, sessionId, localDraft, sending, contextPreamble])
+
   const onSend = useCallback(() => {
     // The page snapshot rides the FIRST message rather than an opening turn of
     // its own. An automatic turn on open would claim a runner and produce an
@@ -317,15 +384,23 @@ function EmbedChat({
       </header>
       <div className="min-h-0 flex-1">
         <ChatPanel
-          state={socket.state}
+          state={
+            readOnlySocket
+              ? // The composer reads its body off the draft, and a contact has
+                // no server-side one — so the local body is presented in the
+                // shape the panel already understands rather than teaching the
+                // shared kit about a second principal.
+                { ...socket.state, active_draft: contactDraft(localDraft) }
+              : socket.state
+          }
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={onSend}
-          onStop={socket.stopChat}
-          awaitingReply={socket.awaitingReply}
-          onUpdateDraft={socket.updateDraft}
-          onTakeOver={socket.takeOverDraft}
-          onDiscard={socket.discardDraft}
+          onSend={readOnlySocket ? onSendAsContact : onSend}
+          onStop={readOnlySocket ? () => undefined : socket.stopChat}
+          awaitingReply={readOnlySocket ? sending : socket.awaitingReply}
+          onUpdateDraft={readOnlySocket ? setLocalDraft : socket.updateDraft}
+          onTakeOver={readOnlySocket ? () => undefined : socket.takeOverDraft}
+          onDiscard={readOnlySocket ? () => setLocalDraft('') : socket.discardDraft}
           draftPersistKey={sessionId}
         />
       </div>

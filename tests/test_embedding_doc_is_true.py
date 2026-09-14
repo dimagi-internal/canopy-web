@@ -70,7 +70,7 @@ def test_documented_commands_exist_with_the_documented_flags(doc, command, flags
 @pytest.mark.parametrize(
     "route",
     [
-        "/api/auth/token-exchange",
+        "/api/auth/contact-token",
         "/api/embed/agents",
         "/embed/chat",
         "/embed/widget.js",
