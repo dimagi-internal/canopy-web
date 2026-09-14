@@ -188,7 +188,17 @@ class AppCredential(models.Model):
 
     name = models.CharField(max_length=100, unique=True)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
-    allowed_delegation_domains = models.JSONField(default=list)
+    #: Email domains this app may assert a user in, at `token-exchange`.
+    #:
+    #: `blank=True` because EMPTY IS A REAL CONFIGURATION, not an unfinished
+    #: one: it means the credential vouches for nobody, and that is exactly
+    #: right for an app that never exchanges — canopy's own self-embed mints
+    #: through `POST /api/embed/token`, which is session-authenticated and asks
+    #: no domain question. Without `blank=True` the admin made the field
+    #: required, so registering the self-app forced an operator to grant a
+    #: delegation domain it does not use — turning a credential that can only
+    #: frame a shell into one that can impersonate every user in that domain.
+    allowed_delegation_domains = models.JSONField(default=list, blank=True)
     #: Origins permitted to frame this app's embed shell, as a
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
     #:

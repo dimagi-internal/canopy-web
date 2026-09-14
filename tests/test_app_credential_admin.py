@@ -95,6 +95,48 @@ def test_frame_origins_are_saved_so_the_widget_can_load():
     assert AppCredential.objects.get(name="connect-labs").frame_origins() == [LABS]
 
 
+def test_the_self_app_registers_with_no_delegation_domains():
+    """Empty is a real configuration, and the one canopy's own widget wants.
+
+    The self-embed mints through `POST /api/embed/token`, which is
+    session-authenticated and asks no domain question — so the credential
+    needs to vouch for nobody. While the field was required, registering it
+    forced an operator to grant a domain the app never uses, which turns a
+    credential that can only frame a shell into one that can impersonate every
+    user in that domain.
+    """
+    _user, c = _staff()
+
+    c.post(_add_url(), _form(name="canopy-web", allowed_delegation_domains="[]"), follow=True)
+
+    cred = AppCredential.objects.get(name="canopy-web")
+    # A list, not None: `exchange_api` iterates this field directly.
+    assert cred.allowed_delegation_domains == []
+    assert cred.frame_origins() == [LABS]
+
+
+def test_the_shell_then_serves_for_it():
+    """The 404 an unregistered app returns is exactly this row missing."""
+    _user, c = _staff()
+    c.post(_add_url(), _form(name="canopy-web", allowed_delegation_domains="[]"), follow=True)
+
+    response = Client().get("/embed/chat?app=canopy-web")
+
+    assert response.status_code == 200
+    assert LABS in response.headers["Content-Security-Policy"]
+
+
+def test_an_address_is_not_a_domain():
+    """`allowed_delegation_domains` is compared against the part after the @,
+    so an address here matches nobody and reads as a working grant."""
+    _user, c = _staff()
+
+    response = c.post(_add_url(), _form(allowed_delegation_domains='["jj@dimagi.com"]'))
+
+    assert not AppCredential.objects.filter(name="connect-labs").exists()
+    assert b"Not email domains" in response.content
+
+
 def test_a_wildcard_origin_is_refused_at_the_form():
     """It would be filtered on read anyway, but silently — an admin who typed
     it would believe the grant was in force."""

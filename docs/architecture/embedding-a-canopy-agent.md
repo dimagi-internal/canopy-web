@@ -54,7 +54,7 @@ staff user:
 | Field | What it is | If you get it wrong |
 | --- | --- | --- |
 | **Name** | The `app` value you pass to `canopy.init`, e.g. `connect-labs` | Mismatch ⇒ the widget's frame 404s |
-| **Allowed delegation domains** | Email domains this app may vouch for, e.g. `["dimagi.com"]` | Empty ⇒ the app can mint tokens for nobody |
+| **Allowed delegation domains** | Email domains this app may vouch for at token-exchange, e.g. `["dimagi.com"]` | Empty ⇒ the app vouches for nobody. That is a *refusal*, not a bug, and it is the right setting for a host that never exchanges — see the note below |
 | **Allowed frame origins** | Origins that may frame the widget. **Include every environment** — production, staging, and your local dev origin | Empty ⇒ the frame 404s by design; an exempt page with no `frame-ancestors` would be frameable by any site |
 | **Allowed agents** (inline) | Which agents this app may offer | Empty ⇒ the picker offers nothing |
 | **Provision workspace / role** | Optional: the tenant a brand-new user lands in | Leave blank unless *every* user of your host should be trusted in that tenant |
@@ -62,6 +62,14 @@ staff user:
 Origins are validated on save. A wildcard, a path, or anything containing `;` is
 refused with an explanation — a wildcard in particular would undo the entire
 framing protection.
+
+> **Grant no delegation domain you do not need.** The field is optional (`[]`),
+> and a domain in it is a real power: anyone holding this app's raw secret can
+> exchange it for a token acting as *any* user in that domain. A host that mints
+> from its own signed-in session rather than through
+> `POST /api/auth/token-exchange` — canopy embedding its own widget is the
+> example — should leave it `[]`, which grants nothing while leaving the framing
+> and agent allowlists fully in force.
 
 **Alternatively, by command** (local or scripted setup — note a deployment has
 no shell to run these in, since `EnableExecuteCommand` is off on the service and
