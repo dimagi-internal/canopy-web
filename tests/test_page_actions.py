@@ -11,6 +11,7 @@ arguments, a host that says no, and a tab that never answers. Each must reach
 the caller as an error carrying a reason, never as a completed action.
 """
 
+import time
 import uuid
 
 import pytest
@@ -89,6 +90,27 @@ def test_a_page_declares_its_actions_and_the_agent_can_discover_them():
     assert listed[0]["parameters"]["required"] == ["ids"]
 
 
+def test_a_host_may_spell_the_schema_the_way_mcp_does():
+    """`inputSchema` over HTTP survives to the stored declaration.
+
+    This is the door the widget actually knocks on, and it was where the field
+    was lost: the Ninja schema named only `parameters`, so MCP's own spelling
+    was dropped before any of the code that reads it ran.
+    """
+    _user, session, c = _ctx()
+
+    c.put(f"/api/canopy-sessions/{session.id}/page-actions",
+          data={"actions": [{
+              "name": "dismissInsights",
+              "inputSchema": {"type": "object", "required": ["ids"]},
+          }]}, content_type="application/json")
+
+    listed = c.get(f"/api/canopy-sessions/{session.id}/page-actions").json()
+    # Read back under the one canonical name, so nothing downstream has to ask
+    # which spelling this row happens to use.
+    assert listed[0]["parameters"]["required"] == ["ids"]
+
+
 def test_declaring_replaces_rather_than_merges():
     """A leftover action from the page the user navigated away from is one the
     agent would call into nothing."""
@@ -157,6 +179,49 @@ def test_a_wrongly_typed_argument_is_caught():
         page_actions.request_action(session=session, name="dismissInsights",
                                     args={"ids": "not-a-list"}, user=user)
     assert exc.value.code == "bad_arguments"
+
+
+def test_a_schema_declared_as_inputSchema_is_enforced_too():
+    """`inputSchema` is MCP's spelling and `parameters` is OpenAI's; the tool
+    layer publishes from either, so validation must read either.
+
+    While it read only `parameters`, an MCP-spelled declaration produced a tool
+    whose schema the agent could see and the server never checked — and the
+    symptom was a LIE: a missing required argument waited out the full timeout
+    and came back as "the page is probably closed".
+    """
+    user, session, _c = _ctx()
+    page_actions.set_declared_actions(session, [{
+        "name": "dismissInsights",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ids": {"type": "array"}},
+            "required": ["ids"],
+        },
+    }])
+
+    with pytest.raises(page_actions.PageActionError) as exc:
+        page_actions.request_action(session=session, name="dismissInsights",
+                                    args={}, user=user)
+
+    assert exc.value.code == "bad_arguments"
+    assert not PageAction.objects.exists()
+
+
+def test_the_timeout_constant_is_read_at_call_time(monkeypatch):
+    """It is the documented knob, and it was a default argument — bound once at
+    import, so setting it did nothing and every test that "shrank" the wait sat
+    through the full twenty seconds."""
+    _fast(monkeypatch, seconds=0.3)
+    user, session, _c = _ctx()
+    page_actions.set_declared_actions(session, [DISMISS])
+
+    started = time.monotonic()
+    with pytest.raises(page_actions.PageActionError):
+        page_actions.request_action(session=session, name="dismissInsights",
+                                    args={"ids": [1]}, user=user)
+
+    assert time.monotonic() - started < 5, "the module constant is still not the knob"
 
 
 def test_a_boolean_is_not_accepted_as_a_number():

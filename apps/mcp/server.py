@@ -14,6 +14,11 @@ matches connect-labs, which is PAT-only.)
 
 Tools are registered as a side effect of importing `apps.mcp.tools`.
 
+Beyond those static tools, `PageActionProvider` contributes the actions
+declared by whatever pages the CALLER currently has open — computed per
+request, because they differ per user and vanish when a tab closes. See
+`apps/mcp/page_tools.py`.
+
 The module exposes:
   * `mcp`            — the FastMCP instance (auth attached)
   * `build_http_app()` — builds the Streamable-HTTP ASGI app (called
@@ -33,6 +38,13 @@ mcp = FastMCP("canopy-web", auth=CanopyPATVerifier())
 
 # Registering tools is a side effect of importing the tools package.
 from . import tools  # noqa: E402,F401
+from .page_tools import PageActionProvider  # noqa: E402
+
+# Dynamic tools: the actions of the pages the caller has open right now.
+# Registered AFTER the static tools deliberately — FastMCP resolves static
+# components ahead of providers, so a page can never capture a canopy tool
+# name even if the `page_` prefix were dropped.
+mcp.add_provider(PageActionProvider())
 
 
 def build_http_app():

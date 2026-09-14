@@ -79,10 +79,31 @@ def set_declared_actions(session: Session, actions: list[dict]) -> None:
             # JSON-Schema, passed through as the host wrote it. canopy does not
             # interpret it beyond the shallow required/type check below — the
             # host is the only party that knows what its own action means.
-            "parameters": a.get("parameters") or {},
+            #
+            # Stored under ONE name whichever the host used. Reading only
+            # `parameters` here discarded an `inputSchema` declaration outright,
+            # which is worse than not supporting it: the tool still published,
+            # with no schema, and a missing required argument then waited out
+            # the full timeout and came back as "the page is probably closed".
+            "parameters": schema_of(a),
         })
     session.page_actions_available = cleaned
     session.save(update_fields=["page_actions_available"])
+
+
+def schema_of(spec: dict) -> dict:
+    """The argument schema off a declaration, under either spelling.
+
+    `inputSchema` is MCP's name for it and `parameters` is OpenAI
+    function-calling's; `apps/mcp/page_tools.py` publishes a tool from either,
+    so validation has to read either too. It did not — it looked only at
+    `parameters`, which meant a host writing MCP's own spelling got a tool with
+    a schema the agent could see and the server never enforced. The visible
+    cost was the wrong error: a missing required argument waited out the full
+    timeout and came back as "the page is probably closed", which is both
+    untrue and unactionable.
+    """
+    return spec.get("parameters") or spec.get("inputSchema") or {}
 
 
 def _validate(spec: dict, args: dict) -> None:
@@ -94,7 +115,7 @@ def _validate(spec: dict, args: dict) -> None:
     the one that reads as a page bug rather than an agent one, an argument of
     the wrong primitive type.
     """
-    params = spec.get("parameters") or {}
+    params = schema_of(spec)
     props = params.get("properties") or {}
     for field in params.get("required") or []:
         if field not in args:
@@ -117,13 +138,20 @@ def _validate(spec: dict, args: dict) -> None:
 
 def request_action(
     *, session: Session, name: str, args: dict, user,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> PageAction:
     """Ask the attached page to run one action, and wait for its answer.
 
     Raises `PageActionError` for every outcome that is not a completed action,
     so a caller cannot mistake a refusal or an absent page for success.
+
+    `timeout` defaults to `DEFAULT_TIMEOUT_SECONDS` READ AT CALL TIME. It was a
+    default argument, which binds once at import — so the module constant that
+    every caller and test treats as the knob was not one, and the tests that
+    set it to shrink a 20-second wait were quietly waiting the full 20.
     """
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT_SECONDS
     available = {a["name"]: a for a in declared_actions(session)}
     if not available:
         raise PageActionError(
@@ -166,7 +194,7 @@ def request_action(
     )
     raise PageActionError(
         "timeout",
-        f"the page did not answer within {int(timeout)}s. It is probably closed — "
+        f"the page did not answer within {timeout:g}s. It is probably closed — "
         "an action only runs while the user has the page open.",
     )
 

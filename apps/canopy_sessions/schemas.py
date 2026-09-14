@@ -5,7 +5,7 @@ import datetime as dt
 import uuid
 
 from ninja import Schema
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 from apps.harness.schemas import Origin, normalize_origin
 
@@ -253,11 +253,27 @@ class PageActionSpec(Schema):
     uninterpreted — canopy is not the party that knows what a host's action
     means. It is what lets an agent call `dismissInsights` knowing it takes
     `{ids: number[]}`, rather than being told in prose.
+
+    May also be sent as `inputSchema`, which is MCP's name for the same field;
+    it is read back under `parameters` either way.
     """
 
+    # Rationale, deliberately out of the docstring — a Ninja docstring is the
+    # PUBLISHED OpenAPI description and ships into `generated.ts` (#757).
+    #
+    # Two spellings in, one out, rather than two fields that can disagree.
+    # canopy publishes these declarations as MCP tools, so a host author
+    # reading the MCP spec writes `inputSchema`; while only `parameters` was
+    # accepted, such a declaration was dropped HERE, at the door — the action
+    # still published, with no schema, and a missing required argument then
+    # waited out the full 20s timeout and came back as "the page is probably
+    # closed", which is neither true nor actionable.
     name: str
     description: str = ""
-    parameters: dict = {}
+    parameters: dict = Field(
+        default={},
+        validation_alias=AliasChoices("parameters", "inputSchema"),
+    )
 
 
 class PageActionsDeclareIn(Schema):

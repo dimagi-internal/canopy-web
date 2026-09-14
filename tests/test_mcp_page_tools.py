@@ -53,7 +53,7 @@ def test_a_declared_action_becomes_an_mcp_tool_with_its_schema():
     tool = page_tools.to_mcp_tool(*specs[0])
     # The schema is the whole reason a declaration carries one: without it the
     # agent knows the tool exists but not that it takes `ids`.
-    assert tool.inputSchema["required"] == ["ids"]
+    assert tool.parameters["required"] == ["ids"]
     assert "dismissInsights" in tool.name
     # The description says where it runs and how it fails, because "the tab is
     # closed" is the outcome an agent most needs to be able to act on.
@@ -123,7 +123,7 @@ def test_a_host_using_parameters_instead_of_inputschema_still_works():
     user, ws = _user()
     _session(user, ws, [{"name": "act", "parameters": {"type": "object", "required": ["x"]}}])
     tool = page_tools.to_mcp_tool(*page_tools.page_tool_specs(user)[0])
-    assert tool.inputSchema["required"] == ["x"]
+    assert tool.parameters["required"] == ["x"]
 
 
 def test_a_schemaless_declaration_still_produces_a_valid_tool():
@@ -132,4 +132,4 @@ def test_a_schemaless_declaration_still_produces_a_valid_tool():
     user, ws = _user()
     _session(user, ws, [{"name": "ping"}])
     tool = page_tools.to_mcp_tool(*page_tools.page_tool_specs(user)[0])
-    assert tool.inputSchema == {"type": "object", "properties": {}}
+    assert tool.parameters == {"type": "object", "properties": {}}
