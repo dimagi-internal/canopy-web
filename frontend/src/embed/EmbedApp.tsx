@@ -3,6 +3,7 @@ import { createCanopyClient, type CanopyClient } from '@canopy/client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { buildContextPreamble } from './contextPreamble'
+import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
 
 /**
@@ -49,7 +50,10 @@ export function EmbedApp({ link, app }: Props) {
   const client = useMemo(() => {
     if (clientRef.current) return clientRef.current
     const c = createCanopyClient({
-      baseUrl: window.location.origin,
+      // Origin PLUS the deployment prefix. canopy under `/canopy` on the
+      // shared labs host means a bare `/api/...` reaches the root tenant
+      // (connect-labs) instead — see frameBase.ts.
+      baseUrl: currentFrameBaseUrl(),
       fetchToken: async () => {
         const initial = init
         // The handshake's token is already in hand on the first call; asking
