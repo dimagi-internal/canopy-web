@@ -26,7 +26,8 @@ _EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send"
 class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         user = self.scope.get("user")
-        if not getattr(user, "is_authenticated", False):
+        contact = self.scope.get("contact")
+        if not getattr(user, "is_authenticated", False) and contact is None:
             await self.close(code=4001)
             return
         raw_id = self.scope["url_route"]["kwargs"]["session_id"]
@@ -34,11 +35,36 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if session is None:
             await self.close(code=4004)
             return
+
+        if contact is not None:
+            # A LISTENER, not a participant. A contact joins to hear the agent
+            # reply and nothing else: presence, co-edited drafts and stop are
+            # multiplayer features for members, and every one of them is keyed
+            # on a user id a contact does not have. Read-only is both what they
+            # need and the smallest thing to get right — sending stays on the
+            # HTTP surface, where the principal is checked once.
+            if session.contact_id != contact.pk:
+                await self.close(code=4003)
+                return
+            self.session = session
+            self.user = None
+            self.contact = contact
+            self.read_only = True
+            self.role = None
+            self.group = session_group(session.id)
+            await self.channel_layer.group_add(self.group, self.channel_name)
+            await self.accept()
+            await database_sync_to_async(chat_services.attach_session)(session)
+            await self.send_json(await self._snapshot())
+            return
+
         if not await database_sync_to_async(participants.can_access)(session, user):
             await self.close(code=4003)
             return
         self.session = session
         self.user = user
+        self.contact = None
+        self.read_only = False
         # can_access auto-joins a workspace member as editor, so a role always
         # exists by now; default to editor defensively.
         self.role = await database_sync_to_async(participants.role_for)(session, user) or SessionParticipant.EDITOR
@@ -73,6 +99,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         group = getattr(self, "group", None)
         if not group:
             return
+        if getattr(self, "read_only", False):
+            # No presence row to leave and nobody to tell — a contact never
+            # announced itself. The attach count still has to come down, or a
+            # closed panel keeps the runner streaming forever.
+            await database_sync_to_async(chat_services.detach_session)(self.session)
+            await self.channel_layer.group_discard(group, self.channel_name)
+            return
         await database_sync_to_async(presence.leave)(self.session.id, self.user.id)
         await database_sync_to_async(chat_services.detach_session)(self.session)
         await self._broadcast({"type": "presence.left", "user_id": self.user.id})
@@ -81,6 +114,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content, **kwargs):
         action = content.get("action")
         data = content.get("data") or {}
+        if getattr(self, "read_only", False):
+            # Every action below is keyed on a user id, a participant role, or
+            # both. Refusing the whole set is the honest answer rather than
+            # letting a contact reach one that happens not to dereference
+            # `self.user` today.
+            await self._error("read_only", "this connection can listen, not act.")
+            return
         if action == "presence.heartbeat":
             await database_sync_to_async(presence.touch)(self.session.id, self.user.id)
             # Keep the attach count alive for as long as the socket is open, so a
@@ -379,7 +419,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "event": "session.state",
             "data": serializers.session_state_dto(
                 session=self.session,
-                current_user_id=self.user.id,
+                # None for a contact, who has no user id. The DTO uses it only
+                # to mark which draft/messages are the caller's own, and a
+                # listener has none — where `self.user.id` raised on exactly the
+                # connection this snapshot exists to serve.
+                current_user_id=self.user.id if self.user else None,
                 participants=parts,
                 present_ids=sorted(presence.present_ids(self.session.id)),
                 draft=draft,
