@@ -20,6 +20,7 @@ from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 from apps.workspaces import services as wsvc
 
+from . import services
 from .models import Contact
 from .schemas import ContactOut, ContactPatchIn
 
@@ -29,7 +30,11 @@ router = Router(auth=session_auth, tags=["contacts"])
 def _serialize(c: Contact) -> dict:
     return {
         "id": c.pk,
+        "identity": c.identity,
+        "source": c.source,
         "email": c.email,
+        "external_id": c.external_id,
+        "app_name": c.app.name if c.app_id else "",
         "display_name": c.display_name,
         "workspace_id": c.workspace_id,
         "is_user": c.user_id is not None,
@@ -38,6 +43,8 @@ def _serialize(c: Contact) -> dict:
         "notes": c.notes,
         "attributes": c.attributes or {},
         "message_count": c.message_count,
+        "is_blocked": c.is_blocked,
+        "blocked_reason": c.blocked_reason,
         "first_seen_at": c.first_seen_at,
         "last_seen_at": c.last_seen_at,
     }
@@ -104,8 +111,25 @@ def patch_contact(request: HttpRequest, contact_id: int, payload: ContactPatchIn
         raise HttpError(403, "editing a contact requires the editor or owner role")
 
     data = payload.model_dump(exclude_unset=True, exclude_none=True)
+
+    # `blocked` is a verb, not a column: it sets a timestamp and a reason
+    # together, through the service, so the two cannot drift apart. Popped
+    # before the generic loop, which would otherwise set a bogus attribute and
+    # then hand `update_fields` a name the model does not have.
+    blocked = data.pop("blocked", None)
+    reason = data.pop("blocked_reason", None)
+
     for field, value in data.items():
         setattr(contact, field, value)
     if data:
         contact.save(update_fields=[*data.keys(), "last_seen_at"])
+
+    if blocked is True:
+        services.block(contact, reason=reason or "")
+    elif blocked is False:
+        services.unblock(contact)
+    elif reason is not None and contact.is_blocked:
+        # A reason on its own only makes sense for someone already refused.
+        services.block(contact, reason=reason)
+
     return ContactOut.model_validate(_serialize(contact))

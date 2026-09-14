@@ -10912,8 +10912,33 @@ export interface components {
         readonly ContactOut: {
             /** Id */
             readonly id: number;
-            /** Email */
+            /**
+             * Identity
+             * @description What canopy actually matched on: the address for someone who wrote in, or `<site>:<their id>` for someone using an embedded agent. Prefer this over `email` when showing who a contact is — an embed contact's address is a claim the site made, not the key.
+             */
+            readonly identity: string;
+            /**
+             * Source
+             * @description How canopy came to know this person: "email" (wrote to an agent's inbox) or "embed" (used an agent on a connected site). It says which field is the identity.
+             */
+            readonly source: string;
+            /**
+             * Email
+             * @default
+             */
             readonly email: string;
+            /**
+             * External Id
+             * @description The connected site's own id for this person, opaque to canopy. Scoped to that site, so it cannot collide with a canopy user or with another site's people.
+             * @default
+             */
+            readonly external_id: string;
+            /**
+             * App Name
+             * @description The connected site that vouched for them, if any.
+             * @default
+             */
+            readonly app_name: string;
             /**
              * Display Name
              * @default
@@ -10928,7 +10953,7 @@ export interface components {
             readonly is_user: boolean;
             /**
              * Auth Result
-             * @description Best email-authentication grade ever seen from this address: "dmarc" (the visible From: was not forged), "dkim", "spf" (envelope only — weak), or "none". A grade rather than a boolean because partner organisations run mail of varying quality and "unverified" must stay a workable state. Even "dmarc" proves the DOMAIN sent it, not which human.
+             * @description Best grade ever seen for this person, on one ladder shared by every channel. Email: "dmarc" (the visible From: was not forged), "dkim", "spf" (envelope only — weak). Embedded sites: "app_signed_origin", "app_signed", "app_secret" (proves the site, not the person). "none" either way. A grade rather than a boolean because the people canopy deals with arrive through systems of wildly varying quality and "unverified" must stay a workable state. Even the top grade proves the SENDER authorised it, not which human.
              */
             readonly auth_result: string;
             /**
@@ -10953,6 +10978,17 @@ export interface components {
              * @default 0
              */
             readonly message_count: number;
+            /**
+             * Is Blocked
+             * @description Whether this person has been refused. Blocking stops them reaching an agent without disconnecting the site or closing the mailbox, and keeps the record.
+             * @default false
+             */
+            readonly is_blocked: boolean;
+            /**
+             * Blocked Reason
+             * @default
+             */
+            readonly blocked_reason: string;
             /**
              * First Seen At
              * Format: date-time
@@ -10979,10 +11015,13 @@ export interface components {
          * ContactPatchIn
          * @description What a human may correct. Deliberately narrow.
          *
-         *     `email` is absent on purpose: it is the identity the record is keyed on, and
-         *     editing it would silently re-attribute a correspondence history to someone
-         *     else. The auth grades are absent because they are the mail server's verdict,
-         *     not an opinion.
+         *     `email`, `source` and `external_id` are absent on purpose: they are what the
+         *     record is keyed on, and editing one would silently re-attribute a history to
+         *     someone else. The auth grades are absent because they are the sender's
+         *     verdict, not an opinion.
+         *
+         *     `blocked` is here because refusing one person is a human decision, and the
+         *     only alternatives were disconnecting a whole site or closing a mailbox.
          */
         readonly ContactPatchIn: {
             /** Display Name */
@@ -10993,6 +11032,13 @@ export interface components {
             readonly attributes?: {
                 readonly [key: string]: unknown;
             } | null;
+            /**
+             * Blocked
+             * @description Set true to refuse this person, false to allow them again.
+             */
+            readonly blocked?: boolean | null;
+            /** Blocked Reason */
+            readonly blocked_reason?: string | null;
         };
     };
     responses: never;
