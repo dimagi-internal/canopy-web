@@ -36,6 +36,45 @@ class AppCredentialForm(forms.ModelForm):
     class Meta:
         model = AppCredential
         fields = "__all__"
+        help_texts = {
+            "allowed_delegation_domains": (
+                'Email domains this app may assert a user in at token-exchange, '
+                'e.g. ["dimagi.com"]. Leave it [] for an app that never '
+                "exchanges — canopy's own self-embed mints directly from the "
+                "signed-in session, so [] is correct there and grants nothing."
+            ),
+            "allowed_frame_origins": (
+                'Origins allowed to put the widget in an iframe, e.g. '
+                '["https://labs.connect.dimagi.com"]. Scheme + host + optional '
+                "port; no path, no wildcard. Required even for canopy framing "
+                "itself — empty means the embed shell 404s."
+            ),
+        }
+
+    def clean_allowed_delegation_domains(self):
+        """Normalise "no domains" to `[]`, and say what that means.
+
+        `blank=True` makes the form field optional, and an optional
+        `forms.JSONField` hands back `None` — which `exchange_api` iterates
+        (`{d.lower() for d in app.allowed_delegation_domains}`) and would crash
+        on. Empty has a meaning here and the meaning is a list, so it is stored
+        as one.
+        """
+        domains = self.cleaned_data.get("allowed_delegation_domains")
+        if domains in (None, ""):
+            return []
+        if not isinstance(domains, list):
+            raise forms.ValidationError(
+                'Expected a JSON list of email domains, e.g. ["dimagi.com"]. '
+                "Leave it as [] for an app that never calls token-exchange."
+            )
+        bad = [d for d in domains if not isinstance(d, str) or "@" in d or "/" in d]
+        if bad:
+            raise forms.ValidationError(
+                f"Not email domains: {bad}. Use the bare domain (dimagi.com), "
+                "not an address and not a URL."
+            )
+        return domains
 
     def clean_allowed_frame_origins(self):
         """Reject a bad origin at the form, not at the header.
