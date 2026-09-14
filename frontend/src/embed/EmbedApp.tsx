@@ -133,17 +133,28 @@ export function EmbedApp({ link, app }: Props) {
   const openSession = useCallback(
     async (agent: EmbedAgent, hostInit: HostInit) => {
       try {
-        const created = await client.rest.json<{ id: string }>('/api/canopy-sessions/', {
-          method: 'POST',
-          body: JSON.stringify({
-            agent_slug: agent.slug,
-            title: '',
-            // `embed_app` is NOT sent: canopy stamps it server-side from the
-            // delegated token, and anything we sent under that key would be
-            // discarded (apps/canopy_sessions/api.py).
-            metadata: hostInit.metadata ?? {},
-          }),
-        })
+        // The TENANT-scoped path, with the workspace the picker's own row
+        // named. The flat `/api/canopy-sessions/` resolves to the caller's
+        // DEFAULT workspace, and `create_session` then 404s any agent that is
+        // not in it — so an agent in a second workspace was offered by the
+        // picker and refused on click. For a user in several workspaces with
+        // no default, the flat route does not even get that far: it 422s with
+        // "no unambiguous workspace". `/api/embed/agents` returns `workspace`
+        // per row precisely so this call does not have to guess.
+        const created = await client.rest.json<{ id: string }>(
+          `/api/w/${encodeURIComponent(agent.workspace)}/canopy-sessions/`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              agent_slug: agent.slug,
+              title: '',
+              // `embed_app` is NOT sent: canopy stamps it server-side from the
+              // delegated token, and anything we sent under that key would be
+              // discarded (apps/canopy_sessions/api.py).
+              metadata: hostInit.metadata ?? {},
+            }),
+          },
+        )
         setPhase({ kind: 'chatting', sessionId: created.id })
       } catch (error) {
         setPhase({
