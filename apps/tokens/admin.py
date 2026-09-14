@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import AppCredential, AppCredentialAgent, PersonalToken
+from .models import AppCredential, AppCredentialAgent, EmbedAuditLog, PersonalToken
 
 
 @admin.register(PersonalToken)
@@ -103,3 +103,33 @@ class AppCredentialAdmin(admin.ModelAdmin):
         # meaningful to read.
         names = list(obj.allowed_agents.values_list("agent__slug", flat=True))
         return ", ".join(names) or "— none (offers nothing)"
+
+
+@admin.register(EmbedAuditLog)
+class EmbedAuditLogAdmin(admin.ModelAdmin):
+    """Read the embed audit trail. Append-only, so nothing here can write.
+
+    Registered because a trail nobody can read is not a trail — this is the
+    only place the question "did anything act as me, and what let it" can be
+    asked today. A queryable product surface would be better and is not built
+    yet; the filters below are what make this usable meanwhile.
+    """
+
+    list_display = ("created_at", "event", "ok", "reason", "app_name",
+                    "subject_email", "actor", "client_ip")
+    list_filter = ("event", "ok", "reason", "app_name")
+    search_fields = ("app_name", "subject_email", "detail", "client_ip")
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return True  # the detail VIEW; every field is read-only below
+
+    def has_delete_permission(self, request, obj=None):
+        # An audit trail somebody can prune is not one.
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        return [f.name for f in self.model._meta.fields]

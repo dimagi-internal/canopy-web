@@ -497,3 +497,89 @@ class GitHubConnection(models.Model):
         if self.refresh_token_expires_at and self.refresh_token_expires_at <= timezone.now():
             return True
         return False
+
+
+class EmbedAuditLog(models.Model):
+    """Who acted as whom, through which embedding app, and from where.
+
+    The credential surfaces wrote `logger.info` / `logger.warning` and nothing
+    else. Application logs are the wrong home for this: they are not queryable
+    per user or per app, they age out on a retention policy chosen for
+    debugging, and on a container they are the first thing lost. The question an
+    audit trail exists to answer — *did anything act as me, and what let it* —
+    could not be asked at all.
+
+    **Identifying strings are denormalised on purpose.** `user` and `app` are
+    `SET_NULL`, so deleting either would otherwise erase the trail of what it
+    did, which is the one thing an audit row must survive. `subject_email` and
+    `app_name` are written at the time of the event and never updated: they
+    record what was true then, not what is true now.
+
+    Append-only by convention — nothing in canopy updates or deletes a row here.
+    """
+
+    # Identity flowed to someone.
+    EXCHANGE = "exchange"          # a host asserted a user, and canopy believed it
+    MINT = "mint"                  # canopy minted for its own signed-in user
+    # The registration itself changed.
+    CONNECT = "connect"
+    UPDATE = "update"
+    ROTATE = "rotate"
+    DISCONNECT = "disconnect"
+    EVENT_CHOICES = [
+        (EXCHANGE, "Token exchange"),
+        (MINT, "Session mint"),
+        (CONNECT, "Site connected"),
+        (UPDATE, "Site updated"),
+        (ROTATE, "Secret rotated"),
+        (DISCONNECT, "Site disconnected"),
+    ]
+
+    event = models.CharField(max_length=20, choices=EVENT_CHOICES, db_index=True)
+    ok = models.BooleanField(default=True)
+    #: Short machine-readable reason on a refusal (`bad_domain`, `revoked`, …).
+    reason = models.CharField(max_length=64, blank=True, default="")
+
+    app = models.ForeignKey(
+        "AppCredential", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="audit_rows",
+    )
+    #: The app's name AS IT WAS. Survives the app being deleted.
+    app_name = models.CharField(max_length=100, blank=True, default="", db_index=True)
+
+    #: Whose identity was handed over (exchange/mint), or whose registration
+    #: changed. Null for a refusal that never resolved a user.
+    subject = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="embed_audit_subject_rows",
+    )
+    subject_email = models.CharField(max_length=254, blank=True, default="", db_index=True)
+
+    #: Who performed the action, when that is a different person from the
+    #: subject — an owner connecting a site, say. Null when they are the same.
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="embed_audit_actor_rows",
+    )
+
+    #: Client address as the app server saw it. Best-effort and spoofable
+    #: upstream of a proxy — recorded because it is the only correlation
+    #: available when a credential is suspected of leaking, not because it is
+    #: evidence on its own.
+    client_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+    detail = models.CharField(max_length=500, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "embed_audit_log"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["app_name", "-created_at"]),
+            models.Index(fields=["subject_email", "-created_at"]),
+            models.Index(fields=["event", "-created_at"]),
+        ]
+
+    def __str__(self):
+        status = "ok" if self.ok else f"REFUSED({self.reason})"
+        return f"[{status}] {self.event} {self.app_name} -> {self.subject_email}"
