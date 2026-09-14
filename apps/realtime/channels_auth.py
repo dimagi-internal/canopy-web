@@ -83,6 +83,27 @@ def _user_from_bearer(scope):
 
 
 @database_sync_to_async
+def _contact_from_query_token(scope):
+    """A CONTACT on `?token=`, for a visitor with no canopy account.
+
+    Separate from `_user_from_query_token` and returning a different thing on
+    purpose. Collapsing them would put a contact into `scope["user"]`, where
+    every consumer in the app treats it as somebody with memberships — the same
+    mistake `ContactToken` exists as its own model to prevent.
+    """
+    from urllib.parse import parse_qs
+
+    from apps.tokens.models import ContactToken
+
+    qs = parse_qs((scope.get("query_string") or b"").decode("latin1"))
+    values = qs.get("token") or []
+    if not values:
+        return None
+    token = ContactToken.lookup(values[0])
+    return token.contact if token is not None else None
+
+
+@database_sync_to_async
 def _user_from_query_token(scope):
     """?token=<raw> on the WS URL — DelegatedTokens ONLY. Browsers can't set an
     Authorization header on `new WebSocket()`, so short-lived delegated tokens
@@ -114,4 +135,10 @@ class RealtimeAuthMiddleware:
         )
         scope = dict(scope)
         scope["user"] = user or AnonymousUser()
+        # Only when nothing resolved a user. A contact and a user are never both
+        # present, so a consumer cannot accidentally read the wrong one — and
+        # `scope["user"]` stays anonymous for a contact, so any consumer that
+        # has not been taught about them refuses by its existing check rather
+        # than by remembering a new one.
+        scope["contact"] = None if user else await _contact_from_query_token(scope)
         return await self.app(scope, receive, send)
