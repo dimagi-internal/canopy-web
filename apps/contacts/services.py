@@ -98,9 +98,12 @@ def record_inbound_sender(
         },
     )
     if created:
+        # Same reasoning as the embed path below, applied to the one identifier
+        # canopy CAN be sure about: an email address is personal data, and it
+        # does not need to be in an application log to be correlatable.
         logger.info(
-            "contact recorded: %s in %s (auth=%s) — no membership granted",
-            email, workspace.pk, grade,
+            "contact %s recorded in %s (auth=%s) — no membership granted",
+            contact.pk, workspace.pk, grade,
         )
         return contact
 
@@ -131,7 +134,7 @@ def promote_to_user(contact: Contact, user) -> Contact:
     contact.user = user
     contact.save(update_fields=["user", "last_seen_at"])
     logger.info(
-        "contact %s linked to user %s (still no membership)", contact.email, user.pk,
+        "contact %s linked to user %s (still no membership)", contact.pk, user.pk,
     )
     return contact
 
@@ -193,9 +196,16 @@ def record_embed_visitor(
         },
     )
     if created:
+        # The contact's PK, never the host's id for them. CodeQL flagged this
+        # as clear-text logging of sensitive data and it is right for a reason
+        # worth keeping: `external_id` is chosen by the host and canopy cannot
+        # know what it is — an opaque uuid for one site, an email or a phone
+        # number for the next. The database row holds it under an ACL; an
+        # application log is read by more people, kept by different rules, and
+        # shipped somewhere else entirely. A pk correlates just as well.
         logger.info(
-            "contact recorded from %s: %s in %s (auth=%s) — no membership granted",
-            app.name, external_id, workspace.pk, grade,
+            "contact %s recorded from %s in %s (auth=%s) — no membership granted",
+            contact.pk, app.name, workspace.pk, grade,
         )
         return contact
 
@@ -229,7 +239,7 @@ def block(contact: Contact, *, reason: str = "") -> Contact:
     contact.blocked_at = timezone.now()
     contact.blocked_reason = (reason or "").strip()[:200]
     contact.save(update_fields=["blocked_at", "blocked_reason", "last_seen_at"])
-    logger.info("contact %s blocked (%s)", contact.identity, contact.blocked_reason)
+    logger.info("contact %s blocked (%s)", contact.pk, contact.blocked_reason)
     return contact
 
 
