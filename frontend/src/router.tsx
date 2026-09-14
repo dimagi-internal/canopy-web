@@ -17,6 +17,7 @@ import { WalkthroughsPage } from './pages/WalkthroughsPage'
 import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
+import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { DddPage } from './pages/DddPage'
@@ -213,6 +214,7 @@ export const routeTable: RouteObject[] = [
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },
       { path: '/w/:workspace/members', element: <WorkspaceMembersPage /> },
+      { path: '/w/:workspace/connected-apps', element: <ConnectedAppsPage /> },
       { path: '/w/:workspace/inbound', element: <InboundPushPage /> },
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },

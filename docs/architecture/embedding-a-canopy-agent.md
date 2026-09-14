@@ -48,28 +48,40 @@ which agents it may offer. **All three fail closed** — which is why "nothing
 happens" almost always means one of them is missing rather than something being
 broken.
 
-Go to **`/admin/tokens/appcredential/add/`** on your canopy deployment, as a
-staff user:
+Go to **Connected sites** in your workspace —
+**`/w/<workspace>/connected-apps`** — as a workspace owner:
 
 | Field | What it is | If you get it wrong |
 | --- | --- | --- |
 | **Name** | The `app` value you pass to `canopy.init`, e.g. `connect-labs` | Mismatch ⇒ the widget's frame 404s |
-| **Allowed delegation domains** | Email domains this app may vouch for at token-exchange, e.g. `["dimagi.com"]` | Empty ⇒ the app vouches for nobody. That is a *refusal*, not a bug, and it is the right setting for a host that never exchanges — see the note below |
-| **Allowed frame origins** | Origins that may frame the widget. **Include every environment** — production, staging, and your local dev origin | Empty ⇒ the frame 404s by design; an exempt page with no `frame-ancestors` would be frameable by any site |
-| **Allowed agents** (inline) | Which agents this app may offer | Empty ⇒ the picker offers nothing |
-| **Provision workspace / role** | Optional: the tenant a brand-new user lands in | Leave blank unless *every* user of your host should be trusted in that tenant |
+| **Site URLs** | The origins allowed to frame the widget. **Include every environment** — production, staging, and your local dev origin | Empty ⇒ the frame 404s by design; an exempt page with no `frame-ancestors` would be frameable by any site |
+| **Agents it may offer** | Which of this workspace's agents this site may offer | None ⇒ the picker offers nothing |
+| **"This site has its own sign-in"** | Whether it may vouch for its signed-in users at token-exchange | Off ⇒ the app vouches for nobody. That is a *refusal*, not a bug, and it is right for a site that never exchanges |
 
-Origins are validated on save. A wildcard, a path, or anything containing `;` is
+You are shown the secret **once**, on the response that creates it. canopy keeps
+only a hash, so it cannot be recovered — use **New secret** to issue another,
+which invalidates the previous one immediately.
+
+URLs are validated on save. A wildcard, a path, or anything containing `;` is
 refused with an explanation — a wildcard in particular would undo the entire
-framing protection.
+framing protection. A trailing slash is accepted and trimmed, because that is
+what you get from an address bar.
 
-> **Grant no delegation domain you do not need.** The field is optional (`[]`),
-> and a domain in it is a real power: anyone holding this app's raw secret can
-> exchange it for a token acting as *any* user in that domain. A host that mints
-> from its own signed-in session rather than through
-> `POST /api/auth/token-exchange` — canopy embedding its own widget is the
-> example — should leave it `[]`, which grants nothing while leaving the framing
-> and agent allowlists fully in force.
+> **The vouching question is the strong one.** Ticking it lets anyone holding
+> this site's secret exchange it for a token acting as *any* canopy user in your
+> email domain. It is bounded twice: canopy grants only the domain of the owner
+> who ticked it — you cannot vouch for a population you are not part of — and
+> only if that domain is one canopy already admits at login. A site that mints
+> from canopy's own session instead (canopy embedding its own widget is the
+> example) should leave it off, which grants nothing while leaving the URL and
+> agent allowlists fully in force.
+
+> **Why not the Django admin?** It used to be the only way, and it is now
+> read-only. It is staff-only, so the person who wants to embed an agent could
+> not do it; there is no shell on a deployment to run the management commands
+> in either; and every field here fails closed and silently, so a bare form
+> produces a widget that never appears with nothing to say why. See §11 for
+> canopy's own pages, where the whole thing is one button.
 
 **Alternatively, by command** (local or scripted setup — note a deployment has
 no shell to run these in, since `EnableExecuteCommand` is off on the service and
@@ -385,22 +397,20 @@ write.
 
 **Setup is one credential plus one setting.**
 
-| | |
-| --- | --- |
-| **Name** | `canopy-web` — must match `EMBED_SELF_APP` |
-| **Allowed delegation domains** | `[]` |
-| **Allowed frame origins** | `["https://labs.connect.dimagi.com"]` |
-| **Allowed agents** (inline) | at least one, in a workspace you belong to |
-| **Provision workspace / role** | leave blank |
+Open **`/w/<workspace>/connected-apps`** and press **Turn on the agent panel
+here**, then pick the agents it should offer. That is the whole setup.
 
-`[]` for the domains is deliberate, not a placeholder: the self-embed never
-calls `token-exchange`, so it needs to vouch for nobody, and a domain here would
-make the raw credential exchangeable for a token acting as any user in it.
+There is nothing to fill in because none of it is a decision. The name has to
+equal `EMBED_SELF_APP` or nothing mounts; the delegation list has to be empty
+because the self-embed never exchanges; and the URL is the address you are
+already looking at, so the server takes it from the request rather than asking.
+Each of those is a fact about canopy, and each fails silently when typed wrong —
+which is what asking for them produced. Press it again from another environment
+to add that URL too.
 
-The frame origin is required even though the frame is same-origin. `frame-ancestors`
-enumerates who may embed the shell, and an empty list means there is no shell to
-serve — `/embed/chat` 404s. Include every environment you run: add
-`http://localhost:8000` for local development.
+The frame origin is required even though the frame is same-origin.
+`frame-ancestors` enumerates who may embed the shell, and an empty list means
+there is no shell to serve — `/embed/chat` 404s.
 
 `EMBED_SELF_APP` is already set to `canopy-web` in `deploy/aws/canopy-web.cfn.yaml`.
 Leaving it empty is what keeps this off by default — it mounts a chat panel on

@@ -2648,6 +2648,98 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/connected-apps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Sites connected to this workspace
+         * @description Every site this workspace has connected, with what each may do.
+         */
+        readonly get: operations["apps_tokens_connected_apps_api_list_connected_apps"];
+        readonly put?: never;
+        /**
+         * Connect a site
+         * @description Register a site, and return its secret once.
+         */
+        readonly post: operations["apps_tokens_connected_apps_api_connect_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/connected-apps/enable-self": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Turn on canopy's widget on canopy's own pages
+         * @description One act, because every input is a fact about canopy rather than a choice.
+         *
+         *     The origin is taken from THIS request, not from the body. It is the only
+         *     value that is certainly right — it is the address the person is looking at —
+         *     and taking it from the caller would let a form typo produce a connection
+         *     that silently never frames.
+         */
+        readonly post: operations["apps_tokens_connected_apps_api_enable_self_widget"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/connected-apps/{app_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect a site
+         * @description Revoked rather than deleted: the row is the audit trail of what was once
+         *     allowed to embed an agent, and its embed shell 404s from this moment.
+         */
+        readonly delete: operations["apps_tokens_connected_apps_api_disconnect_app"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change what a connected site may do */
+        readonly patch: operations["apps_tokens_connected_apps_api_update_connected_app"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/rotate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Issue a new secret, invalidating the old one
+         * @description The previous secret stops working immediately — that is the point of the
+         *     button, since it is reached for when the old one has leaked.
+         */
+        readonly post: operations["apps_tokens_connected_apps_api_rotate_secret"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -9094,6 +9186,88 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /** ConnectedAgentOut */
+        readonly ConnectedAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * ConnectedAppOut
+         * @description A site connected to canopy.
+         *
+         *     Carries no secret. The raw credential exists only in the response that
+         *     minted it — there is nothing to re-read here, by construction.
+         */
+        readonly ConnectedAppOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            /** Origins */
+            readonly origins: readonly string[];
+            /** Delegation Domains */
+            readonly delegation_domains: readonly string[];
+            /** Agents */
+            readonly agents: readonly components["schemas"]["ConnectedAgentOut"][];
+            /** Is Self */
+            readonly is_self: boolean;
+            /** Created At */
+            readonly created_at: string;
+            /** Last Used At */
+            readonly last_used_at: string | null;
+            /** Revoked */
+            readonly revoked: boolean;
+        };
+        /** ConnectedAppCreatedOut */
+        readonly ConnectedAppCreatedOut: {
+            readonly app: components["schemas"]["ConnectedAppOut"];
+            /** Secret */
+            readonly secret: string;
+        };
+        /** ConnectIn */
+        readonly ConnectIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Origins
+             * @default []
+             */
+            readonly origins: readonly string[];
+            /**
+             * Delegation Domains
+             * @default []
+             */
+            readonly delegation_domains: readonly string[];
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+        };
+        /** EnableSelfIn */
+        readonly EnableSelfIn: {
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+        };
+        /** UpdateIn */
+        readonly UpdateIn: {
+            /** Origins */
+            readonly origins?: readonly string[] | null;
+            /** Delegation Domains */
+            readonly delegation_domains?: readonly string[] | null;
+            /** Agents */
+            readonly agents?: readonly string[] | null;
+        };
+        /** SecretOut */
+        readonly SecretOut: {
+            /** Secret */
+            readonly secret: string;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -14823,6 +14997,151 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SharedVaultOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_list_connected_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ConnectedAppOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_connect_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedAppCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_enable_self_widget: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EnableSelfIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_disconnect_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_update_connected_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_rotate_secret: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SecretOut"];
                 };
             };
         };

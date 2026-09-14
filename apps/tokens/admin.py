@@ -1,13 +1,7 @@
-from django import forms
-from django.contrib import admin, messages
+from django.contrib import admin
 from django.utils import timezone
 
-from .models import (
-    AppCredential,
-    AppCredentialAgent,
-    PersonalToken,
-    is_valid_frame_origin,
-)
+from .models import AppCredential, AppCredentialAgent, PersonalToken
 
 
 @admin.register(PersonalToken)
@@ -24,114 +18,47 @@ class PersonalTokenAdmin(admin.ModelAdmin):
         self.message_user(request, f"Revoked {n} token(s).")
 
 
-class AppCredentialForm(forms.ModelForm):
-    """Validation lives here, not in `save_model`.
-
-    A `ValidationError` raised from `save_model` is not caught by the admin —
-    it becomes a 500 rather than a re-rendered form with the message attached
-    to the field. Found by a test that expected a 200 with errors and got an
-    exception.
-    """
-
-    class Meta:
-        model = AppCredential
-        fields = "__all__"
-        help_texts = {
-            "allowed_delegation_domains": (
-                'Email domains this app may assert a user in at token-exchange, '
-                'e.g. ["dimagi.com"]. Leave it [] for an app that never '
-                "exchanges — canopy's own self-embed mints directly from the "
-                "signed-in session, so [] is correct there and grants nothing."
-            ),
-            "allowed_frame_origins": (
-                'Origins allowed to put the widget in an iframe, e.g. '
-                '["https://labs.connect.dimagi.com"]. Scheme + host + optional '
-                "port; no path, no wildcard. Required even for canopy framing "
-                "itself — empty means the embed shell 404s."
-            ),
-        }
-
-    def clean_allowed_delegation_domains(self):
-        """Normalise "no domains" to `[]`, and say what that means.
-
-        `blank=True` makes the form field optional, and an optional
-        `forms.JSONField` hands back `None` — which `exchange_api` iterates
-        (`{d.lower() for d in app.allowed_delegation_domains}`) and would crash
-        on. Empty has a meaning here and the meaning is a list, so it is stored
-        as one.
-        """
-        domains = self.cleaned_data.get("allowed_delegation_domains")
-        if domains in (None, ""):
-            return []
-        if not isinstance(domains, list):
-            raise forms.ValidationError(
-                'Expected a JSON list of email domains, e.g. ["dimagi.com"]. '
-                "Leave it as [] for an app that never calls token-exchange."
-            )
-        bad = [d for d in domains if not isinstance(d, str) or "@" in d or "/" in d]
-        if bad:
-            raise forms.ValidationError(
-                f"Not email domains: {bad}. Use the bare domain (dimagi.com), "
-                "not an address and not a URL."
-            )
-        return domains
-
-    def clean_allowed_frame_origins(self):
-        """Reject a bad origin at the form, not at the header.
-
-        `frame_origins()` already filters on read, so a bad value cannot
-        produce a permissive policy — but it would silently not apply, and an
-        admin who typed it would believe the grant was in force. A wildcard is
-        the case that matters: it would restore exactly the exposure
-        `X-Frame-Options: DENY` was preventing.
-        """
-        origins = self.cleaned_data.get("allowed_frame_origins") or []
-        if not isinstance(origins, list):
-            raise forms.ValidationError("Expected a JSON list of origins.")
-        bad = [o for o in origins if not is_valid_frame_origin(o)]
-        if bad:
-            raise forms.ValidationError(
-                f"Not valid origins: {bad}. Use scheme + host + optional port "
-                "(https://labs.connect.dimagi.com, http://localhost:8000) — no "
-                "path, no wildcard. A wildcard is refused on purpose: "
-                "frame-ancestors exists to enumerate the set."
-            )
-        return origins
-
-
 class AppCredentialAgentInline(admin.TabularInline):
-    """Which agents this app may offer.
-
-    Inline rather than a separate page because it is never edited
-    independently — "register connect-labs" and "decide what it can offer" are
-    one operational act, and the whole point of the allowlist is that it is
-    explicit server-side data rather than a host's own settings constant.
-    """
+    """Read-only view of which agents an app may offer."""
 
     model = AppCredentialAgent
-    extra = 1
-    autocomplete_fields = ("agent",)
+    extra = 0
+    can_delete = False
     verbose_name = "allowed agent"
     verbose_name_plural = "allowed agents"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AppCredential)
 class AppCredentialAdmin(admin.ModelAdmin):
-    """Register an embedding application, its origins, and its agents.
+    """Read-only. Embedding apps are managed on **Connected sites**.
 
-    **Why this is in the admin at all.** Every one of these facts had a
-    management command and no other route, and there is nowhere to run one:
-    the deployed service has `EnableExecuteCommand` off (so no `aws ecs
-    execute-command`) and the RDS instance is VPC-internal (so no laptop
-    shell). Registering an embedding app was therefore not actually possible
-    on a deployment. The commands remain for scripted setup; this is the door
-    a human can use.
+    They were managed here once, and that was wrong twice over. Operationally
+    the admin is staff-only, so the person who wants to embed an agent could
+    not do it — and there is nowhere to run the equivalent management command
+    either (`EnableExecuteCommand` is off on the service and the database is
+    VPC-internal). Conceptually, "connect my site to canopy" is something a
+    person does, not a row an administrator edits: the fields are all
+    fail-closed and silent, so a form with no explanation beside it produces a
+    widget that never appears and no way to find out why.
+
+    The surface is `/w/{workspace}/connected-apps`
+    (`apps/tokens/connected_apps_api.py`), owned by workspace owners like every
+    other tenant-admin page. This stays registered because inspecting a row is
+    genuinely useful when something is not working — and stays READ-ONLY so it
+    cannot quietly become the management path again, which is exactly how it
+    became one the first time.
     """
 
-    form = AppCredentialForm
     inlines = [AppCredentialAgentInline]
     list_display = (
         "name",
+        "workspace",
         "domains_display",
         "origins_display",
         "agents_display",
@@ -139,26 +66,22 @@ class AppCredentialAdmin(admin.ModelAdmin):
         "last_used_at",
         "revoked_at",
     )
-    list_filter = ("revoked_at",)
+    list_filter = ("revoked_at", "workspace")
     search_fields = ("name",)
-    actions = ["revoke_selected"]
 
-    fields = (
-        "name",
-        "allowed_delegation_domains",
-        "allowed_frame_origins",
-        "provision_workspace",
-        "provision_role",
-        "created_by",
-        "created_at",
-        "last_used_at",
-        "revoked_at",
-    )
-    # `token_hash` is deliberately absent from `fields` entirely, not merely
-    # read-only: the raw value is shown once at creation and is unrecoverable
-    # afterwards, so a hash in the form is an invitation to paste something
-    # into it.
-    readonly_fields = ("created_by", "created_at", "last_used_at", "revoked_at")
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # True, with every field read-only: False would hide the detail page
+        # entirely, and looking at a row is the reason this is still here.
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        return [f.name for f in self.model._meta.fields]
 
     @admin.display(description="delegation domains")
     def domains_display(self, obj):
@@ -180,43 +103,3 @@ class AppCredentialAdmin(admin.ModelAdmin):
         # meaningful to read.
         names = list(obj.allowed_agents.values_list("agent__slug", flat=True))
         return ", ".join(names) or "— none (offers nothing)"
-
-    def save_model(self, request, obj, form, change):
-        """Mint on create, and show the raw credential exactly once.
-
-        `AppCredential.create_credential` is the only writer that generates a
-        token, so creating through the admin has to go through it rather than
-        a bare `save()` — otherwise the row would have an empty `token_hash`
-        and authenticate nothing, silently.
-        """
-        if change:
-            obj.save()
-            return
-
-        raw, created = AppCredential.create_credential(
-            name=obj.name,
-            domains=obj.allowed_delegation_domains or [],
-            created_by=request.user,
-            provision_workspace=obj.provision_workspace,
-            provision_role=obj.provision_role,
-        )
-        created.allowed_frame_origins = obj.allowed_frame_origins or []
-        created.save(update_fields=["allowed_frame_origins"])
-        # Carry the real pk back so the inline rows attach to it.
-        obj.pk = created.pk
-
-        self.message_user(
-            request,
-            f"Credential for {created.name!r} created. Copy it now — it is not "
-            f"stored and cannot be shown again:  {raw}",
-            level=messages.WARNING,
-        )
-
-    @admin.action(description="Revoke selected credentials")
-    def revoke_selected(self, request, queryset):
-        n = queryset.filter(revoked_at__isnull=True).update(revoked_at=timezone.now())
-        self.message_user(
-            request,
-            f"Revoked {n} credential(s). Their embed shells now 404 and their "
-            "existing delegated tokens stop working on their next request.",
-        )

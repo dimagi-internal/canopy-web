@@ -85,12 +85,27 @@ def test_documented_routes_resolve(doc, route):
         pytest.fail(f"the doc tells a host to call {route}, which resolves to nothing")
 
 
-def test_documented_admin_url_resolves(doc):
-    """The doc sends a human to a specific admin page, because on a deployment
-    there is no shell to run the commands in."""
-    url = "/admin/tokens/appcredential/add/"
-    assert url in doc
-    resolve(url)
+def test_the_documented_page_exists_and_the_admin_is_no_longer_the_path(doc):
+    """The doc sends a human to a product page, not the Django admin.
+
+    `resolve()` cannot check the page itself — every unknown path falls through
+    to the SPA catch-all, so it would pass for a route that does not exist. The
+    frontend router is the authority for that, and the API it calls is the
+    authority for the rest.
+    """
+    assert "/w/<workspace>/connected-apps" in doc
+
+    router = (DOC.parent.parent.parent / "frontend" / "src" / "router.tsx").read_text()
+    assert "/w/:workspace/connected-apps" in router, (
+        "the doc sends a human to a page the router does not declare"
+    )
+
+    # The surface behind it must be real, and mounted where the client expects.
+    resolve("/api/workspaces/w1/connected-apps")
+
+    # The old door must not still be advertised: it is read-only now, so
+    # following the doc there would be a dead end with no explanation.
+    assert "/admin/tokens/appcredential/add/" not in doc
 
 
 def test_the_doc_matches_whether_actions_actually_work(doc):
@@ -167,12 +182,19 @@ def test_the_self_embed_setting_names_and_value_are_real(doc):
     )
 
 
-def test_the_self_embed_section_does_not_ask_for_a_delegation_domain(doc):
-    """The whole point of §11's `[]` is that the self-embed vouches for nobody.
+def test_the_self_embed_section_asks_for_nothing(doc):
+    """§11 is one button, and that is the claim worth pinning.
 
-    A credential that never calls token-exchange needs no domain, and one added
-    "to be safe" makes the raw value exchangeable for a token acting as any user
-    in it. Pinned because it is the kind of field someone fills in by reflex.
+    Every input it would otherwise collect is a fact about canopy — the name
+    must equal `EMBED_SELF_APP`, the delegation list must be empty, the URL is
+    the address you are on — and each fails closed and silently when typed
+    wrong. If this section ever grows a form again, it has regressed to the
+    thing that made the admin the wrong door.
     """
-    section = DOC.read_text().split("## 11. Reference: canopy embedding its own pages")[-1]
-    assert "**Allowed delegation domains** | `[]`" in " ".join(section.split())
+    section = " ".join(
+        DOC.read_text().split("## 11. Reference: canopy embedding its own pages")[-1].split()
+    )
+    assert "Turn on the agent panel here" in section
+    assert "the self-embed never exchanges" in section
+    # A field table is exactly what this section exists not to have.
+    assert "| **Name** |" not in section

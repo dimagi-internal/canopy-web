@@ -188,6 +188,28 @@ class AppCredential(models.Model):
 
     name = models.CharField(max_length=100, unique=True)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    #: The workspace whose owners administer this app.
+    #:
+    #: Nullable ONLY for rows that predate the product surface — a credential
+    #: registered before there was a page to register it on has no owning
+    #: tenant to infer, and inventing one would hand somebody an app they never
+    #: created. Such a row keeps working exactly as before and is simply not
+    #: editable in the UI.
+    #:
+    #: The usual hazard with a nullable tenant FK is a predicate that reads
+    #: "no tenant ⇒ allow" (see ARCHITECTURE.md on `Agent.workspace`). It cannot
+    #: arise here: every reader filters `workspace_id__in=<slugs I own>`, and a
+    #: SQL `IN` never matches NULL, so an unowned row is excluded by
+    #: construction rather than by remembering to exclude it.
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="embedded_apps",
+        help_text="Workspace whose owners administer this app. Blank for rows "
+        "registered before the Connected apps page existed.",
+    )
     #: Email domains this app may assert a user in, at `token-exchange`.
     #:
     #: `blank=True` because EMPTY IS A REAL CONFIGURATION, not an unfinished

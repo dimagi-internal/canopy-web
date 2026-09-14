@@ -163,6 +163,7 @@ from apps.harness.items_api import (  # noqa: E402
 )
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
+from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 from apps.tokens.exchange_api import exchange_router  # noqa: E402
 
@@ -201,6 +202,8 @@ api.add_router("/agents", schedules_router)  # recurring turns, under the agents
 api.add_router("/agents", agent_items_router)
 api.add_router("/items", items_router)
 api.add_router("/workspaces", workspaces_router)
+# Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
+api.add_router("/workspaces", connected_apps_router)
 api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)
