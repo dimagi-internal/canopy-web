@@ -1070,6 +1070,59 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/me": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who canopy thinks I am
+         * @description The contact's own view: themselves, and the agents this site may offer.
+         *
+         *     Deliberately not the workspace's agent index. A contact is not a member, so
+         *     the list is the app's allowlist and nothing is intersected with memberships
+         *     they do not have — the same three-way question `/api/embed/agents` answers
+         *     for users, minus the leg that does not apply.
+         */
+        readonly get: operations["apps_tokens_contact_api_contact_me"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/auth/contact-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Exchange a signed assertion for a contact token
+         * @description A connected site vouches for one of its visitors, and gets them a session.
+         *
+         *     No `Authorization` header: the assertion is the credential, and that is the
+         *     point. A shared secret would still have to exist, be distributed, and be
+         *     the thing an attacker looks for — whereas a signature proves the claim
+         *     without canopy holding anything that could make one.
+         *
+         *     The workspace comes from the app's own row, never the assertion. A host
+         *     cannot name the tenant it wants its visitor placed in.
+         */
+        readonly post: operations["apps_tokens_contact_api_contact_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/reviews/": {
         readonly parameters: {
             readonly query?: never;
@@ -6206,6 +6259,44 @@ export interface components {
             /** Expires At */
             readonly expires_at: string;
         };
+        /** ContactAgentOut */
+        readonly ContactAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+        };
+        /** ContactMeOut */
+        readonly ContactMeOut: {
+            /** Contact Id */
+            readonly contact_id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /** Identity */
+            readonly identity: string;
+            /** App */
+            readonly app: string;
+            /** Agents */
+            readonly agents: readonly components["schemas"]["ContactAgentOut"][];
+        };
+        /** ContactTokenOut */
+        readonly ContactTokenOut: {
+            /** Token */
+            readonly token: string;
+            /** Expires At */
+            readonly expires_at: string;
+            /** Contact Id */
+            readonly contact_id: number;
+            /** Display Name */
+            readonly display_name: string;
+        };
+        /** ContactTokenIn */
+        readonly ContactTokenIn: {
+            /** Assertion */
+            readonly assertion: string;
+        };
         /**
          * ReviewListItemOut
          * @description One row in the DDD-plans dashboard list (GET /api/reviews/).
@@ -9289,6 +9380,10 @@ export interface components {
             readonly delegation_domains: readonly string[];
             /** Agents */
             readonly agents: readonly components["schemas"]["ConnectedAgentOut"][];
+            /** Public Keys */
+            readonly public_keys: readonly string[];
+            /** Signs Assertions */
+            readonly signs_assertions: boolean;
             /** Is Self */
             readonly is_self: boolean;
             /** Created At */
@@ -9323,6 +9418,11 @@ export interface components {
              * @default []
              */
             readonly agents: readonly string[];
+            /**
+             * Public Keys
+             * @default []
+             */
+            readonly public_keys: readonly string[];
         };
         /** EnableSelfIn */
         readonly EnableSelfIn: {
@@ -9340,6 +9440,8 @@ export interface components {
             readonly delegation_domains?: readonly string[] | null;
             /** Agents */
             readonly agents?: readonly string[] | null;
+            /** Public Keys */
+            readonly public_keys?: readonly string[] | null;
         };
         /** SecretOut */
         readonly SecretOut: {
@@ -12736,6 +12838,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EmbedSelfTokenOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_contact_me: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactMeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_contact_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactTokenIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactTokenOut"];
                 };
             };
         };

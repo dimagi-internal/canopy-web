@@ -38,3 +38,35 @@ describe('reading the URLs someone actually pastes', () => {
     expect(parseOrigins('   ')).toEqual([])
   })
 })
+
+import { parseKeys } from './ConnectedAppsPage'
+
+/**
+ * Several keys at once is the normal state during a rotation — publish the new
+ * one beside the old, switch the signer, remove the old — so the box has to
+ * take more than one without being fussy about how they are separated.
+ */
+describe('reading pasted signing keys', () => {
+  const A = '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----'
+  const B = '-----BEGIN PUBLIC KEY-----\nBBBB\n-----END PUBLIC KEY-----'
+
+  it('takes one', () => {
+    expect(parseKeys(A)).toEqual([A])
+  })
+
+  it('takes two pasted back to back', () => {
+    expect(parseKeys(`${A}\n${B}`)).toEqual([A, B])
+  })
+
+  it('tolerates the surrounding whitespace a paste brings', () => {
+    expect(parseKeys(`\n\n  ${A}  \n\n`)).toEqual([A])
+  })
+
+  it('is empty for empty input, so the server sees an explicit none', () => {
+    expect(parseKeys('   ')).toEqual([])
+  })
+
+  it('ignores trailing junk that is not a key', () => {
+    expect(parseKeys(`${A}\nthanks!`)).toEqual([A])
+  })
+})

@@ -165,6 +165,7 @@ from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
+from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 from apps.tokens.exchange_api import exchange_router  # noqa: E402
 
@@ -182,6 +183,12 @@ api.add_router("/inbound", inbound_router)
 api.add_router("/storyboards", storyboards_router)
 api.add_router("/auth", exchange_router)
 api.add_router("/embed", embed_router)
+# The contact surface. `/api/contact/` is the ONLY prefix a contact token can
+# reach — see apps/tokens/contact_api.py and the allowlist in
+# apps/common/middleware.py. `/api/auth/contact-token` mints one and is
+# unauthenticated because the signed assertion is the credential.
+api.add_router("/contact", contact_router)
+api.add_router("/auth", contact_token_router)
 api.add_router("/reviews", reviews_router)
 api.add_router("/ddd", runs_router)
 api.add_router("/shareouts", shareouts_router)
