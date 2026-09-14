@@ -251,6 +251,25 @@ class AppCredential(models.Model):
     #: degraded mode, it is the absence of the capability, and
     #: `assertions.verify` refuses rather than falling back to anything weaker.
     public_keys = models.JSONField(default=list, blank=True)
+    #: Show this app's widget on canopy's OWN pages.
+    #:
+    #: Replaces an `EMBED_SELF_APP` setting that named one credential by name.
+    #: That made canopy a special case twice over: the page needed a separate
+    #: section for it, and the name had to match a deployment setting exactly
+    #: or nothing mounted and nothing said why — a fail-closed silence with no
+    #: surface to notice it on. As a column it is just another thing an app
+    #: may do, and canopy becomes a connected site that happens to point at
+    #: itself.
+    #:
+    #: NOT inferred from the origin list, though that was the obvious idea:
+    #: canopy and connect-labs share a host on labs (canopy is served under
+    #: `/canopy`, connect-labs at the root), so "lists canopy's origin" would
+    #: be true of both and would mount the wrong agent panel on canopy's pages.
+    #:
+    #: At most one app may set it — enforced in `embed_apps`, not by a
+    #: constraint, because the useful behaviour is an error naming the app
+    #: that already has it rather than an IntegrityError.
+    show_on_canopy_pages = models.BooleanField(default=False)
     provision_workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.SET_NULL,

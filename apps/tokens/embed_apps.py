@@ -26,7 +26,6 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.workspaces.models import WorkspaceMembership
-from apps.workspaces.services import allowed_domains
 
 from .models import AppCredential, AppCredentialAgent, is_valid_frame_origin
 
@@ -113,50 +112,28 @@ def _clean_origins(origins) -> list[str]:
     return cleaned
 
 
-def _clean_domains(domains, *, actor) -> list[str]:
-    """Validate the delegation domains against what the ACTOR may vouch for.
+def _no_domains_here(domains) -> list[str]:
+    """This surface does not grant delegation domains, and says so.
 
-    A domain here is the strongest thing on this page: whoever holds the app's
-    secret can exchange it for a token acting as ANY canopy user with an email
-    in that domain. Two bounds, both required.
+    A domain let whoever held the app's secret exchange it for a token acting
+    as ANY canopy user in that domain — an assertion the app proved only by
+    possessing a static string. Signed assertions replaced it
+    (`apps/tokens/assertions.py`): a site now vouches for its own contacts, in
+    its own namespace, which cannot reach canopy's user population at all.
 
-    The domain must be one canopy already admits at login, so this cannot widen
-    who may reach canopy — that is a policy change, not a form field. And it
-    must be the actor's OWN domain, so an owner can only extend the reach they
-    already have rather than mint access to a population they are not part of.
+    The field and `/api/auth/token-exchange` remain for the server-to-server
+    callers that predate this (ace-web), and are managed outside this page.
+    Accepting an empty list rather than rejecting the key outright keeps an
+    older client working; anything non-empty is refused with the reason.
     """
-    if not isinstance(domains, list):
-        raise EmbedAppError("bad_domain", "expected a list of email domains")
-    mine = (getattr(actor, "email", "") or "").strip().lower().rsplit("@", 1)[-1]
-    admitted = set(allowed_domains())
-    cleaned: list[str] = []
-    for raw in domains:
-        value = (raw or "").strip().lower().lstrip("@") if isinstance(raw, str) else raw
-        if not value:
-            continue
-        if "@" in value or "/" in value:
-            raise EmbedAppError(
-                "bad_domain",
-                f"{raw!r} is not a domain. Use the bare domain (dimagi.com), not an "
-                "address and not a URL.",
-            )
-        if value != mine:
-            raise EmbedAppError(
-                "bad_domain",
-                f"you can only vouch for your own email domain ({mine or 'unknown'}), "
-                f"not {value!r}. This grant lets the app act as any canopy user in "
-                "the domain, so it is bounded by the reach you already have.",
-            )
-        if value not in admitted:
-            raise EmbedAppError(
-                "bad_domain",
-                f"{value!r} is not a domain canopy accepts at login, so a token for "
-                "it could never be used. Widening that is a deployment policy "
-                "change (AUTH_ALLOWED_EMAIL_DOMAIN), not a setting on this page.",
-            )
-        if value not in cleaned:
-            cleaned.append(value)
-    return cleaned
+    if domains:
+        raise EmbedAppError(
+            "no_vouching",
+            "connected sites no longer vouch for email domains. Register a "
+            "signing key instead: the site signs a short-lived statement about "
+            "each visitor, which cannot name anybody outside its own users.",
+        )
+    return []
 
 
 def _clean_keys(keys) -> list[str]:
@@ -248,7 +225,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
         raise EmbedAppError("duplicate_name", f"an app named {name!r} is already registered")
 
     cleaned_origins = _clean_origins(origins)
-    cleaned_domains = _clean_domains(domains or [], actor=user)
+    cleaned_domains = _no_domains_here(domains)
     cleaned_keys = _clean_keys(public_keys or [])
 
     raw, app = AppCredential.create_credential(
@@ -270,7 +247,7 @@ def update(*, user, app: AppCredential, origins=None, domains=None, agents=None,
         app.allowed_frame_origins = _clean_origins(origins)
         fields.append("allowed_frame_origins")
     if domains is not None:
-        app.allowed_delegation_domains = _clean_domains(domains, actor=user)
+        app.allowed_delegation_domains = _no_domains_here(domains)
         fields.append("allowed_delegation_domains")
     if public_keys is not None:
         app.public_keys = _clean_keys(public_keys)
@@ -306,83 +283,46 @@ def revoke(app: AppCredential) -> AppCredential:
         app.save(update_fields=["revoked_at"])
     return app
 
+def self_app():
+    """The app whose widget canopy shows on its own pages, or None.
 
-# --- canopy's own widget, as one button ---------------------------------------
-
-
-def self_app_name() -> str:
-    """The credential name this deployment looks for on its own pages.
-
-    Read from `EMBED_SELF_APP` rather than hard-coded, because the lookup in
-    `embed_api._self_app()` reads the same setting — a literal here would be a
-    second source of truth for a fact whose only failure mode is silence (a
-    mismatched name resolves to no credential and the widget simply does not
-    mount).
+    One query on a column, where this used to be a name read from a setting
+    and looked up. Nothing special-cases canopy: it is whichever connected
+    site an owner ticked the box on, and usually that site is canopy itself.
     """
-    from django.conf import settings
-
-    return (getattr(settings, "EMBED_SELF_APP", "") or "").strip()
-
-
-def self_app() -> AppCredential | None:
-    name = self_app_name()
-    return AppCredential.objects.filter(name=name).first() if name else None
+    return AppCredential.objects.filter(
+        show_on_canopy_pages=True, revoked_at__isnull=True
+    ).order_by("name").first()
 
 
-def enable_self(*, user, workspace_slug: str, origin: str, agents: list[str] | None = None):
-    """Turn canopy's own widget on for this deployment, in one act.
+def set_show_on_canopy_pages(*, app: AppCredential, on: bool, origin: str) -> AppCredential:
+    """Turn canopy's own panel on or off for this app.
 
-    Everything a person would otherwise have to know — the exact name, that the
-    delegation list must be empty, that a frame origin is required even though
-    the frame is same-origin — is a fact about canopy, not a decision the user
-    should be asked to make. Asking produced the two ways this goes wrong in
-    practice: a name that does not match `EMBED_SELF_APP`, so nothing mounts and
-    nothing says why; and a delegation domain granted by reflex, which turns a
-    credential that can only frame a shell into one that can act as any user in
-    that domain.
-
-    Idempotent: run again to add an origin (a second environment) or change the
-    agents, rather than failing on the name already existing.
+    Ticking it also ensures canopy's own origin is in the app's URL list,
+    because the two are not independent: `frame-ancestors` is built from that
+    list, so a ticked app without it produces a shell that 404s — on by
+    every visible measure and dead in the browser. The origin comes from the
+    request rather than the form for the same reason it does everywhere else:
+    it is the address the person is looking at, and the one value that cannot
+    be typed wrong.
     """
-    name = self_app_name()
-    if not name:
-        raise EmbedAppError(
-            "not_configured",
-            "this deployment does not have EMBED_SELF_APP set, so canopy does not "
-            "offer the widget on its own pages.",
+    fields = ["show_on_canopy_pages"]
+    if on:
+        other = (
+            AppCredential.objects.filter(show_on_canopy_pages=True, revoked_at__isnull=True)
+            .exclude(pk=app.pk)
+            .first()
         )
-    require_owner(user, workspace_slug)
-
-    existing = self_app()
-    if existing is None:
-        # No delegation domains, ever: `POST /api/embed/token` is
-        # session-authenticated and mints for the caller, so the self-embed has
-        # no assertion to make and nothing to vouch for.
-        raw, app = AppCredential.create_credential(name=name, domains=[], created_by=user)
-        app.workspace_id = workspace_slug
-        app.allowed_frame_origins = _clean_origins([origin])
-        app.save(update_fields=["workspace", "allowed_frame_origins"])
-        set_agents(app, agents or [])
-        # The secret is returned for completeness and is not needed by anyone:
-        # nothing exchanges it. Callers may discard it.
-        return raw, app
-
-    app = existing
-    fields = []
-    wanted = _clean_origins([origin])
-    if wanted and wanted[0] not in (app.allowed_frame_origins or []):
-        app.allowed_frame_origins = [*(app.allowed_frame_origins or []), wanted[0]]
-        fields.append("allowed_frame_origins")
-    if app.revoked_at is not None:
-        app.revoked_at = None
-        fields.append("revoked_at")
-    if app.workspace_id is None:
-        # Adopt a row left over from before this page existed, so it becomes
-        # editable rather than remaining a thing nobody can reach.
-        app.workspace_id = workspace_slug
-        fields.append("workspace")
-    if fields:
-        app.save(update_fields=fields)
-    if agents is not None:
-        set_agents(app, agents)
-    return None, app
+        if other is not None:
+            raise EmbedAppError(
+                "already_shown",
+                f"{other.name!r} already shows its panel on canopy's pages. Turn "
+                "that one off first — canopy can only show one.",
+            )
+        wanted = _clean_origins([origin])
+        if wanted and wanted[0] not in (app.allowed_frame_origins or []):
+            app.allowed_frame_origins = [*(app.allowed_frame_origins or []), wanted[0]]
+            fields.append("allowed_frame_origins")
+    app.show_on_canopy_pages = bool(on)
+    app.save(update_fields=fields)
+    return app

@@ -48,6 +48,20 @@ def _owner():
     return user, ws, c
 
 
+def _shown_app(user):
+    """The connected site canopy shows its own panel for.
+
+    A column an owner ticks, not a name matched against a setting — see
+    `AppCredential.show_on_canopy_pages`.
+    """
+    _raw, app = AppCredential.create_credential(
+        name="canopy-web", domains=[], created_by=user
+    )
+    app.show_on_canopy_pages = True
+    app.save(update_fields=["show_on_canopy_pages"])
+    return app
+
+
 def _rows(event=None):
     qs = EmbedAuditLog.objects.all()
     return list(qs.filter(event=event) if event else qs)
@@ -112,10 +126,9 @@ def test_an_unknown_credential_is_recorded_with_no_app():
     assert row.app is None
 
 
-def test_a_session_mint_is_recorded(settings):
-    settings.EMBED_SELF_APP = "canopy-web"
+def test_a_session_mint_is_recorded():
     user, _ws, c = _owner()
-    AppCredential.create_credential(name="canopy-web", domains=[], created_by=user)
+    _shown_app(user)
 
     assert c.post("/api/embed/token").status_code == 200
 
@@ -215,10 +228,9 @@ def test_an_audit_failure_never_breaks_the_operation(monkeypatch):
 
 def test_the_session_mint_is_rate_limited(settings):
     """It needs only a stolen cookie, and every call writes a token row."""
-    settings.EMBED_SELF_APP = "canopy-web"
     settings.EMBED_MINT_LIMIT = 3
     user, _ws, c = _owner()
-    AppCredential.create_credential(name="canopy-web", domains=[], created_by=user)
+    _shown_app(user)
 
     codes = [c.post("/api/embed/token").status_code for _ in range(5)]
 
@@ -230,9 +242,8 @@ def test_the_session_mint_is_rate_limited(settings):
 def test_a_short_lived_token_is_what_gets_issued(settings):
     """Fifteen minutes, not an hour — the client refetches near expiry anyway,
     so the only thing a long life buys is a longer window for a leaked one."""
-    settings.EMBED_SELF_APP = "canopy-web"
     user, _ws, c = _owner()
-    AppCredential.create_credential(name="canopy-web", domains=[], created_by=user)
+    _shown_app(user)
 
     from django.utils import timezone
     body = c.post("/api/embed/token").json()

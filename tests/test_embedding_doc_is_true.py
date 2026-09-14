@@ -162,39 +162,34 @@ def test_the_step_numbering_matches_the_checklist():
     assert len(checklist) == 6, f"expected 6 steps, found {len(checklist)}"
 
 
-def test_the_self_embed_setting_names_and_value_are_real(doc):
-    """§11 tells an operator to name the credential `canopy-web` because that is
-    what `EMBED_SELF_APP` is set to. If either side moves, the widget silently
-    does not mount — `_self_app()` returns None for a name that resolves to no
-    credential, by design, so there is no error to notice."""
+def test_no_reserved_name_or_setting_survives_in_the_doc(doc):
+    """§11 used to tell you to name the app after `EMBED_SELF_APP`.
+
+    The setting is gone — canopy's own panel is a column an owner ticks, not a
+    name that has to match a deployment value. A doc still naming the setting
+    would send someone looking for something that no longer exists, and the
+    failure it used to cause was silent on both sides.
+    """
     from django.conf import settings
 
-    assert "EMBED_SELF_APP" in doc and "EMBED_SELF_AGENT" in doc
-    # Both must exist as settings, or the doc names a knob that does nothing.
-    assert hasattr(settings, "EMBED_SELF_APP")
-    assert hasattr(settings, "EMBED_SELF_AGENT")
+    assert "EMBED_SELF_APP" not in doc
+    assert not hasattr(settings, "EMBED_SELF_APP")
 
     cfn = (DOC.parent.parent.parent / "deploy" / "aws" / "canopy-web.cfn.yaml").read_text()
-    assert "EMBED_SELF_APP" in cfn, "the doc says the deployment sets it; the template does not"
-    # The exact value the doc tells you to type into the Name field.
-    assert 'Name: EMBED_SELF_APP, Value: "canopy-web"' in " ".join(cfn.split()), (
-        "the deployment's EMBED_SELF_APP no longer matches the name §11 tells you to register"
-    )
+    assert "EMBED_SELF_APP" not in cfn
 
 
 def test_the_self_embed_section_asks_for_nothing(doc):
-    """§11 is one button, and that is the claim worth pinning.
+    """§11 is one tick on the ordinary form, and that is the claim worth pinning.
 
-    Every input it would otherwise collect is a fact about canopy — the name
-    must equal `EMBED_SELF_APP`, the delegation list must be empty, the URL is
-    the address you are on — and each fails closed and silently when typed
-    wrong. If this section ever grows a form again, it has regressed to the
-    thing that made the admin the wrong door.
+    Every input it would otherwise collect is a fact about canopy rather than a
+    decision, and each fails closed and silently when got wrong. If this section
+    ever grows a form of its own again, canopy has become a special case again.
     """
     section = " ".join(
         DOC.read_text().split("## 11. Reference: canopy embedding its own pages")[-1].split()
     )
-    assert "Turn on the agent panel here" in section
-    assert "the self-embed never exchanges" in section
+    assert "Show this panel on canopy's own pages" in section
+    assert "not a special one" in section
     # A field table is exactly what this section exists not to have.
     assert "| **Name** |" not in section

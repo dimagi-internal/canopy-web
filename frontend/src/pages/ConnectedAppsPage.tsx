@@ -4,12 +4,10 @@ import { Button, Input } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
-import { useAuth } from '@/auth/AuthProvider'
 import { listAgents, type AgentOut } from '@/api/agents'
 import {
   connectApp,
   disconnectApp,
-  enableSelfWidget,
   listConnectedApps,
   rotateSecret,
   updateConnectedApp,
@@ -136,9 +134,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const { workspaces } = useWorkspace()
   const isOwner = workspaces.find((w) => w.slug === slug)?.role === 'owner'
-  const auth = useAuth()
-  const myDomain =
-    auth.status === 'authenticated' ? auth.user.email.split('@').pop()?.toLowerCase() ?? '' : ''
 
   const [apps, setApps] = useState<ConnectedApp[] | null>(null)
   const [agents, setAgents] = useState<AgentOut[]>([])
@@ -149,7 +144,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
 
   const [name, setName] = useState('')
   const [origins, setOrigins] = useState('')
-  const [vouch, setVouch] = useState(false)
+  const [showHere, setShowHere] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [signingKey, setSigningKey] = useState('')
 
@@ -176,7 +171,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
       .catch(() => setAgents([]))
   }, [reload])
 
-  const selfApp = apps?.find((a) => a.is_self && !a.revoked) ?? null
 
   async function run(what: () => Promise<unknown>) {
     setBusy(true)
@@ -200,7 +194,8 @@ export function ConnectedAppsPage(): JSX.Element | null {
         // A domain is never typed. The server grants the acting owner's own
         // domain and refuses any other, so the question a person can answer
         // ("does your site sign users in?") is the one being asked.
-        delegation_domains: vouch && myDomain ? [myDomain] : [],
+        show_on_canopy_pages: showHere,
+        delegation_domains: [],
         agents: picked,
         public_keys: parseKeys(signingKey),
       })
@@ -209,6 +204,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
       setOrigins('')
       setPicked([])
       setSigningKey('')
+      setShowHere(false)
     })
   }
 
@@ -230,58 +226,20 @@ export function ConnectedAppsPage(): JSX.Element | null {
       {error && <p className="text-sm text-destructive">{error}</p>}
       {secret && <Secret value={secret} onDone={() => setSecret(null)} />}
 
-      {/* The one-click case, first, because it is the one most people want and
-          because every input it would otherwise ask for is a fact about canopy
-          rather than a decision. */}
-      {isOwner && (
-        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <div>
-            <h2 className="text-sm font-medium text-foreground">canopy's own pages</h2>
-            <p className="text-xs text-muted-foreground">
-              Put the agent panel on canopy itself, so you can ask about the page you
-              are looking at. Uses {currentOrigin()}.
-            </p>
-          </div>
-          {selfApp ? (
-            <div className="space-y-2">
-              <p className="text-xs text-success">
-                On — offering{' '}
-                {selfApp.agents.length
-                  ? selfApp.agents.map((a) => a.name).join(', ')
-                  : 'no agents yet, so the panel will have nothing to show'}
-                .
-              </p>
-              <AgentPicker
-                agents={agents}
-                selected={selfApp.agents.map((a) => a.slug)}
-                onChange={(slugs) =>
-                  void run(() => updateConnectedApp(slug, selfApp.id, { agents: slugs }))
-                }
-              />
-            </div>
-          ) : (
-            <Button
-              disabled={busy}
-              onClick={() => void run(() => enableSelfWidget(slug, picked))}
-            >
-              Turn on the agent panel here
-            </Button>
-          )}
-        </section>
-      )}
-
       {/* Everything already connected. */}
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-foreground">Other sites</h2>
+        <h2 className="text-sm font-medium text-foreground">Sites</h2>
         {apps === null && !loadError && (
           <p className="text-sm text-muted-foreground">Loading…</p>
         )}
-        {apps?.filter((a) => !a.is_self).length === 0 && (
-          <p className="text-sm text-muted-foreground">No other sites connected yet.</p>
+        {apps?.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No sites connected yet. canopy's own pages are one of them — connect a
+            site below and tick the box.
+          </p>
         )}
         {apps
-          ?.filter((a) => !a.is_self)
-          .map((app) => (
+          ?.map((app) => (
             <div key={app.id} className="rounded-lg border border-border bg-card p-4 space-y-2">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -294,6 +252,9 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   <p className="truncate text-xs text-muted-foreground">
                     {app.origins.join(', ') || 'no URLs — the widget will not load'}
                   </p>
+                  {app.shows_on_canopy_pages && (
+                    <p className="text-xs text-primary">Shown on canopy's own pages</p>
+                  )}
                 </div>
                 {isOwner && !app.revoked && (
                   <div className="flex shrink-0 gap-2">
@@ -390,25 +351,23 @@ export function ConnectedAppsPage(): JSX.Element | null {
             </span>
           </label>
 
-          {/* Asked as a question about the site, not as a domain field. The
-              server only ever grants the acting owner's own domain and refuses
-              any other, so there is nothing here to get wrong — and nothing a
-              typo could widen. */}
+          {/* An ordinary option on an ordinary form. canopy used to have a
+              section of its own here, driven by a reserved name that had to
+              match a deployment setting — which made it a special case AND
+              failed silently when the two drifted. */}
           <label className="flex items-start gap-2">
             <input
               type="checkbox"
-              checked={vouch}
-              onChange={(e) => setVouch(e.target.checked)}
+              checked={showHere}
+              onChange={(e) => setShowHere(e.target.checked)}
               className="mt-1"
             />
             <span className="text-xs text-foreground-secondary">
-              This site has its own sign-in, and should show each visitor their own
-              canopy agent.
+              Show this panel on canopy's own pages.
               <span className="block text-muted-foreground">
-                Grants it the right to vouch for <strong>{myDomain || 'your domain'}</strong>{' '}
-                users — anyone holding its secret can then act as any canopy user with
-                that email domain. Leave this off for a site that only embeds canopy's
-                own pages.
+                For asking an agent about the canopy page you are looking at. Adds{' '}
+                {currentOrigin()} to the URLs above, since the panel cannot load
+                without it. Only one site at a time.
               </span>
             </span>
           </label>

@@ -224,11 +224,9 @@ FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 # host and canopy are the same process, so the token is issued directly. That
 # deliberately skips the exchange step, which is a host-side concern and not
 # what this mount exists to exercise.
-EMBED_SELF_APP = env("EMBED_SELF_APP", default="")
 # Optional: skip the agent picker by naming one. It must still be allowed for
 # the app AND in a workspace the viewer belongs to — the widget shows nothing
 # otherwise, which is the same fail-closed path as any other host.
-EMBED_SELF_AGENT = env("EMBED_SELF_AGENT", default="")
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

@@ -383,39 +383,29 @@ has its own inbox — not a chat completion bound to your page.
 
 ## 11. Reference: canopy embedding its own pages
 
-canopy is also a host. The reason to talk to an agent is usually about what is
-in front of you, and `/w/:ws/chat` is not in front of you — so the widget mounts
-on canopy's own authenticated pages, where two real cases live: an agent inbox
-that has gone stale, and a feature set you decide to deprecate while looking at
-it and have forgotten a minute later.
+canopy is also a host, and **not a special one**. The reason to talk to an agent
+is usually about what is in front of you, and `/w/:ws/chat` is not in front of
+you — so the widget mounts on canopy's own authenticated pages, where two real
+cases live: an agent inbox that has gone stale, and a feature set you decide to
+deprecate while looking at it and have forgotten a minute later.
 
-Steps 2 and 3 do not apply. A third-party host must exchange a secret because
-canopy has to verify its assertion about who you are; here the two are one
-process, so `POST /api/embed/token` is session-authenticated and mints for
-`request.user` directly. There is no secret to store and no backend endpoint to
-write.
+**Setup is the ordinary setup, plus one tick.** Connect a site as in step 1 and
+tick **"Show this panel on canopy's own pages"**. There is no separate flow, no
+reserved name and no deployment setting: canopy's own panel is whichever
+connected site an owner ticked that box on, and usually that site is canopy
+itself. Only one app may have it at a time, and the refusal names the one that
+already does.
 
-**Setup is one credential plus one setting.**
+Ticking it also adds canopy's own origin to that app's URL list, because the two
+are not independent: `frame-ancestors` is built from that list, so a ticked app
+without it would be on by every visible measure and dead in the browser. The
+origin comes from the request rather than a field — it is the address you are
+looking at, and the one value that cannot be typed wrong.
 
-Open **`/w/<workspace>/connected-apps`** and press **Turn on the agent panel
-here**, then pick the agents it should offer. That is the whole setup.
-
-There is nothing to fill in because none of it is a decision. The name has to
-equal `EMBED_SELF_APP` or nothing mounts; the delegation list has to be empty
-because the self-embed never exchanges; and the URL is the address you are
-already looking at, so the server takes it from the request rather than asking.
-Each of those is a fact about canopy, and each fails silently when typed wrong —
-which is what asking for them produced. Press it again from another environment
-to add that URL too.
-
-The frame origin is required even though the frame is same-origin.
-`frame-ancestors` enumerates who may embed the shell, and an empty list means
-there is no shell to serve — `/embed/chat` 404s.
-
-`EMBED_SELF_APP` is already set to `canopy-web` in `deploy/aws/canopy-web.cfn.yaml`.
-Leaving it empty is what keeps this off by default — it mounts a chat panel on
-every authenticated page, which no deployment should grow by surprise.
-`EMBED_SELF_AGENT` optionally preselects one agent and skips the picker.
+Steps 2 and 3 still do not apply when the site *is* canopy. A third-party host
+signs an assertion because canopy cannot see who its visitor is; here the two
+are one process, so `POST /api/embed/token` is session-authenticated and mints
+for `request.user` directly. No secret, no signing key, no backend endpoint.
 
 **What this does and does not prove.** The frame is same-origin here, so none of
 the origin discipline is exercised — not `targetOrigin`, not `event.origin`

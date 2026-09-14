@@ -15,7 +15,6 @@ precisely the parameter that must not exist.
 
 from __future__ import annotations
 
-from django.conf import settings
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -119,18 +118,16 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
 
 
 def _self_app() -> AppCredential | None:
-    """The credential canopy-web offers on its own pages, or None when off.
+    """The app whose widget canopy shows on its own pages, or None when off.
 
-    Off by default (`EMBED_SELF_APP` empty): this mounts a chat panel on every
-    authenticated page, which no deployment should grow by surprise. A name
-    that does not resolve to a live credential is also None rather than an
-    error — a misconfigured setting should leave the widget absent, not break
-    every page that asks about it.
+    One column on one row, where this used to be a NAME read from
+    `EMBED_SELF_APP` and looked up. The setting made canopy a special case and
+    failed silently in the one way that matters: a name that did not resolve
+    produced no widget and no error, on either side.
     """
-    name = (getattr(settings, "EMBED_SELF_APP", "") or "").strip()
-    if not name:
-        return None
-    return AppCredential.objects.filter(name=name, revoked_at__isnull=True).first()
+    from . import embed_apps
+
+    return embed_apps.self_app()
 
 
 @embed_router.get("/self", response=EmbedSelfOut,
@@ -146,7 +143,11 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
     return EmbedSelfOut(
         enabled=app is not None,
         app=app.name if app else "",
-        agent=(getattr(settings, "EMBED_SELF_AGENT", "") or "").strip(),
+        # No preselected agent any more. `EMBED_SELF_AGENT` existed to skip the
+        # picker, which the frame already does whenever exactly one agent is on
+        # offer — so the setting only ever duplicated a decision the app's own
+        # agent list already makes, in a place nobody could see it.
+        agent="",
     )
 
 
@@ -166,7 +167,7 @@ def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
     """
     app = _self_app()
     if app is None:
-        raise HttpError(404, "canopy-web does not offer the widget on its own pages")
+        raise HttpError(404, "no connected site shows its panel on canopy's own pages")
 
     # Cheaper to abuse than exchange in one specific way: it needs only a
     # stolen session cookie rather than an app secret, and every call writes a
