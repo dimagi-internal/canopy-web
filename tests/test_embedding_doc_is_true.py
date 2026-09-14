@@ -145,3 +145,34 @@ def test_the_step_numbering_matches_the_checklist():
             f"checklist row {shown} links to section {anchored} — the numbering drifted"
         )
     assert len(checklist) == 6, f"expected 6 steps, found {len(checklist)}"
+
+
+def test_the_self_embed_setting_names_and_value_are_real(doc):
+    """§11 tells an operator to name the credential `canopy-web` because that is
+    what `EMBED_SELF_APP` is set to. If either side moves, the widget silently
+    does not mount — `_self_app()` returns None for a name that resolves to no
+    credential, by design, so there is no error to notice."""
+    from django.conf import settings
+
+    assert "EMBED_SELF_APP" in doc and "EMBED_SELF_AGENT" in doc
+    # Both must exist as settings, or the doc names a knob that does nothing.
+    assert hasattr(settings, "EMBED_SELF_APP")
+    assert hasattr(settings, "EMBED_SELF_AGENT")
+
+    cfn = (DOC.parent.parent.parent / "deploy" / "aws" / "canopy-web.cfn.yaml").read_text()
+    assert "EMBED_SELF_APP" in cfn, "the doc says the deployment sets it; the template does not"
+    # The exact value the doc tells you to type into the Name field.
+    assert 'Name: EMBED_SELF_APP, Value: "canopy-web"' in " ".join(cfn.split()), (
+        "the deployment's EMBED_SELF_APP no longer matches the name §11 tells you to register"
+    )
+
+
+def test_the_self_embed_section_does_not_ask_for_a_delegation_domain(doc):
+    """The whole point of §11's `[]` is that the self-embed vouches for nobody.
+
+    A credential that never calls token-exchange needs no domain, and one added
+    "to be safe" makes the raw value exchangeable for a token acting as any user
+    in it. Pinned because it is the kind of field someone fills in by reflex.
+    """
+    section = DOC.read_text().split("## 11. Reference: canopy embedding its own pages")[-1]
+    assert "**Allowed delegation domains** | `[]`" in " ".join(section.split())

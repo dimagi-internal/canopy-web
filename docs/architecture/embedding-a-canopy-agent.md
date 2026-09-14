@@ -366,3 +366,50 @@ If you want a page-scoped copilot in a React app, CopilotKit is more complete
 and you should probably use it. The reason to use this instead is that the thing
 on the other end is a *canopy agent* — the same one that runs scheduled work and
 has its own inbox — not a chat completion bound to your page.
+
+---
+
+## 11. Reference: canopy embedding its own pages
+
+canopy is also a host. The reason to talk to an agent is usually about what is
+in front of you, and `/w/:ws/chat` is not in front of you — so the widget mounts
+on canopy's own authenticated pages, where two real cases live: an agent inbox
+that has gone stale, and a feature set you decide to deprecate while looking at
+it and have forgotten a minute later.
+
+Steps 2 and 3 do not apply. A third-party host must exchange a secret because
+canopy has to verify its assertion about who you are; here the two are one
+process, so `POST /api/embed/token` is session-authenticated and mints for
+`request.user` directly. There is no secret to store and no backend endpoint to
+write.
+
+**Setup is one credential plus one setting.**
+
+| | |
+| --- | --- |
+| **Name** | `canopy-web` — must match `EMBED_SELF_APP` |
+| **Allowed delegation domains** | `[]` |
+| **Allowed frame origins** | `["https://labs.connect.dimagi.com"]` |
+| **Allowed agents** (inline) | at least one, in a workspace you belong to |
+| **Provision workspace / role** | leave blank |
+
+`[]` for the domains is deliberate, not a placeholder: the self-embed never
+calls `token-exchange`, so it needs to vouch for nobody, and a domain here would
+make the raw credential exchangeable for a token acting as any user in it.
+
+The frame origin is required even though the frame is same-origin. `frame-ancestors`
+enumerates who may embed the shell, and an empty list means there is no shell to
+serve — `/embed/chat` 404s. Include every environment you run: add
+`http://localhost:8000` for local development.
+
+`EMBED_SELF_APP` is already set to `canopy-web` in `deploy/aws/canopy-web.cfn.yaml`.
+Leaving it empty is what keeps this off by default — it mounts a chat panel on
+every authenticated page, which no deployment should grow by surprise.
+`EMBED_SELF_AGENT` optionally preselects one agent and skips the picker.
+
+**What this does and does not prove.** The frame is same-origin here, so none of
+the origin discipline is exercised — not `targetOrigin`, not `event.origin`
+rejection, not storage partitioning. What it does exercise is everything above
+that: the handshake, the agent picker, session creation and history, the context
+snapshot, page actions, and whether the panel is pleasant to use. A real
+third-party host is still the only test of the boundary.
