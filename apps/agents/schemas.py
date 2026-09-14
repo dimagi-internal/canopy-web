@@ -209,7 +209,34 @@ class AgentOut(StrictModel):
     turn_mode: Literal["manual", "auto"] = "manual"
 
 
+class AgentDefinitionOut(StrictModel):
+    """What this instance RUNS, and who else runs it.
+
+    An agent row is one tenant's instance; the definition is the repo it points
+    at. Surfacing this is what makes "improving echo improves it everywhere"
+    checkable rather than asserted — you can see whether a second tenant is on
+    the same definition.
+    """
+
+    key: str = Field(
+        description="Canonical identity of the repo, so two spellings of one "
+                    "URL compare equal. Empty when the agent has no repo, which "
+                    "means canopy cannot see its definition — not that it "
+                    "shares one with other repoless agents.",
+    )
+    repo_url: str = ""
+    repo_ref: str = ""
+    shared_with: list[str] = Field(
+        default_factory=list,
+        description="Workspace slugs of OTHER instances running this same "
+                    "definition. Cross-tenant on purpose — 'would this fix "
+                    "reach them?' is a fleet question. Names tenants only: no "
+                    "board, credentials or turns are disclosed.",
+    )
+
+
 class AgentDetailOut(AgentOut):
+    definition: AgentDefinitionOut | None = None
     sync_count: int = 0
     work_product_count: int = 0
     skill_count: int = 0

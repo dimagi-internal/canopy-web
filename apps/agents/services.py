@@ -71,6 +71,24 @@ def get_agent(slug: str) -> Agent | None:
     return Agent.objects.filter(slug=slug).first()
 
 
+def _definition_summary(agent: Agent) -> dict:
+    """The repo this instance runs, and which other tenants run it.
+
+    Cheap for the fleet's size (a handful of agents, compared in Python because
+    the key needs normalising before it can be matched). If the fleet ever grows
+    enough for that to matter, the fix is a stored normalised column — not a
+    raw-URL match, which would silently under-report.
+    """
+    from .definition import definition_key, siblings
+
+    return {
+        "key": definition_key(agent.repo_url, agent.repo_ref),
+        "repo_url": agent.repo_url,
+        "repo_ref": agent.repo_ref,
+        "shared_with": sorted({a.workspace_id for a in siblings(agent)}),
+    }
+
+
 def agent_detail(agent: Agent) -> dict:
     latest = agent.syncs.order_by("-period_end").first()
     return {
@@ -82,6 +100,7 @@ def agent_detail(agent: Agent) -> dict:
         "email": agent.email,
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
+        "definition": _definition_summary(agent),
         "runner_preference": list(agent.runner_preference or []),
         "turn_mode": agent.turn_mode,
         "created_at": agent.created_at,
