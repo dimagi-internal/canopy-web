@@ -116,25 +116,50 @@ freely without breaking a deployment.
 
 ## 3. Add one backend endpoint
 
-Your server holds the credential and exchanges it for a **short-lived token
-scoped to the signed-in user**. This is the one piece that cannot live in a
+Your server vouches for the person looking at the page, and canopy hands back a
+**short-lived token for them**. This is the one piece that cannot live in a
 browser, which is why "one script tag" is really "one script tag plus one
 endpoint."
 
+You vouch by **signing a statement**, not by presenting a shared secret. Keep
+the private key on your server; canopy holds only the public half, which you
+pasted in step 1. That is the difference that matters: a secret canopy stores
+can be stolen from canopy, and one static string can name anybody — a signature
+proves *this* claim, about *this* visitor, at *this* moment, and canopy could
+not forge one if it wanted to.
+
 ```python
 # your_app/canopy.py
-import json, urllib.request
+import json, urllib.request, uuid
+from datetime import datetime, timedelta, timezone
+
+import jwt  # pyjwt[crypto]
 from django.conf import settings
 
-def exchange_token(email: str, ttl: int = 3600) -> dict:
-    req = urllib.request.Request(
-        f"{settings.CANOPY_BASE_URL}/api/auth/token-exchange",
-        data=json.dumps({"acting_as_email": email, "ttl_seconds": ttl}).encode(),
-        headers={
-            "Content-Type": "application/json",
-            # The app credential. Server-side only.
-            "Authorization": f"Bearer {settings.CANOPY_APP_CREDENTIAL}",
+
+def vouch_for(user) -> dict:
+    """Ask canopy for a token for one of our signed-in people."""
+    now = datetime.now(timezone.utc)
+    assertion = jwt.encode(
+        {
+            "iss": settings.CANOPY_APP_NAME,       # the Name from step 1
+            "sub": str(user.pk),                   # YOUR id for them, opaque to canopy
+            "aud": settings.CANOPY_BASE_URL,       # this canopy, and no other
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(seconds=60)).timestamp()),
+            "jti": str(uuid.uuid4()),              # single use
+            # Optional and descriptive only — canopy records them, and matches
+            # on neither.
+            "name": user.get_full_name(),
+            "email": user.email,
         },
+        settings.CANOPY_SIGNING_KEY,               # the PRIVATE half. Never leaves here.
+        algorithm="EdDSA",
+    )
+    req = urllib.request.Request(
+        f"{settings.CANOPY_BASE_URL}/api/auth/contact-token",
+        data=json.dumps({"assertion": assertion}).encode(),
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -146,19 +171,40 @@ def exchange_token(email: str, ttl: int = 3600) -> dict:
 @login_required
 @require_POST
 def canopy_token(request):
-    exchanged = exchange_token(request.user.email)
+    vouched = vouch_for(request.user)
     # Pick fields explicitly rather than passing canopy's dict through — a new
     # field on canopy's side should not break your endpoint.
     return JsonResponse({
-        "token": exchanged["token"],
-        "expires_at": exchanged["expires_at"],
+        "token": vouched["token"],
+        "expires_at": vouched["expires_at"],
     })
 ```
 
-> **`acting_as_email` must be `request.user.email` and nothing else.**
-> You are asserting "this is an authenticated user of mine," and canopy believes
-> you because you hold the secret. Accepting an email from the request body
-> would let any caller impersonate any user in your allowed domains.
+> **`sub` must be your own id for the signed-in user and nothing else.**
+> You are asserting "this is a real person on my site", and canopy believes you
+> because it verified your signature. Taking `sub` from the request body would
+> let any caller be anybody.
+
+**What the visitor becomes.** A `Contact` in the workspace that owns your app —
+somebody canopy knows about, who is *not* a member of anything. They can talk to
+the agents you were allowed to offer and see their own conversations with your
+site. They cannot reach the workspace, its other agents, or anyone else's
+threads, and recording them grants nothing: `/api/contact/` is the entire
+surface a contact token reaches.
+
+Your ids live in your own namespace — `(your app, your id)` — so they cannot
+collide with a canopy user or with another site's people. That is why this is a
+smaller grant than the email-domain vouching it replaced, which reached into
+canopy's own user population.
+
+**Requirements canopy enforces**, so it is worth knowing before you debug a
+401: `EdDSA`, `ES256` or `RS256` only (never HMAC — the key is public, so a
+symmetric algorithm would let anyone sign); `aud` must match; `exp` at most 120
+seconds out; and each `jti` works exactly once.
+
+**If your visitors already have canopy accounts**, you do not need any of this —
+point `tokenUrl` at an endpoint that returns a token minted for the signed-in
+canopy user instead, and the widget will discover which kind it holds. See §8.
 
 The widget calls this endpoint with `credentials: 'same-origin'` and sends an
 `X-CSRFToken` header if you set a `csrftoken` cookie, so your normal session
