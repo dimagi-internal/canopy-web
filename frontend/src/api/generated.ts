@@ -10573,6 +10573,9 @@ export interface components {
          *     uninterpreted — canopy is not the party that knows what a host's action
          *     means. It is what lets an agent call `dismissInsights` knowing it takes
          *     `{ids: number[]}`, rather than being told in prose.
+         *
+         *     May also be sent as `inputSchema`, which is MCP's name for the same field;
+         *     it is read back under `parameters` either way.
          */
         readonly PageActionSpec: {
             /** Name */
