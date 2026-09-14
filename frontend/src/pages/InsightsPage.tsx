@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { usePageContext } from '@/widget/usePageContext'
 import { usePageAction } from '@/widget/usePageAction'
+import { dismissInsightsAction } from './insightsDismissAction'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -163,26 +164,13 @@ export function InsightsPage() {
 
   usePageAction(
     'dismissInsights',
-    async (args) => {
-      const ids = (args.ids as number[] | undefined) ?? []
-      const visible = new Set(insights.map((i) => i.id))
-      // Only what is actually on screen. The agent was handed this list, so an
-      // id outside it means the page moved on — dismissing it anyway would act
-      // on something the user is no longer looking at.
-      const unknown = ids.filter((id) => !visible.has(id))
-      if (unknown.length) {
-        throw new Error(
-          `not on this page: ${unknown.join(', ')}. The list may have changed since you read it.`,
-        )
-      }
-      const dismissed: number[] = []
-      for (const id of ids) {
-        await insightsApi.dismiss(id)
-        dismissed.push(id)
-      }
-      setInsights((prev) => prev.filter((i) => !dismissed.includes(i.id)))
-      return { dismissed: dismissed.length, ids: dismissed }
-    },
+    async (args) =>
+      dismissInsightsAction((args.ids as number[] | undefined) ?? [], {
+        visible: new Set(insights.map((i) => i.id)),
+        dismiss: (id) => insightsApi.dismiss(id),
+        onDismissed: (ids) =>
+          setInsights((prev) => prev.filter((i) => !ids.includes(i.id))),
+      }),
     {
       description:
         'Dismiss specific insights from the list the user is currently viewing. ' +
