@@ -163,6 +163,7 @@ from apps.harness.items_api import (  # noqa: E402
 )
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
+from apps.contacts.api import router as contacts_router
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 from apps.tokens.exchange_api import exchange_router  # noqa: E402
@@ -210,3 +211,4 @@ api.add_router("/share", session_share_router)
 api.add_router("/harness", harness_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
+api.add_router("/contacts", contacts_router)

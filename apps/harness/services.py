@@ -49,6 +49,35 @@ DEFAULT_LEASE_SECONDS = 900
 MAX_SESSIONLESS_RETRIES = 3
 
 
+def _record_email_contact(agent, origin_ref) -> None:
+    """Upsert a Contact for an email turn's sender, in the AGENT's workspace.
+
+    The agent's tenant, not the enqueuer's: `Turn.enqueued_by` on an email turn
+    is the runner's own account (see `apps.harness.actors`), so keying the
+    contact off the caller would file every correspondent under the runner
+    owner. The sender is in `origin_ref["from"]`, written by the inbox watcher.
+
+    `authserv_id` and the header list are optional and usually absent today —
+    the runner does not ship them yet. Absent means the contact is recorded at
+    the `none` grade, which is honest rather than degraded: we genuinely cannot
+    vouch for the address.
+    """
+    from apps.contacts import services as contacts
+
+    ref = origin_ref if isinstance(origin_ref, dict) else {}
+    sender = str(ref.get("from") or "")
+    if not sender:
+        return
+    contacts.record_inbound_sender(
+        workspace=agent.workspace,
+        address=sender,
+        display_name=str(ref.get("from_name") or ""),
+        headers=ref.get("headers"),
+        authserv_id=str(ref.get("authserv_id") or ""),
+        auth_results=str(ref.get("authentication_results") or ""),
+    )
+
+
 def enqueue_turn(
     *,
     agent=None,
@@ -101,6 +130,21 @@ def enqueue_turn(
     # surfaces `chat_session.agent.slug`, so the runner drives the same agent in
     # the same clone; and every runner in the fleet declares sessions=true, so
     # nothing is stranded on one box.
+    if origin == Turn.ORIGIN_EMAIL and agent is not None:
+        # Record WHO wrote in, before the turn is bound to a session and the
+        # agent reference is handed over below. Best-effort and deliberately
+        # non-fatal: a contact is a convenience for later turns and for routing,
+        # and mail must still be answered when it cannot be recorded.
+        #
+        # This GRANTS NOTHING — see apps.contacts.models. It is the one thing to
+        # keep true here, because an inbound email is an unauthenticated,
+        # spoofable identity and "a message creates a member" is exactly the
+        # pattern this codebase spent a release removing from five endpoints.
+        try:
+            _record_email_contact(agent, origin_ref)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record the sender of an email turn")
+
     if session is None and agent is not None and origin == Turn.ORIGIN_EMAIL:
         thread_id = str((origin_ref or {}).get("thread_id") or "")
         if thread_id:

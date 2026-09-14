@@ -4441,6 +4441,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contacts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * People this workspace knows
+         * @description Scoped to the caller's tenants. `q` filters on address or display name.
+         */
+        readonly get: operations["apps_contacts_api_list_contacts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contacts/{contact_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One person */
+        readonly get: operations["apps_contacts_api_get_contact"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Correct what we know about a person (editor)
+         * @description Editor or better: this is the tenant's record of a person, and changing
+         *     it changes what an agent will believe on the next turn.
+         *
+         *     Resolve-then-authorize, the ordering used everywhere else in this codebase:
+         *     a non-member gets 404 from `_contact_or_404` above and never reaches the
+         *     403, so this never confirms a contact exists to someone who cannot see it.
+         */
+        readonly patch: operations["apps_contacts_api_patch_contact"];
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7290,6 +7336,37 @@ export interface components {
             /** Runner Preference */
             readonly runner_preference?: readonly string[] | null;
         };
+        /**
+         * AgentDefinitionOut
+         * @description What this instance RUNS, and who else runs it.
+         *
+         *     An agent row is one tenant's instance; the definition is the repo it points
+         *     at. Surfacing this is what makes "improving echo improves it everywhere"
+         *     checkable rather than asserted — you can see whether a second tenant is on
+         *     the same definition.
+         */
+        readonly AgentDefinitionOut: {
+            /**
+             * Key
+             * @description Canonical identity of the repo, so two spellings of one URL compare equal. Empty when the agent has no repo, which means canopy cannot see its definition — not that it shares one with other repoless agents.
+             */
+            readonly key: string;
+            /**
+             * Repo Url
+             * @default
+             */
+            readonly repo_url: string;
+            /**
+             * Repo Ref
+             * @default
+             */
+            readonly repo_ref: string;
+            /**
+             * Shared With
+             * @description Workspace slugs of OTHER instances running this same definition. Cross-tenant on purpose — 'would this fix reach them?' is a fleet question. Names tenants only: no board, credentials or turns are disclosed.
+             */
+            readonly shared_with?: readonly string[];
+        };
         /** AgentDetailOut */
         readonly AgentDetailOut: {
             /** Id */
@@ -7326,6 +7403,7 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+            readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             /**
              * Sync Count
              * @default 0
@@ -10826,6 +10904,95 @@ export interface components {
              * @default
              */
             readonly error: string;
+        };
+        /**
+         * ContactOut
+         * @description A person one workspace knows about.
+         */
+        readonly ContactOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * Display Name
+             * @default
+             */
+            readonly display_name: string;
+            /** Workspace Id */
+            readonly workspace_id: string;
+            /**
+             * Is User
+             * @description Whether this person has authenticated for real and been linked to a canopy account. Still says nothing about membership — being known and being let in are different.
+             */
+            readonly is_user: boolean;
+            /**
+             * Auth Result
+             * @description Best email-authentication grade ever seen from this address: "dmarc" (the visible From: was not forged), "dkim", "spf" (envelope only — weak), or "none". A grade rather than a boolean because partner organisations run mail of varying quality and "unverified" must stay a workable state. Even "dmarc" proves the DOMAIN sent it, not which human.
+             */
+            readonly auth_result: string;
+            /**
+             * Last Auth Result
+             * @description Grade on the most recent message. Differs from `auth_result` when a correspondent who used to authenticate no longer does, which is worth noticing.
+             */
+            readonly last_auth_result: string;
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /**
+             * Attributes
+             * @description Cached facts from other systems. Never authoritative: agent execution calls those systems and honours their ACLs live, so nothing here may be what grants.
+             */
+            readonly attributes?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Message Count
+             * @default 0
+             */
+            readonly message_count: number;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            readonly first_seen_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            readonly last_seen_at: string;
+        };
+        /** Page[ContactOut] */
+        readonly Page_ContactOut_: {
+            /** Items */
+            readonly items: readonly components["schemas"]["ContactOut"][];
+            /** Total */
+            readonly total: number;
+            /** Offset */
+            readonly offset: number;
+            /** Limit */
+            readonly limit: number;
+        };
+        /**
+         * ContactPatchIn
+         * @description What a human may correct. Deliberately narrow.
+         *
+         *     `email` is absent on purpose: it is the identity the record is keyed on, and
+         *     editing it would silently re-attribute a correspondence history to someone
+         *     else. The auth grades are absent because they are the mail server's verdict,
+         *     not an opinion.
+         */
+        readonly ContactPatchIn: {
+            /** Display Name */
+            readonly display_name?: string | null;
+            /** Notes */
+            readonly notes?: string | null;
+            /** Attributes */
+            readonly attributes?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
     };
     responses: never;
@@ -17059,6 +17226,78 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PageActionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_contacts_api_list_contacts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly q?: string | null;
+                readonly offset?: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Page_ContactOut_"];
+                };
+            };
+        };
+    };
+    readonly apps_contacts_api_get_contact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly contact_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactOut"];
+                };
+            };
+        };
+    };
+    readonly apps_contacts_api_patch_contact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly contact_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactPatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactOut"];
                 };
             };
         };

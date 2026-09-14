@@ -105,6 +105,7 @@ INSTALLED_APPS = [
     "apps.canopy_sessions",
     "apps.events",
     "apps.inbound",
+    "apps.contacts",
 ]
 
 MIDDLEWARE = [
