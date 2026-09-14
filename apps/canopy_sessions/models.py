@@ -61,6 +61,25 @@ class Session(models.Model):
         """
         return self.project or (self.agent.slug if self.agent_id else "")
     title = models.CharField(max_length=200, blank=True, default="")
+    #: The contact this session belongs to, when it was started by somebody
+    #: with no canopy account (a visitor to a connected site).
+    #:
+    #: Exclusive with `created_by` in practice, and not enforced by a
+    #: constraint on purpose: a contact who later becomes a user
+    #: (`promote_to_user`) should keep their conversations, and the natural way
+    #: to express that is to fill in `created_by` beside the contact rather
+    #: than to migrate rows out from under a live session.
+    #:
+    #: `visible_session_q` reads `created_by`; `contact_session_q` reads this.
+    #: Neither predicate can return the other's rows, which is what keeps a
+    #: contact out of a user's list and vice versa.
+    contact = models.ForeignKey(
+        "contacts.Contact",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="sessions",
+    )
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=ACTIVE)
     origin = models.CharField(max_length=10, choices=ORIGIN_CHOICES, default=ORIGIN_WEB)
     created_by = models.ForeignKey(
