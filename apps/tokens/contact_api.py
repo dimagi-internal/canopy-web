@@ -171,3 +171,163 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
             for a in rows
         ],
     )
+
+
+# --- a contact's own conversations --------------------------------------------
+#
+# Mirrored here rather than opened up on `/api/canopy-sessions/`, and the
+# duplication is the point: those routes stay strictly user-only, so a contact
+# cannot reach one by a view forgetting to ask who is calling. Each of these is
+# a thin delegation to the same service the user-facing route calls, so the two
+# cannot drift on behaviour — only on who is allowed through.
+
+
+class ContactSessionOut(Schema):
+    id: str
+    agent_slug: str | None
+    title: str
+    status: str
+    created_at: str
+
+
+class ContactSessionCreateIn(Schema):
+    agent_slug: str
+
+
+class ContactSendIn(Schema):
+    text: str
+    client_id: str = ""
+
+
+def _session_or_404(request: HttpRequest, session_id):
+    """This contact's session, or 404. Never anybody else's.
+
+    `contact_session_q` is disjoint from `visible_session_q` by construction,
+    so there is no ordering of gates here to get wrong — a user's conversation
+    simply is not in the set this can return.
+    """
+    from apps.canopy_sessions.access import contact_session_q
+    from apps.canopy_sessions.models import Session
+
+    session = (
+        Session.objects.select_related("agent")
+        .filter(contact_session_q(request.contact))
+        .filter(pk=session_id)
+        .first()
+    )
+    if session is None:
+        raise HttpError(404, "session not found")
+    return session
+
+
+def _session_out(s) -> ContactSessionOut:
+    return ContactSessionOut(
+        id=str(s.id),
+        agent_slug=s.agent.slug if s.agent_id else None,
+        title=s.title,
+        status=s.status,
+        created_at=s.created_at.isoformat(),
+    )
+
+
+@contact_router.post("/sessions", response=ContactSessionOut,
+                     summary="Start a conversation with an agent this site offers")
+def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> ContactSessionOut:
+    """The agent must be one the SITE was allowed to offer.
+
+    Not one the contact can reach — a contact reaches nothing, having no
+    membership. So this is the app's allowlist intersected with the contact's
+    own workspace, and there is deliberately no third leg.
+    """
+    from apps.agents.models import Agent
+    from apps.canopy_sessions.models import Session
+
+    contact = request.contact
+    app = request.delegated_app
+    agent = (
+        Agent.objects.filter(
+            slug=payload.agent_slug,
+            embedding_apps__app=app,
+            workspace_id=contact.workspace_id,
+        )
+        .first()
+    )
+    if agent is None:
+        raise HttpError(404, f"{payload.agent_slug!r} is not offered here")
+
+    session = Session.objects.create(
+        workspace=contact.workspace,
+        agent=agent,
+        contact=contact,
+        # No `created_by`: there is no user, and leaving it null is what keeps
+        # this row out of `visible_session_q` for every member of the tenant.
+        title="",
+        metadata={"embed_app": app.name},
+    )
+    audit(event=EmbedAuditLog.MINT, request=request, app=app,
+          detail=f"contact={contact.identity} started session {session.id} with {agent.slug}")
+    return _session_out(session)
+
+
+@contact_router.get("/sessions", response=list[ContactSessionOut],
+                    summary="My conversations on this site")
+def list_sessions(request: HttpRequest) -> list[ContactSessionOut]:
+    from apps.canopy_sessions.access import contact_session_q
+    from apps.canopy_sessions.models import Session
+
+    rows = (
+        Session.objects.select_related("agent")
+        .filter(contact_session_q(request.contact))
+        .order_by("-created_at")[:50]
+    )
+    return [_session_out(s) for s in rows]
+
+
+@contact_router.get("/sessions/{session_id}", response=ContactSessionOut,
+                    summary="One of my conversations")
+def get_session(request: HttpRequest, session_id: str) -> ContactSessionOut:
+    return _session_out(_session_or_404(request, session_id))
+
+
+@contact_router.post("/sessions/{session_id}/send", response=dict,
+                     summary="Say something")
+def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
+    from apps.canopy_sessions import services as session_services
+
+    session = _session_or_404(request, session_id)
+    if not payload.text.strip():
+        raise HttpError(422, "message text is required")
+    try:
+        # `user` is the anonymous request user. `enqueue_turn` ignores an
+        # unauthenticated one, so the turn simply carries no `enqueued_by` —
+        # which is correct: nobody with an account sent this. A routing rule
+        # that wants to know reads `turn.session.contact`, which is the
+        # authoritative answer rather than a copy.
+        message, turn = session_services.send_message(
+            session=session, text=payload.text, user=request.user,
+            client_id=payload.client_id,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    session_services.maybe_execute_inline(turn)
+    return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
+
+
+@contact_router.get("/sessions/{session_id}/messages", response=dict,
+                    summary="Earlier messages")
+def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50) -> dict:
+    from apps.api.pagination import clamp_limit
+    from apps.canopy_sessions import services as session_services
+
+    session = _session_or_404(request, session_id)
+    rows, has_more = session_services.messages_before(
+        session, before=before, limit=clamp_limit(limit)
+    )
+    return {
+        "messages": [
+            {"turn_index": m.turn_index, "role": m.role, "body": m.body,
+             "created_at": m.created_at.isoformat()}
+            for m in rows
+        ],
+        "has_more_before": has_more,
+    }

@@ -72,3 +72,20 @@ def visible_session_q(user) -> Q:
         | Q(participants__user=user)
         | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
     )
+
+
+def contact_session_q(contact) -> Q:
+    """Sessions a CONTACT may read: their own, and only their own.
+
+    Deliberately not a leg of `visible_session_q`. The two predicates are
+    disjoint by construction — that one reads `created_by` and participation,
+    this one reads `contact` — so a contact cannot appear in a user's list and a
+    user's conversation cannot appear in a contact's, without either predicate
+    having to remember the other exists.
+
+    There is no participation leg and no tenant leg. A contact is not a member
+    (`apps/contacts/models.py`), so "everyone in the workspace" is not a set
+    they belong to, and a co-tenant notion of visibility would be exactly the
+    grant the Contact model exists to withhold.
+    """
+    return Q(contact=contact)

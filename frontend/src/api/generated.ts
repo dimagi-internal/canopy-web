@@ -1095,6 +1095,82 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/sessions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** My conversations on this site */
+        readonly get: operations["apps_tokens_contact_api_list_sessions"];
+        readonly put?: never;
+        /**
+         * Start a conversation with an agent this site offers
+         * @description The agent must be one the SITE was allowed to offer.
+         *
+         *     Not one the contact can reach — a contact reaches nothing, having no
+         *     membership. So this is the app's allowlist intersected with the contact's
+         *     own workspace, and there is deliberately no third leg.
+         */
+        readonly post: operations["apps_tokens_contact_api_start_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One of my conversations */
+        readonly get: operations["apps_tokens_contact_api_get_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/send": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Say something */
+        readonly post: operations["apps_tokens_contact_api_send"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Earlier messages */
+        readonly get: operations["apps_tokens_contact_api_messages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/auth/contact-token": {
         readonly parameters: {
             readonly query?: never;
@@ -6280,6 +6356,34 @@ export interface components {
             readonly app: string;
             /** Agents */
             readonly agents: readonly components["schemas"]["ContactAgentOut"][];
+        };
+        /** ContactSessionOut */
+        readonly ContactSessionOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string | null;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /** Created At */
+            readonly created_at: string;
+        };
+        /** ContactSessionCreateIn */
+        readonly ContactSessionCreateIn: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+        };
+        /** ContactSendIn */
+        readonly ContactSendIn: {
+            /** Text */
+            readonly text: string;
+            /**
+             * Client Id
+             * @default
+             */
+            readonly client_id: string;
         };
         /** ContactTokenOut */
         readonly ContactTokenOut: {
@@ -12858,6 +12962,127 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ContactMeOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_list_sessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ContactSessionOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_start_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactSessionCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactSessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_get_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactSessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_send: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactSendIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_messages: {
+        readonly parameters: {
+            readonly query: {
+                readonly before: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };
