@@ -116,6 +116,18 @@ class Session(models.Model):
     #: current set of capabilities, and a leftover action from the page the user
     #: navigated away from is one the agent would call into nothing.
     page_actions_available = models.JSONField(default=list, blank=True)
+
+    #: What the attached page currently SHOWS, as opposed to what it can do.
+    #: The other half of AG-UI's frontend split (shared state beside frontend
+    #: tools), and the half canopy lacked: page context used to be prose pasted
+    #: onto the first message, read once at frame init. Here it is a thing the
+    #: agent re-reads whenever it asks, so it cannot go stale mid-conversation.
+    #:
+    #: Carries a monotonic `version` assigned server-side. Bounded on write
+    #: (see page_state.MAX_STATE_BYTES) — deliberately too small to hold the
+    #: rows a page displays, because the contract is that a page sends its
+    #: SELECTION and the agent re-reads the rows itself under the user's ACL.
+    page_state = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

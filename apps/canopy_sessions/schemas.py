@@ -287,6 +287,32 @@ class PageActionsDeclareIn(Schema):
     actions: list[PageActionSpec] = []
 
 
+class PageStateIn(Schema):
+    """What the attached page currently shows.
+
+    Replaces any previous declaration wholesale. Bounded on the server: a page
+    that sends the rows it displays rather than the selection of them is
+    refused, because the agent re-reads those rows itself under the caller's own
+    permissions.
+    """
+
+    # Rationale out of the docstring on purpose — a Ninja docstring ships to
+    # OpenAPI and generated.ts, so it is public API prose, not a design note.
+    state: dict = {}
+
+
+class PageStateOut(Schema):
+    """The stored view, with the server-assigned `version` folded in.
+
+    An empty `state` means no page is attached OR the page declares nothing.
+    Those are the same to a reader and deliberately so; neither is "the screen
+    is blank".
+    """
+
+    state: dict = {}
+    version: int = 0
+
+
 class PageActionInvokeIn(Schema):
     name: str
     args: dict = {}

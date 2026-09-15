@@ -130,6 +130,8 @@ export interface CanopyWidget {
   /** What the agent may read off this page. Pulled when a session opens, not
    *  subscribed to — see `@canopy/client/bridge` for why. */
   provideContext(provider: ContextProvider): void
+  /** Push what the page is showing now. Safe to call on every change. */
+  setPageState(state: Record<string, unknown>): void
   /** Offer one named action.
    *
    *  `options.parameters` is JSON-Schema and should be supplied: without it the
@@ -156,6 +158,12 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   const src = `${base}/embed/chat?app=${encodeURIComponent(options.app)}`
 
   let provider: ContextProvider | null = null
+  // Replayed on init: a frame that mounts after the page declared its view must
+  // not start blind, and the host has no way to know when the frame is ready.
+  let lastState: Record<string, unknown> | null = null
+  // The frame answers `ready` when its listener is up and it is about to be
+  // handed a token. Nothing is pushed to it before that.
+  let frameReady = false
   const actions = new Map<string, { fn: HostAction; spec: ActionSpec }>()
   let destroyed = false
 
@@ -224,6 +232,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     const message = event.data
     switch (message.type) {
       case 'ready': {
+        frameReady = true
         try {
           post({
             source: SOURCE,
@@ -233,6 +242,10 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             metadata: options.metadata,
             actions: actionSpecs(),
           })
+          // After init, never inside it: `init` carries the token and is the
+          // one message whose shape the frame validates strictly. The view is
+          // a separate fact and rides its own frame.
+          if (lastState) post({ source: SOURCE, type: 'state', state: lastState })
         } catch (error) {
           // The frame is up but unusable. Tell it so it can say so, rather than
           // sit on a spinner the user cannot interpret.
@@ -322,6 +335,24 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     isDismissed: () => chrome.isDismissed(),
     provideContext(next) {
       provider = next
+    },
+    /** Push what the page is showing NOW.
+     *
+     *  Unlike `provideContext`, which is PULLED once when a conversation opens,
+     *  this is pushed on every change — so a user who filters the page after
+     *  opening the chat does not leave the agent holding a screen that has
+     *  moved. The last value is replayed on `init`, so a panel opened later
+     *  still starts from the current view rather than from nothing.
+     */
+    setPageState(next) {
+      lastState = next
+      // Only once the frame has handshaken. Before `ready` there is nothing
+      // listening that could act on it, and the view describes the user's
+      // screen — so it waits for the same moment the token does, and arrives
+      // via the replay on init. Without this the first push races the
+      // handshake and can precede it, which is both useless and looser than
+      // it needs to be.
+      if (frameReady) post({ source: SOURCE, type: 'state', state: next })
     },
     registerAction(name, action, options) {
       actions.set(name, {

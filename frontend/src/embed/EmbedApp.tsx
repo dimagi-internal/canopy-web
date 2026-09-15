@@ -447,6 +447,34 @@ function EmbedChat({
     return link.onActionsChanged(declare)
   }, [client, link, sessionId])
 
+  // Tell canopy what this page is SHOWING, and keep telling it.
+  //
+  // The other half of the page contract, and the one that was missing. Context
+  // used to be read once when the frame initialised and pasted onto the first
+  // message as prose, so a user who filtered the page after opening the chat
+  // left the agent acting on a screen that no longer existed. Here the view is
+  // pushed on every change and the agent re-reads it with `page_state`, so
+  // "close the ones I'm looking at" is answerable on turn nine, not only turn
+  // one.
+  useEffect(() => {
+    const send = (state: Record<string, unknown>) => {
+      void client.rest
+        .json(`/api/canopy-sessions/${sessionId}/page-state`, {
+          method: 'PUT',
+          body: JSON.stringify({ state }),
+        })
+        // A 422 means the host sent its rows instead of its selection. It is
+        // the host author's bug and the server's message says how to fix it;
+        // swallowing it here keeps a bad declaration from breaking the chat.
+        .catch(() => undefined)
+    }
+    const initial = link.pageState()
+    // Only if the host has actually spoken: pushing `{}` for a host that does
+    // not use the state channel would declare the user's screen blank.
+    if (initial) send(initial)
+    return link.onPageStateChanged(send)
+  }, [client, link, sessionId])
+
   // Tell the runner a viewer is here (and stop when the panel closes), the same
   // attach/detach pair canopy's own chat page uses. Best-effort: never block
   // rendering on it.

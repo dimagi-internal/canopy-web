@@ -59,6 +59,14 @@ export interface HostLink {
   /** What the host currently offers, with schemas; updates as it registers. */
   actions(): ActionSpec[]
   onActionsChanged(listener: (specs: ActionSpec[]) => void): () => void
+  /** What the host page is currently SHOWING, as last pushed.
+   *
+   *  `null` means the host has never pushed — which is NOT the same as an empty
+   *  view, and the difference matters: a host that does not speak state at all
+   *  should leave the agent's page state untouched rather than declaring the
+   *  user's screen blank. */
+  pageState(): Record<string, unknown> | null
+  onPageStateChanged(listener: (state: Record<string, unknown>) => void): () => void
   /** Ask the host to close the panel (our own close button). */
   requestClose(): void
   /** Ask for a panel height, in the modes where the host owns it. */
@@ -91,6 +99,10 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
 
   let actionSpecs: ActionSpec[] = []
   const actionListeners = new Set<(specs: ActionSpec[]) => void>()
+  // `null` until the host speaks, deliberately distinct from `{}`: a host that
+  // never pushes must not be read as one declaring an empty screen.
+  let latestState: Record<string, unknown> | null = null
+  const stateListeners = new Set<(state: Record<string, unknown>) => void>()
 
   /** The parent's origin, learned from the first accepted message. Until then
    *  there is nothing to reply to — every outbound message except `ready` is a
@@ -181,6 +193,16 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
         actionListeners.forEach((l) => l(actionSpecs))
         return
+      case 'state': {
+        // A non-object is dropped rather than forwarded: the server would
+        // refuse it anyway, and blanking a good view on a malformed push is
+        // strictly worse than ignoring the push.
+        const next = data.state
+        if (!next || typeof next !== 'object' || Array.isArray(next)) return
+        latestState = next as Record<string, unknown>
+        stateListeners.forEach((l) => l(latestState as Record<string, unknown>))
+        return
+      }
       default:
         return
     }
@@ -201,6 +223,11 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     onActionsChanged(listener) {
       actionListeners.add(listener)
       return () => actionListeners.delete(listener)
+    },
+    pageState: () => latestState,
+    onPageStateChanged(listener) {
+      stateListeners.add(listener)
+      return () => stateListeners.delete(listener)
     },
     requestClose: () => send({ type: 'close' }),
     requestHeight: (px) => send({ type: 'resize', height: px }),

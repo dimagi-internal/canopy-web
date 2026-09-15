@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { usePageContext } from '@/widget/usePageContext'
+import { usePageState } from '@/widget/usePageState'
+import { describeSelection } from '@/widget/pageState'
 import { usePageAction } from '@/widget/usePageAction'
 import { dismissInsightsAction } from './insightsDismissAction'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -88,14 +89,6 @@ function SkeletonCard({ delay }: { delay: number }) {
   )
 }
 
-/** Whole days since `iso`. NaN-safe: an unparseable timestamp reads as 0 rather
- *  than poisoning the list the agent reasons over. */
-function ageInDays(iso: string): number {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return 0
-  return Math.floor((Date.now() - then) / 86_400_000)
-}
-
 export function InsightsPage() {
   const [insights, setInsights] = useState<Insight[]>([])
   const [loading, setLoading] = useState(true)
@@ -146,21 +139,27 @@ export function InsightsPage() {
   // has already been triaged. That selection is page-local, which is what
   // makes this a bridge case rather than a server one.
 
-  usePageContext(() => ({
-    filter: activeFilter,
-    project_filter: projectFilter || null,
-    visible_count: insights.length,
-    // Ages in DAYS, not timestamps: staleness is the question being asked, and
-    // a date makes the agent do arithmetic before it can answer.
-    insights: insights.map((i) => ({
-      id: i.id,
-      project: i.project_slug,
-      category: parseInsightCategory(i.content),
-      text: parseInsightBody(i.content).slice(0, 300),
-      source: i.source,
-      age_days: ageInDays(i.created_at),
-    })),
-  }))
+  // Selection, not data. This used to serialise six fields for every visible
+  // row — which duplicated `list_insights`, could go stale between render and
+  // send, and was a second place the workspace ACL could be got wrong. Now the
+  // page says WHICH rows are on screen and WHICH tool resolves them, and the
+  // agent reads the rows itself, live, under the user's own permissions.
+  //
+  // It is also pushed on every change rather than read once when a conversation
+  // opens, so filtering the page mid-chat updates what "these" means instead of
+  // leaving the agent acting on a screen that has moved.
+  usePageState(
+    () =>
+      describeSelection({
+        backingTool: 'list_insights',
+        ids: insights.map((i) => i.id),
+        filters: {
+          category: activeFilter === 'all' ? null : activeFilter,
+          project: projectFilter || null,
+        },
+      }),
+    [insights, activeFilter, projectFilter],
+  )
 
   usePageAction(
     'dismissInsights',

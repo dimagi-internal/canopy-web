@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { apiV2 } from '@/api/client.v2'
 import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
+import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
 import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions'
 
 /**
@@ -33,9 +34,13 @@ interface ActionOptions {
   parameters?: Record<string, unknown>
 }
 
+// Structural, because the widget arrives as a script tag rather than an import
+// — so this is a second declaration of `@canopy/widget`'s own handle and the
+// two can drift. Keep them in step; `widget.test.ts` exercises the real one.
 interface WidgetHandle {
   destroy(): void
   provideContext(fn: () => unknown): void
+  setPageState(state: Record<string, unknown>): void
   registerAction(
     name: string,
     run: (args: Record<string, unknown>) => unknown | Promise<unknown>,
@@ -96,6 +101,7 @@ export function CanopyWidget() {
   useEffect(() => {
     let cancelled = false
     let unsubscribe: (() => void) | null = null
+    let unsubscribeState: (() => void) | null = null
 
     async function mount() {
       const { data, response } = await apiV2.GET('/api/embed/self')
@@ -124,6 +130,23 @@ export function CanopyWidget() {
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.
       handle.provideContext(() => buildPageContext(pathRef.current, searchRef.current))
+
+      // The state channel, beside the context pull above. `provideContext` is
+      // answered once when a conversation opens; this is pushed whenever the
+      // page's view changes, which is what keeps "the ones I'm looking at"
+      // true after the user filters mid-conversation.
+      //
+      // The route layer rides along on every push, so a page that declares
+      // state does not have to restate where it is — and a page that declares
+      // none stays silent rather than announcing an empty screen.
+      const pushState = (state: Record<string, unknown>) => {
+        handle.setPageState({
+          ...buildPageContext(pathRef.current, searchRef.current),
+          ...state,
+        })
+      }
+      if (hasPageState()) pushState(currentPageState())
+      unsubscribeState = onPageStateChanged(pushState)
 
       // Mirror the page's registry into the widget, and keep mirroring as the
       // user navigates. Declared with SCHEMAS, because an agent that knows an
@@ -159,6 +182,7 @@ export function CanopyWidget() {
     return () => {
       cancelled = true
       unsubscribe?.()
+      unsubscribeState?.()
       handleRef.current?.destroy()
       handleRef.current = null
     }

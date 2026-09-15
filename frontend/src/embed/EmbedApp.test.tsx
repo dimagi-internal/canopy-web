@@ -27,6 +27,10 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     runAction: async () => undefined,
     actions: (): ActionSpec[] => [],
     onActionsChanged: () => () => undefined,
+    // `null`, not `{}`: a host that does not use the state channel must not be
+    // read as one declaring the user's screen blank.
+    pageState: () => null,
+    onPageStateChanged: () => () => undefined,
     requestClose: () => undefined,
     requestHeight: () => undefined,
     dispose: () => undefined,

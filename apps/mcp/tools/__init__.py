@@ -6,6 +6,7 @@ exactly once, after the FastMCP instance is constructed.
 """
 from . import (
     insights,  # noqa: F401
+    page,  # noqa: F401
     schedules,  # noqa: F401
     sessions,  # noqa: F401
 )

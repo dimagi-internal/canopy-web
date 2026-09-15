@@ -69,6 +69,15 @@ export type HostMessage =
   | { source: typeof SOURCE; type: 'action-error'; id: string; message: string }
   /** The set of callable actions changed while the panel was open. */
   | { source: typeof SOURCE; type: 'actions'; actions: ActionSpec[] }
+  /** The page's VIEW changed while the panel was open.
+   *
+   *  Pushed, not polled, and that is the point: the old `context` reply was
+   *  answered once when the frame asked, so a user who filtered the page after
+   *  opening the chat left the agent holding a screen that no longer existed.
+   *  This is the same shape as `actions` above — the host tells the frame when
+   *  the thing it declared has changed — because the two are the same kind of
+   *  fact about a page: what it can do, and what it is showing. */
+  | { source: typeof SOURCE; type: 'state'; state: Record<string, unknown> }
   | { source: typeof SOURCE; type: 'visibility'; open: boolean }
 
 export function isFrameMessage(data: unknown): data is FrameMessage {
