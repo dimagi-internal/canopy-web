@@ -155,6 +155,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
 
   let launcher: HTMLButtonElement | null = null
   let dock: HTMLDivElement | null = null
+  //: Survives the dock being removed, which is what dismissing does.
+  let dismissed = false
   if (!inline) {
     dock = document.createElement('div')
     dock.className = 'dock'
@@ -215,9 +217,19 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       // Closes first, so dismissing while open does not leave a panel on
       // screen with nothing to close it with.
       api.close()
-      if (dock) dock.hidden = true
+      // REMOVED, not hidden. `dock.hidden = true` sets an attribute whose only
+      // effect is the UA stylesheet's `[hidden] { display: none }` — and
+      // `.dock { display: flex }` is a class selector, so it wins the cascade
+      // and the bubble stayed on screen. Nothing in CSS can un-remove a node.
+      //
+      // jsdom does not reproduce that cascade (it reported `display: none` for
+      // the broken version), so no computed-style test could have caught it —
+      // which is why the test below asserts the node is GONE rather than
+      // asserting anything about how it was hidden.
+      dock?.remove()
+      dismissed = true
     },
-    isDismissed: () => Boolean(dock?.hidden),
+    isDismissed: () => dismissed,
     setHeight(px: number) {
       if (inline) return // the host owns layout here
       panel.style.height = `${px}px`

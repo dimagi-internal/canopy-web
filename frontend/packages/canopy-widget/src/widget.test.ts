@@ -473,7 +473,14 @@ describe('the launcher belongs to the host page', () => {
 
     dismiss.click()
 
-    expect((root.querySelector('.dock') as HTMLElement).hidden).toBe(true)
+    // GONE from the tree, not merely flagged. The first version set
+    // `dock.hidden = true`, and this test asserted that attribute — which
+    // passed while the bubble stayed visible in a real browser, because
+    // `.dock { display: flex }` outranks the UA stylesheet's
+    // `[hidden] { display: none }`. jsdom does not reproduce that cascade, so
+    // the only assertion that can catch it is the node's absence.
+    expect(root.querySelector('.dock')).toBeNull()
+    expect(root.querySelector('.launcher')).toBeNull()
     expect(widget.isDismissed()).toBe(true)
   })
 
