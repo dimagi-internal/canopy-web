@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { fromAgui, resetAguiState } from "./agui";
 import type { Message, SessionState, WsEvent } from "./protocol";
 import { shouldSyncDraftLive } from "./drafts";
 import { prependHistory } from "./history";
@@ -41,6 +42,20 @@ export interface UseSessionSocketOptions {
    * Same shape as `onTitleUpdated` — handed over, no opinion taken.
    */
   onUnknownEvent?: (frame: WsEvent) => void;
+  /**
+   * Which vocabulary to ask the server for.
+   *
+   * `"canopy"` (the default) is this kit's own frames, unchanged — the reason
+   * an existing consumer, including ace-web installing `canopy-ui` from npm,
+   * notices nothing. `"ag-ui"` asks the server to project the same conversation
+   * into AG-UI and translates it back here, so the reducer never learns a
+   * second vocabulary and there is one behaviour to test rather than two.
+   *
+   * Opting in buys interoperability, not features: a canopy frame and its
+   * AG-UI projection reduce to identical state (`agui.test.ts` asserts exactly
+   * that against a fixture the server generates).
+   */
+  protocol?: "canopy" | "ag-ui";
 }
 
 export interface UseSessionSocketResult {
@@ -80,6 +95,7 @@ export function useSessionSocket({
   wsUrl,
   onTitleUpdated,
   onUnknownEvent,
+  protocol = "canopy",
 }: UseSessionSocketOptions): UseSessionSocketResult {
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -99,6 +115,12 @@ export function useSessionSocket({
   const closedByUserRef = useRef(false);
   const onTitleUpdatedRef = useRef(onTitleUpdated);
   const onUnknownEventRef = useRef(onUnknownEvent);
+  // A ref, like the callbacks above: `connect` is a stable callback with empty
+  // deps, so reading the prop directly would pin whatever it was on first
+  // render — and a socket that reconnects would silently drop back to the other
+  // vocabulary mid-session.
+  const protocolRef = useRef(protocol);
+  protocolRef.current = protocol;
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
@@ -176,7 +198,13 @@ export function useSessionSocket({
 
   const connect = useCallback(() => {
     if (closedByUserRef.current) return;
-    const ws = new WebSocket(wsUrl(`ws/canopy-sessions/${sessionId}/`));
+    // A half-read tool call from the previous connection must not be completed
+    // by an ARGS event from this one — the ids are per-stream.
+    resetAguiState();
+    const path = `ws/canopy-sessions/${sessionId}/`;
+    const ws = new WebSocket(
+      wsUrl(protocolRef.current === "ag-ui" ? `${path}?protocol=ag-ui` : path),
+    );
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -199,8 +227,14 @@ export function useSessionSocket({
 
     ws.onmessage = (e) => {
       try {
-        const frame = JSON.parse(e.data) as WsEvent;
-        applyEvent(frame);
+        const raw = JSON.parse(e.data);
+        if (protocolRef.current === "ag-ui") {
+          // One AG-UI event can be several canopy frames (a tool call is three
+          // events) or none, so this is a fan-out rather than a rename.
+          for (const frame of fromAgui(raw)) applyEvent(frame);
+          return;
+        }
+        applyEvent(raw as WsEvent);
       } catch {
         // ignore malformed frames
       }

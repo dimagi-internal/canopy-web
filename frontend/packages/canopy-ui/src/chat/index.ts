@@ -67,3 +67,6 @@ export {
   type PlacementBannerProps,
   type PlacementRunner,
 } from "./PlacementBanner";
+// The AG-UI projection's inverse. Exported so a consumer can translate a stream
+// it obtained some other way — and so the round-trip test can reach it.
+export { fromAgui, resetAguiState, CUSTOM_PREFIX, METADATA_KEY } from "./agui";
