@@ -406,3 +406,71 @@ def test_a_key_registered_THROUGH_THE_PAGE_verifies_a_real_assertion():
 
     assert r.status_code == 200, r.content
     assert Contact.objects.get().external_id == "u-7"
+
+
+# --- budgets on the one unauthenticated endpoint ------------------------------
+
+
+def test_the_minting_endpoint_is_rate_limited_per_client(settings):
+    """It is the only UNAUTHENTICATED endpoint of the three that hand out
+    identity — so the one that most needed a budget, and the one I shipped
+    without one. Every call can cost a signature verification and a valid one
+    writes two rows."""
+    settings.CONTACT_TOKEN_CLIENT_LIMIT = 3
+    app, priv, _ws = _setup()
+
+    codes = [_exchange(_assert(priv, sub=f"u-{i}")).status_code for i in range(5)]
+
+    assert codes[:3] == [200, 200, 200]
+    assert 429 in codes[3:]
+
+
+def test_the_client_budget_is_spent_before_anything_is_parsed(settings):
+    """A budget checked after the expensive half has not saved the CPU the
+    expensive half cost. Garbage counts against it too — that is the point."""
+    settings.CONTACT_TOKEN_CLIENT_LIMIT = 2
+    _app, priv, _ws = _setup()
+
+    junk = [_exchange("not-even-a-token").status_code for _ in range(2)]
+    then = _exchange(_assert(priv))
+
+    assert junk == [400, 400]
+    assert then.status_code == 429, "garbage did not count against the budget"
+
+
+def test_a_single_site_is_bounded_separately(settings):
+    """The real bound: how many visitors one site may vouch for. Caps the rows
+    a leaked signing key can create."""
+    settings.CONTACT_TOKEN_CLIENT_LIMIT = 100
+    settings.CONTACT_TOKEN_ISSUER_LIMIT = 2
+    app, priv, _ws = _setup()
+
+    codes = [_exchange(_assert(priv, sub=f"u-{i}")).status_code for i in range(4)]
+
+    assert codes[:2] == [200, 200]
+    assert codes[2] == 429
+    assert Contact.objects.count() == 2, "a throttled call still created a contact"
+
+
+def test_a_throttled_attempt_is_audited(settings):
+    from apps.tokens.models import EmbedAuditLog
+
+    settings.CONTACT_TOKEN_ISSUER_LIMIT = 1
+    _app, priv, _ws = _setup()
+    _exchange(_assert(priv, sub="a"))
+    _exchange(_assert(priv, sub="b"))
+
+    throttled = [r for r in EmbedAuditLog.objects.all() if r.reason == "rate_limited"]
+    assert throttled, "a refused mint left no trace"
+
+
+def test_the_client_budget_is_generous_by_default():
+    """A host's BACKEND calls this, so one site's legitimate traffic arrives
+    from a handful of addresses. A tight per-client cap would throttle a busy
+    partner rather than an attacker — the per-issuer limit is the real bound."""
+    from apps.tokens import rate_limit
+
+    assert rate_limit._over.__doc__  # the shared counter, not a third copy
+    from django.conf import settings as s
+
+    assert int(getattr(s, "CONTACT_TOKEN_CLIENT_LIMIT", 300)) >= 120

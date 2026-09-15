@@ -1,6 +1,8 @@
 # Embedded identity: users, contacts, and what a host is allowed to assert
 
-**Status:** proposed. Nothing here is built.
+**Status:** shipped — #793 (contacts beyond email), #794 (signed assertions +
+the contact principal), #795 (contact-owned conversations), #797 (the socket),
+#798 (the frame). §7's order of work was followed as written.
 **Supersedes:** the identity half of `2026-09-12-embedded-agent-widget-v2-design.md`
 (§3 credential path, §5a trust invariant), which assumed every widget user is
 also a canopy user.
