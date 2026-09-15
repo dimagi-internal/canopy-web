@@ -138,6 +138,27 @@ def is_member(user, slug: str) -> bool:
     return WorkspaceMembership.objects.filter(user=user, workspace_id=slug).exists()
 
 
+def membership(user, workspace):
+    """The caller's `WorkspaceMembership` ROW in `workspace`, or `None`.
+
+    `member_role` answers the question; this returns the row, for the workspace
+    admin surface that needs to act on the membership it just authorized (read
+    its `workspace`, change its role, remove it). Kept here beside the other
+    readers so that "am I in this workspace?" has exactly one implementation no
+    matter which of the two shapes the caller needs —
+    `tests/test_workspace_authorizer_is_sole_gate.py` enforces that.
+
+    `select_related("workspace")` because every caller that wants the row wants
+    the tenant with it.
+    """
+    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
+    return (
+        WorkspaceMembership.objects.select_related("workspace")
+        .filter(user=user, workspace_id=workspace_id)
+        .first()
+    )
+
+
 def member_role(user, workspace) -> str | None:
     """The caller's role in `workspace` (a `Workspace` or a bare slug), or
     `None` if they are not a member at all.
@@ -153,8 +174,7 @@ def member_role(user, workspace) -> str | None:
     call directly) can use the same reader the Ninja handlers do — the MCP
     invariant is that both surfaces run through one implementation, and an
     authorization check is the last thing that should have two."""
-    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
-    m = WorkspaceMembership.objects.filter(user=user, workspace_id=workspace_id).first()
+    m = membership(user, workspace)
     return m.role if m else None
 
 

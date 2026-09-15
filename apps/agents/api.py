@@ -104,13 +104,11 @@ def _caller_role(request: HttpRequest, workspace) -> str | None:
     """The caller's `WorkspaceMembership.role` in `workspace` (a `Workspace`
     instance or a bare slug), or `None` if they aren't a member at all.
 
-    The single place a role — as opposed to bare membership — is read, so
-    every write gate below agrees on where that comes from."""
-    workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
-    membership = wsvc.WorkspaceMembership.objects.filter(
-        user=request.user, workspace_id=workspace_id
-    ).first()
-    return membership.role if membership else None
+    A thin request-shaped wrapper over `wsvc.member_role`, which is the one
+    place the rule lives. This used to run its own membership query — a second
+    implementation of the same decision, which is how this codebase previously
+    ended up with six tenancy predicates that disagreed."""
+    return wsvc.member_role(request.user, workspace)
 
 
 _EDITOR_OR_OWNER = {wsvc.WorkspaceMembership.EDITOR, wsvc.WorkspaceMembership.OWNER}

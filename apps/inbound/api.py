@@ -76,8 +76,7 @@ def _workspace_or_404(user, slug: str) -> Workspace:
 def _owner_workspace_or_404(user, slug: str) -> Workspace:
     """Push config is security config: reads are member, writes are owner."""
     ws = _workspace_or_404(user, slug)
-    m = WorkspaceMembership.objects.filter(workspace=ws, user=user).first()
-    if m is None or m.role != WorkspaceMembership.OWNER:
+    if wsvc.member_role(user, ws) != WorkspaceMembership.OWNER:
         raise HttpError(403, "requires the owner role")
     return ws
 

@@ -74,12 +74,17 @@ def _out(ws: Workspace, role: str) -> WorkspaceOut:
 
 
 def _membership_or_404(user, slug: str) -> WorkspaceMembership:
-    try:
-        return WorkspaceMembership.objects.select_related("workspace").get(
-            workspace_id=slug, user=user
-        )
-    except WorkspaceMembership.DoesNotExist:
+    """The caller's membership row, or 404.
+
+    Reads through `services.membership` rather than querying here: this surface
+    needs the ROW (to read its workspace and to mutate it), but "am I in this
+    workspace?" must still have one implementation — see
+    `tests/test_workspace_authorizer_is_sole_gate.py`.
+    """
+    m = services.membership(user, slug)
+    if m is None:
         raise HttpError(404, f"workspace '{slug}' not found")
+    return m
 
 
 def _require_role(user, slug: str, *allowed: str) -> WorkspaceMembership:

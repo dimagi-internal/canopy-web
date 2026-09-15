@@ -25,6 +25,7 @@ from __future__ import annotations
 from django.db.models import QuerySet
 from django.utils import timezone
 
+from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 
 from .models import AppCredential, AppCredentialAgent, is_valid_frame_origin
@@ -60,7 +61,7 @@ def require_owner(user, slug: str) -> None:
     uses: answering 403 to someone with no membership would confirm the
     workspace exists, so a stranger could enumerate tenants by probing slugs.
     """
-    if not WorkspaceMembership.objects.filter(user=user, workspace_id=slug).exists():
+    if not wsvc.is_member(user, slug):
         raise EmbedAppError("not_found", f"workspace {slug!r} not found")
     if slug not in owned_workspace_slugs(user):
         raise EmbedAppError("not_owner", "only a workspace owner can manage connected apps")
