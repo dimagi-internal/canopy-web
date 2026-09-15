@@ -113,7 +113,8 @@ export function CanopyWidget() {
         csrfCookieName: CSRF_COOKIE_NAME,
         ...(config.agent ? { agent: config.agent } : {}),
         mode: 'overlay',
-        launcherLabel: 'Ask canopy',
+        // The HOST names its own launcher; canopy is a host like any other.
+        launcherLabel: 'Canopy AI',
       })
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.

@@ -451,3 +451,67 @@ describe('destroy', () => {
     b.widget.destroy()
   })
 })
+
+describe('the launcher belongs to the host page', () => {
+  it('uses the label the host gave it', () => {
+    const { root } = widgetHarness({ launcherLabel: 'Canopy AI' })
+    expect((root.querySelector('.launcher') as HTMLElement).textContent).toBe('Canopy AI')
+  })
+
+  it('falls back to a sensible default when the host names nothing', () => {
+    const { root } = widgetHarness()
+    expect((root.querySelector('.launcher') as HTMLElement).textContent).toBe('Ask Canopy')
+  })
+
+  it('can be dismissed, which hides it for the rest of the page load', () => {
+    // It is fixed to the corner of somebody else's page — on a phone it lands
+    // on whatever is already there. Somebody who wants the page rather than the
+    // agent needs a way to say so that is not "reload and hope".
+    const { root, widget } = widgetHarness({ launcherLabel: 'Canopy AI' })
+    const dismiss = root.querySelector('.dismiss') as HTMLButtonElement
+    expect(dismiss).not.toBeNull()
+
+    dismiss.click()
+
+    expect((root.querySelector('.dock') as HTMLElement).hidden).toBe(true)
+    expect(widget.isDismissed()).toBe(true)
+  })
+
+  it('closes an open panel when dismissed, leaving nothing stranded', () => {
+    // Otherwise the panel stays on screen with its launcher gone, and the only
+    // way out is the frame's own close button.
+    const { root, widget } = widgetHarness({ open: true })
+    expect(widget.isOpen()).toBe(true)
+
+    ;(root.querySelector('.dismiss') as HTMLButtonElement).click()
+
+    expect(widget.isOpen()).toBe(false)
+  })
+
+  it('the X is a sibling of the bubble, not a button inside a button', () => {
+    // It overlaps the bubble visually, which is what made me write a
+    // stopPropagation guard and a test that "proved" it — both vacuous, since
+    // a sibling click never passes through. Nesting it would make the guard
+    // necessary AND make the markup invalid, so assert the structure instead.
+    const { root } = widgetHarness()
+    const launcher = root.querySelector('.launcher') as HTMLElement
+    const dismiss = root.querySelector('.dismiss') as HTMLElement
+    expect(launcher.contains(dismiss)).toBe(false)
+    expect(dismiss.parentElement).toBe(launcher.parentElement)
+  })
+
+  it('a host that laid out around the launcher can turn the X off', () => {
+    const { root } = widgetHarness({ dismissible: false })
+    expect(root.querySelector('.launcher')).not.toBeNull()
+    expect(root.querySelector('.dismiss')).toBeNull()
+  })
+
+  it('inline mode has neither, since it has no launcher at all', () => {
+    const slot = document.createElement('div')
+    slot.id = 'slot2'
+    document.body.appendChild(slot)
+    const { root } = widgetHarness({ mode: 'inline', target: '#slot2' })
+    expect(root.querySelector('.dock')).toBeNull()
+    expect(root.querySelector('.dismiss')).toBeNull()
+  })
+})

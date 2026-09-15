@@ -26,6 +26,8 @@ export interface ChromeOptions {
   /** Required for `inline`: a selector or element to fill. */
   target?: string | Element
   launcherLabel: string
+  /** Whether the launcher carries an × that hides it. */
+  dismissible: boolean
   title: string
   /** Panel width for overlay/docked, in px. */
   width: number
@@ -39,6 +41,9 @@ export interface Chrome {
   close(): void
   toggle(): void
   isOpen(): boolean
+  /** Hide the launcher for the rest of this page load. */
+  dismiss(): void
+  isDismissed(): boolean
   setHeight(px: number): void
   destroy(): void
 }
@@ -65,16 +70,41 @@ const STYLES = `
     box-shadow: none; display: block;
   }
   iframe { width: 100%; height: 100%; border: 0; display: block; }
+  /* The launcher and its dismiss button travel together, so the X stays put
+     relative to the bubble at any label length. Insets respect the phone's
+     safe area — this sits over the home indicator otherwise, which is where a
+     covered button hurts most. */
+  .dock {
+    position: fixed;
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: flex-start;
+  }
   .launcher {
-    position: fixed; right: 16px; bottom: 16px;
     height: 48px; padding: 0 18px; border-radius: 24px;
     border: 0; cursor: pointer;
     background: #c2410c; color: #fff;
     font: 500 14px/1 system-ui, sans-serif;
     box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    max-width: min(60vw, 260px);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .launcher:hover { background: #9a3412; }
   .launcher:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* 28px, not the 44px a primary control would get: this is the ESCAPE hatch
+     next to the thing you actually came for, and a dismiss the size of the
+     button it sits on gets pressed by accident. It overlaps the bubble's
+     corner, so the bubble keeps its own full target. */
+  .dismiss {
+    position: relative; left: -14px; top: -6px;
+    width: 28px; height: 28px; border-radius: 14px;
+    border: 0; cursor: pointer; padding: 0;
+    background: #1c1917; color: #fafaf9;
+    font: 500 15px/1 system-ui, sans-serif;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  .dismiss:hover { background: #292524; }
+  .dismiss:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 `
 
 function resolveTarget(target: string | Element | undefined): Element {
@@ -124,14 +154,39 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   root.appendChild(panel)
 
   let launcher: HTMLButtonElement | null = null
+  let dock: HTMLDivElement | null = null
   if (!inline) {
+    dock = document.createElement('div')
+    dock.className = 'dock'
+
     launcher = document.createElement('button')
     launcher.type = 'button'
     launcher.className = 'launcher'
     launcher.textContent = options.launcherLabel
+    launcher.title = options.launcherLabel
     launcher.setAttribute('aria-expanded', 'false')
     launcher.addEventListener('click', () => api.toggle())
-    root.appendChild(launcher)
+    dock.appendChild(launcher)
+
+    if (options.dismissible) {
+      const dismiss = document.createElement('button')
+      dismiss.type = 'button'
+      dismiss.className = 'dismiss'
+      dismiss.textContent = '×'
+      // The bubble sits over the host's own page, and on a phone it lands on
+      // top of whatever is in the bottom-right corner. Somebody who wants the
+      // page rather than the agent needs a way to say so that is not "reload
+      // and hope".
+      dismiss.setAttribute('aria-label', `Hide ${options.launcherLabel} on this page`)
+      dismiss.title = 'Hide on this page'
+      // No stopPropagation: the X is a SIBLING of the launcher inside the dock,
+      // overlapping it only visually, so a click on it never passes through the
+      // bubble. A guard here would read as though it did.
+      dismiss.addEventListener('click', () => api.dismiss())
+      dock.appendChild(dismiss)
+    }
+
+    root.appendChild(dock)
   }
 
   mount.appendChild(host)
@@ -156,6 +211,13 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     toggle() {
       api.isOpen() ? api.close() : api.open()
     },
+    dismiss() {
+      // Closes first, so dismissing while open does not leave a panel on
+      // screen with nothing to close it with.
+      api.close()
+      if (dock) dock.hidden = true
+    },
+    isDismissed: () => Boolean(dock?.hidden),
     setHeight(px: number) {
       if (inline) return // the host owns layout here
       panel.style.height = `${px}px`

@@ -81,7 +81,17 @@ export interface CanopyWidgetOptions {
   csrfCookieName?: string
   /** Opaque metadata stamped on sessions this widget creates. */
   metadata?: Record<string, unknown>
+  /** Text on the launcher bubble. The HOST names it, because the host's page
+   *  is where it appears and only the host knows what its people call this
+   *  thing — "Canopy AI" on canopy itself, something else on a partner site. */
   launcherLabel?: string
+  /** Whether the launcher carries an × that hides it (default true).
+   *
+   *  The bubble is fixed to the corner of somebody else's page, and on a phone
+   *  it lands on whatever is already in that corner. Somebody who wants the
+   *  page rather than the agent needs a way to say so. Hosts that have laid
+   *  out around the launcher can turn it off. */
+  dismissible?: boolean
   title?: string
   width?: number
   zIndex?: number
@@ -97,6 +107,10 @@ export interface CanopyWidget {
   close(): void
   toggle(): void
   isOpen(): boolean
+  /** Hide the launcher for the rest of this page load — what the × does.
+   *  Exposed so a host can offer its own way to put it away. */
+  dismiss(): void
+  isDismissed(): boolean
   /** What the agent may read off this page. Pulled when a session opens, not
    *  subscribed to — see `@canopy/client/bridge` for why. */
   provideContext(provider: ContextProvider): void
@@ -133,6 +147,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     mode,
     target: options.target,
     launcherLabel: options.launcherLabel ?? 'Ask Canopy',
+    dismissible: options.dismissible ?? true,
     title: options.title ?? 'Canopy assistant',
     width: options.width ?? 400,
     zIndex: options.zIndex ?? 2147483000,
@@ -282,6 +297,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     close: () => chrome.close(),
     toggle: () => chrome.toggle(),
     isOpen: () => chrome.isOpen(),
+    dismiss: () => chrome.dismiss(),
+    isDismissed: () => chrome.isDismissed(),
     provideContext(next) {
       provider = next
     },
