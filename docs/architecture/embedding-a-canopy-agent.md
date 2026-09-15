@@ -226,6 +226,8 @@ never starts, with nothing on the page to say why.
     app: 'connect-labs',              // the Name from step 1
     tokenUrl: '/labs/canopy/token',   // the endpoint from step 3
     mode: 'docked',
+    launcherLabel: 'Canopy AI',        // what YOUR people call it
+    // dismissible: false,             // default true — see below
     // Only if your CSRF cookie is not named `csrftoken`:
     // csrfCookieName: 'csrftoken_labs',
   })
@@ -236,6 +238,17 @@ No npm, no React, no build step, no framework. The loader is ~6 kB and imports
 nothing; the chat UI runs inside an iframe with its own React, so it cannot
 collide with anything your page already loads. That is what makes it work on a
 page built from non-module scripts sharing a global scope.
+
+**The launcher is yours to name.** `launcherLabel` is the text on the bubble,
+because it appears on *your* page and only you know what your people call this
+thing. It defaults to "Ask Canopy".
+
+**And your visitors can put it away.** The bubble is fixed to a corner of your
+page, and on a phone it lands on whatever is already in that corner — so it
+carries an × that hides it for the rest of that page load. It comes back on the
+next load, deliberately: a widget that stays hidden with no way back is a
+support ticket. Pass `dismissible: false` if you have laid out around it, or
+call `widget.dismiss()` to offer your own way.
 
 **Pick a mode:**
 
