@@ -22,8 +22,13 @@ from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
 from . import assertions
-from .audit import record as audit
+from .audit import client_ip, record as audit
 from .models import ContactToken, EmbedAuditLog
+from .rate_limit import (
+    ContactTokenRateLimitError,
+    check_contact_token_client,
+    check_contact_token_issuer,
+)
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +87,7 @@ _STATUS = {
     "malformed": 400, "no_issuer": 400, "incomplete": 400, "no_subject": 400,
     "no_jti": 400, "unknown_issuer": 401, "bad_signature": 401, "no_key": 401,
     "wrong_audience": 401, "expired": 401, "too_long": 400, "replayed": 401,
+    "rate_limited": 429,
 }
 
 
@@ -99,6 +105,34 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     cannot name the tenant it wants its visitor placed in.
     """
     from apps.contacts import services as contact_services
+
+    # Two budgets, in the order the work happens. This endpoint is
+    # unauthenticated: the assertion IS the credential, so there is nobody to
+    # bill until one has been checked, and a limit checked after the signature
+    # has not saved the CPU the signature cost.
+    try:
+        check_contact_token_client(client_ip(request))
+    except ContactTokenRateLimitError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, ok=False,
+              reason="rate_limited", detail="per-client, before parsing")
+        raise HttpError(429, f"rate_limited: {exc}")
+
+    try:
+        # Named, not yet trusted. Nothing may act on this app until the
+        # signature verifies below — it is read here only to bill the right
+        # budget for the verification it is about to ask for.
+        claimed = assertions.issuer_of(payload.assertion)
+    except assertions.AssertionError_ as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, ok=False,
+              reason=exc.code, detail="signed assertion")
+        raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
+
+    try:
+        check_contact_token_issuer(claimed.name)
+    except ContactTokenRateLimitError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=claimed, ok=False,
+              reason="rate_limited", detail="per-issuer")
+        raise HttpError(429, f"rate_limited: {exc}")
 
     try:
         app, claims = assertions.verify_for_issuer(payload.assertion)

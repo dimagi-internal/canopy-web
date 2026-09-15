@@ -184,8 +184,16 @@ def _spend_jti(app, claims: dict) -> None:
         raise AssertionError_("replayed", "this assertion has already been used")
 
 
-def verify_for_issuer(token: str):
-    """Resolve the app from `iss`, then verify. Returns `(app, claims)`."""
+def issuer_of(token: str):
+    """The app an assertion CLAIMS to be from, before anything is verified.
+
+    Separate from `verify` so a caller can rate-limit between the two: resolving
+    the issuer is a base64 decode, verifying is a signature check, and a budget
+    spent after the expensive half has not saved anything.
+
+    The app returned is not yet trusted — only named. Nothing may act on it
+    until `verify` succeeds.
+    """
     from .models import AppCredential
 
     name = _unverified_issuer(token)
@@ -195,4 +203,10 @@ def verify_for_issuer(token: str):
         # not a secret, but distinguishing the two tells a prober which of
         # their guesses used to be real.
         raise AssertionError_("unknown_issuer", f"no connected site named {name!r}")
+    return app
+
+
+def verify_for_issuer(token: str):
+    """Resolve the app from `iss`, then verify. Returns `(app, claims)`."""
+    app = issuer_of(token)
     return app, verify(token, app=app)

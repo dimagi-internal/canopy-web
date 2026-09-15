@@ -101,3 +101,67 @@ def check_mint_limit(user_id) -> None:
             f"token mint rate limit exceeded ({_mint_limit()} per {window}s). "
             "Try again shortly."
         )
+
+
+# --- the contact-token endpoint ----------------------------------------------
+#
+# The only one of the three that is UNAUTHENTICATED, and therefore the one that
+# most needed a budget and least had one. Two limits, in the order the work
+# happens, because a limit checked after the expensive part has not saved
+# anything:
+#
+#   1. per CLIENT, before the assertion is parsed at all.
+#   2. per ISSUER, once the app is known and before its signature is verified.
+#
+# The per-client limit is a floor against anonymous flooding, not a business
+# limit: a host's BACKEND calls this endpoint, so all of one site's legitimate
+# traffic arrives from a handful of addresses and a tight cap would throttle a
+# busy partner rather than an attacker. The per-issuer limit is the real bound —
+# it caps both signature verifications and the `Contact` rows a compromised key
+# can create.
+
+
+class ContactTokenRateLimitError(Exception):
+    """Raised when contact-token minting exceeds a budget."""
+
+
+def check_contact_token_client(client_ip) -> None:
+    """Cheap guard, before anything is parsed.
+
+    Deliberately generous. Reaching a signature check at all requires naming a
+    registered app — an unknown `iss` is refused after a base64 decode — so the
+    expensive path is already narrow; this only stops someone hammering it.
+    """
+    limit = int(getattr(settings, "CONTACT_TOKEN_CLIENT_LIMIT", 300))
+    window = int(getattr(settings, "CONTACT_TOKEN_WINDOW_SECONDS", 60))
+    if _over(f"tokens:contact:ip:{client_ip or 'unknown'}", limit, window):
+        raise ContactTokenRateLimitError(
+            f"too many contact-token requests ({limit} per {window}s)"
+        )
+
+
+def check_contact_token_issuer(name: str) -> None:
+    """The real bound: how many visitors one site may vouch for per window.
+
+    Caps the rows a leaked signing key can create, and the verifications a
+    named app can make canopy perform.
+    """
+    limit = int(getattr(settings, "CONTACT_TOKEN_ISSUER_LIMIT", 120))
+    window = int(getattr(settings, "CONTACT_TOKEN_WINDOW_SECONDS", 60))
+    if _over(f"tokens:contact:iss:{name}", limit, window):
+        raise ContactTokenRateLimitError(
+            f"too many contact tokens for this site ({limit} per {window}s)"
+        )
+
+
+def _over(key: str, limit: int, window: int) -> bool:
+    """Fixed-window counter. True when this request is over budget."""
+    if cache.add(key, 1, timeout=window):
+        return False
+    try:
+        count = cache.incr(key)
+    except ValueError:
+        # Expired between add() and incr(); this request starts a fresh window.
+        cache.add(key, 1, timeout=window)
+        return False
+    return count > limit
