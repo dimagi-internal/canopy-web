@@ -15,7 +15,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.realtime.groups import session_group
 
-from . import attach, drafts, participants, presence, serializers, stream_map
+from . import agui, attach, drafts, participants, presence, serializers, stream_map
 from . import services as chat_services
 from .models import Message, Session, SessionParticipant
 
@@ -23,8 +23,46 @@ _EDIT_ROLES = {SessionParticipant.OWNER, SessionParticipant.EDITOR}
 _EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send")
 
 
+#: Query value that switches this socket to AG-UI. Opt-in per CONNECTION, and
+#: absent means canopy's own frames, byte for byte as before — which is what
+#: makes this projection additive rather than a migration. `canopy-ui` is
+#: published to public npm at 0.7.0 with ace-web downstream, so a client that
+#: does not ask must not be able to notice this exists.
+AGUI_PROTOCOL = "ag-ui"
+
+
 class SessionConsumer(AsyncJsonWebsocketConsumer):
+    #: Set at connect from the query string. Not a header: a browser cannot set
+    #: headers on a WebSocket handshake, and the subprotocol field is already
+    #: how Channels' auth layers are configured here.
+    agui_mode = False
+
+    def _negotiate_protocol(self) -> None:
+        raw = (self.scope.get("query_string") or b"").decode("utf-8", "replace")
+        self.agui_mode = f"protocol={AGUI_PROTOCOL}" in raw
+
+    async def send_json(self, content, close=False):
+        """Every frame leaves through here, which is why the projection lives here.
+
+        Overriding the one choke point rather than editing ~20 call sites means
+        a canopy frame added later is projected automatically — or, if it has no
+        AG-UI meaning, silently dropped from the AG-UI stream rather than
+        leaking canopy's vocabulary into a protocol stream. `test_agui_socket`
+        pins the frames that are known to be unmapped, so "dropped" stays a
+        decision somebody made rather than one nobody noticed.
+        """
+        if not self.agui_mode:
+            await super().send_json(content, close=close)
+            return
+
+        thread_id = str(getattr(self, "session", None) and self.session.id or "")
+        for event in agui.project(content, thread_id=thread_id):
+            await super().send_json(agui.encode(event))
+        if close:
+            await self.close()
+
     async def connect(self):
+        self._negotiate_protocol()
         user = self.scope.get("user")
         contact = self.scope.get("contact")
         if not getattr(user, "is_authenticated", False) and contact is None:

@@ -19,6 +19,12 @@ dependencies = [
     "google-api-python-client>=2.120,<3.0",
     "google-auth>=2.29,<3.0",
     "fastmcp>=3.3,<4.0",
+    # AG-UI: the agent<->UI protocol canopy had hand-rolled (apps/canopy_sessions/agui.py).
+    # Pinned to an exact minor because it is PRE-1.0 and its own enum already
+    # carries removals scheduled for 1.0 (THINKING_* -> REASONING_*). The pin is
+    # what makes `agui.py` a seam rather than a dependency: AG-UI types are
+    # constructed there and nowhere else, so a breaking release costs one module.
+    "ag-ui-protocol>=0.1.22,<0.2",
     "channels>=4.1,<5.0",
     "channels-redis>=4.2,<5.0",
     # S3 for chat attachment bytes (apps/canopy_sessions/attachment_storage.py).
