@@ -253,3 +253,47 @@ describe('a contact behind the frame', () => {
     expect(screen.getByText('Hal')).toBeTruthy()
   })
 })
+
+describe('what the agent is asked, and what the conversation ends up called', () => {
+  it('leads with what the person typed, not the page context', async () => {
+    // The runner names an emdash task from the prompt's OPENING words. Leading
+    // with the context block produced tasks called
+    // `c-context-from-the-page-i-am-on-8e56` for somebody who typed "tell me
+    // about this page" — they could not find their own conversation, on a real
+    // deployment, which is how this was found.
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          requestContext: async () => ({ surface: 'the supervisor inbox', path: '/supervisor' }),
+        })}
+        app="canopy-web"
+      />,
+    )
+    await say('Tell me about this page')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    const text = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init!.body)).text
+
+    expect(text.startsWith('Tell me about this page')).toBe(true)
+    // The context still travels — it is moved, not dropped.
+    expect(text).toContain('/supervisor')
+  })
+
+  it('sends the bare message when the host offers no context', async () => {
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          requestContext: async () => ({}),
+        })}
+        app="canopy-web"
+      />,
+    )
+    await say('hello')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    const text = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init!.body)).text
+    expect(text).toBe('hello')
+  })
+})

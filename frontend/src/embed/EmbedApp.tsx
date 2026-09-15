@@ -2,7 +2,7 @@ import { ChatPanel, useSessionSocket } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from '@canopy/client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { buildContextPreamble } from './contextPreamble'
+import { buildPageContextBlock } from './pageContextBlock'
 import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
 import { resolvePrincipal, type Principal } from './principal'
@@ -97,7 +97,7 @@ export function EmbedApp({ link, app }: Props) {
         // start.
         try {
           const context = await link.requestContext()
-          pendingContext.current = buildContextPreamble(context)
+          pendingContext.current = buildPageContextBlock(context)
         } catch {
           // A host that cannot answer is a host that lends no context. Not
           // fatal — the agent simply starts without it.
@@ -166,8 +166,12 @@ export function EmbedApp({ link, app }: Props) {
   const startConversation = useCallback(
     async (agent: EmbedAgent, text: string) => {
       const isContact = principalRef.current?.kind === 'contact'
-      const preamble = pendingContext.current
-      const body = preamble ? `${preamble}\n\n${text}` : text
+      // The ASK first, the page context after. The runner names the emdash
+      // task from the prompt's opening words, so leading with the context
+      // produced tasks called `c-context-from-the-page-i-am-on-…` that nobody
+      // could recognise as their own question.
+      const context = pendingContext.current
+      const body = context ? `${text}\n\n${context}` : text
       pendingContext.current = null
 
       const created = isContact
@@ -454,8 +458,8 @@ function EmbedChat({
   }, [client, sessionId])
 
   const onSendAsContact = useCallback(() => {
-    const preamble = contextPreamble.current
-    const body = preamble ? `${preamble}\n\n${localDraft}` : localDraft
+    const context = contextPreamble.current
+    const body = context ? `${localDraft}\n\n${context}` : localDraft
     if (!body.trim() || sending) return
     contextPreamble.current = null
     setSending(true)
@@ -473,10 +477,13 @@ function EmbedChat({
     // its own. An automatic turn on open would claim a runner and produce an
     // agent reply before the user had said anything — and metadata alone never
     // reaches the agent, since canopy treats it as an opaque bag.
-    const preamble = contextPreamble.current
-    if (preamble) {
+    // The ask leads here too. This path only runs for a message sent after the
+    // session already exists, so it does not name an emdash task — but a reader
+    // scrolling the transcript should still see the question before the JSON.
+    const context = contextPreamble.current
+    if (context) {
       contextPreamble.current = null
-      socket.updateDraft(`${preamble}\n\n${socket.state.active_draft?.body ?? ''}`)
+      socket.updateDraft(`${socket.state.active_draft?.body ?? ''}\n\n${context}`)
     }
     socket.sendChat()
   }, [socket, contextPreamble])
