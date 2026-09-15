@@ -522,3 +522,121 @@ describe('the launcher belongs to the host page', () => {
     expect(root.querySelector('.dismiss')).toBeNull()
   })
 })
+
+describe('dragging the bubble out of the way', () => {
+  /** jsdom has no PointerEvent, so synthesise one that carries what the
+   *  handlers read. Testing the wiring, not the browser's gesture engine —
+   *  the geometry it drives is covered in dragging.test.ts. */
+  function pointer(type: string, x: number, y: number) {
+    const e = new Event(type, { bubbles: true, cancelable: true }) as Event & {
+      clientX: number
+      clientY: number
+      pointerId: number
+    }
+    e.clientX = x
+    e.clientY = y
+    e.pointerId = 1
+    return e
+  }
+
+  function drag(launcher: Element, from: [number, number], to: [number, number]) {
+    launcher.dispatchEvent(pointer('pointerdown', ...from))
+    launcher.dispatchEvent(pointer('pointermove', ...to))
+    launcher.dispatchEvent(pointer('pointerup', ...to))
+  }
+
+  it('moves the dock, and marks it as placed by coordinates', () => {
+    const { root } = widgetHarness()
+    const launcher = root.querySelector('.launcher')!
+    const dock = root.querySelector('.dock') as HTMLElement
+
+    drag(launcher, [500, 500], [200, 300])
+
+    // `data-moved` is what turns off the corner insets in CSS; without it the
+    // left/top coordinates fight `right`/`bottom` and nothing appears to move.
+    expect(dock.dataset.moved).toBe('true')
+    expect(dock.style.left).not.toBe('')
+    expect(dock.style.top).not.toBe('')
+  })
+
+  it('does not open the panel when the drag ends over the bubble', () => {
+    // A drag that finishes where it started still fires a click. Without the
+    // capture-phase guard the panel opens every time you put the bubble down.
+    const { root, widget } = widgetHarness()
+    const launcher = root.querySelector('.launcher') as HTMLElement
+
+    drag(launcher, [500, 500], [200, 300])
+    launcher.click()
+
+    expect(widget.isOpen()).toBe(false)
+  })
+
+  it('still opens on a plain tap', () => {
+    // The guard must not swallow ordinary clicks — that would leave the widget
+    // unopenable, which is worse than the bug it prevents.
+    const { root, widget } = widgetHarness()
+    const launcher = root.querySelector('.launcher') as HTMLElement
+
+    launcher.click()
+
+    expect(widget.isOpen()).toBe(true)
+  })
+
+  it('a wobble is a tap, not a drag', () => {
+    const { root, widget } = widgetHarness()
+    const launcher = root.querySelector('.launcher') as HTMLElement
+    const dock = root.querySelector('.dock') as HTMLElement
+
+    drag(launcher, [500, 500], [502, 501])
+    launcher.click()
+
+    expect(dock.dataset.moved).toBeUndefined()
+    expect(widget.isOpen()).toBe(true)
+  })
+
+  /** A storage that works, because jsdom's does not here — the widget takes
+   *  one rather than reaching for `window.localStorage`, which is what makes
+   *  this testable at all. */
+  function memoryStorage(seed: Record<string, string> = {}) {
+    const data = { ...seed }
+    return {
+      getItem: (k: string) => data[k] ?? null,
+      setItem: (k: string, v: string) => {
+        data[k] = v
+      },
+      data,
+    }
+  }
+
+  it('remembers the position for next time', () => {
+    const storage = memoryStorage()
+    const { root } = widgetHarness({ app: 'canopy-web', storage })
+
+    drag(root.querySelector('.launcher')!, [500, 500], [200, 300])
+
+    const saved = storage.data['canopy.widget.position.canopy-web']
+    expect(saved).toBeTruthy()
+    expect(JSON.parse(saved)).toHaveProperty('x')
+  })
+
+  it('restores a saved position on the next load', () => {
+    const storage = memoryStorage({
+      'canopy.widget.position.canopy-web': JSON.stringify({ x: 120, y: 240 }),
+    })
+
+    const { root } = widgetHarness({ app: 'canopy-web', storage })
+    const dock = root.querySelector('.dock') as HTMLElement
+
+    expect(dock.dataset.moved).toBe('true')
+    expect(dock.style.left).toBe('120px')
+  })
+
+  it('works with no storage at all — dragging is not a storage feature', () => {
+    const { root } = widgetHarness({ storage: null })
+    const dock = root.querySelector('.dock') as HTMLElement
+
+    drag(root.querySelector('.launcher')!, [500, 500], [200, 300])
+
+    expect(dock.dataset.moved).toBe('true')
+  })
+})

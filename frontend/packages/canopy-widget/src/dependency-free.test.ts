@@ -44,7 +44,7 @@ describe('the loader ships with no dependencies', () => {
   })
 
   it('covers every shipped module, so a new file cannot slip past the check', () => {
-    expect(shippedFiles().sort()).toEqual(['chrome.ts', 'index.ts', 'protocol.ts'])
+    expect(shippedFiles().sort()).toEqual(['chrome.ts', 'dragging.ts', 'index.ts', 'protocol.ts'])
   })
 
   it('never posts to a wildcard target origin', () => {

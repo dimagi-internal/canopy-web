@@ -19,6 +19,16 @@
  *             host owns placement and sizing.
  */
 
+import {
+  clampToViewport,
+  isDrag,
+  panelPosition,
+  readSaved,
+  storageKeyFor,
+  writeSaved,
+  type Point,
+} from './dragging'
+
 export type DisplayMode = 'overlay' | 'inline' | 'docked'
 
 export interface ChromeOptions {
@@ -28,6 +38,15 @@ export interface ChromeOptions {
   launcherLabel: string
   /** Whether the launcher carries an × that hides it. */
   dismissible: boolean
+  /** Names the saved position, so two widgets on one origin do not fight. */
+  app: string
+  /** Where a dragged position is remembered.
+   *
+   *  Injected rather than reached for, because `window.localStorage` is not
+   *  functional in this repo's jsdom setup — code that reads it directly is
+   *  untestable here, which is how a persistence bug would ship unnoticed.
+   *  `null` disables remembering without disabling dragging. */
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null
   title: string
   /** Panel width for overlay/docked, in px. */
   width: number
@@ -80,6 +99,13 @@ const STYLES = `
     bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     display: flex; align-items: flex-start;
   }
+  /* Once dragged the dock is placed by left/top, so the corner insets must stop
+     applying or they fight the coordinates. */
+  .dock[data-moved="true"] { right: auto; bottom: auto; }
+  /* Without this a touch-drag scrolls the host's page instead of moving the
+     bubble — the browser claims the gesture before pointermove ever fires. */
+  .launcher { touch-action: none; }
+  .launcher:active { cursor: grabbing; }
   .launcher {
     height: 48px; padding: 0 18px; border-radius: 24px;
     border: 0; cursor: pointer;
@@ -188,10 +214,106 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       dock.appendChild(dismiss)
     }
 
+    // --- dragging -----------------------------------------------------------
+    //
+    // The bubble is fixed to a corner of somebody else's page, and on a phone
+    // that corner already has something in it. Dismissing hides it; dragging
+    // moves it, and the position is remembered — unlike dismissal, a moved
+    // bubble is still visible, so there is no way to strand yourself.
+    const storageKey = storageKeyFor(options.app)
+    const storage = options.storage
+
+    const place = (pos: Point) => {
+      const size = { width: dock!.offsetWidth || 140, height: dock!.offsetHeight || 48 }
+      const at = clampToViewport(pos, size, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })
+      dock!.dataset.moved = 'true'
+      dock!.style.left = `${at.x}px`
+      dock!.style.top = `${at.y}px`
+      return at
+    }
+
+    const saved = readSaved(storage, storageKey)
+    if (saved) place(saved)
+
+    let origin: Point | null = null
+    let grabOffset: Point = { x: 0, y: 0 }
+    let moved = false
+
+    launcher.addEventListener('pointerdown', (event) => {
+      origin = { x: event.clientX, y: event.clientY }
+      moved = false
+      const rect = dock!.getBoundingClientRect()
+      grabOffset = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+      // Keeps the events coming even when the pointer leaves the bubble, which
+      // it does immediately on any real drag.
+      launcher!.setPointerCapture?.(event.pointerId)
+    })
+
+    launcher.addEventListener('pointermove', (event) => {
+      if (!origin) return
+      const now = { x: event.clientX, y: event.clientY }
+      if (!moved && !isDrag(origin, now)) return
+      moved = true
+      place({ x: now.x - grabOffset.x, y: now.y - grabOffset.y })
+    })
+
+    const endDrag = (event: PointerEvent) => {
+      if (!origin) return
+      launcher!.releasePointerCapture?.(event.pointerId)
+      origin = null
+      if (!moved) return
+      const rect = dock!.getBoundingClientRect()
+      writeSaved(storage, storageKey, { x: rect.left, y: rect.top })
+      if (api.isOpen()) placePanel()
+    }
+    launcher.addEventListener('pointerup', endDrag)
+    launcher.addEventListener('pointercancel', endDrag)
+
+    // A drag ends over the bubble often enough to matter, and the browser fires
+    // a click when it does. Without this the panel opens every time you put the
+    // bubble down where you picked it up.
+    launcher.addEventListener('click', (event) => {
+      if (moved) {
+        event.stopImmediatePropagation()
+        event.preventDefault()
+        moved = false
+      }
+    }, true)
+
+    // A window that changes size can strand a bubble that was fine before.
+    window.addEventListener('resize', () => {
+      if (dock?.dataset.moved !== 'true') return
+      const rect = dock.getBoundingClientRect()
+      place({ x: rect.left, y: rect.top })
+      if (api.isOpen()) placePanel()
+    })
+
     root.appendChild(dock)
   }
 
   mount.appendChild(host)
+
+  /** Anchor the panel to wherever the bubble ended up.
+   *
+   *  Only once the dock has actually been moved — an untouched widget keeps the
+   *  corner placement its CSS already gives it, so nothing changes for a host
+   *  that never drags anything. */
+  function placePanel() {
+    if (inline || !dock || dock.dataset.moved !== 'true') return
+    const d = dock.getBoundingClientRect()
+    const at = panelPosition(
+      { x: d.left, y: d.top, width: d.width, height: d.height },
+      { width: panel.offsetWidth || options.width, height: panel.offsetHeight || 500 },
+      { width: window.innerWidth, height: window.innerHeight },
+    )
+    panel.style.left = `${at.x}px`
+    panel.style.top = `${at.y}px`
+    panel.style.right = 'auto'
+    panel.style.bottom = 'auto'
+  }
 
   const api: Chrome = {
     iframe,
@@ -199,6 +321,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     open() {
       if (api.isOpen()) return
       panel.dataset.open = 'true'
+      placePanel()
       launcher?.setAttribute('aria-expanded', 'true')
       options.onToggle(true)
     },

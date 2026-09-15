@@ -52,6 +52,18 @@ import {
 export type { DisplayMode } from './chrome'
 export type { ActionSpec } from './protocol'
 
+/** `window.localStorage`, or null where reaching for it throws. */
+function safeLocalStorage(): Pick<Storage, 'getItem' | 'setItem'> | null {
+  try {
+    const store = globalThis.localStorage
+    // Present but broken is a real state (jsdom without a backing file, some
+    // privacy extensions), and it fails at the first call rather than here.
+    return typeof store?.getItem === 'function' ? store : null
+  } catch {
+    return null
+  }
+}
+
 export interface CanopyWidgetOptions {
   /** Where canopy lives, browser-facing. Absolute for a cross-origin canopy
    *  (the usual embedded case), or a path prefix if same-origin. */
@@ -79,6 +91,10 @@ export interface CanopyWidgetOptions {
    *  `csrftoken_canopy`). With the wrong name the header is simply absent, the
    *  mint 403s, and the widget shows an unexplained failure to start. */
   csrfCookieName?: string
+  /** Where a dragged launcher position is remembered. Defaults to
+   *  `localStorage`; pass `null` to have the bubble start in its corner every
+   *  time. */
+  storage?: Pick<Storage, 'getItem' | 'setItem'> | null
   /** Opaque metadata stamped on sessions this widget creates. */
   metadata?: Record<string, unknown>
   /** Text on the launcher bubble. The HOST names it, because the host's page
@@ -148,6 +164,11 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     target: options.target,
     launcherLabel: options.launcherLabel ?? 'Ask Canopy',
     dismissible: options.dismissible ?? true,
+    app: options.app,
+    // Resolved here, not inside the chrome: merely TOUCHING `localStorage` can
+    // throw in a private window or where a host has blocked site data, so the
+    // access is wrapped once and the chrome is handed a value or a null.
+    storage: options.storage !== undefined ? options.storage : safeLocalStorage(),
     title: options.title ?? 'Canopy assistant',
     width: options.width ?? 400,
     zIndex: options.zIndex ?? 2147483000,

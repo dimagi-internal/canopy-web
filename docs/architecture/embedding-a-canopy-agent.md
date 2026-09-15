@@ -243,7 +243,13 @@ page built from non-module scripts sharing a global scope.
 because it appears on *your* page and only you know what your people call this
 thing. It defaults to "Ask Canopy".
 
-**And your visitors can put it away.** The bubble is fixed to a corner of your
+**And your visitors can move it or put it away.** Dragging the bubble relocates
+it, and where they left it is remembered per site (`localStorage`; pass
+`storage: null` to opt out, and it degrades to "starts in the corner" wherever
+storage is blocked). A position is always pinned back inside the window, so one
+saved on a desktop cannot strand the bubble off-screen on a phone.
+
+ The bubble is fixed to a corner of your
 page, and on a phone it lands on whatever is already in that corner — so it
 carries an × that hides it for the rest of that page load. It comes back on the
 next load, deliberately: a widget that stays hidden with no way back is a
