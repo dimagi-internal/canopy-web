@@ -648,3 +648,58 @@ describe('dragging the bubble out of the way', () => {
     expect(dock.dataset.moved).toBe('true')
   })
 })
+
+describe('the page state channel', () => {
+  it('pushes the view to an open frame, on its own message', async () => {
+    const { widget, fromFrame, sent } = widgetHarness()
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    widget.setPageState({ visible_ids: [4471, 4472], backing_tool: 'list_insights' })
+
+    const [push] = sent('state')
+    expect(push.message.state).toEqual({
+      visible_ids: [4471, 4472],
+      backing_tool: 'list_insights',
+    })
+    // The canopy origin, never '*' — the view describes the user's screen.
+    expect(push.targetOrigin).toBe(CANOPY)
+  })
+
+  it('replays the last view on init, so a panel opened later is not blind', async () => {
+    // The host declares its state when the PAGE renders; the frame handshakes
+    // when the user opens the panel, which can be much later. Without the
+    // replay the agent would know the view only if the user happened to filter
+    // the page after opening the chat.
+    const { widget, fromFrame, sent } = widgetHarness()
+
+    widget.setPageState({ visible_ids: [7] })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const pushes = sent('state')
+    expect(pushes.at(-1)?.message.state).toEqual({ visible_ids: [7] })
+  })
+
+  it('sends the view AFTER init, not inside it', async () => {
+    // `init` is the one message carrying the token and the one whose shape the
+    // frame validates strictly. The view is a separate fact and rides its own
+    // frame rather than growing a field on the credential message.
+    const { widget, fromFrame, posted } = widgetHarness()
+    widget.setPageState({ visible_ids: [7] })
+
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const kinds = posted.map((p) => p.message.type)
+    expect(kinds.indexOf('init')).toBeLessThan(kinds.indexOf('state'))
+    expect(posted.find((p) => p.message.type === 'init')?.message).not.toHaveProperty('state')
+  })
+
+  it('says nothing at all when the host never declares a view', async () => {
+    const { fromFrame, sent } = widgetHarness()
+
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    // A host that does not use the channel must not have an empty screen
+    // announced on its behalf.
+    expect(sent('state')).toHaveLength(0)
+  })
+})

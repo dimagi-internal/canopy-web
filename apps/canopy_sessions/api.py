@@ -22,20 +22,25 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
-from . import access, attachment_storage, page_actions, serializers, services
+from . import access, attachment_storage, page_actions, page_state, serializers, services
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
+    BackfillStateOut,
+    MenuAnswerIn,
+    MessageOut,
+    MessagePageOut,
     PageActionInvokeIn,
     PageActionOut,
     PageActionResultIn,
     PageActionsDeclareIn,
     PageActionSpec,
-    BackfillStateOut,
-    MessageOut,
-    MenuAnswerIn,
-    MessagePageOut,
+    PageStateIn,
+    PageStateOut,
     PlaceIn,
+    ResetIn,
+    ResetOut,
+    ResetSummaryOut,
     SendIn,
     SendOut,
     SessionCreateIn,
@@ -45,9 +50,6 @@ from .schemas import (
     TransferIn,
     TransferOut,
     TurnOutMinimal,
-    ResetIn,
-    ResetOut,
-    ResetSummaryOut,
 )
 
 #: Reserved, server-owned metadata key: the embedding app a session was created
@@ -665,6 +667,35 @@ def list_page_actions(request: HttpRequest, session_id: uuid.UUID) -> list[PageA
     attached — not that the page can do nothing."""
     session = _session_or_404(request, session_id)
     return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
+
+
+@router.put("/{session_id}/page-state", response=PageStateOut,
+            summary="Declare what the attached page is showing")
+def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
+                       payload: PageStateIn) -> PageStateOut:
+    """Called by the page as it mounts and whenever its view changes.
+
+    Replaces the declaration wholesale. A state larger than the server's cap is
+    rejected with `too_large`: send the selection (ids, filters) and the tool
+    that resolves it, not the rows themselves.
+    """
+    session = _session_or_404(request, session_id)
+    try:
+        stored = page_state.set_page_state(session, payload.state)
+    except page_state.PageStateError as exc:
+        # 422: well-formed request, unacceptable CONTENT — the page must change
+        # what it sends, which is a different fix from retrying.
+        raise HttpError(422, f"{exc.code}: {exc.message}")
+    return PageStateOut(state=stored, version=int(stored.get("version") or 0))
+
+
+@router.get("/{session_id}/page-state", response=PageStateOut,
+            summary="What the attached page is showing")
+def read_page_state(request: HttpRequest, session_id: uuid.UUID) -> PageStateOut:
+    """How a surface other than the agent's MCP tool reads the current view."""
+    session = _session_or_404(request, session_id)
+    stored = page_state.current_page_state(session)
+    return PageStateOut(state=stored, version=int(stored.get("version") or 0))
 
 
 @router.post("/{session_id}/page-actions/invoke", response=PageActionOut,

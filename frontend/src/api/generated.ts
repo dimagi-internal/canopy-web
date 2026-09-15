@@ -4498,6 +4498,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/page-state": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the attached page is showing
+         * @description How a surface other than the agent's MCP tool reads the current view.
+         */
+        readonly get: operations["apps_canopy_sessions_api_read_page_state"];
+        /**
+         * Declare what the attached page is showing
+         * @description Called by the page as it mounts and whenever its view changes.
+         *
+         *     Replaces the declaration wholesale. A state larger than the server's cap is
+         *     rejected with `too_large`: send the selection (ids, filters) and the tool
+         *     that resolves it, not the rows themselves.
+         */
+        readonly put: operations["apps_canopy_sessions_api_declare_page_state"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/page-actions/invoke": {
         readonly parameters: {
             readonly query?: never;
@@ -11040,6 +11068,46 @@ export interface components {
              */
             readonly actions: readonly components["schemas"]["PageActionSpec"][];
         };
+        /**
+         * PageStateOut
+         * @description The stored view, with the server-assigned `version` folded in.
+         *
+         *     An empty `state` means no page is attached OR the page declares nothing.
+         *     Those are the same to a reader and deliberately so; neither is "the screen
+         *     is blank".
+         */
+        readonly PageStateOut: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Version
+             * @default 0
+             */
+            readonly version: number;
+        };
+        /**
+         * PageStateIn
+         * @description What the attached page currently shows.
+         *
+         *     Replaces any previous declaration wholesale. Bounded on the server: a page
+         *     that sends the rows it displays rather than the selection of them is
+         *     refused, because the agent re-reads those rows itself under the caller's own
+         *     permissions.
+         */
+        readonly PageStateIn: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+        };
         /** PageActionOut */
         readonly PageActionOut: {
             /** Id */
@@ -17538,6 +17606,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_read_page_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageStateOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_declare_page_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageStateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageStateOut"];
                 };
             };
         };

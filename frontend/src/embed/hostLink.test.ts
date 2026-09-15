@@ -253,3 +253,59 @@ describe('requests', () => {
     await expect(link.requestContext()).rejects.toThrow('has not spoken')
   })
 })
+
+describe('the page state channel', () => {
+  it('receives what the host pushes, and keeps receiving', async () => {
+    // Pushed, not polled — the whole difference from `requestContext`, which is
+    // answered once and then cannot say the page moved.
+    const { link, fromHost } = harness()
+    const seen: unknown[] = []
+    link.onPageStateChanged((s) => seen.push(s))
+
+    await fromHost({ source: SOURCE, type: 'state', state: { visible_ids: [1, 2] } })
+    await fromHost({ source: SOURCE, type: 'state', state: { visible_ids: [2] } })
+
+    expect(seen).toEqual([{ visible_ids: [1, 2] }, { visible_ids: [2] }])
+    expect(link.pageState()).toEqual({ visible_ids: [2] })
+  })
+
+  it('reads as null until the host speaks, not as an empty view', async () => {
+    // A host that does not use the channel must not be read as one declaring
+    // the user's screen blank — that would overwrite nothing with an assertion.
+    const { link } = harness()
+
+    expect(link.pageState()).toBeNull()
+  })
+
+  it('ignores a push from an origin the server did not name', async () => {
+    const { link, fromHost } = harness()
+
+    await fromHost({ source: SOURCE, type: 'state', state: { visible_ids: [9] } }, 'https://evil.example')
+
+    expect(link.pageState()).toBeNull()
+  })
+
+  it('drops a malformed push rather than blanking a good view', async () => {
+    const { link, fromHost } = harness()
+    await fromHost({ source: SOURCE, type: 'state', state: { visible_ids: [1] } })
+
+    await fromHost({ source: SOURCE, type: 'state', state: 'not an object' })
+    await fromHost({ source: SOURCE, type: 'state', state: ['also', 'not'] })
+    await fromHost({ source: SOURCE, type: 'state' })
+
+    expect(link.pageState()).toEqual({ visible_ids: [1] })
+  })
+
+  it('stops notifying once the listener unsubscribes', async () => {
+    const { link, fromHost } = harness()
+    const seen: unknown[] = []
+    const stop = link.onPageStateChanged((s) => seen.push(s))
+
+    stop()
+    await fromHost({ source: SOURCE, type: 'state', state: { visible_ids: [3] } })
+
+    expect(seen).toEqual([])
+    // Still RECORDED, though — a late reader must get the current view.
+    expect(link.pageState()).toEqual({ visible_ids: [3] })
+  })
+})
