@@ -1,6 +1,13 @@
 /**
  * Turning a host's page snapshot into something an agent can read.
  *
+ * It goes AFTER what the person typed, not before — which is why this is a
+ * "block" and no longer a "preamble". Leading with it cost something concrete:
+ * the runner names an emdash task from the prompt's opening words, so somebody
+ * who typed "tell me about this page" got a task called
+ * `c-context-from-the-page-i-am-on-8e56` and could not find their own
+ * conversation. The title of a thing is how you find it again.
+ *
  * The host hands over arbitrary JSON (`provideContext`). The agent reads prose.
  * This is the seam between them, and it is deliberately dumb: fence the JSON,
  * label it, and say where it came from. Anything cleverer — summarising,
@@ -12,7 +19,7 @@
  *  help answer it. A host that needs to send more should send less. */
 const MAX_CHARS = 8000
 
-export function buildContextPreamble(context: Record<string, unknown>): string | null {
+export function buildPageContextBlock(context: Record<string, unknown>): string | null {
   if (!context || Object.keys(context).length === 0) return null
 
   let body: string
