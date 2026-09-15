@@ -81,8 +81,13 @@ export function CanopyWidget() {
   // The widget is created once and lives across navigations — recreating it on
   // every route change would close an open conversation mid-sentence. The path
   // is read through a ref instead, so context is always current.
+  // Path AND query: the search string is where a filtered view keeps its
+  // state, so dropping it made "/insights?project=x" indistinguishable from
+  // the unfiltered page.
   const pathRef = useRef(location.pathname)
   pathRef.current = location.pathname
+  const searchRef = useRef(location.search)
+  searchRef.current = location.search
   const handleRef = useRef<WidgetHandle | null>(null)
   /** Names currently mirrored into the widget, so a withdrawn action is
    *  actually withdrawn rather than left callable. */
@@ -118,7 +123,7 @@ export function CanopyWidget() {
       })
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.
-      handle.provideContext(() => buildPageContext(pathRef.current))
+      handle.provideContext(() => buildPageContext(pathRef.current, searchRef.current))
 
       // Mirror the page's registry into the widget, and keep mirroring as the
       // user navigates. Declared with SCHEMAS, because an agent that knows an

@@ -117,3 +117,29 @@ describe('the page layer', () => {
     expect(ctx.surface).toBe('the items view of agent echo')
   })
 })
+
+describe('the URL is the cheapest context there is', () => {
+  it('carries the query string, where a filtered view keeps its state', () => {
+    const ctx = buildPageContext('/insights', '?project=commcare&category=stale')
+    expect(ctx.query).toEqual({ project: 'commcare', category: 'stale' })
+  })
+
+  it('omits query entirely when there is none, rather than sending an empty object', () => {
+    expect(buildPageContext('/insights')).not.toHaveProperty('query')
+    expect(buildPageContext('/insights', '?')).not.toHaveProperty('query')
+  })
+
+  it('still matches the route rules, which are anchored on a bare path', () => {
+    // The reason search is a separate argument: `/^\/w\/([^/]+)\/?$/` stops
+    // matching the moment a `?` is appended, so folding it into `path` would
+    // drop every such page to the generic descriptor.
+    const ctx = buildPageContext('/w/connect', '?tab=open')
+    expect(ctx.surface).toBe('the project workbench')
+    expect(ctx.query).toEqual({ tab: 'open' })
+  })
+
+  it('decodes what the browser encoded', () => {
+    const ctx = buildPageContext('/insights', '?q=two%20words')
+    expect((ctx.query as Record<string, string>).q).toBe('two words')
+  })
+})

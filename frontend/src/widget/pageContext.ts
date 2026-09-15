@@ -129,12 +129,37 @@ export function setPageContributor(fn: PageContributor): () => void {
   }
 }
 
-/** Both layers, assembled at the moment a conversation opens. */
-export function buildPageContext(path: string): Record<string, unknown> {
+/** The query string as a plain object, or null when there is none.
+ *
+ *  Kept SEPARATE from `path` rather than appended to it, because the route
+ *  rules are regexes anchored on a bare path — `/^\/w\/([^/]+)\/?$/` stops
+ *  matching the moment a `?` arrives, so folding the search in would silently
+ *  drop every page back to the generic descriptor.
+ */
+export function describeQuery(search: string): Record<string, string> | null {
+  const trimmed = (search || '').replace(/^\?/, '')
+  if (!trimmed) return null
+  const out: Record<string, string> = {}
+  for (const [k, v] of new URLSearchParams(trimmed)) out[k] = v
+  return Object.keys(out).length ? out : null
+}
+
+/** Both layers, assembled at the moment a conversation opens.
+ *
+ *  `search` is the cheapest context there is. A page whose state lives in its
+ *  URL — which is every page you can usefully link to — describes its own view
+ *  for free, with no per-page code: `/insights?project=x&category=stale` says
+ *  what is on screen as precisely as a hand-written contributor would, and
+ *  cannot drift from it. It was being dropped, so a filtered page looked
+ *  identical to an unfiltered one.
+ */
+export function buildPageContext(path: string, search = ''): Record<string, unknown> {
   const described = describePage(path)
+  const query = describeQuery(search)
   const base: Record<string, unknown> = {
     surface: described.surface,
     path,
+    ...(query ? { query } : {}),
     ...(described.params ? { params: described.params } : {}),
   }
   if (!contributor) return base
