@@ -20,6 +20,7 @@ Two properties matter more than the individual cases:
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from ag_ui.core import events as E
@@ -77,7 +78,8 @@ def test_every_projected_event_survives_a_round_trip_through_the_sdk():
         {"event": "chat.user_message", "data": {"message_id": "u1", "plaintext": "hello"}},
         {"event": "chat.tool_use",
          "data": {"tool_message_id": "t9", "parent_message_id": "m1",
-                  "block": {"name": "list_insights", "input": {"limit": 5}}}},
+                  "block": {"type": "tool_use", "id": "toolu_01ABC",
+                        "name": "list_insights", "input": {"limit": 5}}}},
         {"event": "chat.tool_result",
          "data": {"tool_message_id": "t9", "block": {"content": "[]"}}},
         {"event": "session.activity", "data": {"state": "working"}},
@@ -399,3 +401,61 @@ def test_an_unknown_frame_is_silence_not_an_exception():
 )
 def test_a_malformed_frame_does_not_raise(frame):
     agui.project(frame, thread_id="t1")
+
+
+# --- the cross-language fixture ---------------------------------------------
+
+FIXTURE = Path(__file__).resolve().parents[1] / "frontend" / "packages" / \
+    "canopy-ui" / "src" / "chat" / "agui.fixture.json"
+
+#: Canopy frames whose projection both languages agree on.
+#:
+#: The projection lives in Python and its INVERSE lives in TypeScript, so
+#: nothing in either codebase can tell you the two still agree. A committed
+#: fixture is the only artifact both can read: Python asserts it is current,
+#: TypeScript asserts its inverse recovers the original frame. Drift in either
+#: direction fails a test instead of silently producing a client that renders a
+#: subtly different conversation.
+ROUND_TRIP_FRAMES = [
+    {"event": "chat.stream_start", "data": {"message_id": "m1", "turn_index": 4}},
+    {"event": "chat.delta", "data": {"message_id": "m1", "text": "hello"}},
+    {"event": "chat.stream_complete", "data": {"message_id": "m1", "plaintext": "hello"}},
+    {"event": "chat.user_message",
+     "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there"}},
+    {"event": "chat.tool_use",
+     "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 5,
+              "block": {"name": "list_insights", "input": {"limit": 5}}}},
+    {"event": "chat.tool_result",
+     "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 6,
+              "block": {"type": "tool_result", "tool_use_id": "toolu_01ABC",
+                        "content": "[]"}}},
+    {"event": "session.title_updated", "data": {"title": "Insights triage"}},
+    {"event": "draft.updated", "data": {"id": "d1", "body": "x", "version": 2}},
+    {"event": "presence.joined", "data": {"user_id": 7}},
+    {"event": "presence.left", "data": {"user_id": 7}},
+]
+
+
+def _build_fixture() -> list[dict]:
+    return [
+        {"canopy": frame,
+         "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1", run_id="r1")]}
+        for frame in ROUND_TRIP_FRAMES
+    ]
+
+
+def test_the_shared_fixture_is_current():
+    """Regenerate with `python -m tests.regen_agui_fixture` when the projection
+    changes on purpose; a failure here means Python and TypeScript have drifted
+    and the TS round-trip test is checking a stale contract."""
+    assert FIXTURE.exists(), f"{FIXTURE} is missing; regenerate it"
+    assert json.loads(FIXTURE.read_text()) == _build_fixture()
+
+
+def test_the_fixture_covers_the_frames_a_conversation_actually_uses():
+    """A fixture holding only the easy cases would pass forever while proving
+    nothing about a streamed reply or a tool call."""
+    covered = {entry["canopy"]["event"] for entry in _build_fixture()}
+
+    assert {"chat.stream_start", "chat.delta", "chat.stream_complete",
+            "chat.tool_use", "chat.tool_result"} <= covered

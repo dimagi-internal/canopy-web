@@ -44,6 +44,35 @@ from ag_ui.core import types as T
 #: this", and so a future AG-UI event with the same idea does not collide.
 CUSTOM_PREFIX = "canopy."
 
+#: Key under which canopy's own fields ride on an AG-UI event's `metadata`.
+#:
+#: AG-UI reserves only the `ag-ui` key and its own comment says "Every other key
+#: is user space", so this is the extension point used as designed. It carries
+#: the two things canopy needs that the protocol has no slot for:
+#:
+#:   turn_index — the transcript ordinal. It is how a live row sorts into the
+#:                position it will occupy after a reload, and how a web send is
+#:                told apart from the echo of the same text arriving from the
+#:                runner. AG-UI orders by arrival, which is not the same thing.
+#:   plaintext  — the settled text of a message that arrived WHOLE. An AG-UI
+#:                client accumulates deltas and so never needs it; canopy's
+#:                reducer dedupes a user message by comparing text, and cannot.
+#:   block      — the runner's own tool payload, verbatim. `stream_map` passes
+#:                it straight through from the transcript, so its shape is the
+#:                PRODUCER's (Anthropic's `tool_use` block from the laptop, the
+#:                cloud runner's from ACP) and canopy deliberately does not
+#:                interpret it. AG-UI's tool call carries a name and an
+#:                arguments string, which is the right thing for a third-party
+#:                client and strictly less than the block holds — so the block
+#:                rides alongside rather than being reconstructed on the way
+#:                back, which would invent an `id` and a `type` that the real
+#:                payload may not have had.
+#:
+#: Without these the projection is LOSSY, and a canopy client reading the AG-UI
+#: stream would render a subtly worse conversation than one reading canopy's own
+#: frames — which would make the projection a downgrade dressed as a standard.
+METADATA_KEY = "canopy"
+
 #: `ACTIVITY_SNAPSHOT.activity_type` for the agent's working/idle/blocked state.
 #: An open string by design — this is the extension point, used as intended.
 ACTIVITY_TYPE = "canopy.session"
@@ -58,6 +87,17 @@ def _tool_call_id(frame_data: dict) -> str:
     `tool_call_update` ends up merging into nothing.
     """
     return str(frame_data.get("tool_message_id") or "")
+
+
+def _meta(**fields: Any) -> dict | None:
+    """canopy's own fields, namespaced, or None when there are none.
+
+    None rather than an empty dict so `exclude_none` drops the key entirely: an
+    event carrying `metadata: {"canopy": {}}` claims to say something about
+    canopy and does not.
+    """
+    present = {k: v for k, v in fields.items() if v is not None}
+    return {METADATA_KEY: present} if present else None
 
 
 def _custom(name: str, value: Any) -> E.CustomEvent:
@@ -161,6 +201,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 type=E.EventType.TEXT_MESSAGE_START,
                 message_id=str(data.get("message_id") or ""),
                 role="assistant",
+                metadata=_meta(turn_index=data.get("turn_index")),
             )
         ]
 
@@ -183,6 +224,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
             E.TextMessageEndEvent(
                 type=E.EventType.TEXT_MESSAGE_END,
                 message_id=str(data.get("message_id") or ""),
+                metadata=_meta(plaintext=data.get("plaintext")),
             )
         ]
 
@@ -196,6 +238,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 message_id=str(data.get("message_id") or ""),
                 role="user",
                 delta=data.get("plaintext") or "",
+                metadata=_meta(turn_index=data.get("turn_index")),
             )
         ]
 
@@ -210,6 +253,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 tool_call_name=str(block.get("name") or "tool"),
                 parent_message_id=(str(data["parent_message_id"])
                                    if data.get("parent_message_id") else None),
+                metadata=_meta(turn_index=data.get("turn_index"), block=block),
             ),
             # Arguments arrive whole from canopy, not streamed, so one ARGS
             # frame carries the lot. The JSON string is AG-UI's shape: a tool
@@ -232,6 +276,11 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 message_id=_tool_call_id(data),
                 tool_call_id=_tool_call_id(data),
                 content=content if isinstance(content, str) else json.dumps(content),
+                metadata=_meta(
+                    turn_index=data.get("turn_index"),
+                    parent_message_id=data.get("parent_message_id"),
+                    block=block,
+                ),
             )
         ]
 
