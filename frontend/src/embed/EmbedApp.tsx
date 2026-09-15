@@ -22,6 +22,11 @@ type Phase =
   | { kind: 'connecting' }
   | { kind: 'failed'; message: string }
   | { kind: 'choosing'; agents: EmbedAgent[] }
+  /** An agent is settled on, but NOTHING has been created yet. The frame loads
+   *  on every page view — the iframe's `src` is set when the chrome is built,
+   *  not when the panel is opened — so anything created here would be created
+   *  for people who never even opened the panel. */
+  | { kind: 'ready'; agent: EmbedAgent }
   | { kind: 'chatting'; sessionId: string }
 
 interface EmbedAgent {
@@ -41,6 +46,13 @@ export function EmbedApp({ link, app }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'connecting' })
   const [init, setInit] = useState<HostInit | null>(null)
   const [principal, setPrincipal] = useState<Principal | null>(null)
+  // Read through refs inside `startConversation`: both are set during the same
+  // async mount flow that later calls it, and reading the state there is what
+  // sent a contact down the tenant path once already.
+  const principalRef = useRef<Principal | null>(null)
+  principalRef.current = principal
+  const initRef = useRef<HostInit | null>(null)
+  initRef.current = init
   const clientRef = useRef<CanopyClient | null>(null)
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
@@ -118,7 +130,7 @@ export function EmbedApp({ link, app }: Props) {
           (agents.length === 1 ? agents[0] : null)
 
         if (preselected) {
-          await openSession(preselected, hostInit, who)
+          setPhase({ kind: 'ready', agent: preselected })
           return
         }
         setPhase({ kind: 'choosing', agents })
@@ -137,56 +149,56 @@ export function EmbedApp({ link, app }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link])
 
-  const openSession = useCallback(
-    // `who` is PASSED, not read from state. It is resolved and used in the same
-    // async flow, and `setPrincipal` has not committed by then — so reading the
-    // state here sent a contact down the tenant path, to
-    // `/api/w/undefined/canopy-sessions/`. Caught by a test; invisible in the UI,
-    // which would only have shown "could not start a conversation".
-    async (agent: EmbedAgent, hostInit: HostInit, who: Principal | null) => {
-      try {
-        if (who?.kind === 'contact') {
-          // A contact has no workspace to scope by and no membership to check;
-          // the site's allowlist is the whole gate, and canopy applies it.
-          const started = await client.rest.json<{ id: string }>('/api/contact/sessions', {
+  /** Create the session and send the first message, in that order.
+   *
+   *  Deferred to the first send rather than done at mount. The frame loads on
+   *  every page view, so creating on mount produced an empty session per page
+   *  load — three of them appeared in a real session list within an hour of the
+   *  widget being switched on, each with no runner, because no turn had ever
+   *  been enqueued. A session IS a conversation; there is not one until
+   *  somebody says something.
+   *
+   *  The first message goes over HTTP even on the user path, where later ones
+   *  go over the socket. Creating, then connecting, then sending would have to
+   *  wait for the socket to be up, and a first message that races the transport
+   *  it depends on is the kind of thing that works until the day it does not.
+   */
+  const startConversation = useCallback(
+    async (agent: EmbedAgent, text: string) => {
+      const isContact = principalRef.current?.kind === 'contact'
+      const preamble = pendingContext.current
+      const body = preamble ? `${preamble}\n\n${text}` : text
+      pendingContext.current = null
+
+      const created = isContact
+        ? await client.rest.json<{ id: string }>('/api/contact/sessions', {
             method: 'POST',
             body: JSON.stringify({ agent_slug: agent.slug }),
           })
-          setPhase({ kind: 'chatting', sessionId: started.id })
-          return
-        }
-        // The TENANT-scoped path, with the workspace the picker's own row
-        // named. The flat `/api/canopy-sessions/` resolves to the caller's
-        // DEFAULT workspace, and `create_session` then 404s any agent that is
-        // not in it — so an agent in a second workspace was offered by the
-        // picker and refused on click. For a user in several workspaces with
-        // no default, the flat route does not even get that far: it 422s with
-        // "no unambiguous workspace". `/api/embed/agents` returns `workspace`
-        // per row precisely so this call does not have to guess.
-        const created = await client.rest.json<{ id: string }>(
-          `/api/w/${encodeURIComponent(agent.workspace)}/canopy-sessions/`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              agent_slug: agent.slug,
-              title: '',
-              // `embed_app` is NOT sent: canopy stamps it server-side from the
-              // delegated token, and anything we sent under that key would be
-              // discarded (apps/canopy_sessions/api.py).
-              metadata: hostInit.metadata ?? {},
-            }),
-          },
-        )
-        setPhase({ kind: 'chatting', sessionId: created.id })
-      } catch (error) {
-        setPhase({
-          kind: 'failed',
-          message:
-            error instanceof Error
-              ? `could not start a conversation: ${error.message}`
-              : 'could not start a conversation',
-        })
-      }
+        : await client.rest.json<{ id: string }>(
+            `/api/w/${encodeURIComponent(agent.workspace)}/canopy-sessions/`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                agent_slug: agent.slug,
+                title: '',
+                // `embed_app` is NOT sent: canopy stamps it server-side from the
+                // delegated token, and anything we sent under that key would be
+                // discarded (apps/canopy_sessions/api.py).
+                metadata: initRef.current?.metadata ?? {},
+              }),
+            },
+          )
+
+      const sendPath = isContact
+        ? `/api/contact/sessions/${encodeURIComponent(created.id)}/send`
+        : `/api/canopy-sessions/${encodeURIComponent(created.id)}/send`
+      await client.rest.json(sendPath, {
+        method: 'POST',
+        body: JSON.stringify({ text: body }),
+      })
+
+      setPhase({ kind: 'chatting', sessionId: created.id })
     },
     [client],
   )
@@ -211,7 +223,7 @@ export function EmbedApp({ link, app }: Props) {
           <button
             key={agent.slug}
             type="button"
-            onClick={() => init && void openSession(agent, init, principal)}
+            onClick={() => setPhase({ kind: 'ready', agent })}
             className="rounded-lg border border-border bg-card p-3 text-left hover:bg-muted"
           >
             <span className="block text-sm text-foreground">{agent.name}</span>
@@ -224,6 +236,16 @@ export function EmbedApp({ link, app }: Props) {
     )
   }
 
+  if (phase.kind === 'ready') {
+    return (
+      <EmbedStart
+        agent={phase.agent}
+        onStart={(text) => startConversation(phase.agent, text)}
+        onClose={() => link.requestClose()}
+      />
+    )
+  }
+
   return (
     <EmbedChat
       sessionId={phase.sessionId}
@@ -232,6 +254,96 @@ export function EmbedApp({ link, app }: Props) {
       contextPreamble={pendingContext}
       readOnlySocket={principal?.kind === 'contact'}
     />
+  )
+}
+
+/**
+ * The panel before there is a conversation.
+ *
+ * Deliberately not `ChatPanel` with an empty transcript: that component reads
+ * its composer body off a server-side draft, and a draft belongs to a session
+ * that does not exist yet. A plain composer is also the honest picture —
+ * there is nothing to show above it.
+ */
+function EmbedStart({
+  agent,
+  onStart,
+  onClose,
+}: {
+  agent: EmbedAgent
+  onStart: (text: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [body, setBody] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = useCallback(() => {
+    const text = body.trim()
+    if (!text || sending) return
+    setSending(true)
+    setError(null)
+    void onStart(text)
+      .catch((e: unknown) => {
+        // The text stays in the box on failure. Losing what somebody typed
+        // because a request failed is the worst possible response to it.
+        setError(e instanceof Error ? e.message : 'could not start the conversation')
+        setSending(false)
+      })
+  }, [body, sending, onStart])
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-[12px] text-muted-foreground">{agent.name}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="rounded px-2 text-muted-foreground hover:text-foreground"
+        >
+          ×
+        </button>
+      </header>
+
+      <div className="grid min-h-0 flex-1 place-items-center p-6">
+        <p className="max-w-xs text-center text-sm text-muted-foreground">
+          Ask {agent.name} about this page.
+        </p>
+      </div>
+
+      {error ? (
+        <p className="px-3 pb-1 text-[12px] text-destructive">{error}</p>
+      ) : null}
+
+      <div className="border-t border-border p-2">
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              send()
+            }
+          }}
+          rows={3}
+          disabled={sending}
+          autoFocus
+          placeholder={`Message ${agent.name}…`}
+          className="w-full resize-none rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground"
+        />
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            onClick={send}
+            disabled={!body.trim() || sending}
+            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-50"
+          >
+            {sending ? 'Starting…' : 'Send'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
