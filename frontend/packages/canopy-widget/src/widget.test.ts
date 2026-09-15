@@ -13,6 +13,20 @@ const TOKEN_URL = '/labs/canopy/token'
  * reading what the host posted back. The frame window is a stand-in (see
  * below), which is what the host checks `event.source` against.
  */
+/** A storage that works, because jsdom's does not reliably here — the widget
+ *  takes one rather than reaching for `window.localStorage`, which is what
+ *  makes any of this testable. */
+function memoryStorage(seed: Record<string, string> = {}) {
+  const data = { ...seed }
+  return {
+    getItem: (k: string) => data[k] ?? null,
+    setItem: (k: string, v: string) => {
+      data[k] = v
+    },
+    data,
+  }
+}
+
 function widgetHarness(overrides: Record<string, unknown> = {}) {
   const posted: Array<{ message: Record<string, unknown>; targetOrigin: string }> = []
 
@@ -20,6 +34,14 @@ function widgetHarness(overrides: Record<string, unknown> = {}) {
     baseUrl: CANOPY,
     app: 'connect-labs',
     tokenUrl: TOKEN_URL,
+    // Every harness gets its OWN storage. Falling through to the ambient
+    // `window.localStorage` made the suite environment-dependent: this
+    // machine's jsdom has no working one (so nothing persisted and every
+    // test started clean) while CI's does, so one test's saved position
+    // restored itself into the next test's fresh widget and marked it
+    // moved before anything was dragged. Passing one here means the file
+    // behaves the same wherever it runs; tests that care override it.
+    storage: memoryStorage(),
     ...overrides,
   } as Parameters<typeof init>[0])
 
@@ -593,20 +615,6 @@ describe('dragging the bubble out of the way', () => {
     expect(dock.dataset.moved).toBeUndefined()
     expect(widget.isOpen()).toBe(true)
   })
-
-  /** A storage that works, because jsdom's does not here — the widget takes
-   *  one rather than reaching for `window.localStorage`, which is what makes
-   *  this testable at all. */
-  function memoryStorage(seed: Record<string, string> = {}) {
-    const data = { ...seed }
-    return {
-      getItem: (k: string) => data[k] ?? null,
-      setItem: (k: string, v: string) => {
-        data[k] = v
-      },
-      data,
-    }
-  }
 
   it('remembers the position for next time', () => {
     const storage = memoryStorage()
