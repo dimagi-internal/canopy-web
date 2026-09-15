@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EmbedApp } from './EmbedApp'
@@ -81,6 +81,17 @@ afterEach(() => {
  *  `/api/contact/sessions`. Still anchored at the end so it cannot match a
  *  sub-resource like `…/sess-1/attach` — the property #785 added this regex
  *  for. */
+/** Type a first message and send it — which is what now creates the session.
+ *
+ *  Nothing is created on mount any more (see the regression test below), so
+ *  every assertion about the create call has to go through the composer, the
+ *  same way a person does. */
+async function say(text = 'hello') {
+  const box = await screen.findByPlaceholderText(/^Message /)
+  fireEvent.change(box, { target: { value: text } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+}
+
 const created = () =>
   calls.find(
     (c) =>
@@ -89,6 +100,44 @@ const created = () =>
   )
 
 describe('starting a conversation', () => {
+  it('creates NOTHING until somebody actually says something', async () => {
+    // The bug this exists for: the chrome sets the iframe `src` when it is
+    // built, not when the panel is opened, so the frame boots on every page
+    // view. Creating the session on mount therefore created one per page load
+    // — three empty sessions turned up in a real list within an hour of the
+    // widget being switched on, each with no runner, because no turn had ever
+    // been enqueued.
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+
+    // Wait until the frame has settled far enough to have created one.
+    await screen.findByPlaceholderText(/^Message /)
+
+    expect(created()).toBeUndefined()
+    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false)
+  })
+
+  it('sends the first message with the session it just created', async () => {
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+    await say('what is stale here?')
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes('/send'))).toBe(true),
+    )
+    const sent = calls.find((c) => c.url.includes('/send'))!
+    expect(JSON.parse(String(sent.init!.body)).text).toContain('what is stale here?')
+  })
+
+
   it('creates the session in the AGENT\'s workspace, not the caller\'s default', async () => {
     // THE bug. `/api/canopy-sessions/` resolves to the caller's default
     // workspace and `create_session` 404s an agent that is not in it — so an
@@ -96,6 +145,7 @@ describe('starting a conversation', () => {
     // click. Worse for a user with no unambiguous default: a 422 before it
     // even looks at the agent.
     render(<EmbedApp link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })} app="canopy-web" />)
+    await say()
 
     await waitFor(() => expect(created()).toBeDefined())
     expect(created()!.url).toContain('/api/w/dimagi/canopy-sessions/')
@@ -103,6 +153,7 @@ describe('starting a conversation', () => {
 
   it('uses the workspace of whichever agent was picked', async () => {
     render(<EmbedApp link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'echo', actions: [] }) })} app="canopy-web" />)
+    await say()
 
     await waitFor(() => expect(created()).toBeDefined())
     expect(created()!.url).toContain('/api/w/connect/canopy-sessions/')
@@ -110,6 +161,7 @@ describe('starting a conversation', () => {
 
   it('still refuses to send embed_app — canopy stamps it from the token', async () => {
     render(<EmbedApp link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })} app="canopy-web" />)
+    await say()
 
     await waitFor(() => expect(created()).toBeDefined())
     expect(JSON.parse(String(created()!.init!.body))).not.toHaveProperty('embed_app')
@@ -165,6 +217,7 @@ describe('a contact behind the frame', () => {
         app="connect-labs"
       />,
     )
+    await say()
 
     await waitFor(() => expect(created()).toBeDefined())
     expect(created()!.url).toContain('/api/contact/sessions')
