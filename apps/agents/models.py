@@ -28,6 +28,28 @@ class Agent(models.Model):
         related_name="agents",
         help_text="The human who operates the agent.",
     )
+    #: The agent's OWN canopy login — not `owner`, which is the human operating
+    #: it. An agent authenticates to canopy's own MCP with its own PAT
+    #: (`secret_refs: canopy-pat`), so the caller behind a tool call is this
+    #: user, and every per-caller query resolves against it.
+    #:
+    #: Explicit rather than matched on `email`: that field is blank by default
+    #: and unique on neither side, so a blank-to-blank match would authorize
+    #: every agent against every user without one. That is the
+    #: `workspace_id IS NULL means allow` bug in a different costume, and this
+    #: repo has paid for it once already (agents/0013).
+    #:
+    #: Nullable because an agent need not have a canopy login — but a NULL must
+    #: never match anything. Every predicate over this column filters
+    #: `user__isnull=False` or compares against a concrete user id.
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="agent_identity",
+        help_text="The agent's own canopy login, used when it calls canopy as itself.",
+    )
     workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.PROTECT,

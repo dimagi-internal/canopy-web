@@ -49,19 +49,21 @@ TOOL_PREFIX = "page_"
 
 
 def _attached_sessions(user):
-    """Sessions belonging to `user` that currently declare page actions.
+    """Sessions whose page `user` may act on, that currently declare actions.
 
     A session only declares while a viewer is attached, so this is in practice
-    "the pages this user has open". Ordered newest-first so the most recent
+    "the pages this caller can reach". Ordered newest-first so the most recent
     attachment wins a name collision.
-    """
-    from apps.canopy_sessions.models import Session
 
-    return list(
-        Session.objects.filter(created_by=user, status=Session.ACTIVE)
-        .exclude(page_actions_available=[])
-        .order_by("-created_at")
-    )
+    The predicate is `page_access.page_visible_q`, not `created_by=user`. That
+    older filter was right for a human asking about their own tabs and wrong for
+    the only case that happens in production: the AGENT is the caller, holding
+    its own PAT, while the session was created by the human it is talking to —
+    so it matched nothing and the agent silently had no page tools at all.
+    """
+    from apps.canopy_sessions.page_access import sessions_with_page_for
+
+    return list(sessions_with_page_for(user).exclude(page_actions_available=[]))
 
 
 def page_tool_specs(user) -> list[tuple]:

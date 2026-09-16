@@ -39,13 +39,15 @@ def _visible_pages(user_id: int) -> list[dict]:
     call for ACTIONS because two tools with one name is unusable; reading is not
     subject to that constraint.
     """
-    from apps.canopy_sessions.models import Session
+    from django.contrib.auth.models import User
 
-    sessions = (
-        Session.objects.filter(created_by_id=user_id, status=Session.ACTIVE)
-        .exclude(page_state={})
-        .order_by("-created_at")
-    )
+    from apps.canopy_sessions.page_access import sessions_with_page_for
+
+    # Resolved to the real user so the predicate can compare concrete ids —
+    # `page_visible_q` matches NOTHING for a missing caller, which is the safe
+    # direction and the one an id-only filter would have got wrong.
+    caller = User.objects.filter(pk=user_id).first()
+    sessions = sessions_with_page_for(caller).exclude(page_state={})
     out = []
     for session in sessions:
         state = dict(session.page_state or {})

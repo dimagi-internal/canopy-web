@@ -42,6 +42,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -115,6 +116,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--token", default=None)
+    ap.add_argument("--act", default=None, metavar="TEXT", nargs="?", const=(
+        "Close the insights I am looking at right now."),
+        help="declare a page selection, ask for it, and assert the agent USED it")
     ap.add_argument("--send", default=None, metavar="TEXT",
                     help="also start a real conversation (enqueues a turn)")
     args = ap.parse_args()
@@ -179,6 +183,10 @@ def main() -> int:
     report("loading the widget created no session", after == before,
            f"{before} empty before, {after} after")
 
+    if args.act:
+        passed, detail = act_on_the_page(base, token, agents, args.act)
+        report("agent acts on what is on screen", passed, detail)
+
     if args.send:
         started = start_conversation(base, token, agents, args.send)
         report("a real conversation starts and carries the first message", bool(started),
@@ -203,6 +211,90 @@ def count_empty_sessions(base, token) -> int:
         if s.get("origin") == "web" and not s.get("runner_name")
         and not (s.get("title") or "").strip()
     )
+
+
+def act_on_the_page(base, token, agents, text, wait_s=420) -> tuple[bool, str]:
+    """The point of the file, the way `answer_from_the_web` is the point of its sibling.
+
+    Everything above proves the widget can LOAD. This proves the feature: the
+    page declares what is on screen, a human asks for something about "these",
+    and the agent reads the declaration and acts on the RIGHT ROWS.
+
+    It asserts the agent USED the page state — not that a turn completed, not
+    that a reply arrived, not that a tool returned 200. A reply saying "I have
+    closed them" while the agent in fact called `clear_insights` with no filter
+    is the failure this exists to catch, and it is indistinguishable from
+    success in every other check we have.
+    """
+    if not isinstance(agents, list) or not agents:
+        return False, "no agent available"
+    agent = agents[0]
+
+    status, created, _ = call(
+        base, f"/api/w/{agent['workspace']}/canopy-sessions/", token, method="POST",
+        body={"agent_slug": agent["slug"], "title": "", "metadata": {}},
+    )
+    if status != 200 or not isinstance(created, dict):
+        return False, f"session create returned {status}"
+    sid = created["id"]
+
+    # Read real ids the caller can actually see, so the selection we declare is
+    # one the agent could genuinely act on. Inventing ids would test the plumbing
+    # against data that does not exist, which is the shape of a green run that
+    # means nothing.
+    status, insights, _ = call(base, "/api/insights/?limit=5", token)
+    # `items` is this API's page key; `results` is a guess that cost a red run.
+    # Both are accepted rather than one being assumed, because a check that
+    # fails on the SHAPE of a healthy response reports the feature broken when
+    # it is not — which is a false alarm, and false alarms are how a live check
+    # stops being trusted.
+    if isinstance(insights, list):
+        rows = insights
+    else:
+        payload = insights or {}
+        rows = payload.get("items") or payload.get("results") or []
+    ids = [r["id"] for r in rows[:3] if isinstance(r, dict) and "id" in r]
+    if not ids:
+        return False, "no insights visible to this token; nothing to select"
+
+    # Declare the view exactly as the widget does (PUT /page-state).
+    status, _st, _ = call(
+        base, f"/api/canopy-sessions/{sid}/page-state", token, method="PUT",
+        body={"state": {"surface": "the insights feed", "path": "/insights",
+                        "backing_tool": "list_insights", "visible_ids": ids,
+                        "visible_count": len(ids)}},
+    )
+    if status != 200:
+        return False, f"page-state declare returned {status}"
+
+    status, _sent, _ = call(base, f"/api/canopy-sessions/{sid}/send", token,
+                            method="POST", body={"text": text})
+    if status != 200:
+        return False, f"send returned {status}"
+
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        time.sleep(10)
+        status, msgs, _ = call(base, f"/api/canopy-sessions/{sid}/messages?limit=100", token)
+        if isinstance(msgs, list):
+            items = msgs
+        else:
+            payload = msgs or {}
+            items = payload.get("items") or payload.get("results") or []
+        blob = json.dumps(items)
+        used_state = "current_page" in blob
+        named_rows = any(str(i) in blob for i in ids)
+        replied = any(m.get("role") == "assistant" and (m.get("plaintext") or "").strip()
+                      for m in items if isinstance(m, dict))
+        if used_state and named_rows:
+            return True, f"session {sid}: agent read current_page and named {ids}"
+        if replied and not used_state:
+            # A reply WITHOUT reading the page is the interesting failure: the
+            # agent answered about everything, or about nothing, rather than
+            # about what the user was looking at.
+            return False, (f"session {sid}: agent replied WITHOUT calling current_page — "
+                           f"it did not act on the {len(ids)} visible rows")
+    return False, f"session {sid}: no answer within {wait_s}s (runner offline?)"
 
 
 def start_conversation(base, token, agents, text) -> str | None:
