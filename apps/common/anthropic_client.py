@@ -16,9 +16,27 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+#: The model every call here defaults to.
+#:
+#: One constant, not four default arguments. It was written out four times
+#: (`_api_call`, `_api_stream`, `call_ai`, `stream_message`), which is how it
+#: came to be a generation stale — moving it meant finding every copy, so nobody
+#: did. Overridable per deployment without a code change; a caller that passes
+#: `model=` still wins, which is what the per-call argument is for.
+#:
+#: Read through `_default_model()` rather than captured at import: a default
+#: argument binds once when the module loads, so a settings override would never
+#: be seen. That exact bug cost this repo a 25-second test file once
+#: (DEFAULT_TIMEOUT_SECONDS in page_actions).
+DEFAULT_MODEL = "claude-sonnet-5"
+
 _client = None
 _consecutive_failures = 0
 _CIRCUIT_BREAKER_THRESHOLD = 5
+
+
+def _default_model() -> str:
+    return getattr(settings, "ANTHROPIC_MODEL", None) or DEFAULT_MODEL
 
 
 def _get_backend():
@@ -74,19 +92,19 @@ def get_client():
     return _client
 
 
-def _api_call(system_prompt, user_message, model="claude-sonnet-4-20250514", max_tokens=4096):
+def _api_call(system_prompt, user_message, model=None, max_tokens=4096):
     client = get_client()
     response = client.messages.create(
-        model=model, max_tokens=max_tokens, system=system_prompt,
+        model=model or _default_model(), max_tokens=max_tokens, system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
     return response.content[0].text
 
 
-async def _api_stream(system_prompt, user_message, model="claude-sonnet-4-20250514"):
+async def _api_stream(system_prompt, user_message, model=None):
     client = get_client()
     with client.messages.stream(
-        model=model, max_tokens=4096, system=system_prompt,
+        model=model or _default_model(), max_tokens=4096, system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     ) as stream:
         for text in stream.text_stream:
@@ -119,7 +137,7 @@ async def _cli_stream(system_prompt, user_message):
 
 # --- Public interface ---
 
-def call_ai(system_prompt, user_message, model="claude-sonnet-4-20250514", max_tokens=4096):
+def call_ai(system_prompt, user_message, model=None, max_tokens=4096):
     """Synchronous AI call. Returns the response text."""
     if is_circuit_open():
         raise RuntimeError("AI circuit breaker open — too many consecutive failures")
@@ -136,7 +154,7 @@ def call_ai(system_prompt, user_message, model="claude-sonnet-4-20250514", max_t
         raise
 
 
-async def stream_message(system_prompt, user_message, model="claude-sonnet-4-20250514"):
+async def stream_message(system_prompt, user_message, model=None):
     """Async streaming AI call. Yields text chunks."""
     if is_circuit_open():
         raise RuntimeError("AI circuit breaker open — too many consecutive failures")
