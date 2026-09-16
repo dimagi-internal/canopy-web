@@ -579,6 +579,10 @@ def test_review_api_create_still_requires_auth(db):
 # user reporting the app as broken (labs, 2026-07-26).
 
 
+# DB-marked as of allauth 65: the error page now lists the configured social
+# providers, so rendering it reads `SocialApp`. Under 0.63 it rendered without
+# touching the database.
+@pytest.mark.django_db
 def test_authentication_error_page_is_recoverable(client):
     """The OAuth-failure page must offer a user-driven way back to login.
 
@@ -590,7 +594,14 @@ def test_authentication_error_page_is_recoverable(client):
     from django.urls import reverse
 
     resp = client.get(reverse("socialaccount_login_error"))
-    assert resp.status_code == 200
+    # 401, not 200, since allauth 65: the page now states that authentication
+    # failed rather than returning OK for a failure. Pinned to the real value
+    # rather than relaxed to a range, but note what this test actually defends
+    # is the RECOVERY below — a human-followable way back. The code is
+    # incidental, and a browser renders this HTML either way; nothing in the SPA
+    # sees it, because it is a server-rendered page reached by redirect from
+    # Google rather than a fetch `shouldBounceToLogin` would react to.
+    assert resp.status_code == 401
     body = resp.content.decode()
     assert reverse("google_login") in body
     # Stock allauth's dead-end wording must be gone.
