@@ -38,7 +38,7 @@ import logging
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
-from fastmcp.tools.tool import Tool, ToolResult
+from fastmcp.tools.base import Tool, ToolResult
 
 log = logging.getLogger(__name__)
 
