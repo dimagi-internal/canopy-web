@@ -95,6 +95,9 @@ export interface CanopyWidgetOptions {
    *  `localStorage`; pass `null` to have the bubble start in its corner every
    *  time. */
   storage?: Pick<Storage, 'getItem' | 'setItem'> | null
+  /** Called when canopy says a resource this page is showing has changed.
+   *  The argument is the resource URI; the host re-reads however it likes. */
+  onInvalidate?: (resource: string) => void
   /** Opaque metadata stamped on sessions this widget creates. */
   metadata?: Record<string, unknown>
   /** Text on the launcher bubble. The HOST names it, because the host's page
@@ -231,6 +234,15 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
 
     const message = event.data
     switch (message.type) {
+      case 'invalidate': {
+        // The host decides what re-reading means; the widget only relays that
+        // something moved. An `onInvalidate` the host never set is not an
+        // error — a host that does not refresh itself is a worse page, not a
+        // broken one.
+        options.onInvalidate?.(String(message.resource ?? ''))
+        return
+      }
+
       case 'ready': {
         frameReady = true
         try {

@@ -5,6 +5,7 @@ import { apiV2 } from '@/api/client.v2'
 import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
 import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
+import { resourceChanged } from './pageInvalidation'
 import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions'
 
 /**
@@ -126,6 +127,12 @@ export function CanopyWidget() {
         mode: 'overlay',
         // The HOST names its own launcher; canopy is a host like any other.
         launcherLabel: 'Canopy AI',
+        // canopy says a resource moved; the page decides what re-reading means.
+        // Registered at init rather than as a later call because a notification
+        // that arrives before the handler exists is simply lost — and the
+        // window between mount and first render is exactly when a fleet turn
+        // might land.
+        onInvalidate: (resource: string) => resourceChanged(resource),
       })
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.

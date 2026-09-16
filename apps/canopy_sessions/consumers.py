@@ -383,6 +383,20 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "data": {"message_id": message.get("message_id"), "partial_len": message.get("partial_len", 0)},
         })
 
+    async def page_invalidate(self, message):
+        """Data the attached page is showing has changed; it should re-read.
+
+        Carries the resource URI and nothing else, which is
+        `notifications/resources/updated`'s own shape — the receiver refetches
+        through the tool it already declared, where its own authorization
+        applies. A diff would be a second source of truth for data the page
+        already knows how to load.
+        """
+        await self.send_json({
+            "event": "page.invalidate",
+            "data": {"uri": message.get("uri", "")},
+        })
+
     async def session_page_action(self, message):
         """The agent is asking the attached page to do something.
 

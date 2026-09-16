@@ -67,6 +67,8 @@ export interface HostLink {
    *  user's screen blank. */
   pageState(): Record<string, unknown> | null
   onPageStateChanged(listener: (state: Record<string, unknown>) => void): () => void
+  /** Tell the host that a resource its page is showing has changed. */
+  invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
   requestClose(): void
   /** Ask for a panel height, in the modes where the host owns it. */
@@ -229,6 +231,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
     },
+    invalidate: (resource: string) => send({ type: 'invalidate', resource }),
     requestClose: () => send({ type: 'close' }),
     requestHeight: (px) => send({ type: 'resize', height: px }),
     dispose() {

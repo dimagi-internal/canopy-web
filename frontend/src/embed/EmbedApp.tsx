@@ -462,6 +462,14 @@ function EmbedChat({
   // second frame that could land nowhere.
   const onUnknownEvent = useCallback(
     (frame: { event: string; data?: unknown }) => {
+      if (frame.event === 'page.invalidate') {
+        // Relayed straight out to the host page, which owns what "re-read"
+        // means. The kit deliberately does not know this frame — it is canopy's
+        // vocabulary, which is exactly what `onUnknownEvent` is for.
+        const data = frame.data as { uri?: string } | undefined
+        link.invalidate(String(data?.uri ?? ''))
+        return
+      }
       if (frame.event !== 'session.page_action') return
       const action = frame.data as { id: string; name: string; args: Record<string, unknown> }
       void (async () => {
