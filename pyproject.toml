@@ -7,7 +7,11 @@ dependencies = [
     "django>=5.0,<6.0",
     "django-environ>=0.11,<1.0",
     "django-cors-headers>=4.3,<5.0",
-    "django-allauth[socialaccount]>=0.61,<1.0",
+    # NOT <1.0. allauth left 0.x versioning at 0.63 -> 64.x, so that cap read as
+    # caution and behaved as a freeze: it held the AUTH library at 0.63.6 while
+    # 65.x shipped, and silently ignored the ACCOUNT_LOGIN_METHODS /
+    # ACCOUNT_SIGNUP_FIELDS settings this repo already declares.
+    "django-allauth[socialaccount]>=65.19,<66.0",
     "whitenoise>=6.6,<7.0",
     "uvicorn[standard]>=0.27,<1.0",
     "psycopg[binary]>=3.1,<4.0",
