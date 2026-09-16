@@ -301,3 +301,81 @@ describe('what the agent is asked, and what the conversation ends up called', ()
     expect(text).toBe('hello')
   })
 })
+
+describe('the page is declared BEFORE the turn is queued', () => {
+  /**
+   * Found by driving the real widget on the real deployment. Observed order was
+   *
+   *     create → SEND → page-actions → page-state
+   *
+   * because both declarations lived in effects keyed on `sessionId`, which React
+   * runs after the render that follows the send. So the FIRST message of a
+   * conversation enqueued a turn describing a page that had not spoken yet, and
+   * whether the agent could see the screen came down to whether a runner claimed
+   * the turn before two more round-trips landed.
+   *
+   * It worked when I tried it. That is the point: the failing case is the
+   * opening message — "close the ones I'm looking at" — and a slow runner hides
+   * it every time a human checks by hand.
+   */
+  const withPage = () =>
+    fakeLink({
+      waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+      actions: () => [{ name: 'dismissInsights' }] as never,
+      pageState: () => ({ visible_ids: [1, 2, 3], backing_tool: 'list_insights' }),
+    })
+
+  const order = () =>
+    calls
+      .map((c) => c.url)
+      .filter((u) => /page-state|page-actions|\/send/.test(u))
+      .map((u) => (u.includes('page-state') ? 'state' : u.includes('page-actions') ? 'actions' : 'send'))
+
+  // `indexOf` alone is NOT enough, and getting this wrong nearly shipped: a
+  // missing declaration returns -1, and -1 is less than every real index — so
+  // the naive ordering assertion is satisfied by the thing being ABSENT. Both
+  // tests below therefore assert PRESENCE first; verified by reverting the fix
+  // and watching them go red.
+  type Step = 'state' | 'actions' | 'send'
+  const before = (first: Step, second: Step) => {
+    const seq = order()
+    expect(seq).toContain(first)
+    expect(seq).toContain(second)
+    expect(seq.indexOf(first)).toBeLessThan(seq.indexOf(second))
+  }
+
+  it('declares what is on screen before sending', async () => {
+    render(<EmbedApp link={withPage()} app="canopy-web" />)
+
+    await say('close the ones I am looking at')
+
+    await waitFor(() => expect(order()).toContain('send'))
+    before('state', 'send')
+  })
+
+  it('declares what the page can do before sending', async () => {
+    render(<EmbedApp link={withPage()} app="canopy-web" />)
+
+    await say('close the ones I am looking at')
+
+    await waitFor(() => expect(order()).toContain('send'))
+    before('actions', 'send')
+  })
+
+  it('still sends when the host declares no state at all', async () => {
+    // A host that does not use the channel must not have its chat blocked on a
+    // declaration it will never make.
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+
+    await say('hello')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    // And it does NOT declare an empty screen on that host's behalf.
+    expect(calls.some((c) => c.url.includes('page-state'))).toBe(false)
+  })
+})

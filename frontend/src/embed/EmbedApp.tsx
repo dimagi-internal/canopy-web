@@ -42,6 +42,44 @@ interface Props {
   app: string
 }
 
+/** Tell canopy what this page can do and what it is showing.
+ *
+ *  Module-level, not a hook, because BOTH components need it: the outer one
+ *  declares before the first send (so the opening message is not racing its own
+ *  context) and the inner one re-declares whenever the host pushes a change
+ *  mid-conversation. One function means one description of the page rather than
+ *  two that can disagree.
+ *
+ *  Both declarations are wholesale replacements, so calling it twice costs a
+ *  round trip and changes nothing — the right trade against a turn arriving
+ *  blind.
+ *
+ *  Failures are swallowed: a page that cannot describe itself must still be
+ *  able to hold a conversation. A 422 in particular is the HOST author's bug
+ *  (rows instead of a selection) and the server's message says how to fix it.
+ */
+async function declarePage(
+  client: { rest: { json: (path: string, init?: RequestInit) => Promise<unknown> } },
+  link: HostLink,
+  sid: string,
+): Promise<void> {
+  const state = link.pageState()
+  await Promise.allSettled([
+    client.rest.json(`/api/canopy-sessions/${sid}/page-actions`, {
+      method: 'PUT',
+      body: JSON.stringify({ actions: link.actions() }),
+    }),
+    // Only if the host has actually spoken — pushing `{}` for a host that does
+    // not use the state channel would declare the user's screen blank.
+    state
+      ? client.rest.json(`/api/canopy-sessions/${sid}/page-state`, {
+          method: 'PUT',
+          body: JSON.stringify({ state }),
+        })
+      : Promise.resolve(),
+  ])
+}
+
 export function EmbedApp({ link, app }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'connecting' })
   const [init, setInit] = useState<HostInit | null>(null)
@@ -149,6 +187,7 @@ export function EmbedApp({ link, app }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link])
 
+
   /** Create the session and send the first message, in that order.
    *
    *  Deferred to the first send rather than done at mount. The frame loads on
@@ -194,6 +233,24 @@ export function EmbedApp({ link, app }: Props) {
             },
           )
 
+      // Declare the page BEFORE the turn is queued.
+      //
+      // Both declarations used to live in effects keyed on `sessionId`, which
+      // React runs after the render that follows this send — so the observed
+      // order in production was create, SEND, page-actions, page-state. The
+      // first message of a conversation therefore enqueued a turn describing a
+      // page that had not said anything yet, and whether the agent saw the
+      // screen depended on whether a runner claimed the turn before two more
+      // HTTP round-trips landed. It worked when the runner was slow.
+      //
+      // That is the worst shape a bug can take: it passes every time a human
+      // tries it by hand, and the case it fails is the one that matters most —
+      // "close the ones I'm looking at" as the OPENING message.
+      //
+      // Contacts are excluded: `/api/contact/` is their entire surface and
+      // neither declaration is on it (test_contact_surface_is_bounded).
+      if (!isContact) await declarePage(client, link, created.id)
+
       const sendPath = isContact
         ? `/api/contact/sessions/${encodeURIComponent(created.id)}/send`
         : `/api/canopy-sessions/${encodeURIComponent(created.id)}/send`
@@ -204,7 +261,7 @@ export function EmbedApp({ link, app }: Props) {
 
       setPhase({ kind: 'chatting', sessionId: created.id })
     },
-    [client],
+    [client, link],
   )
 
   if (phase.kind === 'connecting') {
@@ -435,16 +492,11 @@ function EmbedChat({
   // offers different things, and a stale declaration is one the agent would
   // call into nothing.
   useEffect(() => {
-    const declare = (actions: { name: string; description?: string; parameters?: unknown }[]) => {
-      void client.rest
-        .json(`/api/canopy-sessions/${sessionId}/page-actions`, {
-          method: 'PUT',
-          body: JSON.stringify({ actions }),
-        })
-        .catch(() => undefined)
-    }
-    declare(link.actions())
-    return link.onActionsChanged(declare)
+    // The pre-send declaration already covered the opening message; this keeps
+    // it true as the user navigates mid-conversation. Both paths go through
+    // `declarePage`, so there is one description of the page rather than two
+    // that can disagree.
+    return link.onActionsChanged(() => void declarePage(client, link, sessionId))
   }, [client, link, sessionId])
 
   // Tell canopy what this page is SHOWING, and keep telling it.
@@ -457,22 +509,7 @@ function EmbedChat({
   // "close the ones I'm looking at" is answerable on turn nine, not only turn
   // one.
   useEffect(() => {
-    const send = (state: Record<string, unknown>) => {
-      void client.rest
-        .json(`/api/canopy-sessions/${sessionId}/page-state`, {
-          method: 'PUT',
-          body: JSON.stringify({ state }),
-        })
-        // A 422 means the host sent its rows instead of its selection. It is
-        // the host author's bug and the server's message says how to fix it;
-        // swallowing it here keeps a bad declaration from breaking the chat.
-        .catch(() => undefined)
-    }
-    const initial = link.pageState()
-    // Only if the host has actually spoken: pushing `{}` for a host that does
-    // not use the state channel would declare the user's screen blank.
-    if (initial) send(initial)
-    return link.onPageStateChanged(send)
+    return link.onPageStateChanged(() => void declarePage(client, link, sessionId))
   }, [client, link, sessionId])
 
   // Tell the runner a viewer is here (and stop when the panel closes), the same
