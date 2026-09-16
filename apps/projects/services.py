@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -113,3 +114,45 @@ def clear_insights(
     count = qs.count()
     qs.delete()
     return count
+
+
+def dismiss_insights(*, workspace_slugs: set[str], ids: list[int]) -> list[int]:
+    """Delete the given insights, scoped to `workspace_slugs`. Returns what went.
+
+    The id-based counterpart to `clear_insights`, which can only express a
+    FILTER. "Close the ones I am looking at" is a set of ids — a filter is an
+    approximation of it, and on a paginated feed a wrong one: the same filter
+    matches rows below the fold that the user never saw.
+
+    Scoped through `insights_queryset`, the same predicate the REST dismiss
+    endpoint uses, so a caller cannot delete another workspace's insight by
+    enumerating pks. Ids outside scope are silently absent from the return
+    rather than raising: a partial result the caller can compare against what it
+    asked for is more useful than an all-or-nothing error, and it leaks no
+    information about whether the row existed.
+    """
+    if not ids:
+        return []
+    qs = insights_queryset(workspace_slugs=workspace_slugs).filter(pk__in=ids)
+    found = list(qs.values_list("pk", flat=True))
+    if found:
+        # Row by row, and inside ONE transaction. Both halves matter:
+        #
+        #   row by row — `QuerySet.delete()` does not reliably emit post_delete
+        #   per row, and post_delete is what raises page invalidation. Bulk
+        #   deletion would take the rows and leave the page displaying them,
+        #   which is the exact bug the old page action existed to dodge.
+        #
+        #   one transaction — invalidation coalesces per transaction, so without
+        #   this each delete commits alone and sends its own notification.
+        #   Dismissing twenty insights made the page refetch twenty times;
+        #   `test_the_server_side_dismiss_invalidates_the_page` caught it.
+        #
+        # Atomicity is also the honest semantics: dismissing a set the user
+        # selected should not half-happen.
+        with transaction.atomic():
+            for insight in insights_queryset(
+                workspace_slugs=workspace_slugs
+            ).filter(pk__in=found):
+                insight.delete()
+    return found

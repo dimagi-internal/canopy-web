@@ -104,3 +104,50 @@ async def clear_insights(
         args_summary=f"{summary} -> cleared={cleared}", ok=True,
     )
     return {"cleared": cleared}
+
+
+@mcp.tool
+async def dismiss_insights(ids: list[int]) -> dict:
+    """Dismiss specific insights by id; returns {"dismissed": [ids that went]}.
+
+    Use this for "close the ones I am looking at". `current_page` gives you the
+    ids on the user's screen; pass exactly those.
+
+    Prefer this over `clear_insights` whenever the request is about a visible
+    set. `clear_insights` takes FILTERS, and a filter is only an approximation
+    of what somebody can see — on a paginated feed it also matches rows below
+    the fold they never looked at, and with no filters at all it deletes
+    everything.
+
+    Ids outside the caller's workspaces are absent from the result rather than
+    an error, so compare the returned list against what you asked for.
+
+    Rate-limited per user.
+    """
+    user_id = current_user_id()
+    summary = f"ids={ids[:20]}{'...' if len(ids) > 20 else ''}"
+
+    if user_id is not None:
+        try:
+            check_write_limit(user_id)
+        except RateLimitError as exc:
+            await write_audit(
+                user_id=user_id, tool="dismiss_insights",
+                args_summary=summary, ok=False, error=str(exc),
+            )
+            raise
+
+    slugs = await sync_to_async(wsvc.workspace_slugs_for_user_id, thread_sensitive=True)(user_id)
+    try:
+        dismissed = await sync_to_async(services.dismiss_insights, thread_sensitive=True)(
+            workspace_slugs=slugs, ids=list(ids or []),
+        )
+    except Exception as exc:  # noqa: BLE001
+        await write_audit(
+            user_id=user_id, tool="dismiss_insights",
+            args_summary=summary, ok=False, error=str(exc),
+        )
+        raise
+
+    await write_audit(user_id=user_id, tool="dismiss_insights", args_summary=summary)
+    return {"dismissed": dismissed}
