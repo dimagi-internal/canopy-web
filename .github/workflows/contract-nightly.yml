@@ -85,8 +85,26 @@ jobs:
           AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
           REQUIRE_AUTH: "True"
 
+      # Schemathesis is installed HERE, not in the project's dev extra.
+      #
+      # It talks to a live server over HTTP and imports no canopy code, but as a
+      # dev dependency it shared production's resolution and pinned
+      # `starlette<1` — which blocked FastMCP 4, and with it mcp SDK 2.2 and
+      # resource subscriptions. Every schemathesis 4.x also wants pytest>=9. A
+      # nightly fuzz tool must not get to pin the production MCP library, so it
+      # lives in its own environment with its own pytest.
+      - name: Install schemathesis (isolated from the project graph)
+        run: |
+          uv venv /tmp/contract-env
+          VIRTUAL_ENV=/tmp/contract-env uv pip install "schemathesis>=4.27,<5.0" "pytest>=9,<10"
+          # Minimal config on purpose: this suite talks to a live server over
+          # HTTP and imports no canopy code, so it must not inherit the
+          # project's DJANGO_SETTINGS_MODULE / asyncio_mode — whose plugins are
+          # deliberately absent from this environment.
+          printf '[pytest]\npython_files = test_*.py\n' > /tmp/contract-pytest.ini
+
       - name: Run schemathesis (exhaustive)
-        run: uv run pytest tests/contract/ -v
+        run: /tmp/contract-env/bin/pytest -c /tmp/contract-pytest.ini tests/contract/ -v
         env:
           SCHEMATHESIS_SCHEMA_URL: http://localhost:8000/api/openapi.json
           SCHEMATHESIS_AUTH_BEARER: ${{ steps.pat.outputs.raw }}

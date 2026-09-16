@@ -18,7 +18,12 @@ dependencies = [
     "orjson>=3.10",
     "google-api-python-client>=2.120,<3.0",
     "google-auth>=2.29,<3.0",
-    "fastmcp>=3.3,<4.0",
+    # Unpinned from <4.0 deliberately (2026-09-16). The subscription machinery
+    # canopy needs for page invalidation lives in the low-level `mcp` SDK, and
+    # FastMCP 3.3 pulls SDK 1.27 which does not have it: no
+    # `server/subscriptions.py`, no `send_resource_updated`. FastMCP 4 pulls
+    # SDK 2.2, which does. The floor is the version that carries that SDK.
+    "fastmcp>=4.0,<5.0",
     # AG-UI: the agent<->UI protocol canopy had hand-rolled (apps/canopy_sessions/agui.py).
     # Pinned to an exact minor because it is PRE-1.0 and its own enum already
     # carries removals scheduled for 1.0 (THINKING_* -> REASONING_*). The pin is
@@ -79,7 +84,6 @@ dev = [
     # Deliberately in `dev` and nowhere near the runtime dependency list: this
     # must never become a way for apps/* to import canopy_runner.
     "canopy-runner",
-    "schemathesis>=3.30,<4.0",
     # dev-only: channels.testing.WebsocketCommunicator imports daphne's live
     # test harness at package import time. Prod serves WS via uvicorn, not daphne.
     "daphne>=4.1,<5.0",
