@@ -240,3 +240,26 @@ def test_only_active_sessions_are_notified(sent):
     _an_insight(project)
 
     assert sent == []
+
+
+def test_the_server_side_dismiss_invalidates_the_page(sent):
+    """The composition that replaced the page action.
+
+    `dismiss_insights` deletes row by row precisely so `post_delete` fires for
+    each — `QuerySet.delete()` does not reliably emit it per row, and post_delete
+    is what raises invalidation. Without this the new server tool would delete
+    the rows and leave the page displaying them, which is the exact bug the page
+    action existed to dodge.
+    """
+    from apps.projects import services
+
+    _user, ws, session, project = _world()
+    a, b = _an_insight(project, "[stale] a"), _an_insight(project, "[stale] b")
+    _showing(session)
+    sent.clear()
+
+    dismissed = services.dismiss_insights(workspace_slugs={ws.slug}, ids=[a.pk, b.pk])
+
+    assert sorted(dismissed) == sorted([a.pk, b.pk])
+    # Coalesced to ONE notification for the two rows, not silence and not two.
+    assert [m["uri"] for _g, m in sent] == [INSIGHT_RESOURCE]

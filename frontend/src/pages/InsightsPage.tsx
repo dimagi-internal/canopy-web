@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { usePageState } from '@/widget/usePageState'
 import { useResource } from '@/widget/useResource'
 import { describeSelection } from '@/widget/pageState'
-import { usePageAction } from '@/widget/usePageAction'
-import { dismissInsightsAction } from './insightsDismissAction'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -178,32 +176,18 @@ export function InsightsPage() {
     [insights, activeFilter, projectFilter],
   )
 
-  usePageAction(
-    'dismissInsights',
-    async (args) =>
-      dismissInsightsAction((args.ids as number[] | undefined) ?? [], {
-        visible: new Set(insights.map((i) => i.id)),
-        dismiss: (id) => insightsApi.dismiss(id),
-        onDismissed: (ids) =>
-          setInsights((prev) => prev.filter((i) => !ids.includes(i.id))),
-      }),
-    {
-      description:
-        'Dismiss specific insights from the list the user is currently viewing. ' +
-        'Only ids present in the page context can be dismissed.',
-      parameters: {
-        type: 'object',
-        properties: {
-          ids: {
-            type: 'array',
-            items: { type: 'integer' },
-            description: 'Insight ids, taken from the page context',
-          },
-        },
-        required: ['ids'],
-      },
-    },
-  )
+  // `dismissInsights` was a page action until 2026-09-16 and is now the server
+  // tool `dismiss_insights`.
+  //
+  // It was a DATA MUTATION wearing a page action's clothes. Routed through the
+  // browser it was unaudited, unavailable the moment the tab closed, capped by a
+  // 20-second timeout, and a second implementation of a delete the REST API
+  // already had. It existed only because nothing could tell this page its data
+  // had changed — and now something can (`useResource` above), so the reason is
+  // gone. See docs/superpowers/specs/2026-09-16-page-invalidation-design.md.
+  //
+  // Page actions remain right for things with no server equivalent: scrolling to
+  // a row, opening a drawer, filling a form.
 
   function clearProjectFilter() {
     const next = new URLSearchParams(searchParams)
