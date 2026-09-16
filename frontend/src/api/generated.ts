@@ -4526,6 +4526,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/run-input": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Declare the page in AG-UI's own shape
+         * @description Accepts AG-UI's `RunAgentInput` and applies the parts canopy honours.
+         *
+         *     `state` becomes the page's declared view and `tools` become its callable
+         *     actions — one call where canopy otherwise needs two. Fields canopy has no
+         *     use for are accepted and ignored, so a conforming client can send the whole
+         *     object unchanged.
+         *
+         *     A `state` larger than the server's cap is rejected with `too_large`: send
+         *     the selection (ids, filters) and the tool that resolves it, not the rows.
+         */
+        readonly put: operations["apps_canopy_sessions_api_declare_run_input"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/page-actions/invoke": {
         readonly parameters: {
             readonly query?: never;
@@ -11108,6 +11136,88 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /**
+         * RunAgentInputOut
+         * @description What canopy took from the input, so a client can see what was honoured.
+         */
+        readonly RunAgentInputOut: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Version
+             * @default 0
+             */
+            readonly version: number;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly components["schemas"]["PageActionSpec"][];
+        };
+        /**
+         * RunAgentInputIn
+         * @description AG-UI's `RunAgentInput`, as the one way to declare a page.
+         *
+         *     canopy has two endpoints for this — `page-state` and `page-actions` — which
+         *     is fine for canopy's own widget and a poor answer for anyone else: a host
+         *     integrating from the outside has to learn two canopy-specific shapes to say
+         *     what every AG-UI client already knows how to say. This accepts the
+         *     protocol's own object and translates.
+         *
+         *     Only the two fields canopy can honour are read. `messages`, `run_id`,
+         *     `parent_run_id`, `resume` and `forwarded_props` are accepted and IGNORED
+         *     rather than rejected: a conforming client sends the whole object, and
+         *     refusing it because canopy has no use for `resume` would make the protocol's
+         *     own payload invalid here — which defeats the point of speaking it.
+         */
+        readonly RunAgentInputIn: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly components["schemas"]["PageActionSpec"][];
+            /**
+             * Thread Id
+             * @default
+             */
+            readonly thread_id: string;
+            /**
+             * Messages
+             * @default []
+             */
+            readonly messages: readonly unknown[];
+            /**
+             * Context
+             * @default []
+             */
+            readonly context: readonly unknown[];
+            /**
+             * Run Id
+             * @default
+             */
+            readonly run_id: string;
+            /** Parent Run Id */
+            readonly parent_run_id?: string | null;
+            /** Forwarded Props */
+            readonly forwarded_props?: unknown | null;
+            /**
+             * Resume
+             * @default []
+             */
+            readonly resume: readonly unknown[];
+        };
         /** PageActionOut */
         readonly PageActionOut: {
             /** Id */
@@ -17654,6 +17764,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PageStateOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_declare_run_input: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunAgentInputIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunAgentInputOut"];
                 };
             };
         };

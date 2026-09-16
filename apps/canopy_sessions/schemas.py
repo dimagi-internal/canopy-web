@@ -313,6 +313,43 @@ class PageStateOut(Schema):
     version: int = 0
 
 
+class RunAgentInputIn(Schema):
+    """AG-UI's `RunAgentInput`, as the one way to declare a page.
+
+    canopy has two endpoints for this — `page-state` and `page-actions` — which
+    is fine for canopy's own widget and a poor answer for anyone else: a host
+    integrating from the outside has to learn two canopy-specific shapes to say
+    what every AG-UI client already knows how to say. This accepts the
+    protocol's own object and translates.
+
+    Only the two fields canopy can honour are read. `messages`, `run_id`,
+    `parent_run_id`, `resume` and `forwarded_props` are accepted and IGNORED
+    rather than rejected: a conforming client sends the whole object, and
+    refusing it because canopy has no use for `resume` would make the protocol's
+    own payload invalid here — which defeats the point of speaking it.
+    """
+
+    # Rationale out of the docstring on purpose — a Ninja docstring is published
+    # API documentation, and this ships to generated.ts.
+    state: dict = {}
+    tools: list[PageActionSpec] = []
+    thread_id: str = ""
+    messages: list = []
+    context: list = []
+    run_id: str = ""
+    parent_run_id: str | None = None
+    forwarded_props: object | None = None
+    resume: list = []
+
+
+class RunAgentInputOut(Schema):
+    """What canopy took from the input, so a client can see what was honoured."""
+
+    state: dict = {}
+    version: int = 0
+    tools: list[PageActionSpec] = []
+
+
 class PageActionInvokeIn(Schema):
     name: str
     args: dict = {}
