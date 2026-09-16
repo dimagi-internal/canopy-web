@@ -2,16 +2,26 @@
 name = "canopy-web"
 version = "0.1.0"
 description = "Canopy Web - Django ASGI backend with React frontend"
-requires-python = ">=3.11"
+# 3.12 because Django 6 requires it — and because 3.11 was never actually
+# exercised: the Dockerfile is python:3.12-slim and every CI job runs
+# `uv python install 3.12`. The old floor described an intention, not a
+# tested configuration.
+requires-python = ">=3.12"
 dependencies = [
-    "django>=5.0,<6.0",
+    "django>=6.1,<7.0",
     "django-environ>=0.11,<1.0",
     "django-cors-headers>=4.3,<5.0",
-    "django-allauth[socialaccount]>=0.61,<1.0",
+    # NOT <1.0. allauth left 0.x versioning at 0.63 -> 64.x, so that cap read as
+    # caution and behaved as a freeze: it held the AUTH library at 0.63.6 while
+    # 65.x shipped, and silently ignored the ACCOUNT_LOGIN_METHODS /
+    # ACCOUNT_SIGNUP_FIELDS settings this repo already declares.
+    "django-allauth[socialaccount]>=65.19,<66.0",
     "whitenoise>=6.6,<7.0",
     "uvicorn[standard]>=0.27,<1.0",
     "psycopg[binary]>=3.1,<4.0",
-    "anthropic>=0.40,<1.0",
+    # NOT <1.0 — the SDK reached 1.x, so that cap froze us on 0.125 the same way
+    # the allauth and fastmcp caps did.
+    "anthropic>=1.6,<2.0",
     "django-ninja>=1.3,<2.0",
     "pydantic>=2.8,<3.0",
     "pydantic[email]>=2.8,<3.0",

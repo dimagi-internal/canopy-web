@@ -395,6 +395,10 @@ VAPID_SUBJECT = env("VAPID_SUBJECT", default="mailto:jjackson@dimagi.com")
 # AI Backend: "api" (direct Anthropic SDK) or "cli" (claude code CLI)
 AI_BACKEND = env("AI_BACKEND", default="api")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+# Overrides apps.common.anthropic_client.DEFAULT_MODEL. Empty means "use the
+# code default", so an unset deployment tracks the constant rather than pinning
+# whatever model was current the day the env was written.
+ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="")
 
 # --- Chat execution (apps/canopy_sessions, SP2b) ---
 # When True (dev/test default), a chat "send" runs the stub executor INLINE so the
