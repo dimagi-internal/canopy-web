@@ -2,9 +2,13 @@
 name = "canopy-web"
 version = "0.1.0"
 description = "Canopy Web - Django ASGI backend with React frontend"
-requires-python = ">=3.11"
+# 3.12 because Django 6 requires it — and because 3.11 was never actually
+# exercised: the Dockerfile is python:3.12-slim and every CI job runs
+# `uv python install 3.12`. The old floor described an intention, not a
+# tested configuration.
+requires-python = ">=3.12"
 dependencies = [
-    "django>=5.0,<6.0",
+    "django>=6.1,<7.0",
     "django-environ>=0.11,<1.0",
     "django-cors-headers>=4.3,<5.0",
     # NOT <1.0. allauth left 0.x versioning at 0.63 -> 64.x, so that cap read as
