@@ -362,6 +362,16 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
             ]
         return [_custom("stream.cancelled", data)]
 
+    if event == "page.invalidate":
+        # AG-UI has no native "a resource you are showing changed" event — its
+        # state channel is intra-run, and this fires from outside any run (the
+        # fleet, a schedule, another tab). MCP's `notifications/resources/updated`
+        # is the right vocabulary and canopy is not an MCP server to a browser,
+        # so it rides CUSTOM carrying the same payload: the URI, and nothing
+        # else. The day FastMCP grows a server-side subscription API, this is the
+        # line that changes.
+        return [_custom("page.invalidate", {"uri": data.get("uri") or ""})]
+
     if event == "session.title_updated":
         return [
             E.StateDeltaEvent(

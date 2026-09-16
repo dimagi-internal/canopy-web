@@ -83,7 +83,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount.providers.google",
     # Local apps
     "apps.common",
-    "apps.projects",
+    "apps.projects.apps.ProjectsConfig",
     "apps.issues",
     "apps.walkthroughs",
     "apps.tokens",

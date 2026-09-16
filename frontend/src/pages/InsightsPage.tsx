@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { usePageState } from '@/widget/usePageState'
+import { useResource } from '@/widget/useResource'
 import { describeSelection } from '@/widget/pageState'
 import { usePageAction } from '@/widget/usePageAction'
 import { dismissInsightsAction } from './insightsDismissAction'
@@ -148,10 +149,26 @@ export function InsightsPage() {
   // It is also pushed on every change rather than read once when a conversation
   // opens, so filtering the page mid-chat updates what "these" means instead of
   // leaving the agent acting on a screen that has moved.
+  // Re-read when canopy says the insight collection moved — whoever moved it.
+  // This is what makes "close everything" honest whichever tool the agent picks,
+  // and it equally covers the fleet dismissing an insight while this page is
+  // open, a scheduled turn, or the same feed in another tab.
+  useResource('insight://', async () => {
+    const data = await insightsApi.list({
+      category: activeFilter === 'all' ? undefined : activeFilter,
+      project: projectFilter || undefined,
+    })
+    setInsights(data)
+  })
+
   usePageState(
     () =>
       describeSelection({
         backingTool: 'list_insights',
+        // The resource this page is showing. It is what canopy keys
+        // invalidation on, so declaring it is what makes `useResource` below
+        // ever fire.
+        resource: 'insight://',
         ids: insights.map((i) => i.id),
         filters: {
           category: activeFilter === 'all' ? null : activeFilter,

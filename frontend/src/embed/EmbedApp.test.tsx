@@ -31,6 +31,7 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     // read as one declaring the user's screen blank.
     pageState: () => null,
     onPageStateChanged: () => () => undefined,
+    invalidate: () => undefined,
     requestClose: () => undefined,
     requestHeight: () => undefined,
     dispose: () => undefined,

@@ -96,6 +96,14 @@ export function onPageStateChanged(fn: (state: PageState) => void): () => void {
 export function describeSelection(input: {
   /** The MCP tool that resolves these ids. */
   backingTool: string
+  /** The MCP resource URI this page is showing, e.g. `insight://`.
+   *
+   *  This is what canopy keys INVALIDATION on: when the data behind it changes
+   *  — by any actor, through any door — every page declaring this resource is
+   *  told to re-read. A page that omits it still describes itself to the agent
+   *  but will never be told its data moved, which is a worse page rather than a
+   *  broken one. */
+  resource?: string
   /** What is on screen, in display order. */
   ids: Array<string | number>
   /** The filters producing that selection, if they are not already in the URL. */
@@ -103,9 +111,10 @@ export function describeSelection(input: {
   /** Anything else about the view that is not derivable from the URL. */
   extra?: Record<string, unknown>
 }): PageState {
-  const { backingTool, ids, filters, extra } = input
+  const { backingTool, resource, ids, filters, extra } = input
   return {
     backing_tool: backingTool,
+    ...(resource ? { resource } : {}),
     visible_ids: ids,
     visible_count: ids.length,
     ...(filters && Object.keys(filters).length ? { filters } : {}),

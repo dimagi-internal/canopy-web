@@ -47,6 +47,13 @@ export type FrameMessage =
       name: string
       args?: Record<string, unknown>
     }
+  /** Data the host page is showing has changed; it should re-read.
+   *
+   *  Carries the resource URI and nothing else — MCP's
+   *  `notifications/resources/updated` shape. The host re-reads through the path
+   *  it already uses, where its own authorization applies; a diff would be a
+   *  second source of truth for data the page already knows how to load. */
+  | { source: typeof SOURCE; type: 'invalidate'; resource: string }
   /** The frame wants the panel closed (the user hit its close button). */
   | { source: typeof SOURCE; type: 'close' }
   /** Desired panel height in `inline` mode, where the host owns layout. */
@@ -87,9 +94,9 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   // Only kinds the FRAME may send. A host-bound message ('init', 'token', …)
   // arriving here is not something to interpret — the host is the only party
   // that issues those, so seeing one means something is impersonating it.
-  return ['ready', 'token-request', 'context-request', 'action-request', 'close', 'resize'].includes(
-    m.type,
-  )
+  return [
+    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize',
+  ].includes(m.type)
 }
 
 /** The origin half of a `baseUrl`, which is the only value we will postMessage
