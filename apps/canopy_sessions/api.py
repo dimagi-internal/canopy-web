@@ -37,6 +37,8 @@ from .schemas import (
     PageActionSpec,
     PageStateIn,
     PageStateOut,
+    RunAgentInputIn,
+    RunAgentInputOut,
     PlaceIn,
     ResetIn,
     ResetOut,
@@ -687,6 +689,39 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
         # what it sends, which is a different fix from retrying.
         raise HttpError(422, f"{exc.code}: {exc.message}")
     return PageStateOut(state=stored, version=int(stored.get("version") or 0))
+
+
+@router.put("/{session_id}/run-input", response=RunAgentInputOut,
+            summary="Declare the page in AG-UI's own shape")
+def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
+                      payload: RunAgentInputIn) -> RunAgentInputOut:
+    """Accepts AG-UI's `RunAgentInput` and applies the parts canopy honours.
+
+    `state` becomes the page's declared view and `tools` become its callable
+    actions — one call where canopy otherwise needs two. Fields canopy has no
+    use for are accepted and ignored, so a conforming client can send the whole
+    object unchanged.
+
+    A `state` larger than the server's cap is rejected with `too_large`: send
+    the selection (ids, filters) and the tool that resolves it, not the rows.
+    """
+    session = _session_or_404(request, session_id)
+
+    # Actions first, then state — the same order the widget uses, and for the
+    # same reason: whichever lands last, the agent must never see a page that
+    # declares rows it has no way to act on.
+    page_actions.set_declared_actions(session, [t.dict() for t in payload.tools])
+    stored = page_state.current_page_state(session)
+    if payload.state:
+        try:
+            stored = page_state.set_page_state(session, payload.state)
+        except page_state.PageStateError as exc:
+            raise HttpError(422, f"{exc.code}: {exc.message}")
+    return RunAgentInputOut(
+        state=stored,
+        version=int(stored.get("version") or 0),
+        tools=[PageActionSpec(**a) for a in page_actions.declared_actions(session)],
+    )
 
 
 @router.get("/{session_id}/page-state", response=PageStateOut,
