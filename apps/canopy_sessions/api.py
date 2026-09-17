@@ -211,6 +211,7 @@ def list_sessions(
     request: HttpRequest, state: str = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
     origin_key: str = "", embed_app: str = "",
+    resource: str = "", page_path: str = "",
 ):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
@@ -260,10 +261,36 @@ def list_sessions(
         rows = rows.filter(metadata__origin_key=origin_key)
     # Which embedding app created the session — stamped server-side from the
     # delegated token at create (see create_session), so unlike `origin_key`
-    # this one cannot have been chosen by whoever wrote the row. Opt-in: an
-    # unfiltered list is unchanged, so canopy's own UI does not quietly narrow.
-    if embed_app:
+    # this one cannot have been chosen by whoever wrote the row.
+    #
+    # For a DELEGATED caller it is FORCED, not a filter. `embed_app` was
+    # caller-supplied on read, so a token issued to connect-labs could pass
+    # `embed_app=canopy-web` and enumerate that user's conversations from
+    # another host — same user, but across the host boundary, titles included.
+    # `test_embed_session_provenance`'s own docstring states the goal as "my
+    # previous conversations HERE without being able to ask for someone else's
+    # conversations THERE", and the second half was only enforced at create.
+    #
+    # A browser/PAT caller is unchanged: it is the human themself, not an app
+    # acting for them, so an unfiltered list stays unfiltered and canopy's own
+    # UI does not quietly narrow.
+    acting_app = getattr(request, "delegated_app", None)
+    if acting_app is not None:
+        rows = rows.filter(**{f"metadata__{EMBED_APP_KEY}": acting_app.name})
+    elif embed_app:
         rows = rows.filter(**{f"metadata__{EMBED_APP_KEY}": embed_app})
+
+    # "The conversations I had on THIS page."
+    #
+    # Matched against the session's declared page state (page_state.py), which
+    # is the page's own account of what it was showing — `resource` for the kind
+    # of thing, `path` for the exact screen. A session that never declared a
+    # page matches neither, which is correct: it was not had on any page we know
+    # of, and guessing from the title would be canopy inventing provenance.
+    if resource:
+        rows = rows.filter(page_state__resource=resource)
+    if page_path:
+        rows = rows.filter(page_state__path=page_path)
     if opp_slug:
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:
