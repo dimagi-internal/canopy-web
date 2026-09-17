@@ -1,5 +1,5 @@
 /**
- * `@canopy/widget` — layer 3 of the embedded-agent SDK (v2 spec §1, §2, §3).
+ * `canopy-widget` — layer 3 of the embedded-agent SDK (v2 spec §1, §2, §3).
  *
  * One script tag, a launcher, and a canopy agent that can read the page it is
  * on. Framework-free and dependency-free on the host side: the chat UI runs
@@ -131,7 +131,7 @@ export interface CanopyWidget {
   dismiss(): void
   isDismissed(): boolean
   /** What the agent may read off this page. Pulled when a session opens, not
-   *  subscribed to — see `@canopy/client/bridge` for why. */
+   *  subscribed to — see `canopy-client/bridge` for why. */
   provideContext(provider: ContextProvider): void
   /** Push what the page is showing now. Safe to call on every change. */
   setPageState(state: Record<string, unknown>): void

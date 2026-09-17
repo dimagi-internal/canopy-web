@@ -1,5 +1,5 @@
 /**
- * `@canopy/client` — layer 1 of the embedded-agent SDK (v2 spec §1).
+ * `canopy-client` — layer 1 of the embedded-agent SDK (v2 spec §1).
  *
  * The transport half of talking to canopy-web, with **no framework and no
  * dependencies at all**. That emptiness is the feature: canopy-ui requires
@@ -13,6 +13,15 @@
  * inside one host and coupled to that host's endpoints. ace-web still has its
  * own copy; adopting this is a follow-up in that repo, and until it does the
  * duplication is real.
+ *
+ * **Why the name is unscoped.** It was `@canopy/client`, which cannot be
+ * published: the `@canopy` npm scope belongs to somebody else (it holds one
+ * package, `atos-theme`, which is not ours). That made the whole layer-1 plan
+ * a dead end — ace-web could never `npm install` it, so the duplication above
+ * could never actually be paid down. `canopy-ui` had already hit this and
+ * settled it: it is deliberately unscoped, "no org scope — portable, not tied
+ * to any account", after starting life as `@canopy/workbench`. This follows
+ * that, rather than re-litigating it a third time.
  *
  * What stays OUT, and why:
  *

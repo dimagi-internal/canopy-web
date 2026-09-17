@@ -1,0 +1,77 @@
+name: Publish canopy-client
+
+# Publishes layer 1 of the embedded-agent SDK to the PUBLIC npm registry as the
+# UNSCOPED package `canopy-client`. Unscoped for the same reason canopy-ui is:
+# the `@canopy` npm scope belongs to somebody else, so `@canopy/client` — the
+# name this package shipped with — was never publishable. See the header of
+# frontend/packages/canopy-client/src/index.ts.
+#
+# Auth is OIDC Trusted Publishing — NO stored token, matching
+# publish-canopy-ui.yml. GitHub Actions mints a short-lived OIDC token that npm
+# trusts, so there is no NPM_TOKEN secret to leak (and this repo has none —
+# `gh secret list` is AWS-only).
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ONE-TIME SETUP, REQUIRED BEFORE THE FIRST RUN OF THIS WORKFLOW.         │
+# │                                                                         │
+# │ Trusted Publishing is configured on the npm PACKAGE, so a package that  │
+# │ has never been published has nowhere to configure it. Someone with the  │
+# │ npm account that owns canopy-ui (jjackson_dimagi) must do ONE of:       │
+# │                                                                         │
+# │  a) npmjs.com → Add package → reserve `canopy-client`, then its         │
+# │     Settings → Trusted Publisher → GitHub Actions → repo               │
+# │     `dimagi-internal/canopy-web`, workflow `publish-canopy-client.yml`; │
+# │     then run this workflow. Preferred — no token is ever created.       │
+# │                                                                         │
+# │  b) publish 0.1.0 once from a laptop (`npm publish --access public`     │
+# │     from frontend/packages/canopy-client), then configure the trusted   │
+# │     publisher as above so every LATER release goes through here.        │
+# │                                                                         │
+# │ Until that is done this workflow fails at the publish step with a 404   │
+# │ or an auth error — which is the correct failure, not a bug to work      │
+# │ around by adding a long-lived token.                                    │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Trigger by pushing a tag like `canopy-client-v0.1.0`, or manually via the
+# Actions tab. Bump the version in frontend/packages/canopy-client/package.json
+# to match the tag before tagging — CI enforces that a src change moves the
+# version, the same guard canopy-ui has.
+on:
+  push:
+    tags: ['canopy-client-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC Trusted Publishing
+
+jobs:
+  publish:
+    name: Publish to npmjs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      # Trusted Publishing + provenance need npm >= 11.5.1. npm@latest is now v12
+      # (requires node >= 22), so pin the major and keep node new enough for it.
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
+      # The package ships `src` only (no build step — it is plain .ts that the
+      # consumer's bundler compiles, exactly like canopy-ui). Its own test
+      # suite is the one gate worth running before it leaves the building, and
+      # `dependency-free.test.ts` in particular is what keeps the promise the
+      # package is FOR: zero runtime dependencies, so a React-18 or
+      # no-framework host can install it.
+      - name: Install workspace + test
+        working-directory: frontend
+        run: |
+          npm ci
+          npx vitest run packages/canopy-client
+
+      - name: Publish (OIDC, with provenance)
+        run: npm publish --access public --provenance
+        working-directory: frontend/packages/canopy-client

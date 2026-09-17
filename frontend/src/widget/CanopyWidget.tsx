@@ -36,7 +36,7 @@ interface ActionOptions {
 }
 
 // Structural, because the widget arrives as a script tag rather than an import
-// — so this is a second declaration of `@canopy/widget`'s own handle and the
+// — so this is a second declaration of `canopy-widget`'s own handle and the
 // two can drift. Keep them in step; `widget.test.ts` exercises the real one.
 interface WidgetHandle {
   destroy(): void

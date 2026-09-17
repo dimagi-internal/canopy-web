@@ -1,5 +1,5 @@
 {
-  "name": "@canopy/widget",
+  "name": "canopy-widget",
   "version": "0.1.0",
   "type": "module",
   "description": "Drop-in canopy agent widget: one script tag, overlay / inline / docked, framework-free.",

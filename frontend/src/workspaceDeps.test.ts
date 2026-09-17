@@ -6,13 +6,13 @@ import pkg from '../package.json'
  * dependency in frontend/package.json.
  *
  * WHY THIS EXISTS. `main` was undeployable for three hours with CI green the
- * whole time. #762 imported `@canopy/client` — a local workspace under
+ * whole time. #762 imported `canopy-client` — a local workspace under
  * `frontend/packages/` — without adding it to `dependencies`. That resolves
  * locally and in CI, because `npm install` in a workspace root links every
  * workspace into `node_modules` regardless of the declared graph. The Docker
  * build runs `npm ci`, which follows the lockfile's dependency graph strictly,
  * so the symlink was never created and `tsc -b` failed with "Cannot find
- * module '@canopy/client'".
+ * module 'canopy-client'".
  *
  * So the failure is invisible to `npm run build` AND to the CI job literally
  * named "Frontend build", and shows up only when an image is built — at deploy
@@ -23,7 +23,7 @@ import pkg from '../package.json'
  * exactly what differs between environments, so asserting that here would pass
  * for the same reason the bug hid.
  *
- * `@canopy/widget` is deliberately NOT required to be declared — nothing in
+ * `canopy-widget` is deliberately NOT required to be declared — nothing in
  * `src/` imports it; it is built from its own directory by `npm run
  * build:widget`, which needs the source on disk rather than a node_modules
  * symlink. Verified by a real `docker build`.
@@ -35,7 +35,7 @@ describe('workspace package imports', () => {
 
   // Package NAMES of the in-repo workspaces (package.json declares
   // `workspaces: ["packages/*"]`). These are what an import specifier carries.
-  const WORKSPACE_NAMES = ['canopy-ui', '@canopy/client', '@canopy/widget']
+  const WORKSPACE_NAMES = ['canopy-ui', 'canopy-client', 'canopy-widget']
 
   // Read every source file through Vite, so a new import anywhere in src/ is
   // covered without anyone remembering to add it here.
@@ -76,6 +76,6 @@ describe('workspace package imports', () => {
     // Guards the detector itself: if the pattern matching broke, the checks
     // above would pass by finding nothing.
     expect(importersOf('canopy-ui').length).toBeGreaterThan(0)
-    expect(importersOf('@canopy/client').length).toBeGreaterThan(0)
+    expect(importersOf('canopy-client').length).toBeGreaterThan(0)
   })
 })

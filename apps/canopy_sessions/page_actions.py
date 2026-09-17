@@ -1,7 +1,7 @@
 """Calling into the page a user is looking at.
 
 An embedded host declares what its page can do (`registerAction` in
-`@canopy/widget`); the agent driving that session calls one. This module is the
+`canopy-widget`); the agent driving that session calls one. This module is the
 middle: it validates the call against the host's own declaration, writes the
 durable record, rings the doorbell, and waits — briefly — for the page to
 answer.
