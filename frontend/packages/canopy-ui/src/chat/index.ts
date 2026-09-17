@@ -17,6 +17,10 @@ export type {
   WsEvent,
 } from "./protocol";
 
+// REST <-> kit conversion. Shared because both hosts that read a transcript over
+// REST were writing this out by hand, against this kit's own Message type.
+export { restToKitMessage, type RestMessage } from "./restMessage";
+
 // Reducer (pure)
 export { sessionReducer } from "./sessionReducer";
 export { prependHistory } from "./history";
