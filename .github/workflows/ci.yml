@@ -217,37 +217,49 @@ jobs:
         working-directory: frontend
         run: npm run test
 
-      # canopy-ui ships to npm, and ace-web installs it from there. A source
-      # change WITHOUT a version bump is the same class of silent failure as a
-      # stale generated.ts above: everything here goes green, the package is
-      # never republished (the publish workflow fires on a `canopy-ui-v*` tag),
-      # and the registry keeps serving older code under a version number that
-      # no longer describes it.
+      # A published package whose source moved without its version moving is a
+      # SILENT failure, the same class as the stale generated.ts guard above:
+      # everything here goes green, the `<pkg>-v*` tag never gets pushed, and
+      # the registry keeps serving old code under a version number that no
+      # longer describes it.
       #
-      # That is not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0
-      # was missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam,
-      # both of which had been in the repo at 0.7.0 for weeks — so ace-web,
-      # pinned to "0.7.0" and believing itself current, could not receive a
-      # `page.invalidate` frame and nothing anywhere said why.
+      # Not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0 was
+      # missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam, both
+      # in-repo at 0.7.0 for weeks. ace-web pinned "0.7.0", believed itself
+      # current, and could not receive a `page.invalidate` frame — with nothing
+      # anywhere to say why.
+      #
+      # Covers every publishable workspace rather than canopy-ui alone: the
+      # trap is a property of "published to npm", not of that one package, and
+      # a guard naming one package has to be remembered for the next.
+      # `canopy-widget` is deliberately absent — it is BUILT and served at
+      # /canopy/embed/widget.js, never installed, so it has no registry copy to
+      # go stale.
       #
       # `fetch-depth: 0` above is what lets this diff against the base.
-      - name: canopy-ui source changes require a version bump
+      - name: Published packages need a version bump when their source changes
         if: github.event_name == 'pull_request'
-        working-directory: frontend/packages/canopy-ui
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if git diff --quiet "$BASE_SHA"...HEAD -- src; then
-            echo "canopy-ui/src unchanged; no bump needed."
-            exit 0
-          fi
-          before=$(git show "$BASE_SHA":frontend/packages/canopy-ui/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
-          after=$(node -p "require('./package.json').version")
-          if [ "$before" = "$after" ]; then
-            echo "::error file=frontend/packages/canopy-ui/package.json::canopy-ui/src changed but the version is still $after."
-            echo "npm would keep serving the OLD $after, and every consumer pinned to it silently misses this change."
-            echo "Bump the version here, and after merging push the matching tag to publish:"
-            echo "    git tag canopy-ui-v<new-version> && git push origin canopy-ui-v<new-version>"
-            exit 1
-          fi
-          echo "canopy-ui/src changed and the version moved $before -> $after."
+          failed=0
+          for pkg in canopy-ui canopy-client; do
+            dir="frontend/packages/$pkg"
+            if git diff --quiet "$BASE_SHA"...HEAD -- "$dir/src"; then
+              echo "$pkg: src unchanged, no bump needed."
+              continue
+            fi
+            before=$(git show "$BASE_SHA:$dir/package.json" \
+              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+            after=$(node -p "require('./$dir/package.json').version")
+            if [ "$before" = "$after" ]; then
+              echo "::error file=$dir/package.json::$pkg/src changed but the version is still $after."
+              echo "  npm would keep serving the OLD $after, and every consumer pinned to it"
+              echo "  silently misses this change. Bump the version here, then after merging:"
+              echo "      git tag $pkg-v<new-version> && git push origin $pkg-v<new-version>"
+              failed=1
+            else
+              echo "$pkg: src changed and the version moved $before -> $after."
+            fi
+          done
+          exit $failed
