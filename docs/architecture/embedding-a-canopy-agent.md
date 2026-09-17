@@ -310,9 +310,21 @@ too small to hold the rows behind them.
 
 ### What the agent does with it
 
-The MCP tool `current_page` returns every attached page's state. So the agent
-re-reads your screen *whenever it needs to*, not once at the start —
-"close the ones I'm looking at" is answerable on turn nine.
+Two paths, deliberately, and the redundancy is the point:
+
+1. **It rides the first message.** Your declared state is folded into the
+   context block sent with the opening question, so the agent has your selection
+   from the very first turn.
+2. **The MCP tool `current_page`** returns every attached page's state, so the
+   agent re-reads your screen *whenever it needs to* — "close the ones I'm
+   looking at" is answerable on turn nine.
+
+Path 1 exists because path 2 can be unavailable: MCP servers connect
+asynchronously, and a conversation starts a fresh agent process, so the first
+turn can race that connection. Measured live on 2026-09-16 — the agent replied
+"the canopy-web MCP server is still connecting, its tools aren't loaded" and was
+blind to twenty rows it had been sent. The first turn carries the user's actual
+question, so it must not be the one that depends on the flakiest link.
 
 Also:
 
