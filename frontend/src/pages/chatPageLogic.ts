@@ -4,31 +4,17 @@
  * mounting React or a WebSocket.
  */
 
-import type { Message } from "canopy-ui/chat";
-import type { ChatSessionDetail } from "@/api/chat";
+import { restToKitMessage } from "canopy-ui/chat";
 
 /**
- * A REST `MessageOut` (turn_index/role/plaintext/content/created_at) -> the
- * kit's `Message` shape. Synthetic id (`t<turn_index>`) + `status: "complete"`
- * — `prependHistory` dedupes by `turn_index`, so a synthetic-id row never
- * collides with the WS row of the same index.
+ * Re-exported from `canopy-ui/chat`, which now owns it.
+ *
+ * It was written out here AND in ace-web, against this kit's own `Message`
+ * type — so the kit was always its right home. Kept as a re-export rather than
+ * asking every caller to change its import: the function has not moved as far
+ * as this module's consumers are concerned.
  */
-export function restToKitMessage(
-  m: ChatSessionDetail["messages"][number],
-): Message {
-  return {
-    id: `t${m.turn_index}`,
-    turn_index: m.turn_index,
-    role: m.role as Message["role"],
-    content: m.content,
-    plaintext: m.plaintext,
-    status: "complete",
-    error_detail: null,
-    started_at: null,
-    completed_at: m.created_at,
-    created_at: m.created_at,
-  };
-}
+export { restToKitMessage };
 
 /**
  * What "Load full session" should do next, given a `BackfillStateOut.status`:

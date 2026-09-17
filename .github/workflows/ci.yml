@@ -195,6 +195,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The canopy-ui version-bump guard below diffs against the PR base.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -213,3 +216,38 @@ jobs:
       - name: Run vitest
         working-directory: frontend
         run: npm run test
+
+      # canopy-ui ships to npm, and ace-web installs it from there. A source
+      # change WITHOUT a version bump is the same class of silent failure as a
+      # stale generated.ts above: everything here goes green, the package is
+      # never republished (the publish workflow fires on a `canopy-ui-v*` tag),
+      # and the registry keeps serving older code under a version number that
+      # no longer describes it.
+      #
+      # That is not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0
+      # was missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam,
+      # both of which had been in the repo at 0.7.0 for weeks — so ace-web,
+      # pinned to "0.7.0" and believing itself current, could not receive a
+      # `page.invalidate` frame and nothing anywhere said why.
+      #
+      # `fetch-depth: 0` above is what lets this diff against the base.
+      - name: canopy-ui source changes require a version bump
+        if: github.event_name == 'pull_request'
+        working-directory: frontend/packages/canopy-ui
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA"...HEAD -- src; then
+            echo "canopy-ui/src unchanged; no bump needed."
+            exit 0
+          fi
+          before=$(git show "$BASE_SHA":frontend/packages/canopy-ui/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          after=$(node -p "require('./package.json').version")
+          if [ "$before" = "$after" ]; then
+            echo "::error file=frontend/packages/canopy-ui/package.json::canopy-ui/src changed but the version is still $after."
+            echo "npm would keep serving the OLD $after, and every consumer pinned to it silently misses this change."
+            echo "Bump the version here, and after merging push the matching tag to publish:"
+            echo "    git tag canopy-ui-v<new-version> && git push origin canopy-ui-v<new-version>"
+            exit 1
+          fi
+          echo "canopy-ui/src changed and the version moved $before -> $after."
