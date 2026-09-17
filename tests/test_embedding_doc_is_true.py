@@ -23,7 +23,8 @@ from django.core.management import get_commands, load_command_class
 from django.urls import resolve
 from django.urls.exceptions import Resolver404
 
-DOC = Path(__file__).resolve().parent.parent / "docs" / "architecture" / "embedding-a-canopy-agent.md"
+REPO = Path(__file__).resolve().parent.parent
+DOC = REPO / "docs" / "architecture" / "embedding-a-canopy-agent.md"
 
 
 @pytest.fixture(scope="module")
@@ -193,3 +194,96 @@ def test_the_self_embed_section_asks_for_nothing(doc):
     assert "not a special one" in section
     # A field table is exactly what this section exists not to have.
     assert "| **Name** |" not in section
+
+
+# --- the 2026-09-16 page contract -------------------------------------------
+#
+# The doc's value is that it is PINNED: a host team reads it once and builds
+# against it, so a claim that quietly stops being true is worse than no claim.
+# These cover what §5, §5a and §7 now promise.
+
+
+def test_the_documented_page_state_api_exists(doc):
+    """§5 tells a host to call `setPageState`. It must be on the handle."""
+    src = (REPO / "frontend/packages/canopy-widget/src/index.ts").read_text()
+
+    assert "setPageState" in doc
+    assert "setPageState(state: Record<string, unknown>): void" in src
+
+
+def test_the_documented_selection_fields_are_the_ones_the_server_reads(doc):
+    """§5 tells a host to send `visible_ids` + `backing_tool` + `resource`.
+
+    `resource` is the one canopy keys invalidation on, so a doc naming a
+    different spelling would produce pages that are never refreshed — and
+    nothing at runtime would say so.
+    """
+    helper = (REPO / "frontend/src/widget/pageState.ts").read_text()
+    invalidation = (REPO / "apps/canopy_sessions/invalidation.py").read_text()
+
+    for field in ("visible_ids", "backing_tool", "resource"):
+        assert field in doc, f"§5 no longer documents {field}"
+        assert field in helper, f"describeSelection no longer emits {field}"
+    assert "page_state__resource" in invalidation, "invalidation no longer keys on `resource`"
+
+
+def test_the_documented_size_cap_is_the_real_one(doc):
+    """§5 promises 8 KiB. A host sizes its payload against that number."""
+    from apps.canopy_sessions import page_state
+
+    assert page_state.MAX_STATE_BYTES == 8192
+    assert "8 KiB" in doc
+
+
+def test_the_documented_invalidation_hook_exists(doc):
+    """§5a tells a host to register `useResource`."""
+    assert "useResource" in doc
+    assert (REPO / "frontend/src/widget/useResource.ts").exists()
+    assert "export function useResource" in (
+        REPO / "frontend/src/widget/useResource.ts"
+    ).read_text()
+
+
+def test_the_documented_agui_ingress_route_exists(doc):
+    """§5 offers `run-input` as the one-call alternative."""
+    from django.urls import resolve
+
+    assert "run-input" in doc
+    assert resolve("/api/canopy-sessions/00000000-0000-0000-0000-000000000000/run-input")
+
+
+def test_the_doc_no_longer_teaches_dismissInsights_as_a_page_action(doc):
+    """§7 uses it as the WORKED EXAMPLE of what not to do, so the name may
+    appear — but never as something a host should register."""
+    assert "widget.registerAction('dismissInsights'" not in doc
+    assert not (REPO / "frontend/src/pages/insightsDismissAction.ts").exists()
+
+
+def test_the_replacement_server_tool_is_actually_served(doc):
+    """§7 says the mutation moved to `dismiss_insights`. Asserted against the
+    MOUNTED server, not the module — `page_tools.py` had ten passing tests and
+    no import."""
+    import asyncio
+
+    from apps.mcp.server import mcp
+
+    assert "dismiss_insights" in doc
+    assert "dismiss_insights" in {t.name for t in asyncio.run(mcp._list_tools())}
+
+
+def test_the_documented_read_tool_is_actually_served(doc):
+    """§5 says the agent re-reads the page with `current_page`."""
+    import asyncio
+
+    from apps.mcp.server import mcp
+
+    assert "current_page" in doc
+    assert "current_page" in {t.name for t in asyncio.run(mcp._list_tools())}
+
+
+def test_the_doc_does_not_still_claim_context_is_a_snapshot(doc):
+    """§9 listed "Context is a snapshot" as a known limit. It was fixed, and a
+    limits list that names a solved problem sends host teams designing around
+    something that no longer exists."""
+    limits = doc[doc.index("## 9. Reference: known limits"):]
+    assert "~~**Context is a snapshot.**~~" in limits, "the correction was dropped"

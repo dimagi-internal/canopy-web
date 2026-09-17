@@ -277,34 +277,87 @@ stamps opaque data on sessions the widget creates; plus `width`,
 
 ## 5. Hand the agent the page state
 
+**This changed on 2026-09-16.** `provideContext` still works, but it is the old
+model and it is worse: read once when a conversation opened, delivered as prose,
+attached to the first message only. Filter your page after opening the chat and
+the agent was reasoning about a screen that had moved.
+
+Declare your page instead. Two lines:
+
 ```js
-widget.provideContext(() => ({
-  supplyPoint: currentSupplyPoint,     // ids the agent can look things up by
-  stockOnHand: visibleRows,            // what is on screen
-  filters: { period, commodity },      // what the user narrowed to
-}))
+widget.setPageState({
+  resource: 'stock://',                 // WHAT you are showing (an MCP resource URI)
+  backing_tool: 'stock_on_hand',        // the tool that resolves these rows
+  visible_ids: [4821, 4822, 4823],      // WHICH rows are on screen
+  filters: { period, commodity },       // what the user narrowed to
+})
 ```
 
-Called **once, when a conversation opens** — a snapshot, not a subscription. It
-is read at request time, so a plain closure over your current state is correct;
-you do not need to re-register when things change.
+Push it whenever the view changes — it replaces wholesale, so re-sending costs a
+round trip and nothing else.
 
-What actually matters here:
+### Send the selection, not the data
 
-- **Include identifiers, not just labels.** "Kano warehouse" lets the agent talk
-  about it. `supply_point_id: 4821` lets it look it up.
-- **Send what is on screen, not the whole dataset.** The snapshot is capped at
-  8 000 characters and truncates. If you are near that, you are sending a
-  database rather than a context.
-- **Never include secrets.** It lands in a conversation transcript that
-  persists.
-- **Compute it from what this user can see.** The callback runs in their
-  browser, in their session — so if your RBAC hides a row from them, do not put
-  it in the snapshot. "The agent sees exactly what the user sees" is the whole
-  access-control story, and keeping it true is the host's job.
+The single rule. `visible_ids` plus `backing_tool` says *which rows* and *where
+to read them*; the agent then calls that tool itself, live, with the caller's own
+permissions applied.
 
-Register nothing and the agent simply starts without page context. If your
-callback throws, the same — it will not break the conversation.
+Serialising the rows instead means you have duplicated your own API, the copy can
+go stale between render and send, and you now have a second place to get access
+control wrong. **canopy refuses a state larger than 8 KiB** with a message
+telling you this — the cap is generous for several hundred ids and deliberately
+too small to hold the rows behind them.
+
+### What the agent does with it
+
+The MCP tool `current_page` returns every attached page's state. So the agent
+re-reads your screen *whenever it needs to*, not once at the start —
+"close the ones I'm looking at" is answerable on turn nine.
+
+Also:
+
+- **Include identifiers, not labels.** "Kano warehouse" lets the agent talk
+  about it; `4821` lets it act on it.
+- **Never include secrets.** It lands in a transcript that persists.
+- **Compute it from what this user can see.** It runs in their browser, in their
+  session — if your RBAC hides a row, keep it out. "The agent sees exactly what
+  the user sees" is the whole access-control story, and keeping it true is yours.
+
+Declare nothing and the agent simply starts without page state.
+
+### AG-UI: one call instead of two
+
+If you already speak AG-UI, send its own object and skip canopy's two endpoints:
+
+```
+PUT /api/canopy-sessions/{id}/run-input     ← AG-UI RunAgentInput
+```
+
+`state` becomes your page state, `tools` become your page actions. Fields canopy
+cannot honour (`messages`, `run_id`, `resume`, `forwarded_props`) are accepted
+and ignored, so a conforming client sends the whole object unchanged.
+
+---
+
+## 5a. Being told when your data changes
+
+A page is a cache. Register how to re-read it and canopy will tell you when the
+data behind your declared `resource` moves — **whoever moved it**:
+
+```js
+// React
+useResource('stock://', () => refetchStock())
+```
+
+This fires when the agent changes something, *and* when a scheduled job does,
+*and* when your own fleet does, *and* when the same page is open in another tab.
+Without it, the agent can delete rows you are still displaying — which is the
+bug this replaced.
+
+The notification carries the resource URI and nothing else. That is MCP's
+`notifications/resources/updated` shape: you re-read through the path you
+already use, where your authorization already applies. A diff would be a second
+source of truth for data you already know how to load.
 
 ---
 
@@ -331,22 +384,45 @@ In a browser, on your page, signed in as an ordinary user:
 | A token error in the panel | your endpoint 403'd, 500'd, or returned no `token` |
 | 404 on `/embed/chat` | app name mismatch, credential revoked, or no frame origins |
 | 503 on `/embed/widget.js` | canopy's frontend is not built |
-| Agent replies but knows nothing about the page | `provideContext` not registered, or registered after the conversation opened |
+| Agent replies but knows nothing about the page | no `setPageState` call, or it ran after the first message was sent |
+| Agent acts on rows the user cannot see | you sent rows instead of ids — send `visible_ids` + `backing_tool` |
+| Page shows rows the agent already deleted | no `useResource` registration for that `resource` |
 | Message sends but no reply ever arrives | no runner is online for that agent — a canopy-side operational issue, not yours |
 
 ---
 
 ## 7. How actions reach the agent, and what they cannot do
 
-You declare an action once, in JS:
+### First: is it actually a page action?
+
+Three doors, and picking the wrong one is the commonest mistake:
+
+| the thing | door | why |
+| --- | --- | --- |
+| **reading** data | your server / MCP tool | live, ACL-correct, works with no tab open. The page supplies only the *selection* |
+| **writing** server data | your server / MCP tool | audited, rate-limited, revocable, survives the tab closing |
+| something that **only exists in a browser** | page action | scroll to a row, open a drawer, fill a form, apply a filter |
+
+canopy got this wrong itself and it is worth learning from: `dismissInsights`
+was a page action until 2026-09-16. It was a *data mutation wearing a page
+action's clothes* — unaudited, dead the moment the tab closed, capped by a
+20-second wait, and a second implementation of a delete the REST API already
+had. It existed only because nothing could tell the page its data had changed.
+Once `useResource` (§5a) existed, the reason was gone; it is now the server tool
+`dismiss_insights(ids)` and the page action is deleted.
+
+**If your action's last line is an HTTP call to your own backend, it is not a
+page action.** Put it in your MCP server and let §5a refresh the page.
+
+### Declaring a real one
 
 ```js
-widget.registerAction('dismissInsights', async ({ ids }) => { … }, {
-  description: 'Dismiss insights from the list the user is viewing',
+widget.registerAction('scrollToRow', async ({ id }) => { … }, {
+  description: 'Scroll the table to a row and highlight it',
   parameters: {
     type: 'object',
-    properties: { ids: { type: 'array', items: { type: 'integer' } } },
-    required: ['ids'],
+    properties: { id: { type: 'integer' } },
+    required: ['id'],
   },
 })
 ```
@@ -395,7 +471,8 @@ One request, from a signed-in user on your page.
 | 10 | Session create | Workspace from the user's memberships; the agent must belong to it; the user becomes the owner; the acting app is stamped server-side |
 | 11 | Reading a session | Workspace membership **and** (you created it, or you are a participant, or it is runner-discovered). A co-tenant holding the id cannot read your chat |
 | 12 | WebSocket | The same token, on the query string, since a WS handshake carries no headers |
-| 13 | Context | Runs in the user's browser, in their session — so the agent sees what that user sees, never more |
+| 13 | Page state | Computed in the user's browser, in their session — so the agent sees what that user sees, never more. It carries a SELECTION (ids + the tool that resolves them), so the rows themselves are re-read through that tool under the caller's own permissions rather than trusted from a copy the page made |
+| 14 | Invalidation | Sent only to sessions whose declared `resource` matches, and carries the URI alone — never row data. A page that declared nothing is told nothing |
 
 **The property that matters:** nothing is frozen into the token. Tokens are
 opaque random strings stored as hashes, and memberships are re-read from the
@@ -410,15 +487,22 @@ page is open.
 
 ## 9. Reference: known limits
 
-- **Actions and context both need the page open** (§7). There is no
-  server-side path for an agent to act on your page later.
+- **Page actions need the page open** (§7). There is no server-side path for an
+  agent to act on your *page* later — which is a reason to put data mutations in
+  your MCP server, where they work regardless.
+- **Invalidation reaches attached pages only.** Nothing is queued for a tab that
+  is closed; it reads fresh data when it next opens, so this is correct rather
+  than a gap.
 - **The domain allowlist is narrow today.** Token exchange requires the email's
   domain in both your credential's allowed domains *and* canopy's own login
   allowlist, which is currently Dimagi-only. A partner user on another domain
   gets a 403 and the widget never opens. Widening it is a deliberate policy
   change.
-- **Context is a snapshot.** If the user changes the page mid-conversation, the
-  agent still holds the state from when it opened.
+- ~~**Context is a snapshot.**~~ **Fixed 2026-09-16.** Page state is pushed on
+  every change and re-read by the agent on demand via `current_page`, so
+  changing the page mid-conversation is now reflected. The page is also told
+  when its data changes (§5a). `provideContext` still behaves the old way; use
+  `setPageState`.
 - **The agent does not remember previous conversations.** A user can see and
   resume their prior chats, but each is its own transcript; a new conversation
   starts cold.
