@@ -1,5 +1,5 @@
 import { ChatPanel, useSessionSocket } from 'canopy-ui/chat'
-import { createCanopyClient, type CanopyClient } from '@canopy/client'
+import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { buildPageContextBlock } from './pageContextBlock'

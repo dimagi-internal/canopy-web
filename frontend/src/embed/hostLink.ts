@@ -50,7 +50,7 @@ export interface HostLink {
    *  says minting failed, so the UI can show why instead of spinning. */
   waitForInit(): Promise<HostInit>
   /** Ask the host to mint a fresh token — the frame cannot, having no cookies
-   *  for the host's origin. This is what `@canopy/client`'s `fetchToken` becomes. */
+   *  for the host's origin. This is what `canopy-client`'s `fetchToken` becomes. */
   requestToken(): Promise<{ token: string; expiresAt: string }>
   /** The host page's current state, as the host chose to expose it. */
   requestContext(): Promise<Record<string, unknown>>
@@ -169,7 +169,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         settle(String(data.id), 'resolve', {
           token: String(data.token ?? ''),
           // The host's mint response carries an expiry, but the frame does not
-          // need it to be accurate: @canopy/client refetches on 401 regardless,
+          // need it to be accurate: canopy-client refetches on 401 regardless,
           // and an unparseable value is treated as already-expired there. A far
           // future default would be the unsafe direction, so this is empty.
           expiresAt: String(data.expires_at ?? ''),

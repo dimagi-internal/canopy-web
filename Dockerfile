@@ -5,8 +5,8 @@ COPY frontend/package*.json ./
 # The npm WORKSPACES must exist before `npm ci`, or it cannot link them and any
 # import of a local package fails the build. `canopy-ui` hid this for a while
 # because it is also published to the registry and resolved from there;
-# `@canopy/client` is local-only, so the first import of it broke every deploy
-# (2026-09-13) with "Cannot find module '@canopy/client'". Copied separately
+# `canopy-client` is local-only, so the first import of it broke every deploy
+# (2026-09-13) with "Cannot find module 'canopy-client'". Copied separately
 # from the rest of frontend/ so the dependency layer still caches on
 # package.json alone in the common case.
 COPY frontend/packages ./packages

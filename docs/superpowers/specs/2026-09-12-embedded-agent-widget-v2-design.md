@@ -35,9 +35,17 @@ Dimagi is not a design input; it is a deployment policy (see §5).
 | Layer | What | Status |
 | --- | --- | --- |
 | **0 — wire** | REST + WS protocol, any language | exists (`docs/architecture/api-surface.md`) |
-| **1 — `@canopy/client`** | framework-free TS: token cache + refresh, REST, WS reconnect | **new** |
+| **1 — `canopy-client`** | framework-free TS: token cache + refresh, REST, WS reconnect | **new** |
 | **2 — `canopy-ui/chat`** | React 19 components | exists, published |
 | **3 — `widget.js`** | drop-in IIFE, own bundled React, iframe-isolated | **new** |
+
+> **Renamed 2026-09-16.** Layers 1 and 3 shipped as `@canopy/client` and
+> `@canopy/widget`. Neither can be published: the `@canopy` npm scope is
+> somebody else's. They are now the unscoped `canopy-client` and
+> `canopy-widget`, matching `canopy-ui` — which is unscoped for this exact
+> reason, having already been renamed once out of `@canopy/workbench`. Layer 1
+> being unpublishable made the whole layering theoretical, since ace-web (the
+> host layer 1 was extracted FROM) could not install it.
 
 Layer 1 is the enabling piece and it is mostly a **move, not a write**:
 ace-web's `frontend/src/canopy/{token,api,ws}.ts` is ~390 lines with **zero
