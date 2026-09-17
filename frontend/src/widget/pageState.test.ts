@@ -119,3 +119,50 @@ describe('describeSelection is the shape that works', () => {
     expect(state.visible_count).toBe(5)
   })
 })
+
+describe('the first message must not depend on MCP being up', () => {
+  /**
+   * Found live: the agent replied "the canopy-web MCP server is still
+   * connecting, its tools aren't loaded", so it could not call `current_page`
+   * and had only `{surface, path}` — blind to the twenty rows on screen.
+   *
+   * MCP servers connect asynchronously and the widget creates a fresh session
+   * per conversation, so the FIRST turn races that connection. The first turn
+   * is the one carrying the user's question, which made the most important turn
+   * depend on the flakiest link.
+   */
+  it('merges the selection into what rides the first message', () => {
+    dispose = setPageStateContributor(() =>
+      describeSelection({
+        backingTool: 'list_insights',
+        resource: 'insight://',
+        ids: [61, 60, 59],
+      }),
+    )
+
+    const forTheBlock = { ...currentPageState({ surface: 'the insights feed', path: '/insights' }) }
+
+    // The route layer AND the selection, in one object.
+    expect(forTheBlock.path).toBe('/insights')
+    expect(forTheBlock.visible_ids).toEqual([61, 60, 59])
+    expect(forTheBlock.backing_tool).toBe('list_insights')
+  })
+
+  it('still produces the route alone when no page declared a selection', () => {
+    // A host that does not use the state channel must not end up with a block
+    // that claims an empty screen.
+    const forTheBlock = currentPageState({ surface: 'the supervisor inbox', path: '/supervisor' })
+
+    expect(forTheBlock).toEqual({ surface: 'the supervisor inbox', path: '/supervisor' })
+  })
+
+  it('lets the page override a route field it knows better', () => {
+    // The page is the only party that knows what it actually rendered, so its
+    // own keys win over the route table's guess.
+    dispose = setPageStateContributor(() => ({ surface: 'the filtered insights feed' }))
+
+    expect(currentPageState({ surface: 'the insights feed', path: '/insights' }).surface).toBe(
+      'the filtered insights feed',
+    )
+  })
+})

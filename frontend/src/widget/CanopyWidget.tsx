@@ -136,7 +136,28 @@ export function CanopyWidget() {
       })
       // Read at conversation-open, so this closure sees whatever page the user
       // is on then — not the one they were on when the widget mounted.
-      handle.provideContext(() => buildPageContext(pathRef.current, searchRef.current))
+      // The context block that rides the FIRST message carries the page STATE
+      // too, not just the route.
+      //
+      // Found live on 2026-09-16: the agent replied "the canopy-web MCP server
+      // is still connecting, its tools aren't loaded" and could not call
+      // `current_page` — so all it had was `{surface, path}`. It refused to
+      // guess, correctly, and was blind to the twenty rows on screen.
+      //
+      // MCP servers connect asynchronously, and the widget creates a FRESH
+      // session per conversation — so the runner spawns a new process and the
+      // first turn races that connection. The first turn is also the one
+      // carrying the user's actual question, which made the most important turn
+      // depend on the flakiest link.
+      //
+      // The state is already computed and already pushed; it simply was not in
+      // the prompt. Including it makes the first turn work whether or not MCP
+      // is up, and leaves `current_page` doing what it is actually good at:
+      // RE-READING later, when the page has moved.
+      handle.provideContext(() => ({
+        ...buildPageContext(pathRef.current, searchRef.current),
+        ...(hasPageState() ? currentPageState() : {}),
+      }))
 
       // The state channel, beside the context pull above. `provideContext` is
       // answered once when a conversation opens; this is pushed whenever the
