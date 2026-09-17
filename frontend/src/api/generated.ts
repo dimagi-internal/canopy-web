@@ -17197,6 +17197,8 @@ export interface operations {
                 readonly opp_run_id?: string;
                 readonly origin_key?: string;
                 readonly embed_app?: string;
+                readonly resource?: string;
+                readonly page_path?: string;
             };
             readonly header?: never;
             readonly path?: never;
