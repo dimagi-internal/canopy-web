@@ -1,16 +1,19 @@
 /**
  * What the agent is told about the page you are on.
  *
- * Two layers, because the useful cases need different depths:
+ * **The route layer**, derived from the path alone, so every page gets it for
+ * free: which surface, which workspace, which object. That is already enough for
+ * "this whole feature set should go" — the thought you have while looking at a
+ * page and lose a second later.
  *
- *  1. **The route layer, always on.** Derived from the path alone, so every
- *     page gets it for free: which surface, which workspace, which object.
- *     That is already enough for "this whole feature set should go" — the
- *     thought you have while looking at a page and lose a second later.
- *  2. **The page layer, opt-in.** A component calls `usePageContext(() => …)`
- *     to contribute what is actually on screen — the items and their ages, the
- *     rows, the counts. Needed for "this inbox is stale", which is a claim
- *     about data the URL cannot express.
+ * There used to be a second, opt-in layer here: `usePageContext` let a component
+ * contribute what was on screen, and `buildPageContext` folded it in under
+ * `onScreen`. It is gone, superseded by `pageState.ts`, which does the same job
+ * without the flaw that made it unreliable — this one was READ ONCE, when a
+ * conversation opened, so a user who filtered the page afterwards left the agent
+ * describing a view that no longer existed. The state channel pushes instead.
+ * `currentPageState(buildPageContext(...))` is how the two now compose: route
+ * layer underneath, the page's own declaration on top.
  *
  * Ordered rules, first match wins, mirroring `src/presence/routes.ts` — so a
  * specific pattern (an agent's Items tab) must precede the general one (the
@@ -18,8 +21,8 @@
  *
  * Unlike presence, a page with no rule is NOT excluded: it still gets its path
  * and a generic label. Presence is opt-in because a badge on a page nobody can
- * collide on is noise; context is opt-OUT because an agent that does not know
- * what you are looking at is the problem this exists to solve.
+ * collide on is noise; the route layer is opt-OUT because an agent that does not
+ * know what you are looking at is the problem this exists to solve.
  *
  * (`src/embed/` is the app that runs INSIDE the frame. This directory is the
  * host side — what canopy-web does to put the widget on its own pages.)
@@ -107,28 +110,6 @@ export function describePage(path: string): PageDescriptor {
   return { surface: 'a canopy page' }
 }
 
-// --- the page layer --------------------------------------------------------
-//
-// A module-level registry rather than React context, for one reason: the
-// consumer is not a React component. `provideContext` hands the widget a plain
-// callback, and the widget lives outside the React tree (it mounts its own
-// DOM). Reading a provider from inside the tree and mirroring it out would be
-// a second copy of the same state.
-
-type PageContributor = () => Record<string, unknown>
-
-let contributor: PageContributor | null = null
-
-/** Register what is on screen. Returns a disposer; the LAST registration wins,
- *  because a page has one current view — and a contributor left behind from a
- *  page you navigated away from would describe something no longer there. */
-export function setPageContributor(fn: PageContributor): () => void {
-  contributor = fn
-  return () => {
-    if (contributor === fn) contributor = null
-  }
-}
-
 /** The query string as a plain object, or null when there is none.
  *
  *  Kept SEPARATE from `path` rather than appended to it, because the route
@@ -144,7 +125,7 @@ export function describeQuery(search: string): Record<string, string> | null {
   return Object.keys(out).length ? out : null
 }
 
-/** Both layers, assembled at the moment a conversation opens.
+/** The route layer for a path, assembled.
  *
  *  `search` is the cheapest context there is. A page whose state lives in its
  *  URL — which is every page you can usefully link to — describes its own view
@@ -156,18 +137,10 @@ export function describeQuery(search: string): Record<string, string> | null {
 export function buildPageContext(path: string, search = ''): Record<string, unknown> {
   const described = describePage(path)
   const query = describeQuery(search)
-  const base: Record<string, unknown> = {
+  return {
     surface: described.surface,
     path,
     ...(query ? { query } : {}),
     ...(described.params ? { params: described.params } : {}),
-  }
-  if (!contributor) return base
-  try {
-    return { ...base, onScreen: contributor() }
-  } catch {
-    // A throwing contributor must not cost the route layer too — knowing which
-    // page you are on is the more important half.
-    return base
   }
 }

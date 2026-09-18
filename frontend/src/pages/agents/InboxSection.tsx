@@ -4,7 +4,9 @@ import { listItems, type ItemOut } from '@/api/items'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ITEM_BAND, ITEM_KIND_RANK, type ItemKind } from '@/lib/itemBands'
 import { ItemCard } from '@/components/items/ItemCard'
-import { usePageContext } from '@/widget/usePageContext'
+import { describeSelection } from '@/widget/pageState'
+import { usePageState } from '@/widget/usePageState'
+import { useResource } from '@/widget/useResource'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
 /** Whole days since `iso`. `NaN`-safe: an unparseable timestamp yields 0 rather
@@ -83,23 +85,40 @@ export function InboxSection() {
 
   const count = items?.length ?? 0
 
-  // Hand the embedded agent what is actually in this inbox, with ages — the
-  // whole point being that "this inbox has gone stale" is a claim about the
-  // data, which the URL cannot express. Ages in days rather than timestamps
-  // because staleness is the question being asked, and a date makes the agent
-  // do arithmetic before it can answer it.
-  usePageContext(() => ({
-    open_item_count: count,
-    oldest_open_item_age_days: items?.length
-      ? Math.max(...items.map((i) => ageInDays(i.created_at)))
-      : null,
-    open_items: (items ?? []).map((i) => ({
-      id: i.id,
-      kind: i.kind,
-      title: i.title,
-      age_days: ageInDays(i.created_at),
-    })),
-  }))
+  // Re-read when canopy says the item collection moved — whoever moved it. An
+  // inbox is the surface most likely to change under you: the fleet raises items
+  // while you are reading it, a schedule nag arrives, a colleague decides one.
+  useResource('item://', reload)
+
+  // Tell the embedded agent WHICH items are on screen, not what they say.
+  //
+  // This sent the rows themselves until 2026-09-18 — id, kind, title, age — for
+  // the honest reason that no tool could read an item back, so stripping them
+  // would have left the agent unable to discuss the inbox at all. `list_items`
+  // closed that hole, and the rows went with it: a serialised copy goes stale
+  // between render and send, and is a second place the tenant gate has to be
+  // right. The agent resolves these ids through `list_items`, live, under the
+  // user's own permissions.
+  //
+  // The two aggregates stay, because they are not row data — they are claims
+  // about the SET, and "this inbox has gone stale" is exactly the question the
+  // URL cannot express. Ages in days rather than timestamps because staleness is
+  // what is being asked, and a date makes the agent do arithmetic first.
+  usePageState(
+    () =>
+      describeSelection({
+        backingTool: 'list_items',
+        resource: 'item://',
+        ids: (items ?? []).map((i) => i.id),
+        filters: { agent: agent.slug, state: 'open' },
+        extra: {
+          oldest_open_item_age_days: items?.length
+            ? Math.max(...items.map((i) => ageInDays(i.created_at)))
+            : null,
+        },
+      }),
+    [items, agent.slug],
+  )
 
   return (
     <div className="max-w-4xl px-6 py-8">
