@@ -1,0 +1,23 @@
+{
+  // The PUBLISHED build. The workspace consumes `src/` directly (Vite compiles
+  // TypeScript anywhere), but a host's bundler usually does not: connect-labs'
+  // webpack runs babel with `exclude: /node_modules/`, so raw .ts from npm
+  // fails on the first type annotation. See scripts/build-dist.mjs.
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
