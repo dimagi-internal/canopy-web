@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANSWER_GRACE_MS,
+  answerHidesMenu,
   backfillAction,
   menuBlocksComposer,
+  menuIdentity,
+  type PendingAnswer,
   restToKitMessage,
   sendBlockReason,
   shouldShowLoadFull,
@@ -190,5 +194,49 @@ describe("menuBlocksComposer", () => {
     expect(menuBlocksComposer({ options: [], questions: [] })).toBe(false);
     expect(menuBlocksComposer(null)).toBe(false);
     expect(menuBlocksComposer(undefined)).toBe(false);
+  });
+});
+
+describe("answerHidesMenu", () => {
+  const menu = {
+    question: "Proceed?",
+    title: "Waiting on you",
+    options: [
+      { number: 1, label: "Yes" },
+      { number: 2, label: "No" },
+    ],
+    observed_at: 100,
+  };
+  const pending = (over: Partial<PendingAnswer> = {}): PendingAnswer => ({
+    key: menuIdentity(menu),
+    note: "",
+    activity: "blocked",
+    at: 1_000,
+    ...over,
+  });
+
+  it("hides the dialog you just answered, the moment you tap", () => {
+    expect(answerHidesMenu(menu, pending(), 1_000)).toBe(true);
+  });
+
+  it("keeps hiding it when the report re-sends the same dialog with a newer observed_at", () => {
+    expect(answerHidesMenu({ ...menu, observed_at: 110 }, pending(), 12_000)).toBe(true);
+  });
+
+  it("brings it back when the runner refuses the tap", () => {
+    expect(answerHidesMenu({ ...menu, answer_note: "stale dialog" }, pending(), 5_000)).toBe(false);
+  });
+
+  it("brings back a different dialog", () => {
+    const other = { ...menu, question: "Delete it?" };
+    expect(answerHidesMenu(other, pending(), 5_000)).toBe(false);
+  });
+
+  it("brings it back once the grace window runs out with it still reported", () => {
+    expect(answerHidesMenu(menu, pending(), 1_000 + ANSWER_GRACE_MS)).toBe(false);
+  });
+
+  it("does nothing without a pending answer", () => {
+    expect(answerHidesMenu(menu, null, 1_000)).toBe(false);
   });
 });
