@@ -3,6 +3,10 @@ import { Link, useOutletContext, useSearchParams } from 'react-router-dom'
 import { getSkillHistory, syncSkillHistory, type SkillHistoryOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import { describeSelection } from '@/widget/pageState'
+import { usePageAction } from '@/widget/usePageAction'
+import { usePageState } from '@/widget/usePageState'
+import { useResource } from '@/widget/useResource'
 import { SkillHistoryChart } from './skillHistory/SkillHistoryChart'
 import { SkillHistoryLanes } from './skillHistory/SkillHistoryLanes'
 import { SkillHistoryPanel } from './skillHistory/SkillHistoryPanel'
@@ -155,6 +159,55 @@ export function AgentHistorySection() {
     if (!model) return
     writeDay(Math.max(0, Math.min(model.days, d)))
   }
+
+  const resource = `skill-history://${agent.slug}`
+  const asOf = model ? isoOf(model, day) : null
+
+  // The selection, not the data: the assistant resolves it through the
+  // `skill_history` tool with the caller's own access. Rides the first message
+  // and is re-read via `current_page` later (embedding doc §5).
+  usePageState(
+    () => describeSelection({
+      backingTool: 'skill_history',
+      resource,
+      ids: sel.commit ? [sel.commit] : sel.skill ? [sel.skill] : sel.group ? [sel.group] : [],
+      filters: { agent: agent.slug, group: sel.group ?? null, skill: sel.skill ?? null, commit: sel.commit ?? null, as_of: asOf },
+    }),
+    [agent.slug, sel.group, sel.skill, sel.commit, asOf],
+  )
+
+  // A sync from another tab, or one the assistant triggered, repaints this one.
+  useResource(resource, load)
+
+  usePageAction('selectSkill', ({ skill }) => {
+    if (!model || typeof skill !== 'string' || !model.skills.has(skill)) throw new Error(`no skill named ${String(skill)} in ${agent.slug}'s history`)
+    onSelect({ skill })
+    return { selected: skill }
+  }, {
+    description: 'Open one skill’s history on the page the user is viewing',
+    parameters: { type: 'object', properties: { skill: { type: 'string' } }, required: ['skill'] },
+  })
+
+  usePageAction('showCommit', ({ sha }) => {
+    const full = model && typeof sha === 'string' ? model.h.commits.find((c) => c.sha.startsWith(sha))?.sha : undefined
+    if (!full) throw new Error(`no commit ${String(sha)} in ${agent.slug}'s skill history`)
+    onSelect({ commit: full })
+    return { shown: full }
+  }, {
+    description: 'Open one commit on the page the user is viewing (full or abbreviated sha)',
+    parameters: { type: 'object', properties: { sha: { type: 'string' } }, required: ['sha'] },
+  })
+
+  usePageAction('setTimeline', ({ date }) => {
+    if (!model || typeof date !== 'string') throw new Error('date must be YYYY-MM-DD')
+    const d = dayOf(model, date)
+    if (Number.isNaN(d) || d < 0 || d > model.days) throw new Error(`${date} is outside this history (${isoOf(model, 0)} to ${isoOf(model, model.days)})`)
+    writeDay(d)
+    return { date }
+  }, {
+    description: 'Move the page’s timeline to a date (YYYY-MM-DD)',
+    parameters: { type: 'object', properties: { date: { type: 'string' } }, required: ['date'] },
+  })
 
   if (!data || !model) {
     if (loadError) {

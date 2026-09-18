@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getSkillHistory } from '@/api/agents'
+import { currentPageState } from '@/widget/pageState'
+import { currentSpecs, runPageAction } from '@/widget/pageActions'
 
 const H = {
   agent: 'ace', repo_url: 'x', head_sha: 'b', synced_at: '2026-04-20T00:00:00Z', synced_with: 'owner-gh',
@@ -97,5 +99,54 @@ describe('AgentHistorySection', () => {
     mocked.mockResolvedValueOnce(H as never)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('button', { name: /Open One/ })).toBeTruthy()
+  })
+})
+
+describe('the page contract', () => {
+  it('declares the selected skill and date to the assistant', async () => {
+    renderAt('?skill=alpha&at=2026-04-02')
+    await screen.findByText(/Created Apr 1/)
+    expect(currentPageState()).toMatchObject({
+      backing_tool: 'skill_history',
+      resource: 'skill-history://ace',
+      visible_ids: ['alpha'],
+      filters: { agent: 'ace', skill: 'alpha', as_of: '2026-04-02' },
+    })
+  })
+
+  it('declares nothing selected at the top level', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    expect(currentPageState()).toMatchObject({ visible_ids: [], filters: { agent: 'ace', as_of: '2026-04-20' } })
+  })
+
+  it('offers selectSkill, showCommit and setTimeline', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    expect(currentSpecs().map((s) => s.name)).toEqual(expect.arrayContaining(['selectSkill', 'showCommit', 'setTimeline']))
+  })
+
+  it('selectSkill moves the page, and refuses a skill that does not exist', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    await act(() => runPageAction('selectSkill', { skill: 'alpha' }))
+    expect(screen.getByTestId('where').textContent).toContain('skill=alpha')
+    await expect(runPageAction('selectSkill', { skill: 'nope' })).rejects.toThrow(/no skill named nope/)
+  })
+
+  it('showCommit accepts a short sha and refuses an unknown one', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    await act(() => runPageAction('showCommit', { sha: 'b2' }))
+    expect(screen.getByTestId('where').textContent).toContain('commit=b2')
+    await expect(runPageAction('showCommit', { sha: 'zzz' })).rejects.toThrow(/no commit/)
+  })
+
+  it('setTimeline refuses a date outside the history', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    await act(() => runPageAction('setTimeline', { date: '2026-04-03' }))
+    expect(screen.getByTestId('where').textContent).toContain('at=2026-04-03')
+    await expect(runPageAction('setTimeline', { date: '2020-01-01' })).rejects.toThrow(/outside/)
   })
 })
