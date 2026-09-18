@@ -91,8 +91,7 @@ def _visible_workspace_ids(request: HttpRequest) -> set[str]:
 # and this route would be unreachable. Declaration order keeps "schedules"
 # literal.
 @router.get("/schedules/week", response=ScheduleWeekOut,
-            summary="A week of scheduled fires across the visible fleet",
-            openapi_extra={"x-mcp-expose": True})
+            summary="A week of scheduled fires across the visible fleet",)
 def schedule_week(request: HttpRequest, start: dt.datetime, mine: bool = False) -> ScheduleWeekOut:
     """Every enabled schedule the caller can see, each with its fires in
     [start, start+7d). Scope is the URL: flat → all my workspaces; /w/{ws}/ →
@@ -106,8 +105,7 @@ def schedule_week(request: HttpRequest, start: dt.datetime, mine: bool = False) 
 
 
 @router.get("/{slug}/schedules/", response=Page[ScheduleOut],
-            summary="List an agent's recurring schedules",
-            openapi_extra={"x-mcp-expose": True})
+            summary="List an agent's recurring schedules",)
 def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[ScheduleOut]:
     try:
         schedules = ss.list_schedules(request.user, slug, workspace_slug=_pin(request))
@@ -118,8 +116,7 @@ def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[Sc
 
 
 @router.post("/{slug}/schedules/", response={201: ScheduleOut},
-             summary="Create a recurring schedule",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Create a recurring schedule",)
 def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Status:
     try:
         schedule = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
@@ -140,8 +137,7 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
 # disambiguate), so only declaration order keeps this route reachable. Moving
 # this block below PATCH/DELETE would silently shadow it.
 @router.post("/{slug}/schedules/preview", response=SchedulePreviewOut,
-             summary="Preview the next fire times for a cron expression",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Preview the next fire times for a cron expression",)
 def preview_schedule(
     request: HttpRequest, slug: str, payload: SchedulePreviewIn
 ) -> SchedulePreviewOut:
@@ -157,8 +153,7 @@ def preview_schedule(
 
 
 @router.patch("/{slug}/schedules/{schedule_id}", response=ScheduleOut,
-              summary="Update a recurring schedule",
-              openapi_extra={"x-mcp-expose": True})
+              summary="Update a recurring schedule",)
 def update_schedule(
     request: HttpRequest, slug: str, schedule_id: int, payload: SchedulePatch
 ) -> ScheduleOut:
@@ -180,8 +175,7 @@ def update_schedule(
 
 
 @router.delete("/{slug}/schedules/{schedule_id}", response={204: None},
-               summary="Delete a recurring schedule",
-               openapi_extra={"x-mcp-expose": True})
+               summary="Delete a recurring schedule",)
 def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status:
     try:
         ss.delete_schedule(request.user, slug, schedule_id, workspace_slug=_pin(request))
@@ -193,8 +187,7 @@ def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status
 
 
 @router.post("/{slug}/schedules/{schedule_id}/run-now", response={202: ScheduleOut},
-             summary="Trigger a schedule off-cycle, now",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Trigger a schedule off-cycle, now",)
 def run_now(request: HttpRequest, slug: str, schedule_id: int) -> Status:
     try:
         schedule = ss.run_schedule_now(request.user, slug, schedule_id, workspace_slug=_pin(request))

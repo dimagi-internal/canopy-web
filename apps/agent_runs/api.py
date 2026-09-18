@@ -121,8 +121,7 @@ def _run_or_404(store: RunStore, slug: str, run_id: str) -> Run:
 
 
 # ---- endpoints ----
-@router.get("/{slug}/runs/", response=Page[RunSummary], summary="List an agent's runs",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/runs/", response=Page[RunSummary], summary="List an agent's runs",)
 def list_runs(request: HttpRequest, slug: str, limit: int = 100) -> Page[RunSummary]:
     limit = clamp_limit(limit)
     agent, store = _store_for(request, slug)
@@ -130,8 +129,7 @@ def list_runs(request: HttpRequest, slug: str, limit: int = 100) -> Page[RunSumm
     return paginate(items, offset=0, limit=limit)
 
 
-@router.post("/{slug}/runs/", response={201: RunSummary}, summary="Create a run",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/{slug}/runs/", response={201: RunSummary}, summary="Create a run",)
 def create_run(request: HttpRequest, slug: str, payload: RunCreateIn) -> Status:
     agent, store = _store_for(request, slug)
     try:
@@ -150,15 +148,13 @@ def create_run(request: HttpRequest, slug: str, payload: RunCreateIn) -> Status:
     return Status(201, summary)
 
 
-@router.get("/{slug}/runs/{run_id}/", response=Run, summary="Full run read model",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/runs/{run_id}/", response=Run, summary="Full run read model",)
 def get_run(request: HttpRequest, slug: str, run_id: str) -> Run:
     agent, store = _store_for(request, slug)
     return _run_or_404(store, agent.slug, run_id)
 
 
-@router.get("/{slug}/runs/{run_id}/steps/", response=list[Step], summary="A run's steps",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/runs/{run_id}/steps/", response=list[Step], summary="A run's steps",)
 def list_steps(request: HttpRequest, slug: str, run_id: str) -> list[Step]:
     agent, store = _store_for(request, slug)
     _run_or_404(store, agent.slug, run_id)  # 404 if the run doesn't exist
@@ -166,8 +162,7 @@ def list_steps(request: HttpRequest, slug: str, run_id: str) -> list[Step]:
 
 
 @router.post("/{slug}/runs/{run_id}/steps/{step_key}/gate", response={201: Gate},
-             summary="Record a gate decision on a step",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Record a gate decision on a step",)
 def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
                 payload: GateDecisionIn) -> Status:
     agent, store = _store_for(request, slug)
@@ -183,8 +178,7 @@ def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
 
 
 @router.post("/{slug}/runs/{run_id}/steps/{step_key}/verdict", response={201: Verdict},
-             summary="Record a judge/QA verdict on a step",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Record a judge/QA verdict on a step",)
 def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
                    payload: VerdictIn) -> Status:
     agent, store = _store_for(request, slug)
@@ -199,8 +193,7 @@ def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
     return Status(201, verdict)
 
 
-@router.post("/{slug}/runs/{run_id}/fork", response={201: RunSummary}, summary="Fork a run",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/{slug}/runs/{run_id}/fork", response={201: RunSummary}, summary="Fork a run",)
 def fork_run(request: HttpRequest, slug: str, run_id: str, payload: ForkIn) -> Status:
     agent, store = _store_for(request, slug)
     try:

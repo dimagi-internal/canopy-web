@@ -152,8 +152,7 @@ def _agent_for_admin(request: HttpRequest, slug: str):
     return agent
 
 
-@router.get("/", response=Page[AgentOut], summary="List agents",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/", response=Page[AgentOut], summary="List agents",)
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     limit = clamp_limit(limit)
     visible = _visible_agent_workspace_ids(request)
@@ -165,8 +164,7 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     return paginate(items, offset=0, limit=limit)
 
 
-@router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # The tenant is resolved BEFORE the row is written, because Agent.workspace is
     # NOT NULL (agents/0013) — an agent is never briefly unhomed. Scope to the
@@ -236,15 +234,13 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     return Status(201, AgentOut.model_validate(agent))
 
 
-@router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
 def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
     return AgentDetailOut.model_validate(services.agent_detail(agent))
 
 
-@router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",
-               openapi_extra={"x-mcp-expose": True})
+@router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",)
 def delete_agent(request: HttpRequest, slug: str):
     """Remove an agent and everything hanging off it.
 
@@ -531,8 +527,7 @@ def replace_agent_runner_rules(
 
 
 # ---- syncs (Google-Doc backed) ----
-@router.get("/{slug}/syncs/", response=Page[AgentSyncOut], summary="List the agent's syncs",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/syncs/", response=Page[AgentSyncOut], summary="List the agent's syncs",)
 def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentSyncOut]:
     limit = clamp_limit(limit)
     agent = _get_agent_or_404(request, slug)
@@ -541,8 +536,7 @@ def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentS
 
 
 @router.post("/{slug}/syncs/", response={201: AgentSyncOut},
-             summary="Post a Google-Doc sync (idempotent per period+source)",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Post a Google-Doc sync (idempotent per period+source)",)
 def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status:
     agent = _agent_for_write(request, slug)
     sync = services.upsert_sync(agent, payload)
@@ -550,8 +544,7 @@ def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status
 
 
 @router.delete("/{slug}/syncs/{sync_id}/", response={204: None},
-               summary="Delete a sync (wrong period / stray record)",
-               openapi_extra={"x-mcp-expose": True})
+               summary="Delete a sync (wrong period / stray record)",)
 def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
     """POST upserts per (period, source), so re-posting only corrects a sync for the
     SAME window — a sync filed under the wrong period is otherwise unreachable."""
@@ -562,8 +555,7 @@ def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
 
 
 # ---- turns (a packaged unit of work + optional transcript link) ----
-@router.get("/{slug}/turns/", response=Page[AgentTurnOut], summary="List the agent's turns",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/turns/", response=Page[AgentTurnOut], summary="List the agent's turns",)
 def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentTurnOut]:
     limit = clamp_limit(limit)
     agent = _get_agent_or_404(request, slug)
@@ -572,8 +564,7 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 
 
 @router.post("/{slug}/turns/", response={201: AgentTurnOut},
-             summary="Package a turn (idempotent per cli_session_id)",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Package a turn (idempotent per cli_session_id)",)
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
     agent = _agent_for_write(request, slug)
     turn = services.upsert_turn(agent, payload)
@@ -582,8 +573,7 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
 
 # ---- work products ----
 @router.get("/{slug}/work-products/", response=Page[AgentWorkProductOut],
-            summary="List the agent's work products",
-            openapi_extra={"x-mcp-expose": True})
+            summary="List the agent's work products",)
 def list_work_products(request: HttpRequest, slug: str, limit: int = 200) -> Page[AgentWorkProductOut]:
     limit = clamp_limit(limit)
     agent = _get_agent_or_404(request, slug)
@@ -592,8 +582,7 @@ def list_work_products(request: HttpRequest, slug: str, limit: int = 200) -> Pag
 
 
 @router.post("/{slug}/work-products/", response=CountOut,
-             summary="Add/update work products (upsert by url)",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Add/update work products (upsert by url)",)
 def add_work_products(request: HttpRequest, slug: str, payload: AgentWorkProductBatchIn) -> CountOut:
     agent = _agent_for_write(request, slug)
     result = services.upsert_work_products(agent, payload.work_products)
@@ -601,15 +590,13 @@ def add_work_products(request: HttpRequest, slug: str, payload: AgentWorkProduct
 
 
 # ---- skill catalog ----
-@router.get("/{slug}/skills/", response=list[AgentSkillOut], summary="List the agent's skill catalog",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/skills/", response=list[AgentSkillOut], summary="List the agent's skill catalog",)
 def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
     agent = _get_agent_or_404(request, slug)
     return [AgentSkillOut.model_validate(s) for s in services.list_skills(agent)]
 
 
-@router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",
-            openapi_extra={"x-mcp-expose": True})
+@router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",)
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
     agent = _agent_for_write(request, slug)
     count = services.replace_skills(agent, payload.skills)
@@ -617,16 +604,14 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
 
 
 # ---- tasks (board) ----
-@router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks (board)",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks (board)",)
 def list_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
     agent = _get_agent_or_404(request, slug)
     return [AgentTaskOut.model_validate(t) for t in services.list_tasks(agent)]
 
 
 @router.post("/{slug}/tasks/sync", response=CountOut,
-             summary="Upsert the agent's tasks from the (legacy) source sheet",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Upsert the agent's tasks from the (legacy) source sheet",)
 def sync_tasks(request: HttpRequest, slug: str, payload: AgentTaskSyncIn) -> CountOut:
     agent = _agent_for_write(request, slug)
     return CountOut(**services.sync_tasks(agent, payload.tasks))
@@ -639,15 +624,13 @@ def _get_task_or_404(agent, task_id: int):
     return task
 
 
-@router.post("/{slug}/tasks/", response={201: AgentTaskOut}, summary="Create a task",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/{slug}/tasks/", response={201: AgentTaskOut}, summary="Create a task",)
 def create_task(request: HttpRequest, slug: str, payload: AgentTaskIn) -> Status:
     agent = _agent_for_write(request, slug)
     return Status(201, AgentTaskOut.model_validate(services.create_task(agent, payload)))
 
 
-@router.patch("/{slug}/tasks/{task_id}/", response=AgentTaskOut, summary="Update a task",
-              openapi_extra={"x-mcp-expose": True})
+@router.patch("/{slug}/tasks/{task_id}/", response=AgentTaskOut, summary="Update a task",)
 def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskPatch) -> AgentTaskOut:
     agent = _agent_for_write(request, slug)
     task = _get_task_or_404(agent, task_id)
@@ -677,8 +660,7 @@ _RESHAPING_COMMAND_KINDS = frozenset({
 
 
 @router.post("/{slug}/tasks/{task_id}/commands", response={201: CommandResultOut},
-             summary="Post a board action (accept/decline/dispatch/…) on a task",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Post a board action (accept/decline/dispatch/…) on a task",)
 def post_command(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskCommandIn) -> Status:
     if payload.kind in _RESHAPING_COMMAND_KINDS:
         agent = _agent_for_write(request, slug)
@@ -694,16 +676,14 @@ def post_command(request: HttpRequest, slug: str, task_id: int, payload: AgentTa
 
 
 @router.get("/{slug}/commands", response=list[AgentTaskCommandOut],
-            summary="List commands (the agent reads ?status=pending)",
-            openapi_extra={"x-mcp-expose": True})
+            summary="List commands (the agent reads ?status=pending)",)
 def list_commands(request: HttpRequest, slug: str, status: str | None = None) -> list[AgentTaskCommandOut]:
     agent = _get_agent_or_404(request, slug)
     return [AgentTaskCommandOut.model_validate(c) for c in services.list_commands(agent, status)]
 
 
 @router.post("/{slug}/commands/{cmd_id}/apply", response=AgentTaskCommandOut,
-             summary="Mark a command applied (the agent calls this after acting)",
-             openapi_extra={"x-mcp-expose": True})
+             summary="Mark a command applied (the agent calls this after acting)",)
 def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCommandApplyIn) -> AgentTaskCommandOut:
     agent = _get_agent_or_404(request, slug)
     cmd = agent.commands.filter(id=cmd_id).select_related("task", "agent").first()

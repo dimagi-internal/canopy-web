@@ -295,7 +295,6 @@ def create_project(
     "/slugs/",
     response=list[ProjectSlugOut],
     summary="List project slugs",
-    openapi_extra={"x-mcp-expose": True},
 )
 def get_project_slugs(request: HttpRequest) -> list[ProjectSlugOut]:
     """Slim machine-readable slug list (Bearer-readable), workspace-scoped."""
@@ -594,7 +593,6 @@ def get_actions_summary(
     "/",
     response=Page[InsightOut],
     summary="List insights",
-    openapi_extra={"x-mcp-expose": True},
 )
 def list_insights(
     request: HttpRequest,
@@ -617,7 +615,6 @@ def list_insights(
     "/clear/",
     response=InsightsClearOut,
     summary="Clear insights",
-    openapi_extra={"x-mcp-expose": True},
 )
 def clear_insights(
     request: HttpRequest,

@@ -68,8 +68,7 @@ def _item_or_404(request: HttpRequest, item_id: uuid.UUID) -> Item:
     return item
 
 
-@agent_items_router.get("/{slug}/items/", response=list[ItemOut], summary="List an agent's items",
-                        openapi_extra={"x-mcp-expose": True})
+@agent_items_router.get("/{slug}/items/", response=list[ItemOut], summary="List an agent's items",)
 def list_items(
     request: HttpRequest, slug: str, state: str = "", kind: str = "", batch: str = "",
 ) -> list[dict]:
@@ -85,8 +84,7 @@ def list_items(
 
 
 @agent_items_router.post("/{slug}/items/", response={201: list[ItemOut]},
-                         summary="Raise items for an agent (batch, idempotent)",
-                         openapi_extra={"x-mcp-expose": True})
+                         summary="Raise items for an agent (batch, idempotent)",)
 def create_items(request: HttpRequest, slug: str, payload: list[ItemIn]):
     agent = _get_agent_or_404(request, slug)
     items = services.create_items(
