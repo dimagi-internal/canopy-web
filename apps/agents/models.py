@@ -477,3 +477,60 @@ class AgentTaskCommand(models.Model):
     @property
     def task_title(self) -> str:
         return self.task.title if self.task_id else ""
+
+
+class SkillHistorySync(models.Model):
+    """The last pull of this agent's skill history from its repo.
+
+    A CACHE of the repo, replaced wholesale on each sync — the same stance as
+    `AgentSkill`. `groups` / `checks` / `present` are a HEAD-only snapshot read
+    whole and never queried by field, so they are JSON rather than tables.
+
+    `synced_with` is the GitHub login whose grant produced this history — the
+    agent owner's, never the viewer's (see the spec's "Whose credential").
+    """
+
+    agent = models.OneToOneField(Agent, on_delete=models.CASCADE, related_name="skill_history_sync")
+    # 64: a SHA-256 repository's object ids are 64 hex characters.
+    head_sha = models.CharField(max_length=64, blank=True, default="")
+    synced_at = models.DateTimeField(null=True, blank=True)
+    synced_with = models.CharField(max_length=100, blank=True, default="")
+    last_error = models.TextField(blank=True, default="")
+    # One of skill_history.CREDENTIAL_STATES — what the last attempt found.
+    last_state = models.CharField(max_length=32, blank=True, default="")
+    sync_started_at = models.DateTimeField(null=True, blank=True)
+    # Set on every attempt, success or failure. `synced_at` moves only on
+    # success, so without this a failing agent (no grant, repo not granted)
+    # would refresh the owner's token and clone on every page load.
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    groups = models.JSONField(default=list, blank=True)
+    checks = models.JSONField(default=dict, blank=True)
+    present = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"skill-history:{self.agent.slug}@{self.head_sha[:8]}"
+
+
+class SkillHistoryCommit(models.Model):
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="skill_history_commits")
+    sha = models.CharField(max_length=64)
+    committed_at = models.DateTimeField()
+    subject = models.TextField()
+    body = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["committed_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "sha"], name="uniq_agent_skill_history_sha"),
+        ]
+
+
+class SkillRevision(models.Model):
+    commit = models.ForeignKey(SkillHistoryCommit, on_delete=models.CASCADE, related_name="revisions")
+    skill = models.CharField(max_length=120)
+    lines_after = models.IntegerField()
+    added = models.IntegerField()
+    deleted = models.IntegerField()
+
+    class Meta:
+        indexes = [models.Index(fields=["skill"])]

@@ -163,6 +163,25 @@ export async function listAgentSkills(slug: string): Promise<AgentSkillOut[]> {
   return Array.from(unwrap(res, 'listAgentSkills'))
 }
 
+export type SkillHistoryOut = Schemas['SkillHistoryOut']
+
+// SkillHistoryOut nests several readonly arrays (groups, present, commits,
+// skills, and skills[].revisions itself an array of arrays) — each one
+// degrades under openapi-fetch's Readable<T> the same way toPage's comment
+// above describes for a single array field. Rebuilding every level by hand
+// isn't worth it for a read-only payload the model consumes structurally, so
+// bridge through unknown at the boundary like github.ts/schedules.ts/
+// workspaces.ts already do for the same reason.
+export async function getSkillHistory(slug: string): Promise<SkillHistoryOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/skill-history/', { params: { path: { slug } } })
+  return unwrap(res, 'getSkillHistory') as unknown as SkillHistoryOut
+}
+
+export async function syncSkillHistory(slug: string): Promise<SkillHistoryOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/skill-history/sync', { params: { path: { slug } } })
+  return unwrap(res, 'syncSkillHistory') as unknown as SkillHistoryOut
+}
+
 // Plain array, not paginated.
 export async function listAgentTasks(slug: string): Promise<AgentTaskOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/tasks/', { params: { path: { slug } } })

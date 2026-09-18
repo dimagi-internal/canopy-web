@@ -88,14 +88,13 @@ def _fake_get(body, status=200):
 
 # --- the happy path -----------------------------------------------------------
 
-def test_connecting_stores_the_refresh_token_encrypted_and_not_the_access_token(
-    client, user, configured
-):
-    """The access token is deliberately never persisted.
+def test_connecting_stores_both_tokens_encrypted(client, user, configured):
+    """Both halves are held, encrypted, with their expiries.
 
-    It lives 8 hours and is re-minted on use, so storing it would add a
-    credential at rest that buys nothing. A stolen row is then worth one
-    refresh call to detect and revoke, rather than indefinite access.
+    The access token used to be deliberately dropped and re-minted on every
+    use — which made every use spend the ROTATING refresh token, so two
+    concurrent uses raced and the loser killed the grant. Caching it (8 hours)
+    is what makes a refresh rare; see `access_token_for`.
     """
     start = client.get("/auth/github/start/")
     assert start.status_code == 302
@@ -114,8 +113,10 @@ def test_connecting_stores_the_refresh_token_encrypted_and_not_the_access_token(
     assert decrypt_secret(conn.refresh_token_enc) == "ghr_refresh_1"
     assert conn.refresh_token_expires_at is not None
     assert not conn.needs_reconnect
-    # The row holds no access token at all — not even a column for one.
-    assert not any("access" in f.name for f in GitHubConnection._meta.get_fields())
+    # Encrypted at rest, never the raw value.
+    assert conn.access_token_enc and "ghu_access_1" not in conn.access_token_enc
+    assert decrypt_secret(conn.access_token_enc) == "ghu_access_1"
+    assert conn.access_token_expires_at is not None
 
 
 # --- which GitHub screen a user is sent to ------------------------------------
@@ -327,6 +328,93 @@ def test_refresh_stores_the_rotated_token(user, configured):
     conn = GitHubConnection.objects.get(user=user)
     assert decrypt_secret(conn.refresh_token_enc) == "ghr_refresh_2"
     assert conn.last_used_at is not None
+
+
+def test_refresh_stores_the_new_access_token_with_its_expiry(user, configured):
+    """Both the rotated refresh token AND the fresh access token are stored,
+    so the next call reuses the access token instead of refreshing again."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_refresh_1"),
+    )
+    with _fake_post(_token_response(access_token="ghu_access_2", refresh_token="ghr_refresh_2",
+                                    expires_in=28800)):
+        github_app.access_token_for(user)
+    conn = GitHubConnection.objects.get(user=user)
+    assert decrypt_secret(conn.refresh_token_enc) == "ghr_refresh_2"
+    assert decrypt_secret(conn.access_token_enc) == "ghu_access_2"
+    remaining = conn.access_token_expires_at - timezone.now()
+    assert timezone.timedelta(hours=7, minutes=59) < remaining <= timezone.timedelta(hours=8)
+
+
+def test_a_cached_access_token_is_reused_without_a_refresh(user, configured):
+    """THE RACE THIS CLOSES. Refreshing on every call spent the rotating
+    refresh token every time, so two concurrent callers (a history sync and a
+    diff) both presented the same one — GitHub rejected the loser, the
+    rejection stamped `refresh_failed_at`, and the grant was dead for every
+    feature. A fresh cached token means no exchange at all."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_refresh_1"),
+        access_token_enc=encrypt_secret("ghu_cached"),
+        access_token_expires_at=timezone.now() + timezone.timedelta(hours=4),
+    )
+    with mock.patch("apps.tokens.github_app.requests.post") as post:
+        assert github_app.access_token_for(user) == "ghu_cached"
+        assert github_app.access_token_for(user) == "ghu_cached"
+    post.assert_not_called()
+    conn = GitHubConnection.objects.get(user=user)
+    assert decrypt_secret(conn.refresh_token_enc) == "ghr_refresh_1"
+    assert conn.last_used_at is not None
+
+
+def test_an_expiring_cached_token_triggers_exactly_one_refresh(user, configured):
+    """Within the margin of expiry counts as expired — a token handed out now
+    must outlive the operation it is for."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_refresh_1"),
+        access_token_enc=encrypt_secret("ghu_old"),
+        access_token_expires_at=timezone.now() + timezone.timedelta(minutes=2),
+    )
+    with _fake_post(_token_response(access_token="ghu_new", refresh_token="ghr_refresh_2")) as post:
+        assert github_app.access_token_for(user) == "ghu_new"
+        # The second call reuses what the first one stored.
+        assert github_app.access_token_for(user) == "ghu_new"
+    assert post.call_count == 1
+    assert post.call_args.kwargs["data"]["refresh_token"] == "ghr_refresh_1"
+
+
+def test_a_refresh_that_lost_the_race_uses_the_winners_token(user, configured):
+    """The re-read after taking the lock. Caller B read an expired cache, then
+    waited on the row lock while caller A refreshed. B must use A's token, not
+    spend the refresh token it read before waiting (which A's refresh just
+    invalidated — spending it would stamp `refresh_failed_at` and kill the
+    grant). Simulated by updating the row between the unlocked read and the
+    locked one; sqlite makes the lock itself a no-op, the re-read is what is
+    under test."""
+    GitHubConnection.objects.create(
+        user=user, github_login="jjackson", github_user_id=1,
+        refresh_token_enc=encrypt_secret("ghr_refresh_1"),
+    )
+    real_sfu = GitHubConnection.objects.select_for_update
+
+    def winner_refreshed_first(*args, **kwargs):
+        GitHubConnection.objects.filter(user=user).update(
+            refresh_token_enc=encrypt_secret("ghr_refresh_2"),
+            access_token_enc=encrypt_secret("ghu_from_winner"),
+            access_token_expires_at=timezone.now() + timezone.timedelta(hours=8),
+        )
+        return real_sfu(*args, **kwargs)
+
+    with mock.patch.object(GitHubConnection.objects, "select_for_update",
+                           side_effect=winner_refreshed_first), \
+         mock.patch("apps.tokens.github_app.requests.post") as post:
+        assert github_app.access_token_for(user) == "ghu_from_winner"
+    post.assert_not_called()
+    conn = GitHubConnection.objects.get(user=user)
+    assert conn.refresh_failed_at is None
+    assert decrypt_secret(conn.refresh_token_enc) == "ghr_refresh_2"
 
 
 def test_a_rejected_refresh_becomes_reconnect_rather_than_an_opaque_401(user, configured):

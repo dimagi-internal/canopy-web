@@ -2,6 +2,8 @@
 workspace (agents, their Google-Doc syncs, work products, and skill catalog)."""
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router, Status
@@ -11,7 +13,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import services, skill_history
 from .models import AgentTaskCommand
 from .schemas import (
     AgentCommandApplyIn,
@@ -48,9 +50,12 @@ from .schemas import (
     CommandResultOut,
     CountOut,
     RunnerPreferenceIn,
+    SkillHistoryOut,
     SlackEnabledIn,
     TurnModeIn,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -615,6 +620,37 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
     agent = _agent_for_write(request, slug)
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
+
+
+# ---- skill history ----
+# Reading syncs first when the stored history is over an hour old: opening the
+# page is the trigger (no scheduler exists, and a stale history costs one
+# click). The sync itself is debounced per agent, so many open tabs clone once.
+@router.get("/{slug}/skill-history/", response=SkillHistoryOut,
+            summary="How the agent's skills changed, from its repository's history")
+def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
+    agent = _get_agent_or_404(request, slug)
+    # Due = stale AND no attempt in the last hour: a FAILED attempt never moves
+    # synced_at, so without the attempt debounce a repo_not_granted agent would
+    # refresh the owner's token and clone on every page load. An owner who has
+    # just fixed access presses Sync, which forces.
+    if skill_history.due_for_auto_sync(agent):
+        try:
+            skill_history.sync(agent)
+        except Exception:
+            # A read must not 500 because the refresh behind it broke — serve
+            # what is stored. The attempt is already stamped (see `_claim`),
+            # so a deterministic failure is not retried on every load either.
+            logger.exception("skill history auto-sync failed for agent %s", agent.slug)
+    return SkillHistoryOut(**skill_history.history_payload(agent, request.user))
+
+
+@router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
+             summary="Re-read the agent's skill history from its repository now")
+def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
+    agent = _agent_for_write(request, slug)
+    skill_history.sync(agent, force=True)
+    return SkillHistoryOut(**skill_history.history_payload(agent, request.user))
 
 
 # ---- tasks (board) ----

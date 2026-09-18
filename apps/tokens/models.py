@@ -457,20 +457,29 @@ class GitHubConnection(models.Model):
     satisfies that design's rule for what canopy-web may hold at all — only
     secrets it mints itself, which a token from its own OAuth flow is.
 
-    WHAT IS STORED, AND WHAT IS NOT. The `refresh_token` is the durable half
-    and the only thing encrypted at rest; the access token is deliberately NOT
-    stored. User access tokens live 8 hours and the refresh token 6 months
-    (GitHub's "Expire user authorization tokens" setting, which is on — with it
-    off GitHub issues no refresh token at all and we would be holding a
-    credential that never expires). Treating the access token as disposable
-    means a stolen database row is worth one refresh call to detect and revoke,
-    not indefinite access.
+    WHAT IS STORED. Both halves, both Fernet-encrypted at rest: the
+    `refresh_token` (the durable half, 6 months) and the current access token
+    with its expiry (8 hours). User access tokens live 8 hours and the refresh
+    token 6 months (GitHub's "Expire user authorization tokens" setting, which
+    is on — with it off GitHub issues no refresh token at all and we would be
+    holding a credential that never expires).
+
+    The access token used to be deliberately NOT stored, and every use
+    refreshed. That was a race, not a simplification: GitHub rotates the
+    refresh token on every refresh, so two concurrent uses (two web workers,
+    say a history sync and a diff) both spent the SAME refresh token — the
+    loser's exchange was rejected, `refresh_failed_at` was stamped, and the
+    owner's grant was dead for every feature until they pressed Connect again.
+    Caching the access token makes a refresh rare (once per ~8 hours), and the
+    refresh that does happen runs under a row lock (`github_app.access_token_for`).
+    Holding it costs little: a stolen row plus the encryption key already
+    yielded the refresh token, which is strictly more than an 8-hour token.
 
     THE REFRESH TOKEN ROTATES. GitHub returns a NEW refresh token on every
     refresh and invalidates the old one, so exactly one process may refresh a
-    given row — canopy-web. That is why a runner can never hold this
-    credential: two refreshers race and lock each other out. A runner that
-    needs GitHub gets an installation token instead (see
+    given row — canopy-web, serialized on this row. That is why a runner can
+    never hold this credential: two refreshers race and lock each other out. A
+    runner that needs GitHub gets an installation token instead (see
     `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`).
 
     SCOPE IS THE INSTALLATION'S, NOT THIS ROW'S. This row records that a person
@@ -499,6 +508,11 @@ class GitHubConnection(models.Model):
     # between a failed refresh and a reconnect.
     refresh_token_enc = models.TextField(blank=True, default="")
     refresh_token_expires_at = models.DateTimeField(null=True, blank=True)
+    # The current user access token (Fernet ciphertext) and when GitHub said it
+    # expires. Reused until shortly before that, so concurrent callers do not
+    # each spend the rotating refresh token. Blank = none cached; refresh.
+    access_token_enc = models.TextField(blank=True, default="")
+    access_token_expires_at = models.DateTimeField(null=True, blank=True)
     # Set when a refresh is rejected, so `/settings` can say "reconnect GitHub"
     # instead of surfacing an opaque 401 in the middle of creating an agent.
     # Cleared on every successful refresh.

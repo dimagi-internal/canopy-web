@@ -432,6 +432,7 @@ dependencies = [
     { name = "pydantic", extra = ["email"] },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pywebpush" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "whitenoise" },
 ]
@@ -480,6 +481,7 @@ requires-dist = [
     { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.8,<5.0" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3,<3.0" },
     { name = "pywebpush", specifier = ">=2.3.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4,<1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27,<1.0" },
     { name = "whitenoise", specifier = ">=6.6,<7.0" },

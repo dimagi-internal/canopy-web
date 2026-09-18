@@ -1937,6 +1937,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/skill-history/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** How the agent's skills changed, from its repository's history */
+        readonly get: operations["apps_agents_api_get_skill_history"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/skill-history/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-read the agent's skill history from its repository now */
+        readonly post: operations["apps_agents_api_sync_skill_history"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/tasks/": {
         readonly parameters: {
             readonly query?: never;
@@ -8222,6 +8256,76 @@ export interface components {
              * @default
              */
             readonly args_hint: string;
+        };
+        /** SkillHistoryCommitOut */
+        readonly SkillHistoryCommitOut: {
+            /** Sha */
+            readonly sha: string;
+            /** Date */
+            readonly date: string;
+            /** Subject */
+            readonly subject: string;
+        };
+        /** SkillHistoryGroupOut */
+        readonly SkillHistoryGroupOut: {
+            /** Title */
+            readonly title: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "phase" | "agent" | "none";
+            /** Num */
+            readonly num: string;
+            /** Skills */
+            readonly skills: readonly string[];
+        };
+        /** SkillHistoryOut */
+        readonly SkillHistoryOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Head Sha */
+            readonly head_sha: string;
+            /** Synced At */
+            readonly synced_at: string | null;
+            /** Synced With */
+            readonly synced_with: string;
+            /** Last Error */
+            readonly last_error: string;
+            /**
+             * Credential State
+             * @enum {string}
+             */
+            readonly credential_state: "ok" | "no_repo" | "no_owner" | "owner_not_connected" | "repo_not_granted";
+            /** Owner Name */
+            readonly owner_name: string;
+            /** Viewer Is Owner */
+            readonly viewer_is_owner: boolean;
+            /** Viewer Can Sync */
+            readonly viewer_can_sync: boolean;
+            /** Install Url */
+            readonly install_url: string;
+            /** Groups */
+            readonly groups: readonly components["schemas"]["SkillHistoryGroupOut"][];
+            /** Checks */
+            readonly checks: {
+                readonly [key: string]: string;
+            };
+            /** Present */
+            readonly present: readonly string[];
+            /** Commits */
+            readonly commits: readonly components["schemas"]["SkillHistoryCommitOut"][];
+            /** Skills */
+            readonly skills: readonly components["schemas"]["SkillHistorySkillOut"][];
+        };
+        /** SkillHistorySkillOut */
+        readonly SkillHistorySkillOut: {
+            /** Name */
+            readonly name: string;
+            /** Revisions */
+            readonly revisions: readonly (readonly number[])[];
         };
         /** AgentTaskLink */
         readonly AgentTaskLink: {
@@ -14529,6 +14633,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CountOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_get_skill_history: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SkillHistoryOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_sync_skill_history: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SkillHistoryOut"];
                 };
             };
         };

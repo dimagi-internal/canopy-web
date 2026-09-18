@@ -82,6 +82,9 @@ const AgentWorkProductsSection = lazySection(() =>
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
 )
+const AgentHistorySection = lazySection(() =>
+  import('./pages/agents/AgentHistorySection').then((m) => ({ default: m.AgentHistorySection })),
+)
 
 // The standalone live-chat route is lazy — it pulls in the canopy-ui/chat kit
 // (WebSocket hook + presentational tree) and react-markdown only when opened.
@@ -257,6 +260,7 @@ export const routeTable: RouteObject[] = [
           { path: 'credentials', element: <LazySection><AgentCredentialsSection /></LazySection> },
           { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },
           { path: 'skills', element: <LazySection><AgentSkillsSection /></LazySection> },
+          { path: 'history', element: <LazySection><AgentHistorySection /></LazySection> },
         ],
       },
       { path: '/w/:workspace/ddd', element: <DddPage /> },
