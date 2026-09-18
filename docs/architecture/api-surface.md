@@ -150,6 +150,8 @@ An `Agent` (e.g. "Echo") is a first-class entity — distinct from a code Projec
 - `DELETE /api/agents/{slug}/syncs/{sync_id}/` — Remove a sync filed under the wrong period (POST upserts per `(period, source)`, so a mis-periodized sync is otherwise unreachable)
 - `GET|POST /api/agents/{slug}/work-products/` — List / upsert work products (by url)
 - `GET|PUT /api/agents/{slug}/skills/` — List / replace (PUT) the skill catalog so it mirrors the repo
+- `GET /api/agents/{slug}/skill-history/` — member. Skill history parsed from the agent repo's git log (`skills/*/SKILL.md`), read through `Agent.owner`'s GitHub grant. Syncs first when the last successful sync is older than 1 hour (debounced 90s server-side); returns `credential_state` (`ok`/`no_repo`/`no_owner`/`owner_not_connected`/`repo_not_granted`) for the page's empty states. Drives the **History** rail section
+- `POST /api/agents/{slug}/skill-history/sync` — editor+. Force a sync now (same payload as the GET)
 - `GET /api/agents/{slug}/runtime` — The **Agent Runtime Registry** read: a PAT-authed runner asks "how do I run agent X?" and gets the repo pointer, secret-reference names, engine preference, and tenant. See `docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md`
 - `GET /api/agents/{slug}/tasks/` — List the board
 - `POST /api/agents/{slug}/tasks/sync` — Upsert tasks from the (legacy) source sheet (non-destructive)

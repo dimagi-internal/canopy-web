@@ -63,6 +63,8 @@ app by MultiAuth.
 | `update_schedule` | write (rate-limited) | Update a schedule; only the fields passed are changed. |
 | `delete_schedule` | write (rate-limited) | Delete a schedule, retiring any open occurrence it fired first. |
 | `run_schedule_now` | write (rate-limited) | Trigger a schedule off-cycle immediately. |
+| `skill_history` | read | An agent's skill revisions from its repo's git history (date, subject, body, line change, checking skills), filterable by `skill`/`group`/`since`/`until`. Backs the History page. |
+| `skill_revision_diff` | read | The unified diff one commit made to one skill's `SKILL.md`, fetched live from GitHub and truncated to 20 KB. |
 
 The six schedule tools call `apps/harness/schedule_services.py`, the same
 request-free service layer the REST `/api/agents/{slug}/schedules/` routes

@@ -1,6 +1,6 @@
 # An agent's skill history, and an assistant that knows which skill you mean
 
-**Status:** designed, not built.
+**Status:** built on branch emdash/agent-skill-history-spec (PR pending).
 **Prototype:** the approved design mockup — https://claude.ai/artifact/81X2S36cpLRqgkJTATRQ7c
 (private; built from ACE's real git history on 2026-09-18).
 
@@ -69,6 +69,17 @@ Consequences, stated plainly on the page when they apply:
 
 The sync records which grant it used (`synced_with` = the owner's GitHub login), so
 the page can say whose access produced what you are looking at.
+
+**What the build added beyond this.** `repo_url` is restricted to exactly
+`https://github.com/<owner>/<repo>[.git]` — validated before the sync claim, before
+`access_token_for`, before any subprocess — because the confused-deputy risk above is
+not just "which repo" but "which host": an editor names `repo_url`, and without this
+check the owner's token would ride `http.extraheader` to whatever host that string
+named. The token itself rides that header scoped to the clone alone (`-c
+http.extraheader=Authorization: Bearer <token>`), never a URL, an exception message,
+or `last_error`. `skill_revision_diff` applies the same discipline on the read side:
+`sha` and `skill` are validated before either reaches GitHub's API, so a malformed
+value can't be used to probe with the owner's credential.
 
 ## Shape
 
