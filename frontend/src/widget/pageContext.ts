@@ -45,7 +45,7 @@ export const pageContextRules: PageContextRule[] = [
   // Inbox and Items are where "this is stale" gets said, so they are named
   // specifically rather than collapsed into "the agent workspace".
   {
-    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)\/(items|inbox|turns|tasks|schedules|syncs|skills|runners|overview)/,
+    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)\/(items|inbox|turns|tasks|schedules|syncs|skills|history|runners|overview)/,
     build: (m) => ({
       surface: `the ${m[3]} view of agent ${m[2]}`,
       params: { workspace: m[1], agent: m[2], section: m[3] },

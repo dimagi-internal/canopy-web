@@ -47,6 +47,7 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     { to: 'credentials', label: 'Credentials' },
     { to: 'work-products', label: 'Work products' },
     { to: 'skills', label: 'Skills' },
+    { to: 'history', label: 'History' },
   ]
 
   const header = (

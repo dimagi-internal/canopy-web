@@ -295,6 +295,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Browse the agent\'s skill catalog'],
   },
   {
+    path: '/w/:workspace/agents/:slug/history',
+    title: 'Agent skill history',
+    audience: 'The person(s) who own this agent',
+    what: "How each skill in the agent's repository changed over time, read from its git history. Drill from all skills, to a group, to one skill, to one commit.",
+    actions: ['Scrub the timeline or play it back', 'Open a group, skill or commit', 'Sync from GitHub'],
+  },
+  {
     path: '/w/:workspace/ddd',
     title: 'DDD narratives',
     audience: 'Anyone building or reviewing a demo',
