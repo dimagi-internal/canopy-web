@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SkillHistoryOut } from '@/api/agents'
-import { buildModel, dayOf, fmtDay, panelAt, tilesAt, totalsAt, weeklyCounts } from './model'
+import { buildModel, dayOf, fmtDay, panelAt, skillsSeries, tilesAt, totalsAt, weeklyCounts } from './model'
 
 const H = {
   agent: 'ace', repo_url: 'x', head_sha: 'b', synced_at: '2026-04-20T00:00:00Z', synced_with: 'o',
@@ -79,5 +79,32 @@ describe('skill history model', () => {
     expect(p.kind).toBe('commit')
     if (p.kind !== 'commit') return
     expect(p.rows).toEqual([{ name: 'gone', change: 'removed', lines: 0 }])
+  })
+
+  it('builds the group panel with its skills, revisions, and recent commits', () => {
+    const p = panelAt(m, 19, { group: 'One' })
+    expect(p.kind).toBe('group')
+    if (p.kind !== 'group') return
+    expect(p).toMatchObject({
+      title: 'One',
+      kindLabel: 'Phase 01',
+      skills: 1,
+      revisions: 3,
+      first: 'Apr 1',
+    })
+    expect(p.rows).toEqual([
+      { name: 'alpha', first: 'Apr 1', revisions: 2, lines: 12, checkedBy: ['alpha-eval'] },
+    ])
+    // recent lists commits touched by alpha or alpha-eval (b2, a1), newest first.
+    expect(p.recent.map((c) => c.subject)).toEqual(['fix: alpha and its eval', 'feat: alpha'])
+  })
+
+  it('counts skills across the whole window, dropping gone on day 9', () => {
+    const series = skillsSeries(m)
+    expect(series).toHaveLength(m.days + 1)
+    expect(series[0]).toBe(2) // alpha + gone (alpha-eval not yet created)
+    expect(series[4]).toBe(3) // alpha + alpha-eval + gone
+    expect(series[9]).toBe(2) // alpha + alpha-eval (gone removed on day 9)
+    expect(series[19]).toBe(2)
   })
 })
