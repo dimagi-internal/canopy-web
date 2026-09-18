@@ -32,28 +32,25 @@ EVENT = TypeAdapter(E.Event)
 #: exactly what a fitness test is supposed to stop anyone from forgetting.
 FRAME_SOURCES = [Path(m.__file__).read_text() for m in (consumers, stream_map)]
 
-#: Frames the consumer emits that deliberately have no AG-UI spelling.
+#: There is deliberately no "known unmapped" allowlist any more.
 #:
-#: Being listed here is a decision, not an oversight — which is the entire point
-#: of the fitness test below. Each needs a reason:
+#: There was one, with three entries, each carrying a reason. All three reasons
+#: were wrong, and the list is how they got past review:
 #:
-#:   session.state      — the connect snapshot. It is not one event but a whole
-#:                        conversation plus participants plus drafts; an AG-UI
-#:                        client gets MESSAGES_SNAPSHOT + STATE_SNAPSHOT built
-#:                        from the same source, which is a different shape, not
-#:                        a translation of this frame.
-#:   session.stop       — a request to stop, travelling the other way. AG-UI
-#:                        models cancellation on the client side, not as a
-#:                        server event.
-#:   session.page_action— canopy asking the PAGE to run something. It is the
-#:                        host↔frame contract (page_actions.py), not the
-#:                        agent↔UI one, and an AG-UI client is not the party
-#:                        that executes it.
-KNOWN_UNMAPPED = {
-    "session.state",
-    "session.stop",
-    "session.page_action",
-}
+#:   session.state       "an AG-UI client gets MESSAGES_SNAPSHOT + STATE_SNAPSHOT
+#:                       built from the same source" -- nothing built them. Every
+#:                       AG-UI conversation opened empty.
+#:   session.stop        "travelling the other way" -- it travels server->client;
+#:                       it is how you learn whether your stop landed (#649).
+#:   session.page_action "an AG-UI client is not the party that executes it" --
+#:                       the widget's frame IS that client, and relays it.
+#:
+#: An allowlist with a reason on every line reads as considered, which is
+#: exactly what stopped anyone checking it. The rule is now the one that would
+#: have caught all three: every frame a canopy client can receive ROUND-TRIPS
+#: (see `test_every_frame_the_consumer_emits_is_in_the_round_trip_fixture`).
+#: If a frame one day genuinely has no AG-UI meaning, that is a case to argue in
+#: a PR, not an entry to append.
 
 
 def _frames_the_consumer_can_emit() -> set[str]:
@@ -72,7 +69,7 @@ def _frames_the_consumer_can_emit() -> set[str]:
 def test_the_projection_covers_every_frame_the_consumer_can_emit():
     """The fitness test.
 
-    A frame with no mapping and no entry in KNOWN_UNMAPPED means an AG-UI client
+    A frame with no mapping means an AG-UI client
     silently never hears about something a canopy client does. The failure is
     invisible in production — no error, no dropped connection — so it has to be
     caught here or not at all.
@@ -92,24 +89,36 @@ def test_the_projection_covers_every_frame_the_consumer_can_emit():
     # not exist.
     assert "chat.tool_use" in emitted, "the streaming producer is not being read"
 
-    unmapped = set()
-    for name in emitted - KNOWN_UNMAPPED:
-        if not agui.project({"event": name, "data": {}}, thread_id="t1", run_id="r1"):
-            unmapped.add(name)
+    unmapped = {
+        name for name in emitted
+        if not agui.project({"event": name, "data": {}}, thread_id="t1", run_id="r1")
+    }
 
     assert not unmapped, (
         f"{sorted(unmapped)} reach a canopy client but not an AG-UI one. Add a "
-        f"mapping in apps/canopy_sessions/agui.py, or add it to KNOWN_UNMAPPED "
-        f"with the reason it has no AG-UI spelling."
+        f"mapping in apps/canopy_sessions/agui.py."
     )
 
 
-def test_known_unmapped_does_not_name_frames_that_no_longer_exist():
-    """An entry left behind after a frame is deleted makes the exception list
-    look considered while covering nothing."""
-    stale = KNOWN_UNMAPPED - _frames_the_consumer_can_emit()
+def test_every_frame_the_consumer_emits_is_in_the_round_trip_fixture():
+    """Maps-to-something is necessary and not sufficient.
 
-    assert not stale, f"{sorted(stale)} are listed as unmapped but nothing emits them"
+    A frame can project to an event the TypeScript inverse then ignores, and
+    both halves pass their own tests. Only the shared fixture proves the whole
+    trip -- `agui.test.ts` asserts `fromAgui(project(frame))` recovers `frame`
+    for every entry -- so every frame a client can receive has to be IN it.
+    This is the test the old allowlist should have been.
+    """
+    from tests.test_agui_projection import ROUND_TRIP_FRAMES
+
+    covered = {frame["event"] for frame in ROUND_TRIP_FRAMES}
+    missing = _frames_the_consumer_can_emit() - covered
+
+    assert not missing, (
+        f"{sorted(missing)} are emitted but never round-tripped. Add a realistic "
+        f"example to ROUND_TRIP_FRAMES in tests/test_agui_projection.py and run "
+        f"`python -m tests.regen_agui_fixture`."
+    )
 
 
 # --- the seam itself ---------------------------------------------------------
@@ -207,9 +216,31 @@ async def test_a_frame_with_no_ag_ui_meaning_sends_nothing_rather_than_leaking(c
     AG-UI, where it is not merely useless but unparseable."""
     consumer.agui_mode = True
 
-    await consumer.send_json({"event": "session.state", "data": {"messages": []}})
+    # An UNKNOWN frame, not a real one. This test used `session.state` until
+    # 2026-09-18 -- i.e. it asserted that the connect snapshot sends nothing on
+    # an AG-UI socket, which was the bug, passing.
+    await consumer.send_json({"event": "canopy.no_such_frame", "data": {"x": 1}})
 
     assert consumer.sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_connect_snapshot_reaches_an_ag_ui_client(consumer):
+    """The frame a client cannot live without: without it every conversation
+    opens empty and a reconnect loses the history."""
+    consumer.agui_mode = True
+    snapshot = {"messages": [{"id": "1", "role": "user", "plaintext": "hi"}],
+                "active_draft": None, "participants": [], "presence_user_ids": [],
+                "current_user_id": 7, "menu": None}
+
+    await consumer.send_json({"event": "session.state", "data": snapshot})
+
+    [event] = consumer.sent
+    assert event["type"] == "MESSAGES_SNAPSHOT"
+    assert event["messages"] == [{"id": "1", "role": "user", "content": "hi"}]
+    # Verbatim for canopy's own client -- drafts, presence and the pending menu
+    # have no AG-UI spelling and must not be lost in translation.
+    assert event["metadata"]["canopy"]["frame"] == {"event": "session.state", "data": snapshot}
 
 
 # --- negotiation -------------------------------------------------------------

@@ -493,7 +493,12 @@ function EmbedChat({
     [client, link, sessionId],
   )
 
-  const socket = useSessionSocket({ sessionId, wsUrl, onUnknownEvent })
+  // AG-UI on the wire. `session.page_action` and `page.invalidate` still reach
+  // `onUnknownEvent` exactly as before: they ride AG-UI's CUSTOM event and
+  // `fromAgui` unwraps them into the canopy frames this handler already reads.
+  // (Page actions were silently dropped by the AG-UI projection until
+  // 2026-09-18 — flipping this before that fix would have disabled every one.)
+  const socket = useSessionSocket({ sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui' })
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to

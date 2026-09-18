@@ -287,3 +287,30 @@ def test_the_doc_does_not_still_claim_context_is_a_snapshot(doc):
     something that no longer exists."""
     limits = doc[doc.index("## 9. Reference: known limits"):]
     assert "~~**Context is a snapshot.**~~" in limits, "the correction was dropped"
+
+
+def test_the_documented_agui_socket_contract_is_the_real_one(doc):
+    """The doc tells a host the query flag, the CUSTOM prefix and the metadata
+    key a lossy frame rides under. Each is a literal in code a host cannot see,
+    so each is pinned to that literal rather than trusted."""
+    import json as _json
+
+    from apps.canopy_sessions import agui
+    from apps.canopy_sessions.consumers import AGUI_PROTOCOL
+
+    assert f"?protocol={AGUI_PROTOCOL}" in doc
+    assert f"`CUSTOM` events named `{agui.CUSTOM_PREFIX}<event>`" in doc
+    assert f"`metadata.{agui.METADATA_KEY}.frame`" in doc
+
+    # And the frames the doc names as carrying the original really do.
+    for frame in (
+        {"event": "session.state", "data": {"messages": []}},
+        {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "x"}},
+    ):
+        [event] = [agui.encode(e) for e in agui.project(frame, thread_id="t")]
+        assert event["metadata"][agui.METADATA_KEY]["frame"] == frame, _json.dumps(event)
+
+    # "canopy-ui >= 0.9" is only true if the version that ships this says so.
+    pkg = _json.loads((REPO / "frontend" / "packages" / "canopy-ui" / "package.json").read_text())
+    major, minor = (int(x) for x in pkg["version"].split(".")[:2])
+    assert (major, minor) >= (0, 9)

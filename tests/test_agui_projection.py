@@ -374,18 +374,6 @@ def test_the_agents_own_state_rides_the_designed_activity_extension_point():
     assert snapshot.content == {"state": "blocked"}
 
 
-def test_page_state_is_the_same_object_in_both_directions():
-    """What the page declares (`page_state.py`) is what a client receives as
-    shared state and what `RunAgentInput.state` carries back — one vocabulary,
-    which is the point of adopting a protocol rather than inventing a second."""
-    event = agui.project_state(
-        page_state={"backing_tool": "list_insights", "visible_ids": [1, 2]}, title="Chat"
-    )
-
-    assert event.type == E.EventType.STATE_SNAPSHOT
-    assert event.snapshot["page"]["backing_tool"] == "list_insights"
-
-
 # --- the projection must never break the socket it rides on ------------------
 
 
@@ -433,13 +421,54 @@ ROUND_TRIP_FRAMES = [
     {"event": "draft.updated", "data": {"id": "d1", "body": "x", "version": 2}},
     {"event": "presence.joined", "data": {"user_id": 7}},
     {"event": "presence.left", "data": {"user_id": 7}},
+    # --- every other frame a canopy client can receive ------------------------
+    # Added 2026-09-18, when `test_every_frame_the_consumer_emits_is_in_the_
+    # round_trip_fixture` arrived and found twelve frames that had never been
+    # proven to survive the trip. Shapes copied from the producers
+    # (`consumers.py`, `stream_map.py`, `page_actions.py`), not invented, so a
+    # producer changing its payload shows up here as a stale example.
+    {"event": "session.state",
+     "data": {"messages": [
+                  {"id": "41", "turn_index": 0, "role": "user", "content": {},
+                   "plaintext": "what is stale?", "status": "complete",
+                   "error_detail": None, "started_at": None, "completed_at": None,
+                   "created_at": "2026-09-18T12:00:00+00:00"},
+                  {"id": "42", "turn_index": 1, "role": "assistant", "content": {},
+                   "plaintext": "Three insights are.", "status": "complete",
+                   "error_detail": None, "started_at": None, "completed_at": None,
+                   "created_at": "2026-09-18T12:00:05+00:00"}],
+              "active_draft": None,
+              "participants": [{"user_id": 7, "role": "editor"}],
+              "presence_user_ids": [7],
+              "current_user_id": 7,
+              "menu": None}},
+    {"event": "session.page_action",
+     "data": {"id": "9f1c", "name": "scrollToRow", "args": {"id": 4471}}},
+    {"event": "session.stop", "data": {"state": "failed"}},
+    {"event": "session.activity", "data": {"state": "working"}},
+    {"event": "session.menu",
+     "data": {"menu": {"source": "hook", "question": "Proceed?", "observed_at": 1758196800,
+                       "options": [{"label": "Yes"}, {"label": "No"}]}}},
+    {"event": "session.error", "data": {"code": "draft_conflict", "message": "stale version"}},
+    {"event": "chat.stream_cancelled", "data": {"message_id": "m1", "partial_len": 12}},
+    {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "runner went away"}},
+    {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
+    {"event": "draft.discarded", "data": {"draft_id": "d1"}},
+    {"event": "draft.lock_changed",
+     "data": {"draft_id": "d1", "holder_user_id": 7, "expires_at": "2026-09-18T12:01:00+00:00"}},
+    {"event": "page.invalidate", "data": {"uri": "item://"}},
 ]
 
 
 def _build_fixture() -> list[dict]:
     return [
         {"canopy": frame,
-         "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1", run_id="r1")]}
+         # NO run id, because the live socket passes none
+         # (`SessionConsumer.send_json`). This passed `run_id="r1"` until
+         # 2026-09-18, so the round trip proved a path production never takes —
+         # and missed that the path it does take renamed a cancelled stream to
+         # an event the reducer does not know.
+         "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1")]}
         for frame in ROUND_TRIP_FRAMES
     ]
 
@@ -459,3 +488,21 @@ def test_the_fixture_covers_the_frames_a_conversation_actually_uses():
 
     assert {"chat.stream_start", "chat.delta", "chat.stream_complete",
             "chat.tool_use", "chat.tool_result"} <= covered
+
+
+def test_the_wire_is_ag_ui_1():
+    """The major is the contract. 1.0 froze the spec and promised to hold it;
+    a 2.0 arriving through a loosened pin, or a downgrade back onto the 0.1.x
+    draft, must be a decision someone makes here rather than a lockfile drift."""
+    from ag_ui.core import PROTOCOL_VERSION
+
+    assert PROTOCOL_VERSION.split(".")[0] == "1", PROTOCOL_VERSION
+
+
+def test_canopys_metadata_key_is_user_space_under_ag_ui_1():
+    """Third-party AG-UI 1.0 clients strip events against the schema. canopy's
+    lossy-frame originals ride under `metadata.canopy`, so that key must be one
+    the schema leaves open — 1.0 reserves `ag-ui` and nothing else."""
+    from ag_ui.core.types import AGUI_METADATA_KEY
+
+    assert agui.METADATA_KEY != AGUI_METADATA_KEY

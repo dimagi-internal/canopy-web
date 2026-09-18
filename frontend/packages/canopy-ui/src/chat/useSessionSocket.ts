@@ -58,6 +58,27 @@ export interface UseSessionSocketOptions {
   protocol?: "canopy" | "ag-ui";
 }
 
+/**
+ * Ask for AG-UI on the URL the caller built — whatever it looks like.
+ *
+ * The hook OWNS this flag rather than handing the caller a path with it already
+ * attached, because that contract was invisible and two of the first three
+ * callers broke it: canopy-web's widget builds `client.sessionSocketUrl(id)` and
+ * ace-web builds `buildCanopyWsUrl(base, id)`, and both ignore the path they are
+ * given (they need their own token in the query). The flag was dropped, the
+ * server answered in native frames, and every one of them decoded as AG-UI to
+ * nothing — a blank chat with no error, caught only in review before it shipped.
+ *
+ * Exported for the test, which asserts on the URL a socket really opens.
+ */
+export function withAguiProtocol(url: string): string {
+  // Empty is a caller saying "no URL yet" (the widget before it has a
+  // session); decorating it would turn a deliberate no-op into a bad request.
+  if (!url) return url;
+  if (/[?&]protocol=/.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}protocol=ag-ui`;
+}
+
 export interface UseSessionSocketResult {
   state: SessionState;
   connected: boolean;
@@ -121,6 +142,7 @@ export function useSessionSocket({
   // vocabulary mid-session.
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
+  const warnedNativeRef = useRef(false);
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
@@ -202,8 +224,9 @@ export function useSessionSocket({
     // by an ARGS event from this one — the ids are per-stream.
     resetAguiState();
     const path = `ws/canopy-sessions/${sessionId}/`;
+    const built = wsUrl(path);
     const ws = new WebSocket(
-      wsUrl(protocolRef.current === "ag-ui" ? `${path}?protocol=ag-ui` : path),
+      protocolRef.current === "ag-ui" ? withAguiProtocol(built) : built,
     );
     socketRef.current = ws;
 
@@ -229,6 +252,22 @@ export function useSessionSocket({
       try {
         const raw = JSON.parse(e.data);
         if (protocolRef.current === "ag-ui") {
+          // We asked for AG-UI and the server answered in canopy's own frames:
+          // a server that predates the negotiation, or a URL that lost the flag
+          // on the way (see `withAguiProtocol`). The two are unambiguous — every
+          // AG-UI event has a `type`, and no canopy frame does — so apply it as
+          // what it is. Decoding it as AG-UI yields nothing, which is a blank
+          // chat with no error: the worst possible way to find out.
+          if (typeof raw?.type !== "string" && typeof raw?.event === "string") {
+            if (!warnedNativeRef.current) {
+              warnedNativeRef.current = true;
+              console.warn(
+                "canopy-ui: asked for protocol=ag-ui but the server sent canopy frames; handling them as canopy frames.",
+              );
+            }
+            applyEvent(raw as WsEvent);
+            return;
+          }
           // One AG-UI event can be several canopy frames (a tool call is three
           // events) or none, so this is a fan-out rather than a rename.
           for (const frame of fromAgui(raw)) applyEvent(frame);

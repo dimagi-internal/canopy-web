@@ -135,7 +135,10 @@ export function ChatPage() {
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
 
-  const socket = useSessionSocket({ sessionId: id, wsUrl })
+  // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
+  // back into the same `WsEvent`s the reducer has always consumed, and
+  // `agui.test.ts` proves the reducer reaches identical state either way.
+  const socket = useSessionSocket({ sessionId: id, wsUrl, protocol: 'ag-ui' })
 
   // Session meta + scroll-back cursor seed.
   useEffect(() => {
