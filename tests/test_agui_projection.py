@@ -488,3 +488,21 @@ def test_the_fixture_covers_the_frames_a_conversation_actually_uses():
 
     assert {"chat.stream_start", "chat.delta", "chat.stream_complete",
             "chat.tool_use", "chat.tool_result"} <= covered
+
+
+def test_the_wire_is_ag_ui_1():
+    """The major is the contract. 1.0 froze the spec and promised to hold it;
+    a 2.0 arriving through a loosened pin, or a downgrade back onto the 0.1.x
+    draft, must be a decision someone makes here rather than a lockfile drift."""
+    from ag_ui.core import PROTOCOL_VERSION
+
+    assert PROTOCOL_VERSION.split(".")[0] == "1", PROTOCOL_VERSION
+
+
+def test_canopys_metadata_key_is_user_space_under_ag_ui_1():
+    """Third-party AG-UI 1.0 clients strip events against the schema. canopy's
+    lossy-frame originals ride under `metadata.canopy`, so that key must be one
+    the schema leaves open — 1.0 reserves `ag-ui` and nothing else."""
+    from ag_ui.core.types import AGUI_METADATA_KEY
+
+    assert agui.METADATA_KEY != AGUI_METADATA_KEY

@@ -359,10 +359,17 @@ designed extension points rather than being dropped:
   land") are `CUSTOM` events named `canopy.<event>`;
 - where AG-UI's spelling is lossy for canopy — the connect snapshot, a stream
   error, a blocked agent's dialog — the original frame rides alongside under
-  `metadata.canopy.frame`. A generic AG-UI client ignores it and still gets
-  `MESSAGES_SNAPSHOT`, `RUN_ERROR` and the rest; canopy's client uses it.
+  `metadata.canopy.frame`. It is legal AG-UI 1.0 metadata, so a 1.0 client's
+  enforcement keeps it (CI checks every event canopy emits against
+  `@ag-ui/client`'s own `enforceEvents`).
 
 Ask for nothing and you get canopy's native frames, unchanged.
+
+One limit, so nobody discovers it the hard way: the EVENTS are AG-UI 1.0, the
+TRANSPORT is canopy's. AG-UI's own clients expect one HTTP request per run,
+streamed over SSE and opening with `RUN_STARTED`; canopy's socket is a
+long-lived multiplayer session. So point `canopy-ui` (or your own reader) at the
+socket — not a stock AG-UI `HttpAgent`, which will reject the stream.
 
 ---
 

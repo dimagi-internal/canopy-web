@@ -2,11 +2,12 @@
 
 **The whole module is a seam.** AG-UI types are constructed here and nowhere
 else, and canopy's own frames are never replaced by them — this is a projection
-alongside `WsEvent`, not a migration of it. The reason is stated plainly rather
-than implied: `ag-ui-protocol` is `0.1.x`, its enum already carries removals
-scheduled for 1.0 (`THINKING_*` → `REASONING_*`), and `canopy-ui` is published
-to public npm at 0.7.0 with ace-web downstream. A wrong bet must cost one
-module, not a protocol migration across two repos.
+alongside `WsEvent`, not a migration of it. canopy's frames stay the in-memory
+model at both ends; AG-UI is the wire between them. That was a hedge while the
+protocol was a 0.1.x draft, and it still earns its keep on 1.0 (frozen
+2026-09-17, adopted here the next day): `canopy-ui` is on public npm with
+ace-web downstream, so a 2.0 must cost one module, not a protocol migration
+across two repos.
 
 **Why AG-UI at all.** canopy invented this contract twice already — ACP turned
 out to specify what the runner had hand-rolled, and AG-UI specifies what the

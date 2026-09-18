@@ -35,11 +35,14 @@ dependencies = [
     # SDK 2.2, which does. The floor is the version that carries that SDK.
     "fastmcp>=4.0,<5.0",
     # AG-UI: the agent<->UI protocol canopy had hand-rolled (apps/canopy_sessions/agui.py).
-    # Pinned to an exact minor because it is PRE-1.0 and its own enum already
-    # carries removals scheduled for 1.0 (THINKING_* -> REASONING_*). The pin is
-    # what makes `agui.py` a seam rather than a dependency: AG-UI types are
-    # constructed there and nowhere else, so a breaking release costs one module.
-    "ag-ui-protocol>=0.1.22,<0.2",
+    # 1.0 froze the spec (2026-09-17) and this moved onto it the next day, before
+    # any client depended on the wire. The old `<0.2` pin was right while the
+    # protocol was a draft, and would have been a silent freeze the moment 1.0
+    # shipped — the same trap as the old `<1.0` caps on allauth and anthropic.
+    # The cap is now the MAJOR, which is what a 1.0 promises to hold stable.
+    # `agui.py` is still the seam: AG-UI types are constructed there and nowhere
+    # else, so a 2.0 costs one module.
+    "ag-ui-protocol>=1.0,<2.0",
     "channels>=4.1,<5.0",
     "channels-redis>=4.2,<5.0",
     # S3 for chat attachment bytes (apps/canopy_sessions/attachment_storage.py).
