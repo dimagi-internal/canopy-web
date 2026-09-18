@@ -51,6 +51,7 @@ from dataclasses import dataclass
 
 import requests
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
@@ -63,6 +64,11 @@ GITHUB_API = "https://api.github.com"
 
 # Every GitHub call gets one, because a hung request here blocks a web worker.
 HTTP_TIMEOUT = 15
+
+# A cached access token is reused until this long before GitHub's stated
+# expiry, so a token handed to a caller does not die mid-operation (a clone
+# plus a diff can take a minute; five is generous).
+ACCESS_TOKEN_MARGIN = timezone.timedelta(minutes=5)
 
 # The session key the CSRF `state` is parked under between initiate and
 # callback. Session-bound rather than a signed cookie so it is single-use by
@@ -280,19 +286,25 @@ def _auth_headers(access_token: str) -> dict:
     }
 
 
+def _expiry(seconds) -> timezone.datetime | None:
+    return timezone.now() + timezone.timedelta(seconds=int(seconds)) if seconds else None
+
+
 def _store(user, *, body: dict, gh_user: dict) -> GitHubConnection:
-    """Persist a fresh grant. Encrypts the refresh token; drops the access one."""
-    expires_in = body.get("refresh_token_expires_in")
-    refresh_expires = (
-        timezone.now() + timezone.timedelta(seconds=int(expires_in)) if expires_in else None
-    )
+    """Persist a fresh grant: both tokens, encrypted, with their expiries.
+
+    The access token from the code exchange is cached too, so the first use
+    after connecting does not spend the refresh token for nothing.
+    """
     conn, _ = GitHubConnection.objects.update_or_create(
         user=user,
         defaults={
             "github_login": gh_user.get("login", ""),
             "github_user_id": int(gh_user.get("id") or 0),
             "refresh_token_enc": encrypt_secret(body.get("refresh_token", "")),
-            "refresh_token_expires_at": refresh_expires,
+            "refresh_token_expires_at": _expiry(body.get("refresh_token_expires_in")),
+            "access_token_enc": encrypt_secret(body.get("access_token", "")),
+            "access_token_expires_at": _expiry(body.get("expires_in")),
             "refresh_failed_at": None,
         },
     )
@@ -338,18 +350,43 @@ def complete_authorization(user, *, code: str, state: str | None, session) -> Gi
 
 # ---- using the grant ---------------------------------------------------------
 
+def _cached_access_token(conn: GitHubConnection) -> str:
+    """The row's cached access token if it is good for at least the margin
+    longer, else "". An undecryptable value (a rotated key) is treated as no
+    cache, since a refresh replaces it anyway."""
+    if not (conn.access_token_enc and conn.access_token_expires_at):
+        return ""
+    if conn.access_token_expires_at - ACCESS_TOKEN_MARGIN <= timezone.now():
+        return ""
+    try:
+        return decrypt_secret(conn.access_token_enc)
+    except Exception:
+        return ""
+
+
 def access_token_for(user) -> str:
-    """A usable user access token, refreshed on the spot.
+    """A usable user access token — the cached one while it is fresh, otherwise
+    refreshed on the spot.
 
     Refresh-on-use rather than refresh-on-schedule: the access token lives 8
-    hours and this is called a handful of times per user ever, so a background
+    hours and this is called a handful of times per user, so a background
     refresher would be machinery for nothing — and one that fell behind would
     fail at exactly the moment someone pressed a button.
 
-    GitHub rotates the refresh token, so the new one is stored before the
-    caller does anything with the access token. A rejection stamps
-    `refresh_failed_at`, which is what turns an opaque mid-operation 401 into
-    "reconnect GitHub" on `/settings`.
+    WHY THE CACHE AND THE LOCK. GitHub rotates the refresh token on every
+    refresh and invalidates the old one. Refreshing on EVERY call (which this
+    used to do) meant two concurrent callers both spent the same refresh
+    token; the loser's exchange was rejected, `refresh_failed_at` was stamped,
+    and the grant was dead for every feature until the user reconnected. So
+    the access token is reused until `ACCESS_TOKEN_MARGIN` before it expires,
+    and a refresh happens inside a transaction holding `select_for_update` on
+    the row — re-read AFTER the lock is taken, so a caller that queued behind
+    another's refresh uses the token that refresh produced instead of spending
+    the (now dead) refresh token it read before waiting.
+
+    The rotated refresh token is stored before the caller does anything with
+    the access token. A rejection stamps `refresh_failed_at`, which is what
+    turns an opaque mid-operation 401 into "reconnect GitHub" on `/settings`.
     """
     conn = GitHubConnection.objects.filter(user=user).first()
     if conn is None:
@@ -357,32 +394,56 @@ def access_token_for(user) -> str:
     if conn.needs_reconnect:
         raise GitHubAuthError("your GitHub connection expired — reconnect it in Settings")
 
+    cached = _cached_access_token(conn)
+    if cached:
+        GitHubConnection.objects.filter(pk=conn.pk).update(last_used_at=timezone.now())
+        return cached
+
     cid, secret = _require_configured()
-    try:
-        body = _exchange({
-            "client_id": cid,
-            "client_secret": secret,
-            "grant_type": "refresh_token",
-            "refresh_token": decrypt_secret(conn.refresh_token_enc),
-        })
-    except GitHubAuthError:
-        conn.refresh_failed_at = timezone.now()
-        conn.save(update_fields=["refresh_failed_at", "updated_at"])
-        raise
+    failure: GitHubAuthError | None = None
+    token = ""
+    with transaction.atomic():
+        # Re-read under the lock: another process may have refreshed (or had
+        # its refresh rejected) while this one waited.
+        conn = GitHubConnection.objects.select_for_update().get(pk=conn.pk)
+        if conn.needs_reconnect:
+            raise GitHubAuthError("your GitHub connection expired — reconnect it in Settings")
+        cached = _cached_access_token(conn)
+        if cached:
+            conn.last_used_at = timezone.now()
+            conn.save(update_fields=["last_used_at", "updated_at"])
+            return cached
 
-    new_refresh = body.get("refresh_token") or ""
-    expires_in = body.get("refresh_token_expires_in")
-    conn.refresh_token_enc = encrypt_secret(new_refresh) if new_refresh else conn.refresh_token_enc
-    if expires_in:
-        conn.refresh_token_expires_at = timezone.now() + timezone.timedelta(seconds=int(expires_in))
-    conn.refresh_failed_at = None
-    conn.last_used_at = timezone.now()
-    conn.save(update_fields=[
-        "refresh_token_enc", "refresh_token_expires_at", "refresh_failed_at",
-        "last_used_at", "updated_at",
-    ])
+        try:
+            body = _exchange({
+                "client_id": cid,
+                "client_secret": secret,
+                "grant_type": "refresh_token",
+                "refresh_token": decrypt_secret(conn.refresh_token_enc),
+            })
+        except GitHubAuthError as e:
+            # Recorded inside the block and raised after it, so the stamp
+            # commits rather than rolling back with the exception.
+            conn.refresh_failed_at = timezone.now()
+            conn.save(update_fields=["refresh_failed_at", "updated_at"])
+            failure = e
+        else:
+            new_refresh = body.get("refresh_token") or ""
+            token = body.get("access_token") or ""
+            conn.refresh_token_enc = encrypt_secret(new_refresh) if new_refresh else conn.refresh_token_enc
+            if body.get("refresh_token_expires_in"):
+                conn.refresh_token_expires_at = _expiry(body.get("refresh_token_expires_in"))
+            conn.access_token_enc = encrypt_secret(token) if token else ""
+            conn.access_token_expires_at = _expiry(body.get("expires_in")) if token else None
+            conn.refresh_failed_at = None
+            conn.last_used_at = timezone.now()
+            conn.save(update_fields=[
+                "refresh_token_enc", "refresh_token_expires_at", "access_token_enc",
+                "access_token_expires_at", "refresh_failed_at", "last_used_at", "updated_at",
+            ])
 
-    token = body.get("access_token") or ""
+    if failure is not None:
+        raise failure
     if not token:
         raise GitHubAuthError("GitHub returned no access token on refresh")
     return token
