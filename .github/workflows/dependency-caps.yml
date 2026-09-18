@@ -1,0 +1,44 @@
+name: Dependency caps
+
+# Fails when an upper bound in pyproject.toml excludes upstream's latest release
+# — a cap that read as caution and became a freeze. See
+# scripts/check_dependency_caps.py for the history (allauth, anthropic, fastmcp,
+# ag-ui-protocol, pytest, pytest-asyncio) and for `# cap-hold: <why>`.
+#
+# Deliberately NOT a required check, and deliberately not in ci.yml. The thing
+# that trips it is upstream publishing a release, which has nothing to do with
+# whichever PR is open; a required check that fails on unrelated PRs teaches
+# people to re-run it until it goes green. It also asks PyPI, which a required
+# check should not depend on. (A `paths:` filter on a REQUIRED check would also
+# hang the merge queue — see CLAUDE.md — which is fine here because it is not.)
+on:
+  schedule:
+    - cron: "0 8 * * *"   # 08:00 UTC daily, an hour after the contract nightly
+  pull_request:
+    paths:
+      - pyproject.toml
+      - scripts/check_dependency_caps.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  caps:
+    name: Caps admit the latest release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # The checker needs only `packaging`; syncing the project would make a
+      # PyPI outage look like a dependency problem.
+      - name: Check caps against PyPI
+        run: uv run --no-project --with packaging python scripts/check_dependency_caps.py pyproject.toml

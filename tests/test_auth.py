@@ -625,18 +625,15 @@ def test_authentication_error_is_logged_without_leaking_credentials(rf, caplog):
     request.session = Mock(session_key=None)
 
     # The `apps` logger is configured with propagate=False (settings/base.py), so
-    # records never reach the root logger caplog hooks by default. Attach caplog's
-    # handler to the logger itself rather than relaxing the setting — the
-    # propagation behaviour under test should be the one that ships.
-    log = logging.getLogger("apps.common.auth_adapter")
-    log.addHandler(caplog.handler)
-    try:
-        with caplog.at_level(logging.WARNING, logger="apps.common.auth_adapter"):
-            adapter.on_authentication_error(
-                request, "google", error="unknown", exception=PermissionDenied("bad state")
-            )
-    finally:
-        log.removeHandler(caplog.handler)
+    # records never reach the root logger caplog hooks by default. Since pytest 9,
+    # `at_level(logger=...)` attaches caplog's handler to THAT logger itself, which
+    # is what reaches it without relaxing the setting — the propagation behaviour
+    # under test stays the one that ships. (Under pytest 8 this test attached the
+    # handler by hand; doing both on 9 captures every record twice.)
+    with caplog.at_level(logging.WARNING, logger="apps.common.auth_adapter"):
+        adapter.on_authentication_error(
+            request, "google", error="unknown", exception=PermissionDenied("bad state")
+        )
 
     assert len(caplog.records) == 1
     msg = caplog.records[0].getMessage()
