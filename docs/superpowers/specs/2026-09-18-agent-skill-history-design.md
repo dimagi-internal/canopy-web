@@ -96,7 +96,7 @@ Framework tier (`agents` is framework): nothing here is ACE-specific.
    that single group — correct, just flat.
 5. Replace this agent's rows wholesale in one transaction (the `AgentSkill`
    precedent: a cache of the repo, never edited in place), then `mark_dirty` the
-   resource (§3).
+   resource (§4).
 
 Bounds: 60 s total timeout (clone + log), and a repo whose clone exceeds 200 MB is
 refused with a message rather than filling the task's ephemeral disk. Both numbers
