@@ -325,6 +325,9 @@ Resources:
             # neither is a secret; the client secret is in Secrets Manager.
             - { Name: GITHUB_APP_CLIENT_ID, Value: "Iv23li0buZMWuemM5QQO" }
             - { Name: GITHUB_APP_SLUG, Value: "canopy-agents" }
+            # Slack app (apps/slack): the client id is public — it is in every
+            # install URL. The client + signing secrets are in Secrets Manager.
+            - { Name: SLACK_CLIENT_ID, Value: "2832206080.12127904051216" }
             # Canopy offering its own agent on its own pages. This is an
             # AppCredential NAME, not a secret — the credential is never
             # exchanged here, because the host and canopy are one process (see
