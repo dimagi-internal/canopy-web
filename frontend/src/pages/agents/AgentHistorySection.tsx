@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom'
 import { getSkillHistory, syncSkillHistory, type SkillHistoryOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
@@ -12,11 +12,51 @@ import { SkillHistoryLanes } from './skillHistory/SkillHistoryLanes'
 import { SkillHistoryPanel } from './skillHistory/SkillHistoryPanel'
 import { buildModel, dayOf, fmtDay, isoOf, panelAt, scopeNames, tilesAt, totalsAt, type Selection } from './skillHistory/model'
 
-const STATE_COPY: Record<string, string> = {
-  no_repo: 'This agent has no repository configured, so there is no history to read.',
-  no_owner: 'History reads through the agent owner’s GitHub connection, and this agent has no owner.',
-  owner_not_connected: 'History reads through the agent owner’s GitHub connection. The owner hasn’t connected GitHub.',
-  repo_not_granted: 'The owner’s GitHub connection can’t reach this agent’s repository. The owner can add it on GitHub’s installation screen.',
+const FULL_SHA = /^[0-9a-f]{7,64}$/i
+
+/** Why there is no (fresh) history, and who can do something about it. The
+ *  credential is the agent OWNER's, so the copy names them, offers Connect only
+ *  to them, and links GitHub's installation screen when the repo isn't granted. */
+function CredentialNotice({ h }: { h: SkillHistoryOut }) {
+  const owner = h.owner_name || 'The agent owner'
+  const ownerPossessive = h.owner_name ? `${h.owner_name}’s` : 'the agent owner’s'
+  const ownerPossessiveStart = h.owner_name ? `${h.owner_name}’s` : 'The agent owner’s'
+  let body: ReactNode = null
+  switch (h.credential_state) {
+    case 'no_repo':
+      body = 'This agent has no repository configured, so there is no history to read.'
+      break
+    case 'no_owner':
+      body = 'History reads through the agent owner’s GitHub connection, and this agent has no owner.'
+      break
+    case 'owner_not_connected':
+      body = h.viewer_is_owner
+        ? <>History reads through your GitHub connection, and you haven’t connected GitHub. <Link to="/settings" className="underline">Connect GitHub</Link></>
+        : <>History reads through {ownerPossessive} GitHub connection. {owner} hasn’t connected GitHub, and needs to connect it in their canopy settings.</>
+      break
+    case 'repo_not_granted':
+      body = (
+        <>
+          {h.viewer_is_owner ? 'Your' : ownerPossessiveStart} GitHub connection can’t reach{' '}
+          <span className="font-mono">{h.repo_url || 'this agent’s repository'}</span>.
+          {' '}{h.viewer_is_owner ? 'You can add it' : `${owner} can add it`} on GitHub’s installation screen.
+          {h.install_url && (
+            <>
+              {' '}
+              <a href={h.install_url} target="_blank" rel="noreferrer" className="underline">Choose repositories on GitHub</a>
+            </>
+          )}
+        </>
+      )
+      break
+    default:
+      return null
+  }
+  return (
+    <p role="status" className="m-0 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
+      {body}
+    </p>
+  )
 }
 
 // Small inline stroke icons — not text glyphs (▶/❚❚ render as emoji on some
@@ -189,7 +229,10 @@ export function AgentHistorySection() {
   })
 
   usePageAction('showCommit', ({ sha }) => {
-    const full = model && typeof sha === 'string' ? model.h.commits.find((c) => c.sha.startsWith(sha))?.sha : undefined
+    // Refuse anything that is not a plausible sha before matching by prefix:
+    // '' is a prefix of every sha and would silently open the first commit.
+    if (typeof sha !== 'string' || !FULL_SHA.test(sha)) throw new Error(`sha must be 7 to 64 hex characters, got ${JSON.stringify(sha)}`)
+    const full = model ? model.h.commits.find((c) => c.sha.startsWith(sha.toLowerCase()))?.sha : undefined
     if (!full) throw new Error(`no commit ${String(sha)} in ${agent.slug}'s skill history`)
     onSelect({ commit: full })
     return { shown: full }
@@ -281,23 +324,17 @@ export function AgentHistorySection() {
           </p>
           <p className="m-0 text-[12px] text-muted-foreground">
             {data.synced_at ? `Read ${new Date(data.synced_at).toLocaleString()} using ${data.synced_with}’s GitHub access.` : 'Not read yet.'}
-            {' '}
-            <button type="button" onClick={sync} disabled={syncing} className="text-primary underline disabled:opacity-50">
-              {syncing ? 'Syncing…' : 'Sync from GitHub'}
-            </button>
+            {data.viewer_can_sync && (
+              <>
+                {' '}
+                <button type="button" onClick={sync} disabled={syncing} className="text-primary underline disabled:opacity-50">
+                  {syncing ? 'Syncing…' : 'Sync from GitHub'}
+                </button>
+              </>
+            )}
             {syncError && <span className="ml-2 text-[12px] text-destructive">{syncError}</span>}
           </p>
-          {data.credential_state !== 'ok' && STATE_COPY[data.credential_state] && (
-            <p role="status" className="m-0 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
-              {STATE_COPY[data.credential_state]}
-              {(data.credential_state === 'owner_not_connected' || data.credential_state === 'repo_not_granted') && (
-                <>
-                  {' '}
-                  <Link to="/settings" className="underline">GitHub settings</Link>
-                </>
-              )}
-            </p>
-          )}
+          <CredentialNotice h={data} />
           {data.last_error && data.credential_state === 'ok' && (
             <p role="status" className="m-0 text-[12px] text-destructive">Last sync failed: {data.last_error}</p>
           )}

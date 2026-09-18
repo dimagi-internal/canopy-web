@@ -6,12 +6,16 @@ import { getSkillHistory } from '@/api/agents'
 import { currentPageState } from '@/widget/pageState'
 import { currentSpecs, runPageAction } from '@/widget/pageActions'
 
+const SHA_A = 'a1'.repeat(20)
+const SHA_B = 'b2'.repeat(20)
+
 const H = {
-  agent: 'ace', repo_url: 'x', head_sha: 'b', synced_at: '2026-04-20T00:00:00Z', synced_with: 'owner-gh',
+  agent: 'ace', repo_url: 'https://github.com/o/ace', head_sha: SHA_B, synced_at: '2026-04-20T00:00:00Z', synced_with: 'owner-gh',
   last_error: '', credential_state: 'ok',
+  owner_name: 'Olive Owner', viewer_is_owner: false, viewer_can_sync: true, install_url: 'https://github.com/apps/canopy-agents/installations/new',
   groups: [{ title: 'One', kind: 'phase', num: '01', skills: ['alpha'] }],
   checks: {}, present: ['alpha'],
-  commits: [{ sha: 'a1', date: '2026-04-01', subject: 'feat: alpha' }, { sha: 'b2', date: '2026-04-05', subject: 'fix: alpha grows' }],
+  commits: [{ sha: SHA_A, date: '2026-04-01', subject: 'feat: alpha' }, { sha: SHA_B, date: '2026-04-05', subject: 'fix: alpha grows' }],
   skills: [{ name: 'alpha', revisions: [[0, 10, 10, 0], [1, 12, 2, 0]] }],
 }
 
@@ -53,7 +57,7 @@ describe('AgentHistorySection', () => {
     expect(screen.getByText('fix: alpha grows')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /fix: alpha grows/ }))
-    expect(screen.getByTestId('where').textContent).toContain('commit=b2')
+    expect(screen.getByTestId('where').textContent).toContain(`commit=${SHA_B}`)
 
     fireEvent.click(screen.getByRole('button', { name: 'All skills' }))
     expect(screen.getByTestId('where').textContent).toBe('')
@@ -137,9 +141,42 @@ describe('the page contract', () => {
   it('showCommit accepts a short sha and refuses an unknown one', async () => {
     renderAt()
     await screen.findByText(/owner-gh/)
-    await act(() => runPageAction('showCommit', { sha: 'b2' }))
-    expect(screen.getByTestId('where').textContent).toContain('commit=b2')
-    await expect(runPageAction('showCommit', { sha: 'zzz' })).rejects.toThrow(/no commit/)
+    await act(() => runPageAction('showCommit', { sha: SHA_B.slice(0, 7) }))
+    expect(screen.getByTestId('where').textContent).toContain(`commit=${SHA_B}`)
+    await expect(runPageAction('showCommit', { sha: 'ccccccc' })).rejects.toThrow(/no commit/)
+  })
+
+  it('showCommit refuses an empty or malformed sha instead of opening the first commit', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    for (const sha of ['', 'a1', 'zzzzzzz', 'a'.repeat(65)]) {
+      await expect(runPageAction('showCommit', { sha })).rejects.toThrow(/7 to 64 hex/)
+    }
+    expect(screen.getByTestId('where').textContent).not.toContain('commit=')
+  })
+
+  it('declares a group selection exactly', async () => {
+    renderAt('?group=One&at=2026-04-02')
+    await screen.findByText(/owner-gh/)
+    expect(currentPageState()).toEqual({
+      backing_tool: 'skill_history',
+      resource: 'skill-history://ace',
+      visible_ids: ['One'],
+      visible_count: 1,
+      filters: { agent: 'ace', group: 'One', skill: null, commit: null, as_of: '2026-04-02' },
+    })
+  })
+
+  it('declares a commit selection exactly — the sha the skill_history tool takes as `commit`', async () => {
+    renderAt(`?commit=${SHA_B}&at=2026-04-05`)
+    await screen.findByText(/owner-gh/)
+    expect(currentPageState()).toEqual({
+      backing_tool: 'skill_history',
+      resource: 'skill-history://ace',
+      visible_ids: [SHA_B],
+      visible_count: 1,
+      filters: { agent: 'ace', group: null, skill: null, commit: SHA_B, as_of: '2026-04-05' },
+    })
   })
 
   it('setTimeline refuses a date outside the history', async () => {
@@ -148,5 +185,55 @@ describe('the page contract', () => {
     await act(() => runPageAction('setTimeline', { date: '2026-04-03' }))
     expect(screen.getByTestId('where').textContent).toContain('at=2026-04-03')
     await expect(runPageAction('setTimeline', { date: '2020-01-01' })).rejects.toThrow(/outside/)
+  })
+})
+
+describe('the credential notice names who must act', () => {
+  const withState = (over: Partial<typeof H>) => vi.mocked(getSkillHistory).mockResolvedValueOnce({ ...H, ...over } as never)
+
+  it('owner_not_connected, seen by someone else: names the owner and offers no Connect', async () => {
+    withState({ credential_state: 'owner_not_connected', viewer_is_owner: false })
+    renderAt()
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain('Olive Owner’s GitHub connection')
+    expect(notice.textContent).toContain('Olive Owner hasn’t connected GitHub')
+    expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull()
+  })
+
+  it('owner_not_connected, seen by the owner: offers Connect GitHub', async () => {
+    withState({ credential_state: 'owner_not_connected', viewer_is_owner: true })
+    renderAt()
+    await screen.findByRole('status')
+    expect(screen.getByRole('link', { name: 'Connect GitHub' }).getAttribute('href')).toBe('/settings')
+  })
+
+  it('repo_not_granted: names the repo and links the installation screen', async () => {
+    withState({ credential_state: 'repo_not_granted' })
+    renderAt()
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain('https://github.com/o/ace')
+    expect(notice.textContent).toContain('Olive Owner can add it')
+    expect(screen.getByRole('link', { name: 'Choose repositories on GitHub' }).getAttribute('href'))
+      .toBe('https://github.com/apps/canopy-agents/installations/new')
+  })
+
+  it('repo_not_granted with no App configured: no dead install link', async () => {
+    withState({ credential_state: 'repo_not_granted', install_url: '' })
+    renderAt()
+    await screen.findByRole('status')
+    expect(screen.queryByRole('link', { name: 'Choose repositories on GitHub' })).toBeNull()
+  })
+
+  it('hides Sync from a viewer who cannot sync', async () => {
+    withState({ viewer_can_sync: false })
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    expect(screen.queryByRole('button', { name: 'Sync from GitHub' })).toBeNull()
+  })
+
+  it('shows Sync to an editor', async () => {
+    renderAt()
+    await screen.findByText(/owner-gh/)
+    expect(screen.getByRole('button', { name: 'Sync from GitHub' })).toBeTruthy()
   })
 })
