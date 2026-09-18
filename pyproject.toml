@@ -77,9 +77,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0,<9.0",
+    "pytest>=9.1,<10.0",
     "pytest-django>=4.8,<5.0",
-    "pytest-asyncio>=0.23,<1.0",
+    "pytest-asyncio>=1.4,<2.0",
     # A lock-ordering regression in runner/ec2/cloud_runner.py's
     # threading (transcript_lock / transcript_post_lock) can deadlock rather
     # than fail — verified in review: reintroducing an inverse acquisition
