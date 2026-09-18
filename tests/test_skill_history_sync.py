@@ -1,9 +1,12 @@
 # tests/test_skill_history_sync.py
 """Syncing an agent's skill history from its repo.
 
-The repo is a real local git repository and `repo_url` points at it, so the
-clone, the log and the frontmatter read are the real commands. Only the GitHub
-credential is faked — at `access_token_for`, the one seam the spec names.
+The repo is a real local git repository and `repo_url` is a bare
+`https://github.com/<owner>/<repo>` URL (the only shape `_validate_repo_url`
+accepts) rewritten to that local repo via a per-test `GIT_CONFIG_GLOBAL`
+(`insteadOf`), so the clone, the log and the frontmatter read are the real
+commands — only the GitHub credential is faked, at `access_token_for`, the one
+seam the spec names.
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+import requests
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -23,6 +27,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 TOKEN = "ghu_SECRETTOKENVALUE"
+GITHUB_URL = "https://github.com/o/agent-repo"
 
 
 def _git(repo: Path, *args: str, date: str = "2026-04-01T10:00:00+00:00") -> None:
@@ -52,23 +57,55 @@ def repo(tmp_path):
 
 
 @pytest.fixture
+def git_rewrite(tmp_path, repo, monkeypatch):
+    """Redirect the fake `https://github.com/o/agent-repo` URL to the real
+    local repo, the way a developer's `~/.gitconfig` `insteadOf` points a host
+    at a mirror. Also allows the `file` protocol: production's `_clone` passes
+    `-c protocol.allow=never`, which blocks `file` by default, but a
+    *specific* key (`protocol.file.allow`) always wins over that *generic*
+    one regardless of which config source set it — so this global config,
+    layered on top of the command line's `-c`, is what makes the local
+    rewrite reachable in tests without loosening anything in production.
+    """
+    cfg = tmp_path / "gitconfig-happy"
+    cfg.write_text(
+        f'[url "{repo}"]\n\tinsteadOf = {GITHUB_URL}\n'
+        '[protocol "file"]\n\tallow = always\n'
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+    return cfg
+
+
+@pytest.fixture
 def owner():
     return User.objects.create_user(username="own", email="own@dimagi.com")
 
 
 @pytest.fixture
-def agent(owner, repo):
+def agent(owner):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
     return Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner,
-                                repo_url=str(repo), repo_ref="main")
+                                repo_url=GITHUB_URL, repo_ref="main")
 
 
 @pytest.fixture
-def granted():
+def granted(git_rewrite):
     with mock.patch.object(skill_history.github_app, "access_token_for", return_value=TOKEN) as m, \
          mock.patch.object(skill_history, "_github_login", return_value="own-gh"):
         yield m
+
+
+def _unreachable_rewrite(tmp_path, monkeypatch, url: str) -> None:
+    """Point `url` at a local path that does not exist, so a clone of it
+    fails the same way an ungranted repo would — locally, with no network
+    call and no dependency on a real unreachable host."""
+    cfg = tmp_path / "gitconfig-unreachable"
+    cfg.write_text(
+        f'[url "{tmp_path / "does-not-exist"}"]\n\tinsteadOf = {url}\n'
+        '[protocol "file"]\n\tallow = always\n'
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
 
 
 def test_sync_stores_commits_revisions_groups_and_checks(agent, granted):
@@ -127,17 +164,48 @@ def test_owner_not_connected(agent):
     assert row.last_state == "owner_not_connected"
 
 
-def test_a_repo_the_grant_cannot_reach_is_repo_not_granted_and_keeps_the_old_history(agent, granted):
+@pytest.mark.parametrize("bad_url", [
+    "https://gitlab.com/o/agent-repo",   # not github.com
+    "/nonexistent/repo",                 # local filesystem path, no scheme
+    "-x",                                 # would be read as a git option
+    "file:///etc/passwd",                 # file:// scheme
+    "https://user:pw@github.com/o/repo",  # embedded credentials
+])
+def test_an_invalid_repo_url_never_touches_git_or_github(agent, bad_url):
+    agent.repo_url = bad_url
+    agent.save()
+    with mock.patch.object(skill_history, "_clone_and_read") as clone, \
+         mock.patch.object(skill_history.github_app, "access_token_for") as token_call:
+        row = skill_history.sync(agent)
+    clone.assert_not_called()
+    token_call.assert_not_called()
+    assert row.last_state == "repo_not_granted"
+    assert skill_history.credential_state(agent) == "repo_not_granted"
+
+
+def test_a_transient_network_failure_fetching_the_token_does_not_raise(agent):
+    with mock.patch.object(skill_history.github_app, "access_token_for",
+                           side_effect=requests.ConnectionError("connection refused")):
+        row = skill_history.sync(agent)
+    assert row.last_state == "ok"
+    assert row.last_error
+
+
+def test_a_repo_the_grant_cannot_reach_is_repo_not_granted_and_keeps_the_old_history(agent, granted, tmp_path, monkeypatch):
     skill_history.sync(agent)
-    agent.repo_url = "/nonexistent/repo"
+    unreachable_url = "https://github.com/o/unreachable-repo"
+    _unreachable_rewrite(tmp_path, monkeypatch, unreachable_url)
+    agent.repo_url = unreachable_url
     agent.save()
     row = skill_history.sync(agent, force=True)
     assert row.last_state == "repo_not_granted"
     assert SkillHistoryCommit.objects.filter(agent=agent).count() == 2  # previous snapshot intact
 
 
-def test_the_token_never_reaches_the_stored_error(agent, granted):
-    agent.repo_url = "https://github.invalid/org/repo"
+def test_the_token_never_reaches_the_stored_error(agent, granted, tmp_path, monkeypatch):
+    unreachable_url = "https://github.com/o/still-unreachable"
+    _unreachable_rewrite(tmp_path, monkeypatch, unreachable_url)
+    agent.repo_url = unreachable_url
     agent.save()
     row = skill_history.sync(agent, force=True)
     assert TOKEN not in row.last_error
