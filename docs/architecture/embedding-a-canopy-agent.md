@@ -349,6 +349,21 @@ PUT /api/canopy-sessions/{id}/run-input     ← AG-UI RunAgentInput
 cannot honour (`messages`, `run_id`, `resume`, `forwarded_props`) are accepted
 and ignored, so a conforming client sends the whole object unchanged.
 
+The stream coming back is AG-UI too. Connect the session socket with
+`?protocol=ag-ui` and every frame arrives as an AG-UI event — which is what
+canopy's own chat page and widget do, via `canopy-ui` ≥ 0.9
+(`useSessionSocket({ protocol: 'ag-ui' })`). What AG-UI has no word for rides its
+designed extension points rather than being dropped:
+
+- canopy-only events (co-edited drafts, presence, page actions, "did my stop
+  land") are `CUSTOM` events named `canopy.<event>`;
+- where AG-UI's spelling is lossy for canopy — the connect snapshot, a stream
+  error, a blocked agent's dialog — the original frame rides alongside under
+  `metadata.canopy.frame`. A generic AG-UI client ignores it and still gets
+  `MESSAGES_SNAPSHOT`, `RUN_ERROR` and the rest; canopy's client uses it.
+
+Ask for nothing and you get canopy's native frames, unchanged.
+
 ---
 
 ## 5a. Being told when your data changes

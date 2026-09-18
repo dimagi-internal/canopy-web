@@ -6,6 +6,7 @@ fan-out for turn events; the draft/presence/participant domain is chat's own.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from channels.db import database_sync_to_async
@@ -30,6 +31,8 @@ _EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send"
 #: does not ask must not be able to notice this exists.
 AGUI_PROTOCOL = "ag-ui"
 
+log = logging.getLogger(__name__)
+
 
 class SessionConsumer(AsyncJsonWebsocketConsumer):
     #: Set at connect from the query string. Not a header: a browser cannot set
@@ -40,6 +43,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     def _negotiate_protocol(self) -> None:
         raw = (self.scope.get("query_string") or b"").decode("utf-8", "replace")
         self.agui_mode = f"protocol={AGUI_PROTOCOL}" in raw
+        # The evidence for deleting the native wire. canopy's own clients ask
+        # for AG-UI as of 2026-09-18, but a tab open across that deploy, an
+        # un-upgraded ace-web, or any `canopy-ui` consumer below 0.9 still asks
+        # for native. When this line has said `native` for nobody over a full
+        # week, the native branch of `send_json` has no callers and can go —
+        # the canopy FRAMES stay regardless, as the in-memory model both ends
+        # already share. Grep: `canopy_sessions.protocol`.
+        log.info("canopy_sessions.protocol negotiated=%s",
+                 AGUI_PROTOCOL if self.agui_mode else "native")
 
     async def send_json(self, content, close=False):
         """Every frame leaves through here, which is why the projection lives here.

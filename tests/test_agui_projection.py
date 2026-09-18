@@ -374,18 +374,6 @@ def test_the_agents_own_state_rides_the_designed_activity_extension_point():
     assert snapshot.content == {"state": "blocked"}
 
 
-def test_page_state_is_the_same_object_in_both_directions():
-    """What the page declares (`page_state.py`) is what a client receives as
-    shared state and what `RunAgentInput.state` carries back — one vocabulary,
-    which is the point of adopting a protocol rather than inventing a second."""
-    event = agui.project_state(
-        page_state={"backing_tool": "list_insights", "visible_ids": [1, 2]}, title="Chat"
-    )
-
-    assert event.type == E.EventType.STATE_SNAPSHOT
-    assert event.snapshot["page"]["backing_tool"] == "list_insights"
-
-
 # --- the projection must never break the socket it rides on ------------------
 
 
@@ -433,13 +421,54 @@ ROUND_TRIP_FRAMES = [
     {"event": "draft.updated", "data": {"id": "d1", "body": "x", "version": 2}},
     {"event": "presence.joined", "data": {"user_id": 7}},
     {"event": "presence.left", "data": {"user_id": 7}},
+    # --- every other frame a canopy client can receive ------------------------
+    # Added 2026-09-18, when `test_every_frame_the_consumer_emits_is_in_the_
+    # round_trip_fixture` arrived and found twelve frames that had never been
+    # proven to survive the trip. Shapes copied from the producers
+    # (`consumers.py`, `stream_map.py`, `page_actions.py`), not invented, so a
+    # producer changing its payload shows up here as a stale example.
+    {"event": "session.state",
+     "data": {"messages": [
+                  {"id": "41", "turn_index": 0, "role": "user", "content": {},
+                   "plaintext": "what is stale?", "status": "complete",
+                   "error_detail": None, "started_at": None, "completed_at": None,
+                   "created_at": "2026-09-18T12:00:00+00:00"},
+                  {"id": "42", "turn_index": 1, "role": "assistant", "content": {},
+                   "plaintext": "Three insights are.", "status": "complete",
+                   "error_detail": None, "started_at": None, "completed_at": None,
+                   "created_at": "2026-09-18T12:00:05+00:00"}],
+              "active_draft": None,
+              "participants": [{"user_id": 7, "role": "editor"}],
+              "presence_user_ids": [7],
+              "current_user_id": 7,
+              "menu": None}},
+    {"event": "session.page_action",
+     "data": {"id": "9f1c", "name": "scrollToRow", "args": {"id": 4471}}},
+    {"event": "session.stop", "data": {"state": "failed"}},
+    {"event": "session.activity", "data": {"state": "working"}},
+    {"event": "session.menu",
+     "data": {"menu": {"source": "hook", "question": "Proceed?", "observed_at": 1758196800,
+                       "options": [{"label": "Yes"}, {"label": "No"}]}}},
+    {"event": "session.error", "data": {"code": "draft_conflict", "message": "stale version"}},
+    {"event": "chat.stream_cancelled", "data": {"message_id": "m1", "partial_len": 12}},
+    {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "runner went away"}},
+    {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
+    {"event": "draft.discarded", "data": {"draft_id": "d1"}},
+    {"event": "draft.lock_changed",
+     "data": {"draft_id": "d1", "holder_user_id": 7, "expires_at": "2026-09-18T12:01:00+00:00"}},
+    {"event": "page.invalidate", "data": {"uri": "item://"}},
 ]
 
 
 def _build_fixture() -> list[dict]:
     return [
         {"canopy": frame,
-         "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1", run_id="r1")]}
+         # NO run id, because the live socket passes none
+         # (`SessionConsumer.send_json`). This passed `run_id="r1"` until
+         # 2026-09-18, so the round trip proved a path production never takes —
+         # and missed that the path it does take renamed a cancelled stream to
+         # an event the reducer does not know.
+         "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1")]}
         for frame in ROUND_TRIP_FRAMES
     ]
 

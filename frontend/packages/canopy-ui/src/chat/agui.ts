@@ -65,6 +65,19 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
   const type = typeof frame.type === "string" ? frame.type : "";
   const m = meta(frame);
 
+  // The server's own frame, when it sent one. Where the AG-UI spelling is lossy
+  // for canopy — a run error with no slot for which message failed, a messages
+  // snapshot with none for drafts, presence or a pending dialog, an interrupt
+  // that re-encodes the menu — the original rides under `metadata.canopy.frame`
+  // (`_verbatim` in agui.py), and returning it beats rebuilding it: a rebuilt
+  // frame carries whatever this function guessed, not what the server said.
+  // One rule for every such event, so a newly lossy projection needs no new case
+  // here — which is how the connect snapshot went missing in the first place.
+  const original = m.frame;
+  if (original && typeof original === "object" && typeof (original as WsEvent).event === "string") {
+    return [original as WsEvent];
+  }
+
   switch (type) {
     case "TEXT_MESSAGE_START":
       return [

@@ -184,6 +184,45 @@ def _expires_at(menu: dict) -> str | None:
         return None
 
 
+def _agui_message(row: dict) -> T.Message | None:
+    """One canopy message row in AG-UI's own vocabulary, or None.
+
+    Only the two roles a generic AG-UI client can render without canopy's
+    context. A tool row's shape belongs to its PRODUCER (see `METADATA_KEY`),
+    and AG-UI's `ToolMessage` demands a `toolCallId` a transcript row does not
+    reliably carry — inventing one is how a client ends up correlating a result
+    to the wrong call. Those rows are still in the verbatim snapshot, so
+    canopy's own client loses nothing.
+    """
+    role = row.get("role")
+    mid = str(row.get("id") or "")
+    text = row.get("plaintext") or ""
+    if not mid:
+        return None
+    if role == "user":
+        return T.UserMessage(id=mid, role="user", content=text)
+    if role == "assistant":
+        return T.AssistantMessage(id=mid, role="assistant", content=text)
+    return None
+
+
+def _verbatim(frame: dict) -> dict:
+    """The original canopy frame, riding alongside a LOSSY projection.
+
+    Some frames have an AG-UI spelling that is right for a third-party client
+    and strictly less than canopy's own client needs — a run error has no slot
+    for WHICH message failed, a messages snapshot has none for drafts, presence
+    or a pending dialog. Reconstructing canopy's frame from the AG-UI one would
+    invent or drop fields (the tool-block lesson, again), so the original rides
+    under `metadata.canopy.frame` and the inverse returns it as-is.
+
+    One key for every such frame, rather than a per-event field, so the inverse
+    has ONE rule — "if the server gave you the original, use it" — instead of a
+    case per event that someone has to remember to write.
+    """
+    return {METADATA_KEY: {"frame": frame}}
+
+
 def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEvent]:
     """One canopy `WsEvent` frame → zero or more AG-UI events.
 
@@ -328,6 +367,12 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 outcome=E.RunFinishedInterruptOutcome(
                     type="interrupt", interrupts=[_interrupt_from_menu(menu)]
                 ),
+                # The Interrupt is the right shape for a third-party client, and
+                # rebuilding canopy's menu from it is lossy (`observed_at` comes
+                # back as an ISO string, option objects lose their extra keys).
+                # This is the blocked-agent dialog — the path the "clicking does
+                # nothing" incident ran through — so it round-trips exactly.
+                metadata=_verbatim(frame),
             )
         ]
 
@@ -337,6 +382,11 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 type=E.EventType.RUN_ERROR,
                 message=str(data.get("detail") or "stream failed"),
                 code="stream_error",
+                # Without this the inverse could only rebuild a `session.error`:
+                # RUN_ERROR has no slot for WHICH message failed, so the reply
+                # that died would be left spinning while a generic error toast
+                # appeared somewhere else.
+                metadata=_verbatim(frame),
             )
         ]
 
@@ -358,9 +408,14 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                     type=E.EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id,
                     result={"cancelled": True,
                             "partial_len": data.get("partial_len") or 0},
+                    metadata=_verbatim(frame),
                 )
             ]
-        return [_custom("stream.cancelled", data)]
+        # Named for the frame it IS. This was `stream.cancelled`, which the
+        # inverse unwrapped to an event called `stream.cancelled` — a name the
+        # reducer has never heard of — so on the path the live socket actually
+        # takes (it passes no run id) a cancelled reply was never shown as one.
+        return [_custom(event, data)]
 
     if event == "page.invalidate":
         # AG-UI has no native "a resource you are showing changed" event — its
@@ -380,6 +435,49 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
             )
         ]
 
+    # The connect snapshot — the frame a client cannot live without.
+    #
+    # Until 2026-09-18 this returned nothing, and a test allowlist
+    # (`KNOWN_UNMAPPED`) recorded that as a decision. It was not a safe one: an
+    # AG-UI client opened every conversation EMPTY, and lost its history again
+    # on every reconnect. Nothing noticed because no client spoke AG-UI yet —
+    # the round-trip fixture covered streaming frames only, and a reply
+    # streaming correctly into an empty conversation looks like a working chat.
+    #
+    # Two audiences, so two halves. A third-party AG-UI client gets the history
+    # in the protocol's own vocabulary (`MESSAGES_SNAPSHOT`, user and assistant
+    # text). canopy's client gets the frame VERBATIM (`_verbatim`)
+    # — drafts, participants, presence, the pending menu — because none of that
+    # has an AG-UI spelling, and rebuilding canopy's message rows from AG-UI's
+    # would invent fields the real rows may not have had (the same reason tool
+    # blocks ride verbatim). The price is the message text travelling twice on
+    # connect, once per audience; a lossy snapshot is the worse trade.
+    if event == "session.state":
+        return [
+            E.MessagesSnapshotEvent(
+                type=E.EventType.MESSAGES_SNAPSHOT,
+                messages=[m for m in (_agui_message(row) for row in data.get("messages") or []) if m],
+                metadata=_verbatim(frame),
+            ),
+        ]
+
+    # canopy asking the PAGE to run something (`page_actions.py`). The host↔frame
+    # contract, not the agent↔UI one — but the frame IS the client reading this
+    # stream, and it is the party that relays the action to its host. Dropping
+    # it (as this did until 2026-09-18) would have silently disabled every page
+    # action the moment the widget switched protocol.
+    if event == "session.page_action":
+        return [_custom(event, data)]
+
+    # Whether the stop a human asked for actually LANDED — `requested` from the
+    # consumer, then `stopped` or `failed` from the runner. The frame exists
+    # because a stop used to fail silently (#649), and it was dropped here on the
+    # belief that it travelled client→server; it does not. AG-UI's cancellation
+    # is a run outcome (`chat.stream_cancelled` already maps onto it), which has
+    # no way to say "we asked and it did not work" — so it rides CUSTOM.
+    if event == "session.stop":
+        return [_custom(event, data)]
+
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent
     # is the protocol's model, so a co-edited draft, a presence roster and which
     # box a session is bound to have no native spelling. They are not dropped —
@@ -390,20 +488,6 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     # Unknown: silence. A projection that raises on an unrecognised frame would
     # let any new canopy event take down a third-party client's stream.
     return []
-
-
-def project_state(*, page_state: dict | None, title: str = "") -> E.StateSnapshotEvent:
-    """The shared state a client sees on connect.
-
-    `page_state` is what the user is looking at (see `page_state.py`) and it is
-    the same object `RunAgentInput.state` carries in the other direction — so
-    the round trip is one vocabulary rather than two, which is the point of
-    adopting a protocol at all.
-    """
-    snapshot: dict[str, Any] = {"title": title}
-    if page_state:
-        snapshot["page"] = page_state
-    return E.StateSnapshotEvent(type=E.EventType.STATE_SNAPSHOT, snapshot=snapshot)
 
 
 def encode(event: E.BaseEvent) -> dict:
