@@ -17,10 +17,14 @@ const Change = ({ c }: { c: string }) => (
 
 export function SkillHistoryPanel({ panel, crumbs, dateLabel, onSelect, onDay, commitDay }: {
   panel: Panel; crumbs: Crumb[]; dateLabel: string
-  onSelect: (s: Selection) => void; onDay: (day: number) => void; commitDay: (sha: string) => number
+  // Returns null when the sha doesn't resolve to a known commit, so the
+  // caller can leave "Move timeline" unrendered rather than falling back to
+  // day 0 for an unknown commit.
+  onSelect: (s: Selection) => void; onDay: (day: number) => void; commitDay: (sha: string) => number | null
 }) {
+  const moveDay = panel.kind === 'commit' ? commitDay(panel.sha) : null
   return (
-    <aside className="flex max-h-[calc(100vh-48px)] w-[416px] shrink-0 flex-col overflow-y-auto rounded-2xl border border-border bg-card lg:sticky lg:top-6">
+    <aside className="flex max-h-[calc(100vh-48px)] w-full flex-col overflow-y-auto rounded-2xl border border-border bg-card lg:sticky lg:top-6 lg:w-[416px] lg:shrink-0">
       <nav aria-label="Selection" className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3.5 text-[13px]">
         {crumbs.map((c, i) => (
           <span key={i} className="flex items-center gap-2">
@@ -130,8 +134,10 @@ export function SkillHistoryPanel({ panel, crumbs, dateLabel, onSelect, onDay, c
             <div className="font-mono text-[12px] text-muted-foreground">commit {panel.sha.slice(0, 8)} · {panel.date}</div>
             <div className="text-[17px] font-medium text-foreground">{panel.subject}</div>
           </div>
-          <button type="button" onClick={() => onDay(commitDay(panel.sha))}
-                  className="self-start rounded-lg border border-border px-3.5 py-2 text-[13.5px] hover:border-primary">Move timeline to {panel.date}</button>
+          {moveDay !== null && (
+            <button type="button" onClick={() => onDay(moveDay)}
+                    className="self-start rounded-lg border border-border px-3.5 py-2 text-[13.5px] hover:border-primary">Move timeline to {panel.date}</button>
+          )}
           <div className="flex flex-col"><Kicker>Skills changed ({panel.rows.length})</Kicker>
             {panel.rows.map((r) => (
               <Row key={r.name} onClick={() => onSelect({ skill: r.name })}>

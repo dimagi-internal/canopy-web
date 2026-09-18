@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getSkillHistory } from '@/api/agents'
 
 const H = {
   agent: 'ace', repo_url: 'x', head_sha: 'b', synced_at: '2026-04-20T00:00:00Z', synced_with: 'owner-gh',
@@ -64,5 +65,37 @@ describe('AgentHistorySection', () => {
   it('says whose GitHub access produced the history', async () => {
     renderAt()
     expect(await screen.findByText(/owner-gh/)).toBeTruthy()
+  })
+
+  it('a selection made during playback wins, and stops playback', async () => {
+    renderAt()
+    // Wait for the real initial load (a genuine microtask) before switching
+    // to fake timers, so the async data-fetch isn't affected by them.
+    await screen.findByRole('button', { name: /Open One/ })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Play from the first commit' }))
+      expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Skill alpha' }))
+      vi.advanceTimersByTime(120)
+
+      expect(screen.getByTestId('where').textContent).toContain('skill=alpha')
+      expect(screen.getByRole('button', { name: 'Play from the first commit' })).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a retry affordance when the initial load fails, and recovers on retry', async () => {
+    const mocked = vi.mocked(getSkillHistory)
+    mocked.mockRejectedValueOnce(new Error('network down'))
+    renderAt()
+    expect(await screen.findByText(/Couldn't load this agent's history/)).toBeTruthy()
+
+    mocked.mockResolvedValueOnce(H as never)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('button', { name: /Open One/ })).toBeTruthy()
   })
 })

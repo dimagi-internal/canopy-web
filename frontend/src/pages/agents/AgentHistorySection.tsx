@@ -47,21 +47,50 @@ function ChevronRightIcon() {
   )
 }
 
+const LOAD_ERROR_COPY = "Couldn't load this agent's history."
+const SYNC_ERROR_COPY = 'Sync failed. Try again in a moment.'
+
 export function AgentHistorySection() {
   const { agent } = useOutletContext<AgentOutletContext>()
   const [data, setData] = useState<SkillHistoryOut | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
   const [params, setParams] = useSearchParams()
   const [playing, setPlaying] = useState(false)
   const timer = useRef<number | null>(null)
 
+  // Every request that can set `data` (the initial load, a Retry, a sync)
+  // gets its own sequence number. Only the result belonging to the most
+  // RECENTLY ISSUED request is ever applied, regardless of resolution order —
+  // otherwise a slow initial GET that resolves after a faster sync already
+  // landed newer data would silently stomp it with stale data.
+  const seq = useRef(0)
+
+  const load = () => {
+    const id = ++seq.current
+    setLoadError(null)
+    getSkillHistory(agent.slug)
+      .then((h) => {
+        if (id !== seq.current) return
+        setData(h)
+        setLoadError(null)
+      })
+      .catch(() => {
+        if (id !== seq.current) return
+        setLoadError(LOAD_ERROR_COPY)
+      })
+  }
+
   useEffect(() => {
-    let cancelled = false
     setData(null)
-    getSkillHistory(agent.slug).then((h) => !cancelled && setData(h)).catch(() => !cancelled && setData(null))
-    return () => {
-      cancelled = true
-    }
+    setLoadError(null)
+    setSyncError(null)
+    load()
+    // `load` closes over `agent.slug`; re-running only on slug change is
+    // deliberate, and a stale in-flight request for the previous agent is
+    // automatically superseded the moment this call bumps `seq`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.slug])
 
   const model = useMemo(() => (data ? buildModel(data) : null), [data])
@@ -70,8 +99,19 @@ export function AgentHistorySection() {
     ...(params.get('skill') ? { skill: params.get('skill')! } : {}),
     ...(params.get('commit') ? { commit: params.get('commit')! } : {}),
   }
+
+  // Kept in sync every render so a playback tick — whose interval closure
+  // can be arbitrarily stale — always reads the CURRENT selection, never the
+  // one that was live when play() was called.
+  const selRef = useRef(sel)
+  selRef.current = sel
+
   const at = params.get('at')
-  const day = model ? Math.min(model.days, Math.max(0, at ? dayOf(model, at) : model.days)) : 0
+  let day = 0
+  if (model) {
+    const parsed = at ? dayOf(model, at) : model.days
+    day = Math.min(model.days, Math.max(0, Number.isFinite(parsed) ? parsed : model.days))
+  }
 
   const stop = () => {
     if (timer.current) window.clearInterval(timer.current)
@@ -81,8 +121,11 @@ export function AgentHistorySection() {
   useEffect(() => () => stop(), [])
 
   // A selection change (group/skill/commit, or the "All skills" breadcrumb)
-  // PUSHES a history entry so Back walks the drill-down one step at a time.
+  // PUSHES a history entry so Back walks the drill-down one step at a time —
+  // and stops any playback in progress first, so the next 60ms tick can never
+  // rewrite this selection with whatever was live when play() started.
   const onSelect = (next: Selection) => {
+    stop()
     const p = new URLSearchParams()
     if (next.group) p.set('group', next.group)
     if (next.skill) p.set('skill', next.skill)
@@ -94,12 +137,15 @@ export function AgentHistorySection() {
   // A date-only move (slider scrub, ±week, Latest, a chart click, or a
   // playback tick) REPLACES the current history entry instead — playback
   // alone rewrites the URL every 60ms, which would otherwise flood back/
-  // forward history with one entry per tick.
+  // forward history with one entry per tick. Reads the selection from
+  // `selRef`, never a captured closure, so a stale interval tick can't
+  // reintroduce an old selection either.
   const writeDay = (nextDay: number) => {
+    const current = selRef.current
     const p = new URLSearchParams()
-    if (sel.group) p.set('group', sel.group)
-    if (sel.skill) p.set('skill', sel.skill)
-    if (sel.commit) p.set('commit', sel.commit)
+    if (current.group) p.set('group', current.group)
+    if (current.skill) p.set('skill', current.skill)
+    if (current.commit) p.set('commit', current.commit)
     if (model && nextDay < model.days) p.set('at', isoOf(model, nextDay))
     setParams(p, { replace: true })
   }
@@ -110,7 +156,19 @@ export function AgentHistorySection() {
     writeDay(Math.max(0, Math.min(model.days, d)))
   }
 
-  if (!data || !model) return <div className="px-6 py-8"><WorkbenchSkeleton /></div>
+  if (!data || !model) {
+    if (loadError) {
+      return (
+        <div className="flex flex-col items-start gap-3 px-6 py-8">
+          <p className="text-[13px] text-muted-foreground">{loadError}</p>
+          <button type="button" onClick={load} className="rounded-lg border border-border px-3 py-1.5 text-[13px] hover:border-primary">
+            Retry
+          </button>
+        </div>
+      )
+    }
+    return <div className="px-6 py-8"><WorkbenchSkeleton /></div>
+  }
 
   const totals = totalsAt(model, day)
   const scope = scopeNames(model, sel)
@@ -143,9 +201,17 @@ export function AgentHistorySection() {
   }
 
   const sync = async () => {
+    const id = ++seq.current
     setSyncing(true)
+    setSyncError(null)
     try {
-      setData(await syncSkillHistory(agent.slug))
+      const h = await syncSkillHistory(agent.slug)
+      if (id === seq.current) {
+        setData(h)
+        setLoadError(null)
+      }
+    } catch {
+      if (id === seq.current) setSyncError(SYNC_ERROR_COPY)
     } finally {
       setSyncing(false)
     }
@@ -166,8 +232,9 @@ export function AgentHistorySection() {
             <button type="button" onClick={sync} disabled={syncing} className="text-primary underline disabled:opacity-50">
               {syncing ? 'Syncing…' : 'Sync from GitHub'}
             </button>
+            {syncError && <span className="ml-2 text-[12px] text-destructive">{syncError}</span>}
           </p>
-          {data.credential_state !== 'ok' && (
+          {data.credential_state !== 'ok' && STATE_COPY[data.credential_state] && (
             <p role="status" className="m-0 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
               {STATE_COPY[data.credential_state]}
               {(data.credential_state === 'owner_not_connected' || data.credential_state === 'repo_not_granted') && (
@@ -182,7 +249,7 @@ export function AgentHistorySection() {
             <p role="status" className="m-0 text-[12px] text-destructive">Last sync failed: {data.last_error}</p>
           )}
         </div>
-        <dl className="m-0 grid grid-cols-4 gap-6">
+        <dl className="m-0 grid grid-cols-2 gap-6 sm:grid-cols-4">
           {([[totals.skills, 'skills'], [totals.revisions.toLocaleString(), 'revisions'], [totals.withChecks, 'skills with a QA or eval skill'], [totals.removed, 'skills removed']] as const).map(([v, l]) => (
             <div key={l} className="flex flex-col">
               <dd className="m-0 text-[32px] font-semibold leading-none text-foreground">{v}</dd>
@@ -216,7 +283,10 @@ export function AgentHistorySection() {
           <p className="text-[12px] text-muted-foreground">Groups come from the agent files in the repository. A QA or eval skill is shown inside the skill it checks. Bars are 1px per revision, capped at 90.</p>
         </div>
         <SkillHistoryPanel panel={panel} crumbs={crumbs} dateLabel={fmtDay(model, day)} onSelect={onSelect} onDay={onDay}
-                           commitDay={(sha) => model.commitDay[model.bySha.get(sha) ?? 0]} />
+                           commitDay={(sha) => {
+                             const idx = model.bySha.get(sha)
+                             return idx === undefined ? null : model.commitDay[idx]
+                           }} />
       </div>
     </div>
   )
