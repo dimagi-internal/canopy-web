@@ -74,10 +74,12 @@ the page can say whose access produced what you are looking at.
 `https://github.com/<owner>/<repo>[.git]` — validated before the sync claim, before
 `access_token_for`, before any subprocess — because the confused-deputy risk above is
 not just "which repo" but "which host": an editor names `repo_url`, and without this
-check the owner's token would ride `http.extraheader` to whatever host that string
-named. The token itself rides that header scoped to the clone alone (`-c
-http.extraheader=Authorization: Bearer <token>`), never a URL, an exception message,
-or `last_error`. `skill_revision_diff` applies the same discipline on the read side:
+check the owner's token would ride an auth header to whatever host that string
+named. The token itself rides an environment-scoped git config key
+(`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` setting
+`http.https://github.com/.extraheader`), passed to the clone command alone — never
+argv (a `-c` flag shows up in a process list), a URL, an exception message, or
+`last_error`. `skill_revision_diff` applies the same discipline on the read side:
 `sha` and `skill` are validated before either reaches GitHub's API, so a malformed
 value can't be used to probe with the owner's credential.
 
@@ -89,8 +91,9 @@ Framework tier (`agents` is framework): nothing here is ACE-specific.
 
 1. Resolve the credential: `github_app.access_token_for(agent.owner)`.
 2. `git clone --bare --single-branch --branch <repo_ref>` into a `TemporaryDirectory`.
-   The token rides `-c http.extraheader=Authorization: Bearer …`, never the URL, so
-   it cannot land in a process list, an exception message or a log line. **Full
+   The token rides an environment-scoped git config key (`GIT_CONFIG_*` setting
+   `http.https://github.com/.extraheader`) on the clone command only — never argv or
+   the URL, so it cannot land in a process list, an exception message or a log line. **Full
    clone, not `--filter=blob:none`:** a blobless clone makes `--numstat` fetch every
    blob lazily, one round trip each — measured, it did not finish in 5 minutes on
    ACE. A full clone of ACE is 23 MB and **1.6 s**.
@@ -121,12 +124,17 @@ last successful sync is older than an hour (debounced server-side so ten open ta
 do not clone ten times: `sync_started_at` is claimed under `select_for_update`,
 and a sync started less than 90 s ago for this agent returns the stored history
 instead of cloning again — 90 s being above the 60 s timeout, so a crashed sync
-cannot hold the claim forever).
+cannot hold the claim forever). The button's forced sync skips only the "is it due?"
+check, never an in-flight claim. Every attempt stamps `last_attempt_at`, and page open
+does not retry within an hour of an attempt — a failure never moves `synced_at`, so
+without that an agent whose repo is not granted would refresh the owner's token and
+clone on every load. An unexpected failure during the page-open sync is logged and
+the stored history is served, never a 500.
 
 ### Models (`apps/agents`)
 
 - `SkillHistorySync` — one per agent: `head_sha`, `synced_at`, `synced_with`
-  (GitHub login), `last_error`, `sync_started_at`.
+  (GitHub login), `last_error`, `sync_started_at`, `last_attempt_at`.
 - `SkillHistoryCommit` — `agent` FK, `sha`, `committed_at`, `subject`, `body`.
 - `SkillRevision` — `commit` FK, `skill`, `lines_after`, `added`, `deleted`.
 - Group membership and checking-skill pairings are stored on the sync row as JSON:
