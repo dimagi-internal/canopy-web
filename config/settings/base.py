@@ -105,6 +105,7 @@ INSTALLED_APPS = [
     "apps.canopy_sessions",
     "apps.events",
     "apps.inbound",
+    "apps.slack",
     "apps.contacts",
 ]
 
@@ -455,6 +456,14 @@ GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # The app's slug, used only to build the "install it somewhere else" link
 # (https://github.com/apps/<slug>/installations/new). Public.
 GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
+
+# Slack front door (apps/slack). The client id is public (it is in every
+# install URL); the client + signing secrets are Secrets Manager entries. Any of
+# the three empty (or the CFN "PLACEHOLDER") means Slack is off: the webhooks
+# answer 503 and nothing else changes.
+SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default="")
+SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default="")
+SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 
 # This deployment's own externally-reachable base URL — no request context to derive
 # it from when services.py builds a callback URL for a drilled agent to POST back to

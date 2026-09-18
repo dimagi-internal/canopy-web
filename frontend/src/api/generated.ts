@@ -1741,6 +1741,27 @@ export interface paths {
         readonly patch: operations["apps_agents_api_set_turn_mode"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/slack": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Turn Slack access to an agent on or off
+         * @description Whether people in this workspace's connected Slack can talk to the agent
+         *     (by mention, DM, or `/canopy`). Owner only.
+         */
+        readonly patch: operations["apps_agents_api_set_slack_enabled"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runtime": {
         readonly parameters: {
             readonly query?: never;
@@ -7501,6 +7522,11 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+            /**
+             * Slack Enabled
+             * @default false
+             */
+            readonly slack_enabled: boolean;
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -7629,6 +7655,11 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+            /**
+             * Slack Enabled
+             * @default false
+             */
+            readonly slack_enabled: boolean;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             /**
              * Sync Count
@@ -7681,6 +7712,16 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+        };
+        /**
+         * SlackEnabledIn
+         * @description Turn Slack access to an agent on or off. Its own endpoint, for the same
+         *     reason as TurnModeIn: the agent-repo upsert must not be able to open the
+         *     agent to a new channel of people.
+         */
+        readonly SlackEnabledIn: {
+            /** Slack Enabled */
+            readonly slack_enabled: boolean;
         };
         /**
          * AgentRuntimeOut
@@ -14115,6 +14156,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["TurnModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_set_slack_enabled: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackEnabledIn"];
             };
         };
         readonly responses: {

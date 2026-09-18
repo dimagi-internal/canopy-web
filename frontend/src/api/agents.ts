@@ -230,6 +230,16 @@ export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<Tu
   return unwrap(res, 'setAgentTurnMode').turn_mode
 }
 
+// Turn Slack access to the agent on or off (owner only). Same return shape as
+// setAgentTurnMode, for the same reason: the toggle only needs the flag back.
+export async function setAgentSlackEnabled(slug: string, enabled: boolean): Promise<boolean> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/slack', {
+    params: { path: { slug } },
+    body: { slack_enabled: enabled },
+  })
+  return unwrap(res, 'setAgentSlackEnabled').slack_enabled
+}
+
 // Wholesale replace of an agent's ordered runner list — index = rank. Each
 // row carries its own `enabled`: false keeps the row (rank preserved) but it
 // never routes — the toggle that replaced the old remove-chip affordance.

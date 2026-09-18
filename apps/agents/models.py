@@ -132,6 +132,9 @@ class Agent(models.Model):
     TURN_MODE_CHOICES = [(MANUAL, "manual (outbound waits for human approval)"),
                          (AUTO, "auto (self-review-and-send, audit on the board)")]
     turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, default=MANUAL)
+    # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
+    # it opens the agent to a new channel of people, which is a deliberate act.
+    slack_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

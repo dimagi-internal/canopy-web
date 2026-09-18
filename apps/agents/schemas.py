@@ -60,6 +60,14 @@ class TurnModeIn(StrictModel):
     turn_mode: Literal["manual", "auto"]
 
 
+class SlackEnabledIn(StrictModel):
+    """Turn Slack access to an agent on or off. Its own endpoint, for the same
+    reason as TurnModeIn: the agent-repo upsert must not be able to open the
+    agent to a new channel of people."""
+
+    slack_enabled: bool
+
+
 class AgentRunnerOut(StrictModel):
     """One row of an agent's ordered runner list (the routing-matrix UI's read
     model). `online`/`ready` are computed per row from `Runner.live_status` /
@@ -207,6 +215,10 @@ class AgentOut(StrictModel):
     # agents LIST and the detail view carry it. Literal so the generated TS
     # client gets the union, not string.
     turn_mode: Literal["manual", "auto"] = "manual"
+    # Reachable from Slack (apps/slack). Owner-flipped, like turn_mode it is
+    # operational state rather than repo config, so the self-publish upsert
+    # cannot turn it on.
+    slack_enabled: bool = False
 
 
 class AgentDefinitionOut(StrictModel):

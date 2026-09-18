@@ -55,6 +55,7 @@ PUBLIC_PATH_PREFIXES = (
     # this middleware cannot see.
     "/api/contact/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
+    "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a
     # full path), so prefix-matching it is safe; "/about" alone would also

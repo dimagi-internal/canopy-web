@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { CountStat, SyncCard } from '@/components/agents/cards'
@@ -153,6 +154,18 @@ export function AgentOverviewSection() {
           How {agent.name}&apos;s turns handle outbound actions. Read at the start of every turn.
         </p>
         <TurnModeToggle agentSlug={agent.slug} initialMode={agent.turn_mode} />
+      </div>
+
+      {/* Slack — whether people in the workspace's connected Slack can reach this agent */}
+      <div className="mb-6 rounded-lg border border-border bg-card p-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
+          Slack
+        </span>
+        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
+          Let linked members talk to {agent.name} from Slack by mention, DM, or <code>/canopy {agent.slug}</code>.
+          Each Slack thread becomes a private chat session. Owners only.
+        </p>
+        <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
       </div>
 
       {/* Ranked runner assignments — which paired runners this agent routes to, in order */}

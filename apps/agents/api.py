@@ -48,6 +48,7 @@ from .schemas import (
     CommandResultOut,
     CountOut,
     RunnerPreferenceIn,
+    SlackEnabledIn,
     TurnModeIn,
 )
 
@@ -299,6 +300,19 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     agent = _agent_for_write(request, slug)
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
+    return AgentDetailOut.model_validate(services.agent_detail(agent))
+
+
+@router.patch("/{slug}/slack", response=AgentDetailOut,
+              summary="Turn Slack access to an agent on or off")
+def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) -> AgentDetailOut:
+    """Whether people in this workspace's connected Slack can talk to the agent
+    (by mention, DM, or `/canopy`). Owner only."""
+    # Owner, not editor: editor is what anyone who self-joined already holds,
+    # and this opens the agent to everyone in a Slack workspace.
+    agent = _agent_for_admin(request, slug)
+    agent.slack_enabled = payload.slack_enabled
+    agent.save(update_fields=["slack_enabled", "updated_at"])
     return AgentDetailOut.model_validate(services.agent_detail(agent))
 
 

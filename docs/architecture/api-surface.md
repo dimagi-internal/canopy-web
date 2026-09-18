@@ -384,6 +384,15 @@ poll without losing its row.
 
 **Configured entirely at `/w/:workspace/inbound`** — audience, signer, topic, mailboxes, per-mailbox watch health, and copy-pasteable `gcloud` commands generated from that workspace's own push URL. There are deliberately **no deployment-global inbound settings**: config that lives in env vars and a Django shell is deployment, not configuration, and it is what made the app single-tenant.
 
+### Slack (`apps/slack`) — the Slack front door
+**Framework tier.** Any agent whose owner turned on Slack can be talked to by mention, DM, or `/canopy <agent> <ask>`. A Slack thread becomes a `canopy_sessions.Session` (the email-thread pattern) and every message is a `send_message(origin="slack", user=<linked user>)`, so routing, actor rules and the chat UI need nothing Slack-specific. Design: `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`.
+- `POST /api/slack/events` · `POST /api/slack/commands` — bare views, allowlisted in `apps/common/middleware.py`, self-enforcing on the Slack signing secret (5-minute replay window). A verified request always gets **200**, even one we refuse — a non-2xx makes Slack redeliver; the refusal goes back to the human as an ephemeral message. Unconfigured (any of the three settings empty or the CFN `PLACEHOLDER`) is **503**.
+- `GET /auth/slack/install/?workspace=<slug>` → `GET /auth/slack/callback/` — OAuth install, **owner of that workspace** only; re-pointing a team already bound elsewhere needs ownership of both.
+- `GET /auth/slack/link/?token=…` — joins a Slack user to the signed-in canopy user **only when the Slack profile email equals the canopy email**. ace-web's link bound whoever opened the URL, which let an attacker's Slack account run as whoever clicked a forwarded link.
+- `PATCH /api/agents/{slug}/slack` — `slack_enabled`, **owner only**.
+
+**Grants nothing.** An unlinked Slack user, or a linked one who is not a member of the installation's workspace, gets words back and no turn. The session is private to whoever started the thread (`created_by`, `origin=web`); someone else who joins the same Slack thread becomes a participant. Only `app_mention` and `message.im` are handled — never plain channel messages, so nothing is ingested passively. Slack redelivery collapses onto one turn (`client_id = slack:<channel>:<ts>`). **Not yet built:** relaying the agent's reply back into the thread (the user is told where to follow along), and the "read the last N minutes" channel window.
+
 ### Storyboards (`apps/storyboards`) — the shareable arc
 **Product tier** (it curates DDD narratives). `Storyboard → Act → Entry`; an entry names a narrative by slug and resolves to its **current** release at read time. `Entry.pinned_run_id` exists but stays blank except to hold an entry on a known-good run while that narrative is mid-redraft. `slug` is unique **per workspace**, not globally.
 - `GET|POST /api/storyboards/` — List / create (member)
