@@ -236,12 +236,41 @@ def test_the_documented_size_cap_is_the_real_one(doc):
 
 
 def test_the_documented_invalidation_hook_exists(doc):
-    """§5a tells a host to register `useResource`."""
-    assert "useResource" in doc
-    assert (REPO / "frontend/src/widget/useResource.ts").exists()
-    assert "export function useResource" in (
-        REPO / "frontend/src/widget/useResource.ts"
-    ).read_text()
+    """§5a tells a host to pass `onInvalidate` to `canopy.init`.
+
+    This used to assert the doc named `useResource` — a React hook that lives
+    inside canopy-web's OWN frontend and is exported by no package. A host
+    following the doc could not have called it, and this test pinned that. So
+    it now checks the option against the widget a host actually loads: it is a
+    declared option, and the widget really calls it when canopy says a
+    resource moved.
+    """
+    widget = (REPO / "frontend/packages/canopy-widget/src/index.ts").read_text()
+
+    assert "onInvalidate" in doc
+    assert "onInvalidate?: (resource: string) => void" in widget
+    assert "options.onInvalidate?.(" in widget
+    # And the host-facing guide no longer offers the in-repo hook as its API.
+    assert "useResource(" not in doc
+
+
+def test_every_documented_widget_method_is_real(doc):
+    """§4 lists what `canopy.init` returns. A method a host calls that does not
+    exist fails in their browser, not here."""
+    import re
+
+    widget = (REPO / "frontend/packages/canopy-widget/src/index.ts").read_text()
+    iface = widget[widget.index("export interface CanopyWidget {"):]
+    iface = iface[: iface.index("\n}")]
+    real = set(re.findall(r"^\s+(\w+)\(", iface, re.M))
+
+    section = doc[doc.index("The returned object has"):]
+    section = section[: section.index("## 5.")]
+    documented = set(re.findall(r"`(\w+)\(\)`", section))
+
+    assert documented, "the method list moved; point this test at it"
+    assert documented <= real, f"documented but not on the widget: {sorted(documented - real)}"
+    assert "setPageState" in documented, "the primary API is missing from the list"
 
 
 def test_the_documented_agui_ingress_route_exists(doc):
