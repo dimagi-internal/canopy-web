@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closeIntent, closeResultMessage } from './closeAction'
+import { closeDestination, closeIntent, closeResultMessage } from './closeAction'
 
 const base = {
   status: 'active',
@@ -53,5 +53,16 @@ describe('closeResultMessage', () => {
   it('explains an unreachable runner in terms of the box', () => {
     const msg = closeResultMessage({ ok: false, closing: false, reason: 'unavailable' }, base)
     expect(msg).toContain('jj-mbp')
+  })
+})
+
+describe('closeDestination', () => {
+  it('goes back when the previous entry is a page of this app', () => {
+    expect(closeDestination(3, 'dimagi')).toBe(-1)
+  })
+
+  it('falls back to the chat list when the chat was opened directly', () => {
+    expect(closeDestination(0, 'dimagi')).toBe('/w/dimagi/chat')
+    expect(closeDestination(undefined, 'dimagi')).toBe('/w/dimagi/chat')
   })
 })

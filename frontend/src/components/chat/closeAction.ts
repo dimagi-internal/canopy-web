@@ -48,3 +48,23 @@ export function closeResultMessage(r: CloseResult, s: CloseSubject): string | nu
   }
   return "Could not close this session"
 }
+
+/**
+ * Where to go once a session is closed: back where you came from.
+ *
+ * React Router stamps `idx` on every entry it pushes, so `idx > 0` means the
+ * previous entry is a page of this app, and going back returns you there (the
+ * session list, a board, an agent page). A chat opened straight from a link or
+ * a notification has nothing of ours behind it. Going back there would leave
+ * the app, so it falls back to the workspace's chat list.
+ */
+export function closeDestination(historyIdx: unknown, workspace: string): -1 | string {
+  return typeof historyIdx === 'number' && historyIdx > 0 ? -1 : `/w/${workspace}/chat`
+}
+
+/** How often, and for how long, the page checks whether a close relayed to a
+ *  runner has landed. The runner retires the session on its next report
+ *  (~10s), so 45s covers a few missed cycles without leaving you stuck on a
+ *  page that will never change. */
+export const CLOSE_POLL_MS = 2_000
+export const CLOSE_WAIT_MS = 45_000

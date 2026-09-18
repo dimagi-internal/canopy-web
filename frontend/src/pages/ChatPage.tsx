@@ -25,7 +25,13 @@ import {
   uploadAttachment,
   deleteAttachment,
 } from '@/api/chat'
-import { closeIntent, closeResultMessage } from '@/components/chat/closeAction'
+import {
+  CLOSE_POLL_MS,
+  CLOSE_WAIT_MS,
+  closeDestination,
+  closeIntent,
+  closeResultMessage,
+} from '@/components/chat/closeAction'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -393,9 +399,12 @@ export function ChatPage() {
   const [closing, setClosing] = useState(false)
   const [closeNote, setCloseNote] = useState<string | null>(null)
 
-  // Navigate away only when the session is REALLY gone (`closing: false`). When the
-  // close was relayed to a runner the emdash task is still the truth, so stay put
-  // and say so — bouncing to the list would claim a result we do not have yet.
+  // Navigate away only when the session is REALLY gone. When the close was
+  // relayed to a runner (`closing: true`), the emdash task is still the truth
+  // until the runner's next report retires the session, so wait for that and
+  // THEN leave. Leaving on the relay alone would claim a result we do not have
+  // yet, and staying put for good left you on a dead chat with no way back
+  // (Jonathan, 2026-09-18: "it should return me to the previous page").
   const closeThisSession = useCallback(async () => {
     if (!meta) return
     const intent = closeIntent(meta)
@@ -404,14 +413,38 @@ export function ChatPage() {
       return
     }
     if (intent.confirm && !window.confirm('This chat is still working. Close it anyway?')) return
+    const leave = () => {
+      const to = closeDestination(window.history.state?.idx, meta.workspace)
+      if (to === -1) navigate(-1)
+      else navigate(to, { replace: true })
+    }
+    const closingId = id
     setClosing(true)
     setCloseNote(null)
     try {
-      const result = await closeSession(id)
+      const result = await closeSession(closingId)
       const message = closeResultMessage(result, meta)
-      if (message) setCloseNote(message)
-      else if (result.closing) setCloseNote('Closing on the runner…')
-      else navigate(`/w/${meta.workspace}/chat`)
+      if (message) {
+        setCloseNote(message)
+        return
+      }
+      if (result.closing) {
+        setCloseNote('Closing on the runner…')
+        const deadline = Date.now() + CLOSE_WAIT_MS
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, CLOSE_POLL_MS))
+          // Stop if you navigated elsewhere while waiting.
+          if (!window.location.pathname.includes(closingId)) return
+          const s = await getSession(closingId).catch(() => null)
+          if (s && s.status !== 'active') {
+            leave()
+            return
+          }
+        }
+        setCloseNote('Still closing on the runner. It will drop off the list once it’s done.')
+        return
+      }
+      leave()
     } catch {
       setCloseNote('Couldn’t close this session')
     } finally {
