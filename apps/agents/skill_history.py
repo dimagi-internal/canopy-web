@@ -56,6 +56,16 @@ STALE_AFTER = dt.timedelta(hours=1)
 _REPO_PATH_RE = re.compile(r"^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _REPO_URL_HELP = "History can only be read from a https://github.com/<owner>/<repo> repository"
 
+# `revision_diff` builds a live GitHub API URL from caller-supplied `sha` and
+# `skill` — both are validated against these before anything is sent, so a
+# malformed value (e.g. a path-traversal attempt in `skill`) is refused
+# without ever reaching `access_token_for` or `requests.get`.
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+# The MCP cap on one diff's patch text (global-constraints.md).
+DIFF_CAP_BYTES = 20 * 1024
+
 # Markers in a failed `clone`'s stderr that mean the grant cannot reach this
 # repository (missing, private-to-someone-else, or plain wrong) as opposed to
 # a transient network problem. "could not resolve host" is deliberately NOT
@@ -409,3 +419,51 @@ def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
             for r in rows[:limit]
         ],
     }
+
+
+def _owner_repo(agent: Agent) -> str:
+    """`owner/repo`, derived straight from a VALIDATED GitHub URL.
+
+    Deliberately not `definition_key` (which folds in the ref, normalises
+    `.git`/scp-style/case, and exists to compare two repo spellings — a wider
+    job than this one). `revision_diff` sends the owner's token to whatever
+    host this produces, so it re-validates `agent.repo_url` itself rather than
+    trusting a caller who parsed it another way; only a bare
+    `https://github.com/<owner>/<repo>[.git]` ever reaches here.
+    """
+    _validate_repo_url(agent.repo_url)
+    path = urlsplit(agent.repo_url).path
+    if path.endswith(".git"):
+        path = path[: -len(".git")]
+    return path.strip("/")
+
+
+def revision_diff(agent: Agent, sha: str, skill: str) -> dict:
+    """One commit's change to one SKILL.md, fetched live — never stored.
+
+    `sha` and `skill` are validated BEFORE the repo URL, the owner's token, or
+    GitHub are ever touched: both are used to build the request URL, so a
+    malformed value (e.g. `skill="../../user"`) is refused outright rather
+    than reaching `access_token_for` or `requests.get`.
+    """
+    if not _SHA_RE.match(sha or ""):
+        raise SyncError("ok", f"'{sha}' is not a valid commit sha")
+    if not _SKILL_NAME_RE.match(skill or ""):
+        raise SyncError("ok", f"'{skill}' is not a valid skill name")
+    owner_repo = _owner_repo(agent)  # raises SyncError("repo_not_granted", ...) if not GitHub
+
+    token = github_app.access_token_for(agent.owner)
+    resp = requests.get(
+        f"{github_app.GITHUB_API}/repos/{owner_repo}/commits/{sha}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        timeout=github_app.HTTP_TIMEOUT,
+    )
+    if resp.status_code != 200:
+        raise SyncError("repo_not_granted", f"GitHub returned {resp.status_code} for commit {sha[:12]}")
+    target = f"skills/{skill}/SKILL.md"
+    patch = next((f.get("patch") or "" for f in resp.json().get("files", []) if f.get("filename") == target), "")
+    raw = patch.encode()
+    truncated = len(raw) > DIFF_CAP_BYTES
+    if truncated:
+        patch = raw[:DIFF_CAP_BYTES].decode(errors="ignore")
+    return {"sha": sha, "skill": skill, "patch": patch, "truncated": truncated}
