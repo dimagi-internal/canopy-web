@@ -4,7 +4,7 @@
  * mounting React or a WebSocket.
  */
 
-import { restToKitMessage } from "canopy-ui/chat";
+import { restToKitMessage, type SessionMenu } from "canopy-ui/chat";
 
 /**
  * Re-exported from `canopy-ui/chat`, which now owns it.
@@ -128,4 +128,61 @@ export function sendBlockReason(args: {
   return args.paused
     ? `${args.runnerName} is paused — resume it to send`
     : `${args.runnerName} is unavailable — continue on another runner to send`;
+}
+
+/**
+ * A tap on the "Waiting on you" dialog that the server has relayed (or is
+ * relaying) to the runner.
+ *
+ * Nothing on the server clears the menu when you answer it: the runner presses
+ * the key, and the retraction only arrives when the next session report notices
+ * the dialog is gone (~10s) or the agent streams its next row. On a phone that
+ * gap read as the tap being ignored. The buttons came back to life the moment
+ * the POST returned, the header still said "needs you", and the composer stayed
+ * locked, even though the answer had landed (Jonathan, 2026-09-18). So the page
+ * hides the dialog it just answered, straight away, and only brings it back
+ * when there is evidence the answer did NOT take.
+ */
+export interface PendingAnswer {
+  /** `menuIdentity` of the dialog that was answered. */
+  key: string;
+  /** The `answer_note` the dialog carried at tap time. A DIFFERENT note arriving
+   *  afterwards is the runner refusing this tap. */
+  note: string;
+  /** `activity` at tap time. Only a change away from it is news. */
+  activity: string | undefined;
+  at: number;
+}
+
+/** How long an answered dialog stays hidden while the producer still reports
+ *  it. The session report re-derives the menu every ~10s, so a dialog still
+ *  there after three reports did not take the key, and hiding it any longer
+ *  would strand the agent behind a menu nobody can see. */
+export const ANSWER_GRACE_MS = 30_000;
+
+/** What makes two menu objects the same dialog. `observed_at` and the answer
+ *  fields change on every report of the SAME dialog, so they are left out. */
+export function menuIdentity(menu: SessionMenu): string {
+  return JSON.stringify([
+    menu.title ?? "",
+    menu.question ?? "",
+    menu.body ?? "",
+    (menu.options ?? []).map((o) => [o.number, o.label]),
+    (menu.questions ?? []).map((q) => [q.question, q.options.map((o) => [o.number, o.label])]),
+  ]);
+}
+
+/** Whether the dialog on screen is the one we just answered, and should stay
+ *  hidden. It comes back when the runner refused the tap (a new
+ *  `answer_note`), when it is a different dialog, or when the grace window
+ *  has run out with the dialog still reported. */
+export function answerHidesMenu(
+  menu: SessionMenu,
+  pending: PendingAnswer | null,
+  now: number,
+): boolean {
+  if (!pending) return false;
+  if ((menu.answer_note ?? "") !== pending.note) return false;
+  if (menuIdentity(menu) !== pending.key) return false;
+  return now - pending.at < ANSWER_GRACE_MS;
 }

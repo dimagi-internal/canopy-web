@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef} from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ChatPanel,
@@ -36,6 +36,10 @@ import {
   backfillAction,
   restToKitMessage,
   menuBlocksComposer,
+  menuIdentity,
+  answerHidesMenu,
+  ANSWER_GRACE_MS,
+  type PendingAnswer,
   sendBlockReason,
   shouldShowLoadFull,
 } from './chatPageLogic'
@@ -197,12 +201,90 @@ export function ChatPage() {
   // `can_manage` flags that decide whether resuming is even on offer here.
   const boundRunner = findBoundRunner(meta?.runner_name, fleetRunners)
   const boundPaused = boundOffline && Boolean(boundRunner?.paused)
+
+  // Answering the dialog a blocked agent is waiting on. The clear is optimistic
+  // and happens at TAP time, not when the server confirms: nothing retracts the
+  // menu until the next session report (~10s) or the agent's next row, and until
+  // then a phone showed live buttons, "needs you" and a locked composer over an
+  // answer that had already landed. The runner re-reads the screen and refuses
+  // a stale answer, so the worst case is a menu that comes back (see
+  // `answerHidesMenu`), which is better than a tap that looks ignored.
+  const [answering, setAnswering] = useState(false)
+  const [answerError, setAnswerError] = useState('')
+  const [pendingAnswer, setPendingAnswer] = useState<PendingAnswer | null>(null)
+  const [answerClock, setAnswerClock] = useState(0)
+  const onAnswerMenu = useCallback(
+    async (option: number | null, selections?: number[][] | null,
+           texts?: (string | null)[] | null) => {
+      if (!id) return
+      const menu = socket.state.menu
+      setAnswering(true)
+      setAnswerError('')
+      if (menu) {
+        setPendingAnswer({
+          key: menuIdentity(menu),
+          note: menu.answer_note ?? '',
+          activity: socket.state.activity,
+          at: Date.now(),
+        })
+      }
+      try {
+        const res = await answerMenu(id, option, selections, texts)
+        if (!res.ok) {
+          // Not relayed, so nothing will press the key. Put the dialog back
+          // with the reason instead of claiming the answer was sent.
+          setPendingAnswer(null)
+          setAnswerError(
+            res.reason === 'unavailable'
+              ? 'That runner is offline — answer it in emdash.'
+              : res.reason === 'unbound'
+                ? 'This session has no runner to answer on.'
+                : 'Could not answer.',
+          )
+        }
+      } catch {
+        setPendingAnswer(null)
+        setAnswerError('Could not answer.')
+      } finally {
+        setAnswering(false)
+      }
+    },
+    [id, socket.state.menu, socket.state.activity],
+  )
+
+  // Wake up when the grace window runs out, so a dialog that is STILL reported
+  // comes back without waiting for some unrelated frame to trigger a render.
+  useEffect(() => {
+    if (!pendingAnswer) return
+    const t = setTimeout(() => setAnswerClock((n) => n + 1),
+      Math.max(0, pendingAnswer.at + ANSWER_GRACE_MS - Date.now()) + 50)
+    return () => clearTimeout(t)
+  }, [pendingAnswer])
+
+  const menuHidden = Boolean(
+    socket.state.menu && answerHidesMenu(socket.state.menu, pendingAnswer, Date.now()),
+  )
+  const visibleMenu = menuHidden ? undefined : socket.state.menu
+
+  // Let go of the answer once the truth has caught up: the agent's activity has
+  // moved on (it is working, or idle again), or a dialog is showing that this
+  // answer does not cover (refused, a different dialog, or grace expired).
+  useEffect(() => {
+    if (!pendingAnswer) return
+    const activity = socket.state.activity
+    if (activity !== pendingAnswer.activity && activity !== 'blocked') {
+      setPendingAnswer(null)
+    } else if (socket.state.menu && !menuHidden) {
+      setPendingAnswer(null)
+    }
+  }, [pendingAnswer, socket.state.activity, socket.state.menu, menuHidden, answerClock])
+
   // The composer refuses rather than queueing — see sendBlockReason.
   const disabledReason = sendBlockReason({
     runnerName: meta?.runner_name,
     boundOffline,
     paused: boundPaused,
-    blockedOnMenu: menuBlocksComposer(socket.state.menu),
+    blockedOnMenu: menuBlocksComposer(visibleMenu),
   })
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
@@ -518,61 +600,6 @@ export function ChatPage() {
     </div>
   )
 
-  // Answering the dialog a blocked agent is waiting on. The optimistic clear is
-  // deliberate: the runner re-reads the screen and refuses a stale answer, so the
-  // worst case is a menu that reappears — better than buttons that stay live
-  // against a dialog that is already gone.
-  const [answering, setAnswering] = useState(false)
-  const [answerError, setAnswerError] = useState('')
-  const answeredAt = useRef(0)
-  const onAnswerMenu = useCallback(
-    async (option: number | null, selections?: number[][] | null,
-           texts?: (string | null)[] | null) => {
-      if (!id) return
-      setAnswering(true)
-      setAnswerError('')
-      // Remember what we were looking at: if the menu DISAPPEARS right after this
-      // tap, the runner reconciled it away — either the key landed, or the screen
-      // said the dialog was already gone. A cleared menu carries no note (there
-      // is no object left to hang one on), so the transient explanation belongs
-      // here, where we know a tap just happened.
-      answeredAt.current = Date.now()
-      try {
-        const res = await answerMenu(id, option, selections, texts)
-        if (!res.ok) {
-          setAnswerError(
-            res.reason === 'unavailable'
-              ? 'That runner is offline — answer it in emdash.'
-              : res.reason === 'unbound'
-                ? 'This session has no runner to answer on.'
-                : 'Could not answer.',
-          )
-        }
-      } catch {
-        setAnswerError('Could not answer.')
-      } finally {
-        setAnswering(false)
-      }
-    },
-    [id],
-  )
-
-  // The reconciliation rule, client side: the runner clears a menu both when the
-  // key LANDED and when the screen turned out to have no dialog. Neither leaves
-  // a note on the server (the object is gone), and neither needs one — except in
-  // the second case, where nothing visibly happened and silence would read as
-  // the button failing again. We know a tap just happened, so we say it here.
-  const [vanishedNote, setVanishedNote] = useState('')
-  const hadMenu = useRef(false)
-  useEffect(() => {
-    const has = Boolean(socket.state.menu)
-    if (hadMenu.current && !has && Date.now() - answeredAt.current < 30_000) {
-      setVanishedNote('That dialog is gone — either your answer landed, or it had already been answered.')
-    }
-    if (has) setVanishedNote('')
-    hadMenu.current = has
-  }, [socket.state.menu])
-
   // undefined = no hook has reported for this session yet, so defer to the
   // server's coarser flag rather than asserting idle.
   const liveWorking =
@@ -582,7 +609,13 @@ export function ChatPage() {
   // The agent asked for a human and stopped — a permission prompt, or an idle
   // wait for input. It previously rendered as "running", which is the worst way
   // to get this wrong: you wait on an agent that is waiting on you.
-  const liveBlocked = socket.state.activity === "blocked";
+  //
+  // Except once you have answered: `Notification` fires on the way IN to a wait
+  // and nothing fires on the way out, so `activity` stays "blocked" until the
+  // agent's next row lands. Your answer is the event that ends the wait, and it
+  // happened here, so it is shown here, as running.
+  const answeredResuming = pendingAnswer !== null && !visibleMenu;
+  const liveBlocked = socket.state.activity === "blocked" && !answeredResuming;
   // The window between pressing send and the agent actually starting: the turn
   // is enqueued, a runner has to claim it and (on a laptop) drive it into
   // emdash before Claude sees a prompt at all. NOTHING could report during it —
@@ -624,7 +657,7 @@ export function ChatPage() {
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
             needs you{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
           </span>
-        ) : liveWorking ? (
+        ) : liveWorking || answeredResuming ? (
           <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
@@ -699,16 +732,19 @@ export function ChatPage() {
           // cannot answer — the banner above holds the ways out.
           disabledReason={disabledReason}
           banner={
-            socket.state.menu ? (
+            visibleMenu ? (
               <MenuPrompt
-                menu={socket.state.menu}
+                menu={visibleMenu}
                 busy={answering}
                 error={answerError}
                 onAnswer={onAnswerMenu}
               />
-            ) : vanishedNote ? (
+            ) : menuHidden ? (
+              // The tap's receipt, shown only while the dialog is still being
+              // reported. Once it is retracted the header saying "running" is
+              // the whole story.
               <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-muted-foreground">
-                {vanishedNote}
+                Answer sent. The agent is picking it up.
               </div>
             ) : boundOffline ? (
               <PlacementBanner
