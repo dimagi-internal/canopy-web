@@ -121,110 +121,84 @@ ace-web's, whose URLs point at `/ace/`.
 
 ## Feeding it context from several threads
 
-Jonathan's ask: "read everything from the last 10 minutes", across threads,
-without handing the bot the ability to ingest whole channels.
+Jonathan's ask: "read everything from the last 10 minutes" **in the channel the
+bot is already in** — a conversation spread across several threads there —
+without the bot ingesting whole channels. Decided 2026-09-18: channel history,
+scoped to the channel the request came from. The Real-time Search API is
+deferred (below).
+
+### What the request does
+
+`@canopy hal read the last 10 min <ask>` in channel C:
+
+1. `conversations.history(channel=C, oldest=now-window)` — top-level messages
+   posted in the window.
+2. `conversations.replies` for each of those that has replies, limited to the
+   same window, plus the thread the mention itself is in (fetched whole — it is
+   the conversation the human is asking from).
+3. Rendered as plain text — author, time, grouped by thread — and put into the
+   turn's prompt fenced as quoted Slack content, so the agent reads it as
+   material, not instructions.
+
+**Known gap, accepted for v1:** a reply posted in the window to a thread whose
+*parent* is older than the window is missed (Slack's history call returns
+parents only, by parent time). Closing it means scanning parents further back
+than the window, which is the opposite of the bound. The basket covers it.
 
 ### The constraint Slack imposes
 
-**Slack has no time-bounded or thread-bounded read scope.** Reading messages is
-`channels:history` / `groups:history` / `im:history` / `mpim:history`, and each
-grants the full history of every conversation of that type *the bot is a member
-of*. And a useful Slack agent needs `channels:history` + `groups:history` anyway:
-an `app_mention` event carries only the one message, so even reading the thread
-the agent was mentioned in requires them. So "can technically read a whole
-channel it is in" arrives with basic usefulness, not with this feature.
+**Slack has no time-bounded or thread-bounded read scope.** Reading a channel is
+`channels:history` (public) / `groups:history` (private), each granting the full
+history of every channel of that type the bot is a member of. A useful Slack
+agent needs them anyway: an `app_mention` carries only the one message, so even
+reading the thread the agent was mentioned in requires them. "The app could
+technically read the whole channel" arrives with basic usefulness, not with this
+feature.
 
-What can be made true is that canopy **never does** it, enforced in one place:
+What canopy makes true is that it **never does**, enforced in one module:
 
 1. **No passive ingestion.** Subscribe to `app_mention` and `message.im` only —
    never `message.channels` / `message.groups`. Nothing is read unless a linked
    human asks, at that moment.
-2. **Only where invited.** The bot reads only conversations it is a member of.
-   It cannot see human-to-human DMs at all (`im:history` covers DMs *with the
-   bot*).
-3. **Window capped server-side.** The window is a Slack `oldest` computed by
-   canopy (default 10 min, hard max 60), not a parameter the agent or the prompt
-   can widen. Pagination stops at the cap.
-4. **Requester must be a member.** Every channel read is checked against
-   `conversations.members` for the requesting Slack user, so the agent cannot be
-   used to read a channel you cannot see.
-5. **The agent never holds a Slack token.** canopy-web fetches and hands text
-   into the turn's prompt. The agent cannot call Slack itself, so a
-   prompt-injected "now read #finance" has nothing to call.
-6. **Audited.** Each read writes an `events` row: requester, channels, window,
+2. **Only the channel the request came from.** The channel id comes from the
+   verified event, never from message text, so "read #finance" cannot redirect
+   it. No cross-channel reads — so no membership check is needed either: the
+   requester just posted there.
+3. **Window capped server-side.** `oldest` is computed by canopy (default 10
+   min, hard max 60); a number in the message is clamped to it. Pagination stops
+   at the window and at a message-count ceiling.
+4. **The agent never holds a Slack token.** canopy-web fetches and hands text
+   into the turn's prompt. The agent cannot call Slack, so a prompt-injected
+   "now read the whole channel" has nothing to call.
+5. **Audited.** Each read writes an `events` row: requester, channel, window,
    message count.
-7. **Private by default.** The resulting session is the requester's alone
-   (above); content from a private channel lands nowhere wider than that.
+6. **Private by default.** The resulting session is the requester's alone
+   (above). Adding a participant to a session holding private-channel content
+   warns first — Slack's guidance is not to expose messages to anyone who could
+   not see them in Slack.
 
-### Two ways to pick the context
+Internal (non-Marketplace) apps are not subject to the 2025
+`conversations.history` throttle on distributed apps; confirm on the first live
+run.
 
-**A. Time window — `@canopy hal read the last 10 min` (optionally `in #a #b`).**
-Default scope: threads the *requester* posted in during the window, across
-channels both they and the bot are in, each thread fetched whole
-(`conversations.replies`) so the context is not cut mid-conversation. Named
-channels narrow it. This is the "10 minutes" ask. Internal (non-Marketplace) apps
-are not subject to the 2025 `conversations.history` throttle on distributed
-apps; confirm on the first live run.
+### Later: the basket
 
-**B. Basket — a message shortcut "Add to canopy context".** Click `⋯` on any
-message, in any conversation; the interaction payload carries that message's text,
-so this needs **no history scope** and works in human-to-human DMs and channels
-the bot is not in. Items collect per user for 30 min; the next `@canopy <agent>`
-from that user attaches them. Most precise and least privileged; more clicks.
+A message shortcut "Add to canopy context" — `⋯` on any message, in any
+conversation. The interaction payload carries the message text, so it needs **no
+history scope** and works in human-to-human DMs and channels the bot is not in.
+Items collect per user for 30 min and attach to that user's next `@canopy`.
+Covers what the channel window cannot: DMs, other channels, the old-parent gap.
 
-Ship **A** with the first real version (it is the ask) and **B** right after
-(it covers DMs, which A structurally cannot).
+### Deferred
 
-### Option C: the Real-time Search API — viable for an internal app, spike it
-
-`assistant.search.context`, called with the bot token plus the `action_token`
-Slack puts on the mention event. It is the closest thing Slack has to the ask:
-results are bound to what the *requesting user* can see, the call is only
-possible in response to that user's message, and it takes `after`/`before`
-timestamps. With a bot token it covers public channels the user is in — **no
-need to invite the bot** into each one, which A requires.
-
-**The storage question.** The developer page says flatly *"You must not store or
-copy any of the data retrieved from this API"*, and a canopy session persists
-by design (Turn.prompt, Message rows, and the runner's Claude Code transcript,
-which is never deleted). The binding text is the API Terms of Service, and it is
-narrower: in its "Data Access API and Real-Time Search API" section the
-prohibition is on persistent copies of **other organizations'** API Data, aimed
-at third-party providers, and the Commercial Distribution restrictions exempt an
-app built for a single organization. canopy's Slack app is internal to Dimagi's
-own workspace, so this is Dimagi's own data. Read that way, persisting it in a
-private Dimagi session is permitted. Because the docs page and the terms
-disagree, **get a one-line confirmation from whoever owns the Slack admin
-relationship before shipping C** — it is not a design blocker.
-
-**It stops being true the day canopy serves another organization's Slack.** At
-that point canopy is the third party and the restriction binds: Slack-sourced
-context would need an ephemeral path (fetched per turn, never written to
-Turn.prompt or Message rows, transcripts purged). So `SlackInstallation` records
-whether the team is the deploying org's own, and C is refused for any other team
-until that ephemeral path exists. Ties to the deferred org layer.
-
-**Also required by the same page, and already true here:** "don't expose
-messages to anyone who would not have access to them in Slack" — satisfied by
-the session being private to the requester. **Adding a participant to a session
-holding Slack-sourced context must warn** (or refuse, for private-channel
-content), because that is exactly the exposure the rule forbids.
-
-**Unknowns for the spike:** whether `query` can be empty or wildcarded (a time
-window has no search terms), keyword vs semantic behaviour on Dimagi's plan
-(semantic needs Slack AI on Business+), and the method's rate limit. If a
-windowed query is not expressible, C does not replace A.
-
-If the spike is clean, C is preferable to A: no channel invitations to manage,
-and "what the user can see" is enforced by Slack itself rather than by canopy's
-`conversations.members` check.
-
-### Considered and not chosen
-
-- **User tokens** (`search:read`, per-user history, or the Real-time Search API
-  with user scopes for private channels and DMs). Reaches everything the user
-  can see, including DMs, but means holding a broad token per user at rest.
-  Broader than the problem; the basket (B) covers DMs without it.
+- **Slack Real-time Search API** (`assistant.search.context` with the mention's
+  `action_token`). Bounded by what the requesting user can see and reaches
+  channels the bot is not in — but the ask is the bot's own channel, which
+  channel history covers. Its docs page forbids storing results; the binding API
+  Terms scope that to *other organizations'* data, which an internal Dimagi app
+  is not. Get that confirmed if it is ever picked up.
+- **User tokens.** Everything the user can see including DMs, held at rest per
+  user. Broader than the problem.
 
 ## Delivery
 
@@ -235,11 +209,9 @@ and "what the user can see" is enforced by Slack itself rather than by canopy's
    failure).
 2. **PR 2 — relay back** + a live e2e script (`scripts/e2e_slack.py`) that posts
    a real mention and asserts the reply lands in the thread.
-3. **PR 3 — context window.** Spike C first (half a day against the live
-   workspace); ship C if a windowed query works, else A. Either way the
-   guarantees above are pinned by tests (cap, no token in turn, audit row, and
-   the membership check for A).
-4. **PR 4 — basket (B).**
+3. **PR 3 — channel window**, with the guarantees above pinned by tests
+   (channel from the event only, window cap, no token in the turn, audit row).
+4. **PR 4 — basket.**
 5. **ace-web:** retire `/ace` or keep it only for tracked-run progress cards.
 
 **Manual, needs a human:** create the Canopy Slack app, approve the install in
