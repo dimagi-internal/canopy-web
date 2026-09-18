@@ -314,3 +314,25 @@ def test_the_documented_agui_socket_contract_is_the_real_one(doc):
     pkg = _json.loads((REPO / "frontend" / "packages" / "canopy-ui" / "package.json").read_text())
     major, minor = (int(x) for x in pkg["version"].split(".")[:2])
     assert (major, minor) >= (0, 9)
+
+
+def test_the_documented_history_filters_are_real_parameters(doc):
+    """§5b tells a host it can filter its history by `resource` and
+    `page_path`. Those are query parameter NAMES a host cannot discover, so
+    they are pinned to the route's signature rather than trusted."""
+    import inspect
+
+    from apps.canopy_sessions.api import list_sessions
+
+    params = inspect.signature(list_sessions).parameters
+    for name in ("resource", "page_path"):
+        assert f"?{name}=" in doc, f"§5b no longer documents ?{name}="
+        assert name in params, f"the doc offers ?{name}= but list_sessions has no such parameter"
+
+
+def test_the_doc_states_the_host_boundary_on_history(doc):
+    """The leak #823 closed — a delegated token listing another host's
+    conversations — is a property a host team should be able to rely on, so
+    the doc has to say it, and say the supplied value is ignored."""
+    assert "on your host, and only yours" in doc
+    assert "An `embed_app` you pass is ignored" in doc

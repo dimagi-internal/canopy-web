@@ -395,6 +395,31 @@ source of truth for data you already know how to load.
 
 ---
 
+## 5b. Reading back a user's history
+
+The token your endpoint mints also lists that user's earlier conversations —
+**on your host, and only yours**:
+
+```
+GET /api/canopy-sessions/                          ← this user's conversations here
+GET /api/canopy-sessions/?resource=stock://        ← ...had while showing that resource
+GET /api/canopy-sessions/?page_path=/warehouses    ← ...or on that path
+```
+
+The host is taken from the token, exactly as it is when a conversation is
+created. An `embed_app` you pass is ignored rather than honoured, so connect-labs
+cannot list the same person's conversations on canopy-web — the same human, but
+across a boundary they did not cross. (A signed-in canopy user or a personal
+token sees everything that person can, because there the person is asking, not
+an app on their behalf.)
+
+The page filters match what the page itself declared with `setPageState`, never
+anything canopy infers. A conversation whose page declared nothing matches no
+page filter: it was not had on any page canopy knows about, and guessing from
+its title would be inventing where it happened.
+
+---
+
 ## 6. Check that it works
 
 In a browser, on your page, signed in as an ordinary user:
@@ -406,7 +431,7 @@ In a browser, on your page, signed in as an ordinary user:
 | An agent is offered | the picker, or straight into a conversation |
 | Sending a message gets a reply | the agent responds |
 | The agent knows your page | ask it "what am I looking at?" |
-| Reopening later shows history | your prior conversations with that agent |
+| Reopening later shows history | your prior conversations with that agent — on this host only (§5b) |
 
 ### If something does not work
 

@@ -1,6 +1,10 @@
 # The page is told when its data changes
 
-**Status:** design, not built.
+**Status:** built. Invalidation #817; `insight://` + server-side
+`dismiss_insights` replacing the page action #818; `item://` + `list_items`, with
+the agent inbox moved onto it and `usePageContext` deleted #828. Two pages use it
+(`/insights`, an agent's Inbox); every mutation path reaches it because it is
+raised at the model layer, not per tool.
 **Prerequisite:** shipped — FastMCP 4 / mcp SDK 2.2 (#812), which is where the
 subscription machinery lives.
 
