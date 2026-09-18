@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { usePageAction } from '@/widget/usePageAction'
 import { usePageState } from '@/widget/usePageState'
 import { useResource } from '@/widget/useResource'
 import { describeSelection } from '@/widget/pageState'
@@ -23,7 +24,18 @@ const CATEGORIES = [
   { key: 'alignment', label: 'Alignment' },
 ]
 
-function InsightCard({ insight, onDismiss }: { insight: Insight; onDismiss: (id: number) => void }) {
+/** How long a row stays highlighted after the agent points at it. */
+const SHOWN_HIGHLIGHT_MS = 2500
+
+function InsightCard({
+  insight,
+  onDismiss,
+  highlighted = false,
+}: {
+  insight: Insight
+  onDismiss: (id: number) => void
+  highlighted?: boolean
+}) {
   const category = parseInsightCategory(insight.content)
   const body = parseInsightBody(insight.content)
   const style = category ? CATEGORY_STYLES[category] : null
@@ -35,7 +47,10 @@ function InsightCard({ insight, onDismiss }: { insight: Insight; onDismiss: (id:
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -40, transition: { duration: 0.2 } }}
       transition={{ type: 'spring', stiffness: 400, damping: 35 }}
-      className={`bg-card border rounded-lg p-4 ${style ? style.border : 'border-border'}`}
+      data-insight-id={insight.id}
+      className={`bg-card border rounded-lg p-4 transition-shadow ${style ? style.border : 'border-border'} ${
+        highlighted ? 'ring-2 ring-primary' : ''
+      }`}
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -117,6 +132,8 @@ export function InsightsPage() {
     return () => { cancelled = true }
   }, [activeFilter, projectFilter])
 
+  const [shownId, setShownId] = useState<number | null>(null)
+
   async function handleDismiss(id: number) {
     try {
       await insightsApi.dismiss(id)
@@ -132,11 +149,10 @@ export function InsightsPage() {
   // stale entries he legitimately wants closed, and saying "close these" is
   // cheap in front of the list and expensive anywhere else.
   //
-  // The agent could already bulk-clear by FILTER (clear_insights is
-  // MCP-exposed), but not dismiss a chosen set, and it cannot see which
-  // insights are on screen — the active filter, the project narrowing, what
-  // has already been triaged. That selection is page-local, which is what
-  // makes this a bridge case rather than a server one.
+  // The three doors, as this page uses them: READ the rows through
+  // `list_insights`, CHANGE them through `dismiss_insights` (both server tools,
+  // under the user's own ACL), and only what exists solely in this tab —
+  // which rows are on screen, and pointing at one — goes through the page.
 
   // Selection, not data. This used to serialise six fields for every visible
   // row — which duplicated `list_insights`, could go stale between render and
@@ -177,17 +193,53 @@ export function InsightsPage() {
   )
 
   // `dismissInsights` was a page action until 2026-09-16 and is now the server
-  // tool `dismiss_insights`.
+  // tool `dismiss_insights` — a data mutation wearing a page action's clothes.
+  // See docs/superpowers/specs/2026-09-16-page-invalidation-design.md.
   //
-  // It was a DATA MUTATION wearing a page action's clothes. Routed through the
-  // browser it was unaudited, unavailable the moment the tab closed, capped by a
-  // 20-second timeout, and a second implementation of a delete the REST API
-  // already had. It existed only because nothing could tell this page its data
-  // had changed — and now something can (`useResource` above), so the reason is
-  // gone. See docs/superpowers/specs/2026-09-16-page-invalidation-design.md.
+  // What stays here is what has no server equivalent, because it exists only in
+  // this tab: pointing at a row. "Which of these is the oldest?" is a question
+  // the agent answers through `list_insights`; SHOWING the user that row is
+  // something only the page can do.
   //
-  // Page actions remain right for things with no server equivalent: scrolling to
-  // a row, opening a drawer, filling a form.
+  // It is also, deliberately, the production caller of the page-action path.
+  // After dismiss moved to the server nothing used it, which is how a feature
+  // rots while its tests stay green (`page_tools.py` shipped that way once).
+  usePageAction(
+    'showInsight',
+    ({ id }) => {
+      const wanted = Number(id)
+      const el = document.querySelector(`[data-insight-id="${wanted}"]`)
+      // Throw to refuse, and say why in words the agent can act on. The row
+      // not being here usually means a filter hides it — which is worth
+      // telling the user, not something to paper over by scrolling elsewhere.
+      if (!el) {
+        throw new Error(
+          `Insight ${wanted} is not on screen — the current filter hides it, or it was dismissed.`,
+        )
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setShownId(wanted)
+      return { shown: wanted }
+    },
+    {
+      description:
+        'Scroll the insights feed to one insight and highlight it, so the user can see which one you mean. ' +
+        'Only works for insights currently on screen (see current_page for their ids).',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'integer', description: 'The insight id' } },
+        required: ['id'],
+      },
+    },
+  )
+
+  // The highlight is a pointer, not a state: it fades so the page does not keep
+  // claiming the agent is talking about a row long after the conversation moved.
+  useEffect(() => {
+    if (shownId === null) return
+    const t = window.setTimeout(() => setShownId(null), SHOWN_HIGHLIGHT_MS)
+    return () => window.clearTimeout(t)
+  }, [shownId])
 
   function clearProjectFilter() {
     const next = new URLSearchParams(searchParams)
@@ -331,7 +383,12 @@ export function InsightsPage() {
         <div className="space-y-3">
           <AnimatePresence initial={false}>
             {insights.map((insight) => (
-              <InsightCard key={insight.id} insight={insight} onDismiss={handleDismiss} />
+              <InsightCard
+                key={insight.id}
+                insight={insight}
+                onDismiss={handleDismiss}
+                highlighted={insight.id === shownId}
+              />
             ))}
           </AnimatePresence>
 
