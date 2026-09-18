@@ -23,16 +23,22 @@ def _visible_agent(user_id, slug: str):
     return Agent.objects.filter(slug=slug, workspace_id__in=wsvc.workspace_slugs_for_user_id(user_id)).first()
 
 
-def _history(user_id, agent, skill, group, since, until, limit):
+def _history(user_id, agent, skill, group, since, until, limit, commit):
     from apps.agents import skill_history
 
     a = _visible_agent(user_id, agent)
     if a is None:
         return {"error": f"agent '{agent}' not found"}
-    parse = lambda s: dt.date.fromisoformat(s) if s else None  # noqa: E731
-    return skill_history.skill_revisions(
-        a, skill=skill, group=group, since=parse(since), until=parse(until), limit=limit
-    )
+    try:
+        parse = lambda s: dt.date.fromisoformat(s) if s else None  # noqa: E731
+        return skill_history.skill_revisions(
+            a, skill=skill, group=group, since=parse(since), until=parse(until), limit=limit,
+            commit=commit,
+        )
+    except ValueError as e:  # a malformed since/until
+        return {"error": f"dates must be YYYY-MM-DD: {e}"}
+    except skill_history.SyncError as e:  # a malformed commit
+        return {"error": str(e)}
 
 
 def _diff(user_id, agent, sha, skill):
@@ -56,6 +62,7 @@ async def skill_history(
     since: str | None = None,
     until: str | None = None,
     limit: int = 300,
+    commit: str | None = None,
 ) -> dict:
     """How an agent's skills changed, from its repository's git history.
 
@@ -65,15 +72,19 @@ async def skill_history(
     that check it (`checked_by`) or the skill it checks (`checks`).
 
     Filters: `skill` name, `group` title (a phase or agent from the History
-    page), `since` / `until` as YYYY-MM-DD. `limit` is capped at 300.
+    page), `commit` (a sha or sha prefix, 7 to 64 hex characters),
+    `since` / `until` as YYYY-MM-DD. `limit` is capped at 300.
 
     On the History page, read `current_page` first: it says which skill, group
-    or commit the user has selected and the date they are looking at.
+    or commit the user has selected and the date they are looking at. Its
+    selection maps onto these parameters directly — a selected commit's sha
+    (`visible_ids` / the `commit` filter) is `commit`, and the page's `as_of`
+    date filter is `until`.
     """
     user_id = current_user_id()
-    out = await sync_to_async(_history, thread_sensitive=True)(user_id, agent, skill, group, since, until, limit)
+    out = await sync_to_async(_history, thread_sensitive=True)(user_id, agent, skill, group, since, until, limit, commit)
     await write_audit(user_id=user_id, tool="skill_history",
-                      args_summary=f"agent={agent} skill={skill} group={group} -> {len(out.get('revisions', []))}")
+                      args_summary=f"agent={agent} skill={skill} group={group} commit={commit} -> {len(out.get('revisions', []))}")
     return out
 
 

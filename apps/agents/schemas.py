@@ -648,6 +648,16 @@ class SkillHistoryOut(StrictModel):
     synced_with: str
     last_error: str
     credential_state: Literal["ok", "no_repo", "no_owner", "owner_not_connected", "repo_not_granted"]
+    # The agent owner's display name (or email), "" when there is no owner.
+    # The credential is the owner's, so the page names who has to act.
+    owner_name: str
+    # Whether the caller is the owner (only they can connect the GitHub grant).
+    viewer_is_owner: bool
+    # Whether the caller may force a sync (editor or owner in the workspace).
+    viewer_can_sync: bool
+    # GitHub's installation screen for the canopy-agents App, "" when the
+    # deployment has no App configured.
+    install_url: str
     groups: list[SkillHistoryGroupOut]
     checks: dict[str, str]
     present: list[str]

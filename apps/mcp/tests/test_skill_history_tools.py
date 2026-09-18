@@ -110,3 +110,53 @@ def test_a_non_github_repo_url_is_refused_before_any_github_call(world):
     assert "error" in out
     tok.assert_not_called()
     get.assert_not_called()
+
+
+def test_a_selected_commit_resolves_by_sha_prefix(world):
+    """The History page declares a commit selection as `visible_ids: [sha]`
+    plus a `commit` filter; the backing tool must be able to answer it."""
+    owner, _, agent = world
+    other = SkillHistoryCommit.objects.create(agent=agent, sha="d" * 40, subject="feat(idea-to-pdd): later",
+                                              committed_at=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
+    SkillRevision.objects.create(commit=other, skill="idea-to-pdd", lines_after=1340, added=7, deleted=0)
+    with as_user(owner):
+        out = _call("skill_history", agent="ace", commit="c" * 7)
+    assert [r["sha"] for r in out["revisions"]] == ["c" * 40]
+    assert out["revisions"][0]["subject"] == "fix(idea-to-pdd): read comments"
+    assert out["commit"] == "c" * 7
+
+
+def test_the_pages_as_of_date_is_until(world):
+    owner, _, agent = world
+    later = SkillHistoryCommit.objects.create(agent=agent, sha="d" * 40, subject="later",
+                                              committed_at=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
+    SkillRevision.objects.create(commit=later, skill="idea-to-pdd", lines_after=1340, added=7, deleted=0)
+    with as_user(owner):
+        out = _call("skill_history", agent="ace", until="2026-08-31")
+    assert [r["sha"] for r in out["revisions"]] == ["c" * 40]
+
+
+@pytest.mark.parametrize("bad", ["", "abc", "zzzzzzz", "c" * 65, "../../x"])
+def test_a_malformed_commit_is_an_error_not_a_raise(world, bad):
+    owner, _, _ = world
+    with as_user(owner):
+        out = _call("skill_history", agent="ace", commit=bad)
+    assert "error" in out
+
+
+def test_a_malformed_date_is_an_error_not_a_raise(world):
+    owner, _, _ = world
+    with as_user(owner):
+        out = _call("skill_history", agent="ace", since="last tuesday")
+    assert "error" in out
+
+
+def test_a_malformed_skill_name_is_refused_before_any_github_call(world):
+    owner, _, _ = world
+    with as_user(owner), \
+         mock.patch.object(skill_history.github_app, "access_token_for") as tok, \
+         mock.patch.object(skill_history.requests, "get") as get:
+        out = _call("skill_revision_diff", agent="ace", sha="c" * 40, skill="../../user")
+    assert "error" in out
+    tok.assert_not_called()
+    get.assert_not_called()

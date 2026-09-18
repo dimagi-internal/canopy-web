@@ -491,13 +491,18 @@ class SkillHistorySync(models.Model):
     """
 
     agent = models.OneToOneField(Agent, on_delete=models.CASCADE, related_name="skill_history_sync")
-    head_sha = models.CharField(max_length=40, blank=True, default="")
+    # 64: a SHA-256 repository's object ids are 64 hex characters.
+    head_sha = models.CharField(max_length=64, blank=True, default="")
     synced_at = models.DateTimeField(null=True, blank=True)
     synced_with = models.CharField(max_length=100, blank=True, default="")
     last_error = models.TextField(blank=True, default="")
     # One of skill_history.CREDENTIAL_STATES — what the last attempt found.
     last_state = models.CharField(max_length=32, blank=True, default="")
     sync_started_at = models.DateTimeField(null=True, blank=True)
+    # Set on every attempt, success or failure. `synced_at` moves only on
+    # success, so without this a failing agent (no grant, repo not granted)
+    # would refresh the owner's token and clone on every page load.
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
     groups = models.JSONField(default=list, blank=True)
     checks = models.JSONField(default=dict, blank=True)
     present = models.JSONField(default=list, blank=True)
@@ -508,7 +513,7 @@ class SkillHistorySync(models.Model):
 
 class SkillHistoryCommit(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="skill_history_commits")
-    sha = models.CharField(max_length=40)
+    sha = models.CharField(max_length=64)
     committed_at = models.DateTimeField()
     subject = models.TextField()
     body = models.TextField(blank=True, default="")

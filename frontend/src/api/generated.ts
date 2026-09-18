@@ -8299,6 +8299,14 @@ export interface components {
              * @enum {string}
              */
             readonly credential_state: "ok" | "no_repo" | "no_owner" | "owner_not_connected" | "repo_not_granted";
+            /** Owner Name */
+            readonly owner_name: string;
+            /** Viewer Is Owner */
+            readonly viewer_is_owner: boolean;
+            /** Viewer Can Sync */
+            readonly viewer_can_sync: boolean;
+            /** Install Url */
+            readonly install_url: string;
             /** Groups */
             readonly groups: readonly components["schemas"]["SkillHistoryGroupOut"][];
             /** Checks */

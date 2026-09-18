@@ -2,6 +2,8 @@
 workspace (agents, their Google-Doc syncs, work products, and skill catalog)."""
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router, Status
@@ -52,6 +54,8 @@ from .schemas import (
     SlackEnabledIn,
     TurnModeIn,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -626,12 +630,19 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
             summary="How the agent's skills changed, from its repository's history")
 def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
     agent = _get_agent_or_404(request, slug)
-    # Retries after a failed attempt too (a failure never sets synced_at), so an
-    # owner who connects GitHub sees history on the next page load. Failures are
-    # fast — no token, or a clone refused — and the per-agent claim debounces.
-    if skill_history.is_stale(agent) and skill_history.credential_state(agent) not in ("no_repo", "no_owner"):
-        skill_history.sync(agent)
-    return SkillHistoryOut(**skill_history.history_payload(agent))
+    # Due = stale AND no attempt in the last hour: a FAILED attempt never moves
+    # synced_at, so without the attempt debounce a repo_not_granted agent would
+    # refresh the owner's token and clone on every page load. An owner who has
+    # just fixed access presses Sync, which forces.
+    if skill_history.due_for_auto_sync(agent):
+        try:
+            skill_history.sync(agent)
+        except Exception:
+            # A read must not 500 because the refresh behind it broke — serve
+            # what is stored. The attempt is already stamped (see `_claim`),
+            # so a deterministic failure is not retried on every load either.
+            logger.exception("skill history auto-sync failed for agent %s", agent.slug)
+    return SkillHistoryOut(**skill_history.history_payload(agent, request.user))
 
 
 @router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
@@ -639,7 +650,7 @@ def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
     agent = _agent_for_write(request, slug)
     skill_history.sync(agent, force=True)
-    return SkillHistoryOut(**skill_history.history_payload(agent))
+    return SkillHistoryOut(**skill_history.history_payload(agent, request.user))
 
 
 # ---- tasks (board) ----

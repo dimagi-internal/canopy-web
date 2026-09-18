@@ -17,6 +17,10 @@ credentials, or a value git would read as another option (leading `-`) are
 all rejected there; only a bare GitHub HTTPS URL ever reaches git or the
 token.
 
+LINE COUNTS ASSUME A LINEAR (squash-merged) HISTORY. `lines_after` is a
+running sum of `git log --numstat`, which omits merge commits' diffs, so a
+change that reached the branch only through a merge commit is not counted.
+
 RUNS IN THE REQUEST. A full clone of ACE (the largest agent) is 23 MB / 1.6 s
 and the log is 0.2 s, so there is no worker. NOT `--filter=blob:none`: that
 makes `--numstat` fetch every blob lazily and did not finish in five minutes.
@@ -60,7 +64,8 @@ _REPO_URL_HELP = "History can only be read from a https://github.com/<owner>/<re
 # `skill` — both are validated against these before anything is sent, so a
 # malformed value (e.g. a path-traversal attempt in `skill`) is refused
 # without ever reaching `access_token_for` or `requests.get`.
-_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+# 7..64: an abbreviated sha up to a full SHA-256 object id.
+_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
 _SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 # The MCP cap on one diff's patch text (global-constraints.md).
@@ -141,6 +146,29 @@ def credential_state(agent: Agent) -> str:
 def is_stale(agent: Agent) -> bool:
     row = SkillHistorySync.objects.filter(agent=agent).first()
     return row is None or row.synced_at is None or timezone.now() - row.synced_at > STALE_AFTER
+
+
+def _attempt_due(row: SkillHistorySync | None) -> bool:
+    """Stale, AND no attempt (successful or not) within the last STALE_AFTER.
+
+    The second half is the debounce for FAILED attempts: a failure never moves
+    `synced_at`, so without it an agent whose owner has not connected GitHub,
+    or whose repo is not granted, would refresh the owner's token and clone on
+    every page load. An owner who fixes access presses Sync (which forces).
+    """
+    if row is None:
+        return True
+    now = timezone.now()
+    stale = row.synced_at is None or now - row.synced_at > STALE_AFTER
+    attempted_recently = row.last_attempt_at is not None and now - row.last_attempt_at <= STALE_AFTER
+    return stale and not attempted_recently
+
+
+def due_for_auto_sync(agent: Agent) -> bool:
+    """Whether reading the page should sync first (see `get_skill_history`)."""
+    if credential_state(agent) in ("no_repo", "no_owner"):
+        return False
+    return _attempt_due(SkillHistorySync.objects.filter(agent=agent).first())
 
 
 def _github_login(user) -> str:
@@ -236,26 +264,35 @@ def _clone_and_read(agent: Agent, token: str) -> tuple[str, str, dict[str, str],
                         "HEAD", "--", "skills/*/SKILL.md"], cwd=dest, deadline=deadline)
         present = {
             line.split("/", 1)[1]
-            for line in _run_git(["ls-tree", "-d", "--name-only", "HEAD", "skills/"], cwd=dest, deadline=deadline).split()
+            for line in _run_git(["ls-tree", "-d", "--name-only", "HEAD", "skills/"],
+                                 cwd=dest, deadline=deadline).splitlines()
             if "/" in line
         }
         files: dict[str, str] = {}
         listing = _run_git(["ls-tree", "--name-only", "HEAD", "agents/"], cwd=dest, deadline=deadline)
-        for path in listing.split():
+        # splitlines, not split: a filename with a space is one path.
+        for path in listing.splitlines():
             if path.endswith(".md"):
                 files[path] = _run_git(["show", f"HEAD:{path}"], cwd=dest, deadline=deadline)
         return head, log, files, present
 
 
-def _claim(agent: Agent, force: bool) -> SkillHistorySync | None:
-    """Take the per-agent sync claim, or return None if another sync holds it."""
+def _claim(agent: Agent) -> SkillHistorySync | None:
+    """Take the per-agent sync claim, or return None if another sync holds it.
+
+    Even a forced sync honours an in-flight claim: two overlapping syncs would
+    each delete-and-reinsert the commits and collide on the unique constraint.
+    Stamps `last_attempt_at` in its own committed transaction, so the attempt
+    is recorded however the sync then ends — including an unexpected raise.
+    """
     with transaction.atomic():
         row, _ = SkillHistorySync.objects.select_for_update().get_or_create(agent=agent)
         now = timezone.now()
-        if row.sync_started_at and now - row.sync_started_at < DEBOUNCE and not force:
+        if row.sync_started_at and now - row.sync_started_at < DEBOUNCE:
             return None
         row.sync_started_at = now
-        row.save(update_fields=["sync_started_at"])
+        row.last_attempt_at = now
+        row.save(update_fields=["sync_started_at", "last_attempt_at"])
         return row
 
 
@@ -268,6 +305,11 @@ def _record_failure(row: SkillHistorySync, state: str, message: str) -> SkillHis
 
 
 def sync(agent: Agent, *, force: bool = False) -> SkillHistorySync:
+    """Re-read the agent's history from its repo, and return the stored row.
+
+    `force` skips only the "is it due?" check (stale, and not attempted within
+    the last hour) — never an in-flight claim, which returns the stored row.
+    """
     if not agent.repo_url or agent.owner_id is None:
         row, _ = SkillHistorySync.objects.get_or_create(agent=agent)
         state = "no_repo" if not agent.repo_url else "no_owner"
@@ -281,7 +323,10 @@ def sync(agent: Agent, *, force: bool = False) -> SkillHistorySync:
         row, _ = SkillHistorySync.objects.get_or_create(agent=agent)
         return _record_failure(row, e.state, str(e))
 
-    row = _claim(agent, force)
+    if not force and not _attempt_due(SkillHistorySync.objects.filter(agent=agent).first()):
+        return SkillHistorySync.objects.get(agent=agent)
+
+    row = _claim(agent)
     if row is None:
         return SkillHistorySync.objects.get(agent=agent)
 
@@ -342,12 +387,25 @@ def _do_sync(agent: Agent, row: SkillHistorySync) -> SkillHistorySync:
     return row
 
 
-def history_payload(agent: Agent) -> dict:
+def _display_name(user) -> str:
+    if user is None:
+        return ""
+    return (user.get_full_name() or "").strip() or user.email or ""
+
+
+def history_payload(agent: Agent, viewer) -> dict:
     """The compact page payload: commits once, revisions as index tuples.
 
     ~150 KB for ACE. Bodies are deliberately absent — they are what the MCP
     tool is for, and would roughly triple the page's download.
+
+    The viewer fields exist so the page can say WHO must act: the credential
+    is the owner's, so only the owner can connect GitHub, and syncing is an
+    editor action. The role comes from the one authorizer
+    (`wsvc.has_role_at_least`), never a query of its own.
     """
+    from apps.workspaces import services as wsvc
+
     row = SkillHistorySync.objects.filter(agent=agent).first()
     commits = list(SkillHistoryCommit.objects.filter(agent=agent).order_by("committed_at", "id"))
     index = {c.id: i for i, c in enumerate(commits)}
@@ -363,6 +421,11 @@ def history_payload(agent: Agent) -> dict:
         "synced_with": row.synced_with if row else "",
         "last_error": row.last_error if row else "",
         "credential_state": credential_state(agent),
+        "owner_name": _display_name(agent.owner),
+        "viewer_is_owner": agent.owner_id is not None and agent.owner_id == getattr(viewer, "pk", None),
+        "viewer_can_sync": wsvc.has_role_at_least(viewer, agent.workspace_id,
+                                                  wsvc.WorkspaceMembership.EDITOR),
+        "install_url": github_app.install_url() if github_app.is_configured() else "",
         "groups": row.groups if row else [],
         "checks": row.checks if row else {},
         "present": row.present if row else [],
@@ -383,10 +446,19 @@ def skills_in_group(agent: Agent, group: str) -> list[str]:
 
 
 def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
-                    since: dt.date | None, until: dt.date | None, limit: int = 300) -> dict:
-    """Revisions newest first, with bodies — the read the assistant reasons over."""
+                    since: dt.date | None, until: dt.date | None, limit: int = 300,
+                    commit: str | None = None) -> dict:
+    """Revisions newest first, with bodies — the read the assistant reasons over.
+
+    `commit` is a sha or sha prefix (7..64 hex), matched by prefix — the
+    History page's commit selection. Raises SyncError on a malformed one.
+    """
+    if commit is not None and not _SHA_RE.match(commit):
+        raise SyncError("ok", f"'{commit}' is not a valid commit sha")
     row = SkillHistorySync.objects.filter(agent=agent).first()
     qs = SkillRevision.objects.filter(commit__agent=agent).select_related("commit")
+    if commit:
+        qs = qs.filter(commit__sha__startswith=commit.lower())
     if skill:
         qs = qs.filter(skill=skill)
     if group:
@@ -403,6 +475,7 @@ def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
         "agent": agent.slug,
         "skill": skill,
         "group": group,
+        "commit": commit,
         "checked_by": sorted(c for c, s in checks.items() if skill and s == skill),
         "checks": checks.get(skill) if skill else None,
         "truncated": len(rows) > limit,

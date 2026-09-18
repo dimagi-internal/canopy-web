@@ -140,6 +140,31 @@ def test_a_sync_in_flight_is_not_started_twice(agent, granted):
     clone.assert_not_called()
 
 
+def test_a_forced_sync_still_honours_an_in_flight_claim(agent, granted):
+    """Force skips only the "is it due?" check. Two overlapping syncs would
+    each delete-and-reinsert the commits and collide on the unique constraint."""
+    SkillHistorySync.objects.create(agent=agent, sync_started_at=timezone.now())
+    with mock.patch.object(skill_history, "_clone_and_read") as clone:
+        skill_history.sync(agent, force=True)
+    clone.assert_not_called()
+
+
+def test_an_unforced_sync_is_skipped_when_not_due(agent, granted):
+    skill_history.sync(agent)
+    with mock.patch.object(skill_history, "_clone_and_read") as clone:
+        skill_history.sync(agent)
+    clone.assert_not_called()
+
+
+def test_every_attempt_is_stamped_even_a_failed_one(agent):
+    with mock.patch.object(skill_history.github_app, "access_token_for",
+                           side_effect=GitHubAuthError("no GitHub connection")):
+        row = skill_history.sync(agent)
+    assert row.last_attempt_at is not None
+    assert row.synced_at is None
+    assert not skill_history.due_for_auto_sync(agent)
+
+
 def test_a_stale_claim_older_than_the_window_is_taken_over(agent, granted):
     SkillHistorySync.objects.create(agent=agent, sync_started_at=timezone.now() - timezone.timedelta(seconds=120))
     row = skill_history.sync(agent)
