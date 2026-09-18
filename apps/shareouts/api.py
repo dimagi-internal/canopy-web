@@ -27,7 +27,6 @@ router = Router(auth=session_auth, tags=["shareouts"])
     "/",
     response=Page[ShareoutOut],
     summary="List shareouts",
-    openapi_extra={"x-mcp-expose": True},
 )
 def list_shareouts(
     request: HttpRequest,
@@ -59,7 +58,6 @@ def list_shareouts(
     "/",
     response={201: ShareoutBatchOut},
     summary="Create shareouts (batch, idempotent per period+source)",
-    openapi_extra={"x-mcp-expose": True},
 )
 def create_shareouts(
     request: HttpRequest,
@@ -92,7 +90,6 @@ def create_shareouts(
     "/clear/",
     response=ShareoutsClearOut,
     summary="Clear shareouts by source / project / date (AND-combined)",
-    openapi_extra={"x-mcp-expose": True},
 )
 def clear_shareouts(
     request: HttpRequest,

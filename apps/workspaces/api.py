@@ -105,8 +105,7 @@ def _invite_out(inv: WorkspaceInvite) -> InviteOut:
     )
 
 
-@router.post("/", response={201: WorkspaceOut}, summary="Create a workspace",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/", response={201: WorkspaceOut}, summary="Create a workspace",)
 def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status:
     # An invite-admitted user (cleared the OAuth gate via a live invite or an
     # existing membership, not the domain allowlist) must not be able to
@@ -130,8 +129,7 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
     return Status(201, _out(ws, WorkspaceMembership.OWNER))
 
 
-@router.get("/", response=list[WorkspaceOut], summary="List my workspaces",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/", response=list[WorkspaceOut], summary="List my workspaces",)
 def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
     memberships = (
         WorkspaceMembership.objects.filter(user=request.user)
@@ -141,15 +139,13 @@ def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
     return [_out(m.workspace, m.role) for m in memberships]
 
 
-@router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)
 def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     m = _membership_or_404(request.user, slug)
     return _out(m.workspace, m.role)
 
 
-@router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",)
 def list_joinable_workspaces(request: HttpRequest) -> list[JoinableWorkspaceOut]:
     """A capability list, not a directory: only workspaces whose
     `self_join_domains` matches the caller's own email domain, and only ones
@@ -161,8 +157,7 @@ def list_joinable_workspaces(request: HttpRequest) -> list[JoinableWorkspaceOut]
     ]
 
 
-@router.post("/{slug}/join", response=WorkspaceOut, summary="Join a self-serve workspace",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/{slug}/join", response=WorkspaceOut, summary="Join a self-serve workspace",)
 def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     """Explicit, auditable self-join — the replacement for the old implicit
     auto-join. Re-checks the domain match server-side on every call (never
@@ -181,8 +176,7 @@ def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     return _out(ws, m.role)
 
 
-@router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",
-               openapi_extra={"x-mcp-expose": True})
+@router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",)
 def delete_workspace(request: HttpRequest, slug: str):
     """Delete an empty workspace. Owner-only, and never one that still owns agents.
 
@@ -219,8 +213,7 @@ def delete_workspace(request: HttpRequest, slug: str):
 
 
 # ---- members ----
-@router.get("/{slug}/members/", response=list[MemberOut], summary="List members (member-only)",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/members/", response=list[MemberOut], summary="List members (member-only)",)
 def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
     _membership_or_404(request.user, slug)
     members = (
@@ -231,7 +224,7 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
 
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},
-               summary="Remove a member (owner-only)", openapi_extra={"x-mcp-expose": True})
+               summary="Remove a member (owner-only)")
 def remove_member(request: HttpRequest, slug: str, user_id: int):
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
@@ -242,7 +235,7 @@ def remove_member(request: HttpRequest, slug: str, user_id: int):
 
 
 @router.patch("/{slug}/members/{user_id}/", response=MemberOut,
-              summary="Change a member's role (owner-only)", openapi_extra={"x-mcp-expose": True})
+              summary="Change a member's role (owner-only)")
 def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: MemberRoleUpdateIn) -> MemberOut:
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
@@ -253,8 +246,7 @@ def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: Memb
 
 
 # ---- invites ----
-@router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (owner-only)",
-             openapi_extra={"x-mcp-expose": True})
+@router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (owner-only)",)
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     inv = services.create_invite(
@@ -263,15 +255,14 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
     return Status(201, _invite_out(inv))
 
 
-@router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",
-            openapi_extra={"x-mcp-expose": True})
+@router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     _membership_or_404(request.user, slug)
     return [_invite_out(i) for i in WorkspaceInvite.objects.filter(workspace_id=slug).order_by("-created_at")]
 
 
 @router.post("/{slug}/invites/{invite_id}/revoke", response={204: None},
-             summary="Revoke an invite (owner-only)", openapi_extra={"x-mcp-expose": True})
+             summary="Revoke an invite (owner-only)")
 def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
     _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
@@ -305,7 +296,7 @@ def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
 
 
 @router.post("/invites/{token}/accept", response=WorkspaceOut,
-             summary="Accept an invite by token", openapi_extra={"x-mcp-expose": True})
+             summary="Accept an invite by token")
 def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
     try:
         ws, role = services.accept_invite(token=token, user=request.user)
