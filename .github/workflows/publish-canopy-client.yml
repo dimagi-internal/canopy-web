@@ -30,6 +30,10 @@ name: Publish canopy-client
 # │ Until that is done this workflow fails at the publish step with a 404   │
 # │ or an auth error — which is the correct failure, not a bug to work      │
 # │ around by adding a long-lived token.                                    │
+# │                                                                         │
+# │ STATUS 2026-09-18: 0.1.0 was published by hand (option b's first half), │
+# │ so the package exists. Whether its Trusted Publisher is configured is   │
+# │ answered by this workflow's first run for 0.2.0.                       │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # Trigger by pushing a tag like `canopy-client-v0.1.0`, or manually via the
@@ -60,18 +64,24 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@11
 
-      # The package ships `src` only (no build step — it is plain .ts that the
-      # consumer's bundler compiles, exactly like canopy-ui). Its own test
-      # suite is the one gate worth running before it leaves the building, and
-      # `dependency-free.test.ts` in particular is what keeps the promise the
-      # package is FOR: zero runtime dependencies, so a React-18 or
-      # no-framework host can install it.
+      # Its own suite is the gate before it leaves the building. Two tests
+      # carry the weight: `dependency-free.test.ts` keeps the promise the
+      # package is FOR (zero runtime dependencies, so a React-18 or
+      # no-framework host can install it), and `published-build.test.ts` builds
+      # the real artifact and loads it in plain Node — the check 0.1.0 lacked.
       - name: Install workspace + test
         working-directory: frontend
         run: |
           npm ci
           npx vitest run packages/canopy-client
 
+      # Publish the BUILD, not the source. 0.1.0 shipped raw TypeScript and
+      # failed in connect-labs' webpack, which (like most) does not compile
+      # node_modules. See scripts/build-dist.mjs.
+      - name: Build
+        working-directory: frontend/packages/canopy-client
+        run: node scripts/build-dist.mjs dist
+
       - name: Publish (OIDC, with provenance)
-        run: npm publish --access public --provenance
+        run: npm publish ./dist --access public --provenance
         working-directory: frontend/packages/canopy-client
