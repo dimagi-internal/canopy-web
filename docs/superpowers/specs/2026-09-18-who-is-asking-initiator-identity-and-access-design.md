@@ -1,6 +1,6 @@
 # Who is asking: initiator identity and access, end to end
 
-**Status:** proposed — decisions D1–D5 open (see the end).
+**Status:** proposed — D1 decided 2026-09-18 (no dynamic user creation; see §2); D2–D5 open.
 **Spans:** canopy-web (identity, tool authorization), the canopy agent framework
 (`agent-core`, the agent factory, `gating_guard`), and each embedding host's MCP
 server (connect-labs first).
@@ -86,30 +86,66 @@ The host keeps doing exactly what it does now — its server signs a short-lived
 statement about the visitor (`sub` = the host's own id, `aud`, `exp` ≤ 120 s,
 single-use `jti`). Two claims are added: `email` and `email_verified`.
 
-canopy then resolves, in order:
+**Arrival never creates a canopy account.** A visitor becomes a canopy user only
+if one already exists; otherwise they are a contact, and becoming a user is a
+separate, deliberate step the person takes themselves (below). canopy then
+resolves, in order:
 
-1. **An existing link** `(app, host sub) → canopy user` — use it.
-2. **Otherwise, a verified email the host may speak for** — if `email_verified`
-   is true, the email's domain is one this site's owner has explicitly allowed it
-   to resolve (a new, visible setting on Connected sites, bounded as before to a
-   domain the owner is in and canopy admits at login), and a canopy user with that
-   verified email exists → record the link and resolve to that user.
-3. **Otherwise → contact**, exactly as today.
+1. **An existing link** — the visitor's contact `(app, host sub)` already has a
+   `user` (`Contact.user`, set by `contacts.services.promote_to_user`) → resolve
+   to that user. The link is the contact row itself; there is no second table.
+2. **Otherwise, an existing account the host may speak for** — if
+   `email_verified` is true, the email's domain is one this site's owner has
+   explicitly allowed it to resolve (a new, visible setting on Connected sites,
+   bounded as before to a domain the owner is in and canopy admits at login), and
+   a canopy user with that verified email ALREADY exists → link the contact to it
+   and resolve to that user.
+3. **Otherwise → contact**, exactly as today. No user is created, whatever the
+   email says.
+
+### From contact to user: create an account, then link
+
+A contact who wants their canopy account is offered it in the widget — *"Sign in
+to canopy to use your account here"*. That opens canopy's own sign-in in a popup:
+
+- **If they have no account**, they create one through canopy's normal sign-up —
+  the same rules as anyone else (the allowed login domains, or an invite). The
+  widget grants no shortcut past those rules.
+- **Once signed in**, canopy has proved the account *itself* — not taken the host's
+  word for it — and calls `promote_to_user(contact, user)`. From the next token on,
+  step 1 above resolves them to that user.
+- **Their contact history comes with them**: conversations they had as the
+  contact become visible to the linked user, since it is the same person on the
+  same site.
+- **Linking grants no membership**, exactly as `promote_to_user` already
+  guarantees. Being known and being let into a workspace stay two decisions.
+
+This popup is also the fallback for step 2: a person whose domain the site owner
+has not opted in, or whose host sends no verified email, links the same way.
+
+### A path that breaks this rule today
+
+`POST /api/auth/token-exchange` — the older server-to-server exchange ace-web
+uses — **does** create users on the fly (`User.objects.create_user` plus an
+auto-verified `EmailAddress`), and can provision a workspace membership. That
+contradicts the rule above. It stays working for ace-web until ace-web moves onto
+this arrival path, and is then removed; until then no new site may be given it
+(Connected sites already refuses to grant the email-domain vouching it depends
+on).
 
 The token issued is the kind that matches: a `DelegatedToken` for a user (their
 full canopy ACL applies on every request), a `ContactToken` for a contact (only
 `/api/contact/`). The widget already accepts either unchanged.
 
 **The honest trade in step 2.** A host allowed to resolve a domain can assert any
-verified address in it, so a compromised host signing key could speak for canopy
-users in that domain. That is the old email-domain vouching risk, made much
+verified address in it, so a compromised host signing key could speak for
+EXISTING canopy users in that domain (never create new ones). That is the old email-domain vouching risk, made much
 smaller: it is per-visitor and signed rather than one static secret; it is opt-in
 per domain on a page the owner sees; every resolution is audited with
 `assurance=host_signed`; and (§4) a `host_signed` user can be given less than a
-`session` user in the agent's policy. The alternative (D1) is a one-time link: the
-first time, the visitor confirms their canopy account in a canopy sign-in popup,
-and only the stored link is trusted afterwards. Stronger, one extra click per
-person, once.
+`session` user in the agent's policy. The sign-in link above is the stronger
+path, and a site owner who does not want host-asserted matching simply leaves
+step 2 off — every visitor then starts as a contact and links by signing in.
 
 ## 3. The agent knows who asked
 
@@ -234,7 +270,7 @@ tried `canopy email send`" is blocked by the same rail that blocks raw
 | where | change |
 | --- | --- |
 | canopy-web `harness` | initiator fields on `Turn`; set on every enqueue path (widget, chat, email, schedule, dispatch, Slack) |
-| canopy-web `tokens` | arrival resolution (link → verified email → contact); `email`/`email_verified` claims; the per-domain "resolve visitors to canopy accounts" setting; the link table |
+| canopy-web `tokens` | arrival resolution (linked contact → existing account by verified email → contact), never creating a user; `email`/`email_verified` claims; the per-domain "resolve visitors to existing canopy accounts" setting; the sign-in-to-link flow calling `promote_to_user`; contact history visible to the linked user |
 | canopy-web `mcp` | per-session endpoint; turn → initiator resolution; intersection in every tool; tool-list filtering; `who_is_asking()`; the gateway + OBO signing (D4) |
 | canopy-web `agents` | publish + store `access.yaml` alongside the skill catalog |
 | runner | per-task MCP URL on task creation; turn context block; initiator written beside the turn for the hook |
@@ -248,8 +284,10 @@ Each ships alone and is useful alone.
 
 1. **Initiator on every turn + the context block.** No behaviour change; the agent
    simply knows who asked, on every channel including email.
-2. **Arrival resolution** — widget visitors with canopy accounts arrive as
-   themselves.
+2. **Arrival resolution + sign-in-to-link** — widget visitors with canopy
+   accounts arrive as themselves; everyone else starts as a contact and can link
+   once they have an account. Then move ace-web onto this path and remove the
+   user-creating `token-exchange`.
 3. **canopy's tools run as `agent ∩ initiator`** — per-session MCP endpoint.
    *This is the phase that removes the "Alice can ask for more than she can
    see" gap for canopy data.*
@@ -262,10 +300,11 @@ only the host-tool access that is fine for everyone who can reach it.
 
 ## Decisions
 
-- **D1 — How a visitor becomes their canopy account.** (a) automatically, by a
-  host-asserted verified email, opt-in per domain; or (b) a one-time link through
-  a canopy sign-in popup. *Recommended: (a) for Dimagi-staff hosts, with
-  `host_signed` capped by policy; (b) available for anything more sensitive.*
+- **D1 — How a visitor becomes their canopy account. DECIDED 2026-09-18.** No
+  dynamic user creation: an existing account is used (matched by a host-verified
+  email where the site owner opted in, or by a prior link); anyone else starts as
+  a contact, and once they have created an account through canopy's normal
+  sign-up they sign in from the widget and are linked (§2).
 - **D2 — Multiplayer.** Initiator per turn (whoever sent that message) or per
   session (whoever opened it). *Recommended: per turn.*
 - **D3 — Scheduled and dispatched turns.** Act with the creator's/dispatcher's
