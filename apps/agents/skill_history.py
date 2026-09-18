@@ -330,3 +330,82 @@ def _do_sync(agent: Agent, row: SkillHistorySync) -> SkillHistorySync:
         row.save()
         mark_dirty(resource_uri(agent))
     return row
+
+
+def history_payload(agent: Agent) -> dict:
+    """The compact page payload: commits once, revisions as index tuples.
+
+    ~150 KB for ACE. Bodies are deliberately absent — they are what the MCP
+    tool is for, and would roughly triple the page's download.
+    """
+    row = SkillHistorySync.objects.filter(agent=agent).first()
+    commits = list(SkillHistoryCommit.objects.filter(agent=agent).order_by("committed_at", "id"))
+    index = {c.id: i for i, c in enumerate(commits)}
+    per_skill: dict[str, list[list[int]]] = {}
+    for r in (SkillRevision.objects.filter(commit__agent=agent)
+              .order_by("commit__committed_at", "commit_id").values_list("skill", "commit_id", "lines_after", "added", "deleted")):
+        per_skill.setdefault(r[0], []).append([index[r[1]], r[2], r[3], r[4]])
+    return {
+        "agent": agent.slug,
+        "repo_url": agent.repo_url,
+        "head_sha": row.head_sha if row else "",
+        "synced_at": row.synced_at if row else None,
+        "synced_with": row.synced_with if row else "",
+        "last_error": row.last_error if row else "",
+        "credential_state": credential_state(agent),
+        "groups": row.groups if row else [],
+        "checks": row.checks if row else {},
+        "present": row.present if row else [],
+        "commits": [{"sha": c.sha, "date": c.committed_at.date().isoformat(), "subject": c.subject} for c in commits],
+        "skills": [{"name": n, "revisions": v} for n, v in sorted(per_skill.items())],
+    }
+
+
+def skills_in_group(agent: Agent, group: str) -> list[str]:
+    row = SkillHistorySync.objects.filter(agent=agent).first()
+    if row is None:
+        return []
+    for g in row.groups:
+        if g["title"] == group:
+            checkers = [c for c, checked in row.checks.items() if checked in g["skills"]]
+            return list(g["skills"]) + checkers
+    return []
+
+
+def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
+                    since: dt.date | None, until: dt.date | None, limit: int = 300) -> dict:
+    """Revisions newest first, with bodies — the read the assistant reasons over."""
+    row = SkillHistorySync.objects.filter(agent=agent).first()
+    qs = SkillRevision.objects.filter(commit__agent=agent).select_related("commit")
+    if skill:
+        qs = qs.filter(skill=skill)
+    if group:
+        qs = qs.filter(skill__in=skills_in_group(agent, group))
+    if since:
+        qs = qs.filter(commit__committed_at__date__gte=since)
+    if until:
+        qs = qs.filter(commit__committed_at__date__lte=until)
+    qs = qs.order_by("-commit__committed_at", "-commit_id")
+    limit = max(1, min(limit, 300))
+    rows = list(qs[: limit + 1])
+    checks = row.checks if row else {}
+    return {
+        "agent": agent.slug,
+        "skill": skill,
+        "group": group,
+        "checked_by": sorted(c for c, s in checks.items() if skill and s == skill),
+        "checks": checks.get(skill) if skill else None,
+        "truncated": len(rows) > limit,
+        "revisions": [
+            {
+                "sha": r.commit.sha,
+                "date": r.commit.committed_at.date().isoformat(),
+                "skill": r.skill,
+                "subject": r.commit.subject,
+                "body": r.commit.body[:4000],
+                "lines_after": r.lines_after,
+                "line_change": r.added - r.deleted,
+            }
+            for r in rows[:limit]
+        ],
+    }

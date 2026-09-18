@@ -11,7 +11,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import services, skill_history
 from .models import AgentTaskCommand
 from .schemas import (
     AgentCommandApplyIn,
@@ -48,6 +48,7 @@ from .schemas import (
     CommandResultOut,
     CountOut,
     RunnerPreferenceIn,
+    SkillHistoryOut,
     SlackEnabledIn,
     TurnModeIn,
 )
@@ -615,6 +616,30 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
     agent = _agent_for_write(request, slug)
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
+
+
+# ---- skill history ----
+# Reading syncs first when the stored history is over an hour old: opening the
+# page is the trigger (no scheduler exists, and a stale history costs one
+# click). The sync itself is debounced per agent, so many open tabs clone once.
+@router.get("/{slug}/skill-history/", response=SkillHistoryOut,
+            summary="How the agent's skills changed, from its repository's history")
+def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
+    agent = _get_agent_or_404(request, slug)
+    # Retries after a failed attempt too (a failure never sets synced_at), so an
+    # owner who connects GitHub sees history on the next page load. Failures are
+    # fast — no token, or a clone refused — and the per-agent claim debounces.
+    if skill_history.is_stale(agent) and skill_history.credential_state(agent) not in ("no_repo", "no_owner"):
+        skill_history.sync(agent)
+    return SkillHistoryOut(**skill_history.history_payload(agent))
+
+
+@router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
+             summary="Re-read the agent's skill history from its repository now")
+def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
+    agent = _agent_for_write(request, slug)
+    skill_history.sync(agent, force=True)
+    return SkillHistoryOut(**skill_history.history_payload(agent))
 
 
 # ---- tasks (board) ----
