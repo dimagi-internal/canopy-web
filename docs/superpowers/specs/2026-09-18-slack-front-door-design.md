@@ -175,16 +175,56 @@ from that user attaches them. Most precise and least privileged; more clicks.
 Ship **A** with the first real version (it is the ask) and **B** right after
 (it covers DMs, which A structurally cannot).
 
+### Option C: the Real-time Search API — viable for an internal app, spike it
+
+`assistant.search.context`, called with the bot token plus the `action_token`
+Slack puts on the mention event. It is the closest thing Slack has to the ask:
+results are bound to what the *requesting user* can see, the call is only
+possible in response to that user's message, and it takes `after`/`before`
+timestamps. With a bot token it covers public channels the user is in — **no
+need to invite the bot** into each one, which A requires.
+
+**The storage question.** The developer page says flatly *"You must not store or
+copy any of the data retrieved from this API"*, and a canopy session persists
+by design (Turn.prompt, Message rows, and the runner's Claude Code transcript,
+which is never deleted). The binding text is the API Terms of Service, and it is
+narrower: in its "Data Access API and Real-Time Search API" section the
+prohibition is on persistent copies of **other organizations'** API Data, aimed
+at third-party providers, and the Commercial Distribution restrictions exempt an
+app built for a single organization. canopy's Slack app is internal to Dimagi's
+own workspace, so this is Dimagi's own data. Read that way, persisting it in a
+private Dimagi session is permitted. Because the docs page and the terms
+disagree, **get a one-line confirmation from whoever owns the Slack admin
+relationship before shipping C** — it is not a design blocker.
+
+**It stops being true the day canopy serves another organization's Slack.** At
+that point canopy is the third party and the restriction binds: Slack-sourced
+context would need an ephemeral path (fetched per turn, never written to
+Turn.prompt or Message rows, transcripts purged). So `SlackInstallation` records
+whether the team is the deploying org's own, and C is refused for any other team
+until that ephemeral path exists. Ties to the deferred org layer.
+
+**Also required by the same page, and already true here:** "don't expose
+messages to anyone who would not have access to them in Slack" — satisfied by
+the session being private to the requester. **Adding a participant to a session
+holding Slack-sourced context must warn** (or refuse, for private-channel
+content), because that is exactly the exposure the rule forbids.
+
+**Unknowns for the spike:** whether `query` can be empty or wildcarded (a time
+window has no search terms), keyword vs semantic behaviour on Dimagi's plan
+(semantic needs Slack AI on Business+), and the method's rate limit. If a
+windowed query is not expressible, C does not replace A.
+
+If the spike is clean, C is preferable to A: no channel invitations to manage,
+and "what the user can see" is enforced by Slack itself rather than by canopy's
+`conversations.members` check.
+
 ### Considered and not chosen
 
-- **Slack Real-time Search API** (`assistant.search.context` with the
-  `action_token` from the mention). Attractive — user-bound, request-bound,
-  `after`/`before` filters — but its terms say *"You must not store or copy any
-  of the data retrieved from this API"*, and a canopy session persists by design
-  (Message rows, and the runner's Claude Code transcript on disk). Revisit only
-  for an explicitly ephemeral turn.
-- **User tokens** (`search:read`, or per-user history). Reaches everything the
-  user can see including DMs, held at rest per user. Broader than the problem.
+- **User tokens** (`search:read`, per-user history, or the Real-time Search API
+  with user scopes for private channels and DMs). Reaches everything the user
+  can see, including DMs, but means holding a broad token per user at rest.
+  Broader than the problem; the basket (B) covers DMs without it.
 
 ## Delivery
 
@@ -195,8 +235,10 @@ Ship **A** with the first real version (it is the ask) and **B** right after
    failure).
 2. **PR 2 — relay back** + a live e2e script (`scripts/e2e_slack.py`) that posts
    a real mention and asserts the reply lands in the thread.
-3. **PR 3 — context window (A)**, with the seven guarantees above pinned by
-   tests (cap, membership check, no token in turn, audit row).
+3. **PR 3 — context window.** Spike C first (half a day against the live
+   workspace); ship C if a windowed query works, else A. Either way the
+   guarantees above are pinned by tests (cap, no token in turn, audit row, and
+   the membership check for A).
 4. **PR 4 — basket (B).**
 5. **ace-web:** retire `/ace` or keep it only for tracked-run progress cards.
 
