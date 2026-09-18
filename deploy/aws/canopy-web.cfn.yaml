@@ -192,6 +192,22 @@ Resources:
       Name: canopy-web/github-app-client-secret
       SecretString: "PLACEHOLDER"
 
+  # Slack front door (apps/slack). Born "PLACEHOLDER", which the app reads as
+  # UNCONFIGURED (the webhooks answer 503) — so shipping these containers
+  # before the Slack app exists changes nothing. The client id is public and
+  # goes in the env list below once the app is created.
+  SlackClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/slack-client-secret
+      SecretString: "PLACEHOLDER"
+
+  SlackSigningSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/slack-signing-secret
+      SecretString: "PLACEHOLDER"
+
   # --- ALB target group + /canopy/* rule (slots in at a free priority
   #     alongside ace's /ace/* at prio 20 and the connect-labs default) ---
   # CHANGING ANYTHING BELOW NEEDS IAM THE DEPLOY ROLE MIGHT NOT HAVE. This
@@ -331,6 +347,8 @@ Resources:
             - { Name: CANOPY_DRIVE_SA_KEY_JSON, ValueFrom: !Ref DriveSaKeyJson }
             - { Name: VAPID_PRIVATE_KEY, ValueFrom: !Ref VapidPrivateKey }
             - { Name: GITHUB_APP_CLIENT_SECRET, ValueFrom: !Ref GithubAppClientSecret }
+            - { Name: SLACK_CLIENT_SECRET, ValueFrom: !Ref SlackClientSecret }
+            - { Name: SLACK_SIGNING_SECRET, ValueFrom: !Ref SlackSigningSecret }
           LogConfiguration:
             LogDriver: awslogs
             Options:

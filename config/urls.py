@@ -7,6 +7,8 @@ from django.views.generic import RedirectView
 
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
+from apps.slack import views as slack_views
+from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.tokens.github_views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
@@ -48,6 +50,15 @@ urlpatterns = [
         RedirectView.as_view(pattern_name="walkthrough-content", query_string=True),
         name="walkthrough-content-legacy",
     ),
+    # Slack front door (apps/slack). The webhooks are signed POSTs whose raw
+    # body must be read for the signature, so they are bare views registered
+    # BEFORE the Ninja `api/` mount; the browser legs need a login, like the
+    # GitHub flow above. The callback path is registered on the Slack app.
+    path("api/slack/events", slack_views.events, name="slack_events"),
+    path("api/slack/commands", slack_views.commands, name="slack_commands"),
+    path("auth/slack/install/", slack_auth.install, name="slack_install"),
+    path("auth/slack/callback/", slack_auth.oauth_callback, name="slack_oauth_callback"),
+    path("auth/slack/link/", slack_auth.link, name="slack_link"),
     path("api/", api_v2.urls),
     path("api/docs/", scalar_docs, name="api_docs_scalar"),
     path("api/redoc/", redoc_docs, name="api_docs_redoc"),
