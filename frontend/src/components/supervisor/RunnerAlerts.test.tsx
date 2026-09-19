@@ -163,79 +163,25 @@ describe('RunnerAlerts — a runner AHEAD of the deploy', () => {
 })
 
 describe('RunnerAlerts — a runner that has gone dark', () => {
-  // The banner IS the fix here. The old product said "⚠ Offline runner is out of
-  // date" for a box that had been unattended for three days, which invites
-  // exactly one question — why is auto-update not handling this? — and answers
-  // none of it. Assert the copy, because the copy is the deliverable.
-  const dark = (fields: Partial<RunnerOut> = {}) =>
-    runner('acedimagi-mbp-cdp', {
-      kind: 'emdash',
-      status: 'stale',
-      host: 'acedimagi@Jonathans-MacBook-Pro.local',
-      last_heartbeat_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-      ...fields,
-    })
-
-  it('leads with the silence and says the updater is down too', () => {
-    render(
-      <RunnerAlerts runners={[dark({ code_sha: OLD, expected_code_sha: SHIPPED, code_version: '0.1.0' })]} retiringId={null} onRetire={() => {}} />,
-    )
-    const alert = screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp')
-    expect(alert.dataset.alertKind).toBe('dark')
-    expect(alert.textContent).toContain('gone dark')
-    expect(alert.textContent).toContain('3d')
-    expect(alert.textContent).toContain('including its auto-updater')
-  })
-
-  it('demotes the sha gap to history, and never tells you to run the installer', () => {
-    // Printing `install-runner.sh` under a box nobody can reach is an
-    // instruction that cannot be followed — the machine is not there.
-    render(
-      <RunnerAlerts runners={[dark({ code_sha: OLD, expected_code_sha: SHIPPED })]} retiringId={null} onRetire={() => {}} />,
-    )
-    const alert = screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp')
-    expect(alert.textContent).toContain('history, not a task')
-    expect(alert.textContent).not.toContain('install-runner.sh')
-  })
-
-  it('names the macOS account to log back in', () => {
-    render(<RunnerAlerts runners={[dark()]} retiringId={null} onRetire={() => {}} />)
-    expect(screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp').textContent).toContain('acedimagi')
-  })
-
-  it('warns that a paused box will still not work once it is back', () => {
-    // acedimagi had been paused since Aug 14 and dark since Aug 24. Logging in
-    // fixes the second and leaves the first — worth knowing BEFORE walking over.
-    render(
+  // Most of the fleet is expected to be dark (2026-09-19), so a day of silence
+  // raises no banner — not even the sha/branch it last reported.
+  it('renders nothing for a runner silent for days', () => {
+    const { container } = render(
       <RunnerAlerts
-        runners={[dark({ paused: true, paused_note: 'paused locally (~/.canopy/PAUSED)' })]}
+        runners={[
+          runner('acedimagi-mbp-cdp', {
+            kind: 'emdash',
+            status: 'stale',
+            last_heartbeat_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+            code_sha: OLD,
+            expected_code_sha: SHIPPED,
+            code_branch: 'feat-x',
+          }),
+        ]}
         retiringId={null}
         onRetire={() => {}}
       />,
     )
-    const alert = screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp')
-    expect(alert.textContent).toContain('also paused')
-    expect(alert.textContent).toContain('~/.canopy/PAUSED')
-  })
-
-  it('offers Retire, worded for a box that may simply be gone', () => {
-    const onRetire = vi.fn()
-    render(<RunnerAlerts runners={[dark()]} retiringId={null} onRetire={onRetire} />)
-    fireEvent.click(screen.getByTestId('retire-runner-acedimagi-mbp-cdp'))
-    expect(onRetire).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp').textContent).toContain('gone for good')
-  })
-
-  it('a dark CLOUD runner is not told to log into a macOS account', () => {
-    render(
-      <RunnerAlerts
-        runners={[dark({ kind: 'cloud', host: 'cloud-ec2-1' })]}
-        retiringId={null}
-        onRetire={() => {}}
-      />,
-    )
-    const alert = screen.getByTestId('runner-code-alert-acedimagi-mbp-cdp')
-    expect(alert.textContent).toContain('Bring that box back up')
-    expect(alert.textContent).not.toContain('launchd loads')
+    expect(container.textContent).toBe('')
   })
 })

@@ -1,66 +1,56 @@
 // "Is something wrong with this runner?" — the supervisor's answer, extracted
 // from the page so it is unit-testable.
 //
-// Three ways to be wrong, ONE banner per runner, ranked. The ranking is the
-// whole point of this module, so read it before adding a fourth:
+// Two ways to be wrong, ONE banner per runner, ranked:
 //
-//   1. DARK    — it stopped heartbeating a long time ago. Outranks everything
-//                below because everything below is a LAST REPORT: a fact about
-//                what that box said before it went away, restated as if it were
-//                the present tense.
-//   2. BRANCH  — SOURCE-mode (PYTHONPATH into a working checkout): reports a
+//   1. BRANCH  — SOURCE-mode (PYTHONPATH into a working checkout): reports a
 //                branch, and any branch but `main` means another process left
 //                it on stale/wrong code.
-//   3. OUTDATED/AHEAD — INSTALLED (a uv tool venv — the shape since the
+//   2. OUTDATED/AHEAD — INSTALLED (a uv tool venv — the shape since the
 //                2026-07-28 spec): no branch to be wrong about, but CAN be an
 //                old install. It reports the sha of the runner source it was
 //                built from, the server reports the sha that shipped.
 //
-// Rank 1 exists because ranks 2–3 were being used as a proxy for it, and the
-// proxy said the wrong thing. 2026-08-27: `acedimagi-mbp-cdp` had not
-// heartbeated in three days — its macOS account was logged out, so neither the
-// runner NOR its updater (both LaunchAgents in that account's login session)
-// was running. The only signal anywhere in the product was "⚠ Offline runner is
-// out of date", which names the symptom the dead box last reported and buries
-// the cause in an adjective. An operator reading it reasonably asks why
-// auto-update is not doing its job; the answer is that nothing on that machine
-// is doing any job.
+// A runner that has been silent past DARK_AFTER_MS raises NOTHING. It used to
+// raise its own red "Runner has gone dark" banner (added 2026-08-27 after
+// `acedimagi-mbp-cdp` sat logged-out for three days with only an "out of date"
+// banner to show for it). Since 2026-09-19 most of the fleet's runners are
+// expected to be dark most of the time — boxes and macOS accounts come and go —
+// so a banner per quiet box was a wall of red about the normal state. And a dark
+// box's branch/sha is only its LAST report, so it does not fall through to
+// ranks 1–2 either: that would be the same noise under a different headline.
 import type { RunnerOut } from '@/api/harness'
 
-// How long a runner may be quiet before silence becomes the headline.
+// How long a runner may be quiet before it is treated as off, and drops out of
+// these alerts entirely.
 //
 // NOT the liveness window: `Runner.live_status` calls a runner `stale` after 90
 // SECONDS, which is correct for "can this box claim a turn right now" and would
-// be pure noise here — a closed laptop lid would raise a red banner every night.
-// A full day of silence is different in kind: no plausible working rhythm
-// explains it, and it is well past the point where the box's own 30-minute
-// updater timer would have healed anything it could heal.
+// the wrong line here — a box quiet for an hour still gets its outdated/branch
+// banner (flagged `unreachable`, with Retire). A full day of silence means the
+// box is simply off, which is expected.
 export const DARK_AFTER_MS = 24 * 60 * 60 * 1000
 
 export type RunnerAlert = {
   runner: RunnerOut
-  // 'dark'     = silent past DARK_AFTER_MS. Nothing on that box is running.
   // 'branch'   = source checkout left on a non-main branch.
   // 'outdated' = older than what shipped, or differing with no way to order the
   //              two. 'ahead' = NEWER than what shipped — real, but not a thing
   //              to fix on the box: the deploy catches up, or someone installed
   //              a branch deliberately.
-  kind: 'dark' | 'branch' | 'outdated' | 'ahead'
-  // Milliseconds of silence, for 'dark' only — the banner leads with it.
-  silentForMs?: number
+  kind: 'branch' | 'outdated' | 'ahead'
   // A quiet runner can never heartbeat its way out of a branch/sha state — what
   // is shown is its LAST report, so without action the banner sits there. For
   // those the in-place resolve is to retire the runner; a heartbeating one is
-  // fixed on its machine instead. Always true on 'dark' (that IS the fault) and
-  // reserved on 2–3 for the box that is briefly quiet but not yet dark.
+  // fixed on its machine instead.
   unreachable: boolean
 }
 
 const isQuiet = (r: RunnerOut): boolean => r.status === 'stale' || r.status === 'disconnected'
 
 // Silence we can MEASURE. A null heartbeat is a runner that has never checked in
-// at all — paired and never started, most likely — and it deliberately raises
-// nothing here: there is no age to report, "0ms ago" and "forever ago" are
+// at all — paired and never started, most likely — and it is deliberately not
+// treated as dark: there is no age to measure, "0ms ago" and "forever ago" are
 // indistinguishable in the data, and the same empty-means-unknown rule the sha
 // comparison follows applies to a timestamp. Retiring an unused pairing is a
 // hygiene task, not an incident.
@@ -78,11 +68,9 @@ export function runnerAlerts(
   const alerts: RunnerAlert[] = []
   for (const runner of runners ?? []) {
     const silent = silentFor(runner, now)
-    if (silent !== null && silent >= DARK_AFTER_MS) {
-      // Everything below describes code this box is NOT currently executing.
-      alerts.push({ runner, kind: 'dark', silentForMs: silent, unreachable: true })
-      continue
-    }
+    // Dark is expected, not an incident — and everything below would describe
+    // code this box is NOT currently executing.
+    if (silent !== null && silent >= DARK_AFTER_MS) continue
     const unreachable = isQuiet(runner)
 
     if (runner.code_branch && runner.code_branch !== 'main') {
@@ -116,26 +104,4 @@ export function runnerAlerts(
     }
   }
   return alerts
-}
-
-/** "3d" / "26h" / "45m" — the age of the silence, at the coarsest useful unit. */
-export function humanizeSilence(ms: number): string {
-  const minutes = Math.floor(ms / 60_000)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 48) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
-}
-
-/**
- * The macOS account a laptop runner lives in, from `host` ("user@Machine.local").
- *
- * Load-bearing for the remedy text, not decoration: the fix for a dark emdash
- * runner is to log that specific account back in, and naming it is the
- * difference between an instruction and a hint. Empty when `host` is not in that
- * shape (a cloud row, an old record) — callers must fall back.
- */
-export function macAccount(host: string): string {
-  const at = (host || '').indexOf('@')
-  return at > 0 ? host.slice(0, at) : ''
 }
