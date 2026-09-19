@@ -247,8 +247,21 @@ class AgentDefinitionOut(StrictModel):
     )
 
 
+class AgentOwnerOut(StrictModel):
+    user_id: int
+    name: str
+    email: str
+
+
 class AgentDetailOut(AgentOut):
     definition: AgentDefinitionOut | None = None
+    # The person who operates this agent. Its GitHub-backed features (skill
+    # history) read through THIS person's GitHub grant, so it is shown and
+    # transferable in the UI. None when nobody has been assigned.
+    owner: AgentOwnerOut | None = None
+    # Whether the CALLER may transfer ownership (a workspace owner, or the
+    # agent's current owner). Drives whether the UI offers the control.
+    can_transfer_owner: bool = False
     sync_count: int = 0
     work_product_count: int = 0
     skill_count: int = 0
@@ -256,6 +269,11 @@ class AgentDetailOut(AgentOut):
     turn_count: int = 0
     latest_sync_at: dt.datetime | None = None
     latest_turn_at: dt.datetime | None = None
+
+
+class AgentOwnerIn(StrictModel):
+    # None clears the owner (workspace owners only).
+    user_id: int | None
 
 
 # ---- Sync (Google-Doc backed) ----

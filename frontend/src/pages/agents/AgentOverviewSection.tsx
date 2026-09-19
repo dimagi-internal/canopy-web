@@ -8,6 +8,7 @@ import {
   type AgentTaskStatus,
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
+import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
@@ -144,6 +145,21 @@ export function AgentOverviewSection() {
 
       {/* Dispatch a turn to this agent, inline */}
       <QuickTurn slug={agent.slug} />
+
+      {/* Owner — the person who operates this agent; its GitHub-backed features read through their GitHub connection */}
+      <div className="mb-6 rounded-lg border border-border bg-card p-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">Owner</span>
+        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
+          The person who operates {agent.name}. Its GitHub-backed features, including History, read the
+          repository through this person&apos;s GitHub connection. Workspace owners and the current owner can transfer it.
+        </p>
+        <AgentOwnerControl
+          agentSlug={agent.slug}
+          workspace={agent.workspace ?? ''}
+          initialOwner={agent.owner ?? null}
+          canTransfer={agent.can_transfer_owner ?? false}
+        />
+      </div>
 
       {/* Turn mode — the runtime autonomy switch (state lives here, not in the repo) */}
       <div className="mb-6 rounded-lg border border-border bg-card p-3">

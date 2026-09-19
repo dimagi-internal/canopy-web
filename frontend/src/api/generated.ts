@@ -1694,6 +1694,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/owner": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Transfer the agent's ownership to a member of its workspace (canopy UI only) */
+        readonly put: operations["apps_agents_api_transfer_owner"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runner-preference": {
         readonly parameters: {
             readonly query?: never;
@@ -7695,6 +7712,12 @@ export interface components {
              */
             readonly slack_enabled: boolean;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
+            readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
+            /**
+             * Can Transfer Owner
+             * @default false
+             */
+            readonly can_transfer_owner: boolean;
             /**
              * Sync Count
              * @default 0
@@ -7724,6 +7747,20 @@ export interface components {
             readonly latest_sync_at?: string | null;
             /** Latest Turn At */
             readonly latest_turn_at?: string | null;
+        };
+        /** AgentOwnerOut */
+        readonly AgentOwnerOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Name */
+            readonly name: string;
+            /** Email */
+            readonly email: string;
+        };
+        /** AgentOwnerIn */
+        readonly AgentOwnerIn: {
+            /** User Id */
+            readonly user_id: number | null;
         };
         /**
          * RunnerPreferenceIn
@@ -14245,6 +14282,32 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_agents_api_transfer_owner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentOwnerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
             };
         };
     };
