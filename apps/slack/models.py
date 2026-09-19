@@ -109,6 +109,13 @@ class SlackMenuPost(models.Model):
     )
     key = models.CharField(max_length=64)
     slack_ts = models.CharField(max_length=32, blank=True, default="")
+    channel_id = models.CharField(max_length=32, blank=True, default="")
+    #: The question as asked, so the post can be rewritten without its buttons
+    #: once the dialog is over.
+    question = models.CharField(max_length=300, blank=True, default="")
+    #: Set when a click answered it, so the "answered elsewhere" rewrite on the
+    #: dialog clearing does not overwrite "Answered by @x: …".
+    resolved = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

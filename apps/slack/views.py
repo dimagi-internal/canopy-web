@@ -224,3 +224,56 @@ def commands(request: HttpRequest) -> HttpResponse:
                                text=f"{agent.slug} {ask}", ts=root_ts, thread_ts=root_ts)
     outcome = services.handle_message(inbound)
     return _ephemeral(outcome.message)
+
+
+@csrf_exempt
+@require_POST
+def interactions(request: HttpRequest) -> HttpResponse:
+    """Button presses on a question post (Block Kit `block_actions`).
+
+    Signed exactly like the other two doors. Only OUR buttons are acted on: a
+    checkbox or radio toggle also arrives here, one payload per click, and is
+    just a change of selection that the eventual Submit carries in `state`.
+    """
+    from . import menus
+
+    refused = _verified(request)
+    if refused is not None:
+        return refused
+    try:
+        payload = json.loads(request.POST.get("payload") or "{}")
+    except ValueError:
+        return HttpResponse(status=400)
+    if payload.get("type") != "block_actions":
+        return HttpResponse(status=200)
+    action = (payload.get("actions") or [{}])[0]
+    action_id = str(action.get("action_id") or "")
+    if not (action_id.startswith(menus.PICK) or action_id in (menus.SUBMIT, menus.DISMISS)):
+        return HttpResponse(status=200)
+    installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
+    if installation is None:
+        return HttpResponse(status=200)
+    message = payload.get("message") or {}
+    container = payload.get("container") or {}
+    inbound = services.Inbound(
+        team_id=installation.team_id,
+        channel_id=str((payload.get("channel") or {}).get("id") or container.get("channel_id") or ""),
+        slack_user_id=str((payload.get("user") or {}).get("id") or ""),
+        text="", ts=str(container.get("message_ts") or message.get("ts") or ""),
+        thread_ts=str(message.get("thread_ts") or ""),
+    )
+    try:
+        outcome = services.answer_from_click(
+            installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
+            message_ts=inbound.ts, action=action, state=payload.get("state") or {},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("slack interaction failed")
+        _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
+        return HttpResponse(status=200)
+    if outcome.status not in services.OK_STATUSES:
+        _record(installation, inbound, outcome.status, outcome.message)
+        _tell(installation, inbound, outcome.message)
+    elif outcome.status == services.STALE:
+        _tell(installation, inbound, outcome.message)
+    return HttpResponse(status=200)

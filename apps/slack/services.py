@@ -127,8 +127,9 @@ SENT, NOT_INSTALLED, BLOCKED, NO_AGENT, EMPTY = (
     "sent", "not_installed", "blocked", "no_agent", "empty")
 # A reply to a question the agent is blocked on, and the ways that can go.
 ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "answer_undeliverable"
+STALE = "stale"
 #: Outcomes that are the system working, not refusing — nothing to log.
-OK_STATUSES = {SENT, ANSWERED}
+OK_STATUSES = {SENT, ANSWERED, STALE}
 
 
 @dataclass
@@ -400,3 +401,80 @@ def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | 
             "Couldn't deliver that answer — the runner holding this session is offline. "
             "It will need answering once it is back."), session=session, agent=agent)
     return Outcome(ANSWERED, said, session=session, agent=agent)
+
+
+def answer_from_click(installation: SlackInstallation, *, slack_user_id: str, channel_id: str,
+                      message_ts: str, action: dict, state: dict) -> Outcome:
+    """A button press (or Submit) on a question post -> the answer, or why not.
+
+    Everything the click names is re-checked against what is true NOW, because
+    a question post can outlive its question by hours: the session must be this
+    workspace's and this channel's Slack session, and the dialog it is blocked
+    on must still be the one the buttons were drawn for (content key). A stale
+    click answers nothing — pressing a number at whatever the agent shows now
+    is precisely the failure the phone path spent an incident removing.
+    """
+    import json
+
+    from apps.canopy_sessions.serializers import pending_menu
+
+    from . import menus
+    from .models import SlackMenuPost
+
+    try:
+        value = json.loads(action.get("value") or "{}")
+    except ValueError:
+        value = {}
+    session = (Session.objects.select_related("agent")
+               .filter(pk=value.get("s"), workspace=installation.workspace,
+                       metadata__slack_team=installation.team_id,
+                       metadata__slack_channel=channel_id)
+               .first()) if value.get("s") else None
+    post = SlackMenuPost.objects.filter(session=session, slack_ts=message_ts).first() if session else None
+    menu = pending_menu(session) if session else None
+    if session is None or not menus.answerable(menu) or menus.content_key(menu) != value.get("k"):
+        if post is not None:
+            _resolve_post(installation, post, ":heavy_minus_sign: This question is no longer open.")
+        return Outcome(STALE, "That question is no longer open.")
+
+    _principal, refusal = resolve_principal(installation, slack_user_id)
+    if refusal is not None:
+        return refusal
+
+    action_id = str(action.get("action_id") or "")
+    if action_id == menus.DISMISS:
+        choice = menus.CANCEL
+    elif action_id.startswith(menus.PICK):
+        choice = value.get("sel")
+    else:
+        choice = menus.selections_from_state(state, menu)
+    if choice != menus.CANCEL and not menus.valid(choice, menu):
+        return Outcome(NOT_AN_ANSWER, "Pick an option for each question, then press Submit.",
+                       session=session, agent=session.agent)
+
+    if choice == menus.CANCEL:
+        result = session_services.answer_menu(session=session, option=None)
+        said = f":heavy_minus_sign: Dismissed by <@{slack_user_id}>"
+    else:
+        result = session_services.answer_menu(session=session, option=choice[0][0], selections=choice)
+        said = f":white_check_mark: Answered by <@{slack_user_id}>: {menus.describe(choice, menu)}"
+    if result != "sent":
+        return Outcome(ANSWER_UNDELIVERABLE, (
+            "Couldn't deliver that answer — the runner holding this session is offline."),
+            session=session, agent=session.agent)
+    if post is not None:
+        _resolve_post(installation, post, said)
+    return Outcome(ANSWERED, said, session=session, agent=session.agent)
+
+
+def _resolve_post(installation: SlackInstallation, post, outcome: str) -> None:
+    """Rewrite a question post without its buttons, so it cannot be pressed again."""
+    from . import menus
+
+    post.resolved = True
+    post.save(update_fields=["resolved"])
+    try:
+        client.update_message(installation.bot_token, channel=post.channel_id, ts=post.slack_ts,
+                              text=outcome, blocks=menus.resolved_blocks(post.question, outcome))
+    except Exception:  # noqa: BLE001 — the answer landed; a stale-looking post is cosmetic
+        logger.exception("could not rewrite a Slack question post")

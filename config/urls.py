@@ -56,6 +56,7 @@ urlpatterns = [
     # GitHub flow above. The callback path is registered on the Slack app.
     path("api/slack/events", slack_views.events, name="slack_events"),
     path("api/slack/commands", slack_views.commands, name="slack_commands"),
+    path("api/slack/interactions", slack_views.interactions, name="slack_interactions"),
     path("auth/slack/install/", slack_auth.install, name="slack_install"),
     path("auth/slack/callback/", slack_auth.oauth_callback, name="slack_oauth_callback"),
     path("auth/slack/link/", slack_auth.link, name="slack_link"),

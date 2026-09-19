@@ -159,8 +159,14 @@ def _log_failure(installation, subject, channel: str, error: str) -> None:
 def relay_menu(session_id, menu) -> bool:
     """Post a blocked agent's question into its Slack thread, once per question.
 
-    A cleared dialog (menu None) forgets what was posted, so asking the same
-    thing again later is news again. Returns whether anything was posted.
+    An answerable question gets buttons (checkboxes/radios + Submit for pick-any
+    or several questions); the text beside them stays the fallback, and typed
+    replies still work. When the dialog clears, every question post that was
+    not answered by a click is rewritten without its buttons — otherwise a
+    thread keeps live buttons for a question that is over, and a tap would
+    press a number at whatever the agent is showing now.
+
+    Returns whether anything was posted.
     """
     from apps.canopy_sessions.models import Session
 
@@ -170,32 +176,49 @@ def relay_menu(session_id, menu) -> bool:
     dest = session_destination(session)
     if dest is None:
         return False
+    installation, channel, thread_ts = dest
     if not menu:
+        _close_question_posts(installation, session, ":white_check_mark: Answered.")
         SlackMenuPost.objects.filter(session=session).delete()
         return False
-    installation, channel, thread_ts = dest
     agent_slug = session.agent.slug if session.agent_id else "the agent"
-    posted = False
-    notes = [("q:" + menus.content_key(menu),
-              menus.to_text(agent_slug, menu, session_url(session) if session.created_by_id else ""))]
+    link = session_url(session) if session.created_by_id else ""
+    question = str(menu.get("question") or "")[:300]
+    posts = [("q:" + menus.content_key(menu), menus.to_text(agent_slug, menu, link),
+              menus.to_blocks(agent_slug, menu, session.id) if menus.answerable(menu) else None,
+              question)]
     # A refused answer comes back INSIDE the menu (`answer_note`) on the next
     # report — say it where the person who answered is looking.
     if menu.get("answer_note"):
         note = str(menu["answer_note"])
-        notes.append(("n:" + hashlib.sha256(note.encode()).hexdigest()[:60],
-                      f":warning: That answer didn't land: {note}"))
-    for key, text in notes:
+        posts.append(("n:" + hashlib.sha256(note.encode()).hexdigest()[:60],
+                      f":warning: That answer didn't land: {note}", None, ""))
+    posted = False
+    for key, text, blocks, asked in posts:
         try:
             with transaction.atomic():
-                record = SlackMenuPost.objects.create(session=session, key=key[:64])
+                record = SlackMenuPost.objects.create(session=session, key=key[:64],
+                                                      channel_id=channel, question=asked)
         except IntegrityError:
             continue
         try:
             record.slack_ts = client.post_message(installation.bot_token, channel=channel,
-                                                  text=text, thread_ts=thread_ts)
+                                                  text=text, thread_ts=thread_ts, blocks=blocks)
             record.save(update_fields=["slack_ts"])
             posted = True
         except Exception as e:  # noqa: BLE001 — never break the runner's report over Slack
             logger.exception("could not post a question to Slack")
             _log_failure(installation, session, channel, str(e))
     return posted
+
+
+def _close_question_posts(installation, session, outcome: str) -> None:
+    """Rewrite this session's still-open question posts without their buttons."""
+    open_posts = SlackMenuPost.objects.filter(session=session, key__startswith="q:", resolved=False) \
+        .exclude(slack_ts="")
+    for post in open_posts:
+        try:
+            client.update_message(installation.bot_token, channel=post.channel_id, ts=post.slack_ts,
+                                  text=outcome, blocks=menus.resolved_blocks(post.question, outcome))
+        except Exception:  # noqa: BLE001 — a stale button is a cosmetic failure, not a broken report
+            logger.exception("could not close a Slack question post")
