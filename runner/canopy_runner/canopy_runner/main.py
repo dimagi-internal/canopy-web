@@ -596,23 +596,51 @@ def run_once(cfg: Config, client: Client) -> str:
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
-    hooks.maybe_report_hooks()
+    _step("hooks report", hooks.maybe_report_hooks)
     # The hook config is shared by the whole account and written by anything that
     # starts a listener, so it can be pointed away from us after startup. Checked
     # every tick rather than on the report's cadence: the report is gated on hooks
     # ARRIVING, which is the very thing a drifted config stops.
-    hooks.ensure_hook_config()
-    chat_pump.pump_chat_bridges(cfg, client)
+    _step("hook config", hooks.ensure_hook_config)
+    _step("chat pump", chat_pump.pump_chat_bridges, cfg, client)
     # Before the session report, so a session stopped this tick is reported idle
     # rather than working — otherwise the very next report re-asserts `working`
     # over the interrupt and the web shows the stop undoing itself.
-    session_interrupt.drain(cfg, client, cfg.runner_id)
-    sessions.maybe_report_sessions(cfg, client)
-    streams.sync_session_streams(cfg, client)
-    streams.drain_menu_answers(cfg, client)
-    streams.drain_closes(cfg, client)
-    streams.drain_backfills(cfg, client)
+    _step("session interrupts", session_interrupt.drain, cfg, client, cfg.runner_id)
 
+    # THE CLAIM COMES BEFORE THE REPORTING SWEEP. Every step in `_report_sweep` is a
+    # canopy-web round trip, and they used to run here, ahead of the claim. On a
+    # healthy link that is milliseconds; on a bad one each call can take its full
+    # 10s timeout plus retries, so a human's message sat queued behind five status
+    # reports every tick. Measured 2026-09-19 at 40% packet loss: a Slack turn
+    # waited 162s to be claimed (2 ticks in 7.5 min), against a 0-6s norm. The
+    # sweep reports state; nothing in it gates the claim, so it runs after it.
+    try:
+        return _decide_and_claim(cfg, client, me, healthy)
+    finally:
+        _report_sweep(cfg, client)
+
+
+def _step(name: str, fn, *args, **kwargs) -> None:
+    """Run one tick step that must not take the claim down with it. A step that
+    raised used to crash the whole `run_once`, and a crashed tick claims nothing —
+    on a flaky link that was 14 consecutive claim-less ticks (2026-09-19)."""
+    try:
+        fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001 — a status step must never block the claim
+        logger.warning("tick step '%s' failed; continuing", name, exc_info=True)
+
+
+def _report_sweep(cfg: Config, client: Client) -> None:
+    """Status reporting that no claim depends on — see the note in `run_once`."""
+    _step("session report", sessions.maybe_report_sessions, cfg, client)
+    _step("stream sync", streams.sync_session_streams, cfg, client)
+    _step("menu answers", streams.drain_menu_answers, cfg, client)
+    _step("closes", streams.drain_closes, cfg, client)
+    _step("backfills", streams.drain_backfills, cfg, client)
+
+
+def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     # THE PAUSE. One state, settable from either end: reconcile the local sentinel
     # with the server's `paused` (read off the heartbeat response we just got), and
     # obey whatever is in force.
@@ -624,8 +652,9 @@ def run_once(cfg: Config, client: Client) -> str:
     # and then stampede the instant it resumes. That is the same hazard the
     # per-agent pause names in `check_schedules`.
     #
-    # It sits AFTER the in-flight reporting above, deliberately: a pause stops
-    # STARTING work, it never abandons work already running.
+    # A pause stops STARTING work, it never abandons work already running: the chat
+    # pump runs above it, and `_report_sweep` runs in `run_once`'s `finally`, so both
+    # keep going while parked.
     if reconcile_pause(cfg, client, bool((me or {}).get("paused"))):
         # Parked on purpose is not broken. The re-arm below never runs while
         # paused, so no NEW watch failure can be raised; retract any this box
@@ -637,16 +666,16 @@ def run_once(cfg: Config, client: Client) -> str:
     paused = _paused_agents(cfg)
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
-    _maybe_check_inboxes(cfg, client, paused=paused)
+    _step("inboxes", _maybe_check_inboxes, cfg, client, paused=paused)
     # Keep the Gmail watches armed so push keeps being DELIVERED. Rides the same
     # tick; a no-op unless a topic is configured, and internally throttled to the
     # 24h-before-expiry window rather than firing every cycle.
-    _maybe_rearm_watches(cfg, client)
+    _step("gmail watches", _maybe_rearm_watches, cfg, client)
     # Fleet-audit review ingestion was removed when Ada moved to Items: approving
     # an Item dispatches its work server-side (in the decide transaction), so there
     # is no resolved review for the runner to poll. DDD findings reviews are applied
     # by the DDD orchestrator, never here.
-    _fire_due_schedules(cfg, client, paused=paused)
+    _step("schedules", _fire_due_schedules, cfg, client, paused=paused)
     if not healthy:
         return "cdp_down"  # nothing claimed -> nothing burned; queued turns stay queued
     return _claim_and_execute(cfg, client, paused)
