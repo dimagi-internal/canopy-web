@@ -223,3 +223,40 @@ the Dimagi Slack workspace (bot scopes: `app_mentions:read`, `chat:write`,
 `commands`, `im:history`, `im:write`, `users:read`, `channels:history`,
 `groups:history`, `channels:read`, `groups:read`), put the secrets in Secrets
 Manager.
+
+## Addendum 2026-09-19 — the status card, and a runner that goes away
+
+**Problem.** A thread showed the ask and, eventually, the answer. Nothing said
+which runner had it, whether it was working or blocked, or — the case that
+prompted this — that the laptop running it had been closed and nothing would
+happen until it reopened.
+
+**Status card** (`apps/slack/status.py`, `SlackThreadStatus`). One bot message per
+Slack-born session, posted on the first message and edited in place:
+`` `hal` · ⚙️ Working `` / `Runner `jj-mbp` (laptop) · online · Open in canopy`.
+Derived the way canopy-web derives its header (`live_status`, `pending_menu`,
+latest turn), so the surfaces cannot disagree. Hashed, so a refresh that changes
+nothing costs no Slack call. It replaces the private "Sent to …" note, which only
+the asker could see. Refreshed on: a turn status row (`turn_events_appended`), a
+menu change (`session_menu_changed`), every send, and the sweep below.
+
+**Offline process.** Liveness is heartbeat age (90 s), and a dead runner cannot
+report its own death, so `status.sweep` rides `sessions_reported` — every OTHER
+runner's ~10 s report — throttled to one pass per 15 s via the cache. When a
+session's turn is executing on a runner that is no longer reachable:
+
+1. The card flips to *Paused — `jj-mbp` went offline mid-turn*.
+2. A thread reply (the **offline notice** — an edit notifies nobody) says so,
+   says nothing is lost yet, and carries **Move to `<runner>`** buttons for up to
+   three runners that are up and placeable (cloud first).
+3. If the box comes back: *`jj-mbp` is back online — the work is carrying on*,
+   and the notice loses its buttons.
+4. **Move**: closes the dead box's executing turn as LOST (the lease sweep would
+   in ≤15 min anyway), then `transfer_session` with the original ask as the
+   brief. The target starts a fresh session; unpushed work stays on the old box
+   — the notice says so before anyone presses.
+5. If the lease expires first, the turn is LOST and the notice offers **Retry**
+   (same ask, same session) beside Move.
+
+Every press is re-checked against the current state (a stale button does
+nothing) and requires a workspace member; a contact is refused.

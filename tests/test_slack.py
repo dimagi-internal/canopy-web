@@ -79,7 +79,20 @@ class FakeSlack:
         return resp
 
     def said(self, method: str) -> list[dict]:
-        return [p for m, p in self.calls if m == method]
+        """Every call to `method` EXCEPT the thread's status card (see `cards`) —
+        the card is posted and edited alongside everything else, and counting
+        it would make every "posted once" assertion about the card instead."""
+        return [p for m, p in self.calls if m == method and not _is_card(p)]
+
+    def cards(self, method: str = "chat.postMessage") -> list[dict]:
+        return [p for m, p in self.calls if m == method and _is_card(p)]
+
+
+def _is_card(payload: dict) -> bool:
+    from apps.slack.status import CARD_BLOCK
+
+    blocks = payload.get("blocks") or []
+    return bool(blocks) and blocks[0].get("block_id") == CARD_BLOCK
 
 
 @pytest.fixture
@@ -191,12 +204,15 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     assert not Session.objects.filter(visible_session_q(bob), pk=session.pk).exists()
     assert Session.objects.filter(visible_session_q(alice), pk=session.pk).exists()
 
-    # She is told where it went, visible to her alone — in the CHANNEL, not
-    # threaded under her own top-level message, where an ephemeral reply leaves
-    # no marker and reads as silence (the first live mention on labs).
-    (note,) = slack.said("chat.postEphemeral")
-    assert note["user"] == ALICE and "thread_ts" not in note
-    assert f"/w/{hal.workspace_id}/chat/{session.id}" in note["text"]
+    # Everyone in the thread is told where it went: the status card, IN the
+    # thread (a visible "1 reply", unlike an ephemeral note — which read as
+    # silence on the first live mention on labs). It names the agent, the state
+    # and the canopy link; no private note duplicates it.
+    (card,) = slack.cards()
+    assert card["thread_ts"] == "1700000000.000100"
+    assert "`hal`" in card["text"] and "Queued" in card["text"]
+    assert f"/w/{hal.workspace_id}/chat/{session.id}" in card["text"]
+    assert not slack.said("chat.postEphemeral")
 
 
 def test_slack_redelivery_does_not_ask_the_agent_twice(slack, linked, hal):
@@ -248,7 +264,7 @@ def test_bots_and_edits_are_ignored(slack, linked, hal):
 
 def test_reply_inside_a_thread_stays_in_that_thread(slack, linked, hal):
     mention("hal more", ts="1700000050.000100", thread_ts="1700000000.000100")
-    assert slack.said("chat.postEphemeral")[0]["thread_ts"] == "1700000000.000100"
+    assert slack.cards()[0]["thread_ts"] == "1700000000.000100"
 
 
 def test_member_matched_by_email_is_linked_without_a_click(slack, installation, hal, alice):
@@ -279,8 +295,9 @@ def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installa
     assert not WorkspaceMembership.objects.filter(workspace=ws, user__email="alice@dimagi.com").exists()
     owner = _owner(ws)
     assert not Session.objects.filter(visible_session_q(owner)).exists()
-    # No canopy link in the note — a contact could not open it.
-    assert "/w/" not in slack.said("chat.postEphemeral")[0]["text"]
+    # No canopy link on the card — a contact could not open it.
+    (card,) = slack.cards()
+    assert "`hal`" in card["text"] and "/w/" not in card["text"]
 
 
 def test_the_same_slack_user_is_one_contact(slack, installation, hal):
@@ -574,8 +591,10 @@ def test_a_plain_reply_in_the_thread_continues_the_conversation(slack, linked, h
     turns = list(Turn.objects.order_by("created_at"))
     assert len(turns) == 2 and turns[0].chat_session_id == turns[1].chat_session_id
     assert turns[1].prompt == "and what about next week?"
-    # Only the conversation's first message gets the private "sent" note.
-    assert len(slack.said("chat.postEphemeral")) == 1
+    # One card for the conversation, edited — not one per message — and no
+    # private note per message either.
+    assert len(slack.cards()) == 1
+    assert not slack.said("chat.postEphemeral")
 
 
 def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
@@ -908,3 +927,192 @@ def test_a_command_for_an_agent_not_on_for_slack_does_nothing(slack, linked, ws)
 
 def test_a_bare_agent_command_says_how_to_use_it(slack, linked, hal):
     assert "`/hal <ask>`" in _agent_command("/hal", "").json()["text"]
+
+# ---- the status card, and a runner that goes away mid-turn ----------------------
+#
+# The card is the thread's answer to "which runner, what state, where on canopy".
+# The offline tests stage exactly what closing a laptop does: nothing is reported
+# at all — the heartbeat simply stops — and the card has to notice on its own.
+
+import datetime as _dt  # noqa: E402
+
+from apps.slack import status  # noqa: E402
+from apps.slack.models import SlackThreadStatus  # noqa: E402
+
+
+def _claim(turn, runner, capture):
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=runner,
+                                           claimed_at=timezone.now())
+    turn.refresh_from_db()
+    _reply(turn, {"kind": "status", "payload": {"status": "running"}}, capture=capture)
+    return turn
+
+
+def _card_text(slack) -> str:
+    """What the card says NOW — its last post or edit."""
+    return (slack.cards("chat.update") or slack.cards())[-1]["text"]
+
+
+def _close_the_laptop(runner):
+    Runner.objects.filter(pk=runner.pk).update(
+        last_heartbeat_at=timezone.now() - _dt.timedelta(minutes=5))
+
+
+def _open_the_laptop(runner):
+    Runner.objects.filter(pk=runner.pk).update(last_heartbeat_at=timezone.now())
+
+
+@pytest.fixture
+def cloud(alice, hal):
+    return Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, location=Runner.CLOUD,
+                                 paired_by=alice, workspace=hal.workspace, status=Runner.ONLINE,
+                                 capabilities={"sessions": True}, last_heartbeat_at=timezone.now())
+
+
+def test_the_card_names_the_runner_and_follows_the_turn(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    turn = _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    text = _card_text(slack)
+    assert "Working" in text and "`jj-mbp` (laptop) · online" in text
+    assert f"/chat/{session.id}" in text
+    _reply(turn, {"kind": "status", "payload": {"status": "done"}}, capture=django_capture_on_commit_callbacks)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    status.refresh(session)
+    assert "Done" in _card_text(slack)
+
+
+def test_an_unchanged_card_costs_no_slack_call(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    before = len(slack.calls)
+    status.refresh(session)
+    status.sweep(force=True)
+    assert len(slack.calls) == before
+
+
+def test_a_runner_that_goes_quiet_mid_turn_is_called_out_once(bound, cloud, slack,
+                                                              django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    status.sweep(force=True)
+    status.sweep(force=True)                       # a second pass: still ONE notice
+
+    assert "Paused — `jj-mbp` went offline" in _card_text(slack)
+    (notice,) = [p for p in slack.said("chat.postMessage") if "went offline" in p["text"]]
+    assert notice["thread_ts"] == "1700000000.000100"
+    assert "Nothing is lost yet" in notice["text"]
+    buttons = _buttons(notice)
+    assert [b["text"]["text"] for b in buttons.values()] == ["Move to cloud-1"]
+
+
+def test_the_runner_coming_back_says_so_and_retires_the_buttons(bound, cloud, slack,
+                                                                django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    status.sweep(force=True)
+    _open_the_laptop(runner)
+    status.sweep(force=True)
+
+    assert "Working" in _card_text(slack)
+    assert any("is back online" in p["text"] for p in slack.said("chat.postMessage"))
+    closed = [p for p in slack.said("chat.update") if "back online" in p["text"]]
+    assert closed and not _buttons(closed[-1])     # the notice can no longer be pressed
+    assert SlackThreadStatus.objects.get(session=session).episode == ""
+
+
+def test_the_sweep_rides_other_runners_reports(bound, cloud, slack, django_capture_on_commit_callbacks):
+    from django.core.cache import cache
+
+    session, runner, pairer = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    cache.delete(status.SWEEP_LOCK)
+    # Any runner's report is the clock — here the dead one's co-tenant's.
+    _report(runner, pairer, None, django_capture_on_commit_callbacks)
+    assert any("went offline" in p["text"] for p in slack.said("chat.postMessage"))
+
+
+def test_move_hands_the_session_to_a_live_runner(bound, cloud, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    turn = _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    status.sweep(force=True)
+    notice = [p for p in slack.said("chat.postMessage") if "went offline" in p["text"]][-1]
+    button = next(iter(_buttons(notice).values()))
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert click(button["action_id"], button["value"]).status_code == 200
+
+    turn.refresh_from_db()
+    assert turn.status == Turn.LOST                           # the dead box's turn is closed
+    moved = Turn.objects.exclude(pk=turn.pk).get()
+    assert moved.pinned_runner == cloud and "summarise" not in moved.prompt
+    assert "run it" in moved.prompt and "NOT done" in moved.prompt   # the ask travels with it
+    assert RunnerBinding.objects.get(session=session).runner == cloud
+    assert any("Moved to `cloud-1`" in p["text"] for p in slack.said("chat.postMessage"))
+    assert "Queued" in _card_text(slack) and "cloud-1" in _card_text(slack)
+
+
+def test_a_lost_turn_can_be_retried(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    turn = _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.LOST)
+    _reply(turn, {"kind": "status", "payload": {"status": "lost"}}, capture=django_capture_on_commit_callbacks)
+
+    notice = [p for p in slack.said("chat.postMessage") if "was lost" in p["text"]][-1]
+    retry = _buttons(notice)[status.RETRY]
+    with django_capture_on_commit_callbacks(execute=True):
+        click(status.RETRY, retry["value"])
+    again = Turn.objects.exclude(pk=turn.pk).get()
+    assert again.prompt == turn.prompt and again.chat_session == session
+
+
+def test_a_stale_move_button_does_nothing(bound, cloud, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    status.sweep(force=True)
+    notice = [p for p in slack.said("chat.postMessage") if "went offline" in p["text"]][-1]
+    button = next(iter(_buttons(notice).values()))
+    _open_the_laptop(runner)                       # it came back before anyone pressed
+
+    click(button["action_id"], button["value"])
+    assert Turn.objects.count() == 1 and Turn.objects.get().status == Turn.RUNNING
+    assert "no longer stuck" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_a_contact_cannot_move_a_session(bound, cloud, slack, django_capture_on_commit_callbacks):
+    session, runner, _ = bound
+    _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    _close_the_laptop(runner)
+    status.sweep(force=True)
+    notice = [p for p in slack.said("chat.postMessage") if "went offline" in p["text"]][-1]
+    button = next(iter(_buttons(notice).values()))
+
+    click(button["action_id"], button["value"], user=BOB)       # BOB has no canopy account
+    assert Turn.objects.count() == 1
+    assert "Only a member" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_a_reply_after_the_laptop_closed_can_be_moved(bound, cloud, slack, django_capture_on_commit_callbacks):
+    """The commonest shape of the laptop case: the last turn finished, the lid
+    closed, and THEN someone replied — a queued turn held for a box that is gone."""
+    session, runner, _ = bound
+    first = _claim(Turn.objects.get(), runner, django_capture_on_commit_callbacks)
+    Turn.objects.filter(pk=first.pk).update(status=Turn.DONE)
+    _close_the_laptop(runner)
+    thread_reply("and the follow-up?", ts="1700000300.000100")
+    status.sweep(force=True)
+
+    assert "Waiting for `jj-mbp`, which is offline" in _card_text(slack)
+    notice = [p for p in slack.said("chat.postMessage") if "can't start on your message" in p["text"]][-1]
+    button = next(iter(_buttons(notice).values()))
+    with django_capture_on_commit_callbacks(execute=True):
+        click(button["action_id"], button["value"])
+
+    held = Turn.objects.get(prompt="and the follow-up?")
+    assert held.status == Turn.CANCELLED                       # not left to run after the handover
+    moved = Turn.objects.filter(pinned_runner=cloud).get()
+    assert "and the follow-up?" in moved.prompt

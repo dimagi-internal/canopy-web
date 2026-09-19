@@ -167,9 +167,10 @@ def events(request: HttpRequest) -> HttpResponse:
         _tell(installation, inbound, outcome.message)
     elif outcome.status == services.ANSWERED:
         _tell(installation, inbound, outcome.message)
-    elif outcome.extra.get("new_session"):
-        # Only when a conversation starts. After that the agent's reply in the
-        # thread is the acknowledgement, and a private note per message is noise.
+    elif outcome.extra.get("new_session") and not outcome.extra.get("card"):
+        # Only when a conversation starts, and only if the status card could not
+        # be posted — the card is the visible acknowledgement (agent, runner,
+        # link) for everyone in the thread, which a private note never was.
         _tell(installation, inbound, outcome.message)
     return JsonResponse({"ok": True})
 
@@ -256,13 +257,18 @@ def interactions(request: HttpRequest) -> HttpResponse:
         return HttpResponse(status=400)
     if payload.get("type") != "block_actions":
         return HttpResponse(status=200)
+    from . import status
+
     action = (payload.get("actions") or [{}])[0]
     action_id = str(action.get("action_id") or "")
-    if not (action_id.startswith(menus.PICK) or action_id in (menus.SUBMIT, menus.DISMISS)):
+    is_status = action_id.startswith(status.MOVE) or action_id == status.RETRY
+    if not (is_status or action_id.startswith(menus.PICK) or action_id in (menus.SUBMIT, menus.DISMISS)):
         return HttpResponse(status=200)
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
     if installation is None:
         return HttpResponse(status=200)
+    if is_status:
+        return _status_action(installation, payload, action)
     message = payload.get("message") or {}
     container = payload.get("container") or {}
     inbound = services.Inbound(
@@ -286,4 +292,39 @@ def interactions(request: HttpRequest) -> HttpResponse:
         _tell(installation, inbound, outcome.message)
     elif outcome.status == services.STALE:
         _tell(installation, inbound, outcome.message)
+    return HttpResponse(status=200)
+
+
+def _status_action(installation, payload: dict, action: dict) -> HttpResponse:
+    """A Move / Retry press on an offline notice (see `status.act`)."""
+    from . import status
+
+    container = payload.get("container") or {}
+    message = payload.get("message") or {}
+    inbound = services.Inbound(
+        team_id=installation.team_id,
+        channel_id=str((payload.get("channel") or {}).get("id") or container.get("channel_id") or ""),
+        slack_user_id=str((payload.get("user") or {}).get("id") or ""),
+        text="", ts=str(container.get("message_ts") or message.get("ts") or ""),
+        thread_ts=str(message.get("thread_ts") or ""),
+    )
+    try:
+        ok, said = status.act(installation, slack_user_id=inbound.slack_user_id,
+                              channel_id=inbound.channel_id, action=action)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("slack status action failed")
+        _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
+        _tell(installation, inbound, "Something went wrong doing that. It has been logged.")
+        return HttpResponse(status=200)
+    if ok:
+        # Said in the thread, not privately: everyone in it should know the work moved.
+        dest = message.get("thread_ts") or ""
+        try:
+            client.post_message(installation.bot_token, channel=inbound.channel_id,
+                                text=f"<@{inbound.slack_user_id}>: {said}", thread_ts=dest)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not announce a status action")
+    else:
+        _record(installation, inbound, "status_refused", said)
+        _tell(installation, inbound, said)
     return HttpResponse(status=200)

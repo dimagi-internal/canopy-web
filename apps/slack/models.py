@@ -122,3 +122,28 @@ class SlackMenuPost(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["session", "key"], name="slack_menu_once_per_question"),
         ]
+
+
+class SlackThreadStatus(models.Model):
+    """The status card at the top of a Slack thread, and its offline notice.
+
+    One per Slack-born session (see `apps/slack/status.py`). `rendered` is a hash
+    of what the card last said, so a refresh that changes nothing costs no Slack
+    call. `episode` names the offline/lost episode a notice was posted for
+    ("offline:<turn>"), and is claimed with a conditional UPDATE so two sweeps
+    that notice the same dead runner post one notice between them.
+    """
+
+    session = models.OneToOneField(
+        "canopy_sessions.Session", on_delete=models.CASCADE, related_name="slack_status",
+    )
+    channel_id = models.CharField(max_length=32)
+    slack_ts = models.CharField(max_length=32, blank=True, default="")
+    rendered = models.CharField(max_length=64, blank=True, default="")
+    episode = models.CharField(max_length=64, blank=True, default="")
+    notice_ts = models.CharField(max_length=32, blank=True, default="")
+    notice_runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

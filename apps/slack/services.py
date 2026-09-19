@@ -360,13 +360,18 @@ def handle_message(inbound: Inbound) -> Outcome:
         origin=Turn.ORIGIN_SLACK,
         initiator=principal.initiator(inbound.team_id),
     )
+    # The thread's status card: posted on the first message, updated on every
+    # later one (a new turn is queued, so "Done" must stop saying so).
+    from .status import refresh
+
+    card_state = refresh(session)
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
         note = f"Sent to `{agent.slug}` — the reply will come back here."
     else:
         note = f"Sent to `{agent.slug}` — the reply will come back here. Also on canopy: {session_url(session)}"
     return Outcome(SENT, note, session=session, turn=turn, agent=agent,
-                   extra={"new_session": created})
+                   extra={"new_session": created, "card": card_state is not None})
 
 
 def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | None:
