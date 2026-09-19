@@ -1,10 +1,14 @@
 # Who is asking: initiator identity and access, end to end
 
-**Status:** proposed — D1 decided 2026-09-18 (no dynamic user creation, and no sign-up or linking in the widget while canopy is not public; see §2); D2–D5 open.
+**Status:** proposed, revised 2026-09-18 around **owner + admins** and a **declared interface** for everyone else. D1 decided; D2–D7 open. Phase 1a shipped (#846).
 **Channels in scope:** the widget, canopy chat (web + phone), email, **Slack** (`apps/slack`, being brought back up in parallel — see §1a), schedules and dispatch.
-**Spans:** canopy-web (identity, tool authorization), the canopy agent framework
-(`agent-core`, the agent factory, `gating_guard`), and each embedding host's MCP
-server (connect-labs first).
+**Spans:** canopy-web (identity, admins, the interface, tool authorization),
+the runner, the canopy agent framework (`agent-core`, the agent factory,
+`gating_guard`), and each embedding host's MCP server (connect-labs first).
+
+**Terms.** *Owner*: the one human accountable for an agent (`Agent.owner`).
+*Admins*: people the owner grants full access to that agent. *Callers*:
+everyone else who asks it for something.
 
 ## The problem, in one example
 
@@ -43,9 +47,11 @@ only because the one person using it is the owner.
 3. **Every tool call runs as `agent ∩ initiator`.** The agent can do only what
    BOTH it and the person who asked may do. Not "as Alice" alone — an agent
    deliberately scoped to read-only must stay read-only even for an admin.
-4. **Explicit, per-agent access rules by who is asking**, versioned in the agent's
-   repo, enforced by canopy for tools and by the agent framework for local
-   actions, and shown to the agent as plain instructions.
+4. **Two relationships, not one agent restricted per caller.** An agent's owner
+   and admins reach its full working session; everyone else reaches only the
+   capabilities it declares, over MCP, with who they are and what they are
+   looking at carried as structured context. Every run is still a turn on a
+   canopy runner under the routing rules.
 
 ## 1. The principal: one shape for "who asked"
 
@@ -109,10 +115,10 @@ the Slack work in flight:
 - **the channel context Slack feeds a turn is DATA, not the initiator.** The bot
   reads the channel's recent history and the mentioning thread into the prompt;
   those messages were written by other people, and none of them is who the agent
-  acts for. The context block (§3) names the sender of the triggering message
+  acts for. The caller context (§5) names the sender of the triggering message
   only;
-- the per-session MCP endpoint (§5) covers Slack for free, since a Slack thread IS
-  a session.
+- resolving a call to its turn through the session (§7) covers Slack for free,
+  since a Slack thread IS a session.
 
 ## 2. Arrival: canopy resolves user vs contact
 
@@ -164,181 +170,198 @@ verified address in it, so a compromised host signing key could speak for
 EXISTING canopy users in that domain (never create new ones). That is the old email-domain vouching risk, made much
 smaller: it is per-visitor and signed rather than one static secret; it is opt-in
 per domain on a page the owner sees; every resolution is audited with
-`assurance=host_signed`; and (§4) a `host_signed` user can be given less than a
-`session` user in the agent's policy. A site owner who does not want
+`assurance=host_signed`; and an agent's interface (§4) can offer a `host_signed`
+user less than a signed-in one. A site owner who does not want
 host-asserted matching simply leaves step 2 off, and every visitor is a contact.
 
-## 3. The agent knows who asked
+## 3. Two relationships to an agent: its owner and admins, and everyone else
 
-At the top of every turn the runner delivers a **turn context block**, built by
-canopy from the initiator and the agent's policy (§4):
+Restricting a fully-powered agent per caller — instructions, a policy file, a
+hook — is a denylist on something powerful, and denylists leak. So the model is
+split by relationship instead:
 
-```
-Asked by: Alice Moreno <alice@dimagi.com>
-  canopy user · editor in workspace connect · via widget:connect-labs · host-signed
-You are acting for this person. You may: read opportunities, read insights,
-  scroll/highlight on their page. You may not: send email, change payments.
-```
+| | **Owner and admins** | **Callers** — everyone else |
+| --- | --- | --- |
+| who | `Agent.owner` (exists today) and an explicit per-agent **admins** list | workspace members who are not admins, contacts, Slack users, other agents |
+| how they reach it | its **working session**: full chat, emdash jump-in, steering | its **declared interface** (§4), over MCP |
+| what they can make it do | anything the agent can | only the capabilities the agent offers to their kind of caller |
+| what it runs as | the agent's full profile | the invoked capability's restricted profile (§6) |
 
-An email turn reads the same way (`contact · dmarc-verified · via email`), as do
-Slack (`canopy user · editor in workspace connect · via slack:dimagi ·
-slack-linked`) and a schedule (`system · schedule "weekly digest" · owner
-Jonathan`). The same
-data is re-readable mid-turn through an MCP tool, `who_is_asking()`, because a
-long turn outlives the top of its context.
+**Owner** is the one accountable human, and is always an admin. **Admins** are
+granted by the owner, per agent. They reshape the agent (edit, schedule, route,
+publish) and get its full working session.
 
-The prose is a convenience for the agent's judgement. It is **not** the
-enforcement — §5 is.
+**Why an explicit list rather than a workspace role.** Today "who may change an
+agent" is workspace `editor` or `owner` (`apps/agents/api.py::_agent_for_write`),
+and that code says plainly that `editor` "is not a deliberate grant": self-join
+hands it to anyone from an allowed domain who clicks join. Being in a workspace
+and being trusted with an agent's full session are different things.
 
-## 4. Access policy: `config/access.yaml` in the agent's repo
+**A name to retire.** `_agent_for_admin` today means "WORKSPACE owner only, for
+the agent's secrets". Once admins exist, that name would mean two things; it is
+renamed (`_agent_for_secrets`) and its rule is D7.
 
-`config/allowlist.txt` + the "sender triage" rule in `agent-core/turn.md` are the
-seed: a flat list of counterparts the agent may *act* for, everyone else
-read-only and surfaced. That grows into an explicit policy, keyed by who is
-asking, in the agent's repo (the definition lives in the repo — CLAUDE.md, "an
-agent row is an instance"):
+## 4. The declared interface: what an agent offers callers
+
+An agent declares what it offers, in its repo — `config/interface.yaml`, grown
+out of `config/allowlist.txt` and published to canopy on the same path as the
+skill catalog (the definition lives in the repo; canopy holds the deployed
+version and enforces it):
 
 ```yaml
-# config/access.yaml — who may ask this agent for what
-default: read_only_and_surface        # anyone not matched below
-
-principals:
-  owner:                              # the agent row's owner
-    tools: all
-    actions: [send, reply, write, deploy]
-
-  workspace:                          # canopy users in the agent's workspace
-    roles:
-      editor: { tools: [read:*, insights.dismiss, page.*], actions: [reply] }
-      viewer: { tools: [read:*, page.*],                  actions: [] }
-
-  contact:                            # people canopy knows but who are not members
-    tools: [page.*]
+# config/interface.yaml — what callers can ask this agent for
+capabilities:
+  ask:                                   # free-form conversation: how chat stays chat
+    description: Ask Echo about the portfolio.
+    callers: [member, contact:app_signed]
+    tools: [canopy.list_insights, canopy.current_page, page.*]
     actions: [reply_in_thread]
-    require_assurance: dkim           # an spf-only or unauthenticated contact gets default
 
-  system:
-    schedule: { as: creator }         # a schedule acts with its creator's grant
-    dispatch: { as: dispatcher }
+  summarise_opportunity:
+    description: Summarise one opportunity's delivery and payment status.
+    input: { opportunity_id: integer }
+    callers: [member]
+    tools: [connect_labs.get_opportunity, connect_labs.list_payments]
+    actions: []
 
-assurance:
-  host_signed: { cap: editor }        # a widget-resolved user never exceeds editor here
+callers_default: none                    # anything not listed here: not offered
 ```
 
-- **Published to canopy** on the same path as the skill catalog, so the server
-  enforces the version that is actually deployed.
-- **Absent file = today's behaviour for the owner, `read_only_and_surface` for
-  everyone else.** Safe by default; nothing existing breaks.
-- `allowlist.txt` is read as the `contact` section's allow-list until an agent
-  migrates, so agent repos move one at a time.
-- The agent factory (`canopy_agent_factory`) scaffolds a commented `access.yaml`
-  for new agents instead of the bare allowlist.
+- **Allowlist by construction.** A caller can reach only a capability listed
+  for them, and while it runs, only that capability's tools and actions.
+- **`ask` is a capability like any other.** People in the widget, Slack or email
+  will not pick from a menu; `ask` is the free-form door, with its own scope.
+  Everything else is a specific door with a narrower one.
+- **Served as MCP, per caller.** canopy exposes each agent's interface as MCP
+  tools (`echo.ask`, `echo.summarise_opportunity`), computing the list for the
+  caller in front of it — the same thing `page_tools` already does for a page's
+  actions. The call carries the caller's token, so who is asking arrives with
+  the request rather than being inferred afterwards.
+- **Channels become thin clients.** The widget, Slack, email and canopy chat for
+  a non-admin all invoke a capability (usually `ask`) with the caller context
+  (§5). They stop being ways into the agent's working session.
+- **Prior art, borrowed rather than adopted:** MCP for tools and per-request
+  identity; the Agent2Agent protocol's "agent card" (a published list of an
+  agent's skills and how to authenticate to it) is close to what
+  `interface.yaml` describes.
 
-## 5. Enforcement: `agent ∩ initiator`, at the tool boundary
+## 5. The caller context: one structured envelope
 
-Instructions are not a control. Enforcement happens where the call happens.
+Every invocation carries one envelope, as data — the lesson of the page-state
+work, where prose pasted into a first message went stale and structured state
+re-read through a tool did not:
 
-### canopy's own tools
+| part | source |
+| --- | --- |
+| **who** — kind, user/contact, assurance, channel | the turn's initiator (phase 1a, shipped in #846) |
+| **relationship** — owner, admin, or caller, and their workspace role | owner + admins (§3) |
+| **what they are looking at** — `resource`, `backing_tool`, `visible_ids`, filters | page state (shipped) |
+| **the conversation** — session, thread | the session the turn belongs to |
+| **what was invoked** — the capability and its granted scope | the interface (§4) |
 
-The agent keeps authenticating to canopy's MCP server as itself. What changes is
-that canopy works out **which turn the call belongs to**, and from that who
-asked:
+The agent reads it from a file the runner writes beside the turn, and re-reads it
+mid-turn through `who_is_asking()`. It is **never prepended to the prompt**: a
+chat turn's prompt is the person's own words and becomes the transcript, so it
+would appear as something they typed. The envelope informs the agent's
+judgement; enforcement is §6 and §7.
 
-- **Each emdash chat task gets its own MCP URL** — `/api/mcp/?session=<id>` —
-  written into that task's MCP config when the runner creates it. A task is one
-  session for its whole life, so the URL never needs to change mid-conversation.
-- **One running turn per session is already a database constraint**
-  (`one_executing_turn_per_session`). So `(agent credential, session)` names
-  exactly one turn, exactly one initiator — no guessing, and no turn id the agent
-  could substitute. Non-session agent turns use the equivalent
-  `one_executing_turn_per_agent`.
-  This is why a looser design fails: session turns do not participate in the
-  per-agent constraint, so one agent can run Alice's turn and Bob's turn at once,
-  and "the turn this agent is running" is ambiguous.
-- **Every tool resolves its data scope as the intersection** — e.g.
-  `list_insights` sees workspaces that are the agent's AND Alice's; a contact
-  initiator sees only what the contact surface allows.
-- **The tool LIST is filtered** by `access.yaml` for this initiator, so a
-  disallowed tool is not offered at all rather than offered and refused.
-- **No running turn → no data.** A call with no resolvable turn fails closed, the
-  same direction `page_visible_q` and the workspace authorizer take.
+## 6. Execution: every run is still a turn on a canopy runner, under routing
 
-### Third-party tools (connect-labs)
+There is no second execution path. **Every run — admin or caller — is a `Turn`,
+claimed by a canopy runner under the routing rules** (the `RunnerAssignment`
+cascade, source-aware rules, pinning, session stickiness), and those rules keep
+getting more sophisticated independently of this work.
 
-connect-labs' MCP server needs to know it is Alice too, and must be able to
-believe it. Recommended (D4): **canopy as the MCP gateway for embedded products.**
-The agent reaches connect-labs' tools through canopy's per-session endpoint;
-canopy forwards each call with an **on-behalf-of assertion** it signs — `sub` =
-Alice's connect-labs id (known from her arrival, §2), `act` = the agent,
-`aud` = connect-labs, `exp` ≤ 120 s. connect-labs verifies it against canopy's
-public key and runs the tool as Alice. It is the mirror of what connect-labs
-already does toward canopy.
+What changes is **how the runner executes a turn**, decided by the turn itself:
 
-The alternative is introspection — connect-labs receives the agent's call plus a
-turn reference and asks canopy who is behind it. Less infrastructure, but every
-host must implement the call-back, and a turn reference the agent passes has the
-concurrency problem above unless it is itself a signed per-turn token.
+- **Admin turns** run in the agent's full profile — today's behaviour.
+- **Caller turns** run in the invoked capability's profile: only its declared
+  tools; canopy's MCP scoped to `agent ∩ caller` (§7); none of the admins'
+  credentials; local actions (email, shell, deploys) only as the capability
+  allows, enforced by `gating_guard` reading the envelope. Claude Code can
+  restrict a session's tools, so this is configuration of an ordinary session,
+  not a new executor.
+- **A profile is fixed per session.** Each caller conversation (a widget chat, a
+  Slack thread, an email thread) is already its own session, so an admin's
+  working session and a caller's conversation never share one — and a session's
+  profile cannot drift mid-conversation.
+- **Routing gains inputs, not a new mechanism.** Caller class and capability are
+  on the turn, so a rule like "contact invocations go to the cloud runner" is a
+  natural extension of source-aware routing when it is wanted. Not needed on day
+  one.
 
-### Local actions (email, shell, deploys)
+## 7. Tools the agent calls downstream: `agent ∩ caller`
 
-`agent-core`'s `gating_guard` hook already hard-blocks wrong paths at the tool
-boundary from `config/gating.json`. It gains one input: the current turn's
-initiator (written by the runner beside the turn), and it applies
-`access.yaml`'s `actions` for that initiator — so "a viewer asked, and the agent
-tried `canopy email send`" is blocked by the same rail that blocks raw
-`gog gmail send` today.
+The interface decides what a caller may ASK for. This decides what data the
+agent reaches while answering — both are needed.
 
-## 6. What each piece of the system has to gain
+- **canopy's own tools.** canopy resolves the call to its turn through the
+  session (one running turn per session is a database constraint, so the lookup
+  is exact; the per-agent constraint does not cover session turns, which is why
+  resolving by agent alone is ambiguous), and scopes every tool to the
+  intersection of the agent's grants and the caller's.
+- **Host tools (connect-labs).** canopy forwards each call with a signed
+  on-behalf-of assertion — `sub` = the caller's id at the host (known from their
+  arrival, §2), `act` = the agent, short expiry — which the host verifies against
+  canopy's public key and runs as that person (D4).
+- **Known limit.** On a laptop runner every session runs as the same OS user, so
+  a compromised agent in one caller's session could read another session's
+  files and borrow the identity of someone *concurrently* talking to the same
+  agent — never anyone who is not. Closing that fully means isolating sessions on
+  the box, a much larger change; accepted for now, and the cloud runner can
+  isolate per session earlier.
+
+## 8. What changes where
 
 | where | change |
 | --- | --- |
-| canopy-web `harness` | initiator fields on `Turn`, taken as ONE argument by `enqueue_turn` / `send_message`, so each channel changes one call site; set on every enqueue path (widget, chat, email, schedule, dispatch, Slack) |
-| canopy-web `slack` | pass the initiator from `SlackUserLink` (`slack_linked`); nothing else — deliberately, while the Slack work is in flight |
-| canopy-web `tokens` | arrival resolution (linked contact → existing account by verified email → contact), never creating a user; `email`/`email_verified` claims; the per-domain "resolve visitors to existing canopy accounts" setting. (Sign-up / sign-in-to-link: deferred until canopy is public.) |
-| canopy-web `mcp` | per-session endpoint; turn → initiator resolution; intersection in every tool; tool-list filtering; `who_is_asking()`; the gateway + OBO signing (D4) |
-| canopy-web `agents` | publish + store `access.yaml` alongside the skill catalog |
-| runner | per-task MCP URL on task creation; turn context block; initiator written beside the turn for the hook |
-| canopy plugin `agent-core` | `turn.md`: read the context block, act for that person, "sender triage" becomes "apply access.yaml"; `gating_guard`: enforce `actions` by initiator |
-| canopy plugin agent factory | scaffold `access.yaml` |
-| each host (connect-labs) | add `email`/`email_verified` to its assertion; verify canopy's OBO assertions in its MCP server |
+| canopy-web `harness` | initiator on every turn (**shipped, #846**); capability on caller turns; envelope in the claim response |
+| canopy-web `agents` | `Agent.admins`; reshaping gated on admin instead of workspace editor; `_agent_for_admin` → `_agent_for_secrets`; publish + store `interface.yaml` |
+| canopy-web `tokens` | arrival resolution (§2), never creating a user |
+| canopy-web `mcp` | each agent's interface served as per-caller MCP tools; `who_is_asking()`; tool scoping `agent ∩ caller`; host on-behalf-of forwarding |
+| canopy-web `slack` | the one initiator line (shipped in #846); later, invoke `ask` rather than open a working session |
+| runner | write the envelope beside the turn; run caller turns in the capability's profile |
+| canopy plugin `agent-core` | read the envelope; `gating_guard` enforces the capability's actions; `turn.md` sender triage becomes "you were invoked through capability X for this caller" |
+| canopy plugin agent factory | scaffold `interface.yaml` with an `ask` capability |
+| each host (connect-labs) | `email`/`email_verified` in its assertion; verify canopy's on-behalf-of assertions in its MCP server |
 
-## 7. Phases
+## 9. Phases
 
-Each ships alone and is useful alone.
+1. **1a — who asked, on every turn.** Shipped (#846). **1b** — the runner and
+   `agent-core` delivering the envelope to the agent.
+2. **Arrival resolution** (§2) — existing canopy accounts arrive as themselves,
+   everyone else is a contact; then ace-web onto this path and the
+   user-creating `token-exchange` removed.
+3. **Owner and admins** — `Agent.admins`, the owner's UI to grant it, reshaping
+   and the full working session gated on it, the rename. Useful alone: it is the
+   explicit trust grant the workspace `editor` role was standing in for.
+4. **The declared interface** — `interface.yaml`, published and served as
+   per-caller MCP tools; caller turns carry their capability; channels invoke it.
+5. **Restricted execution** — runners run caller turns in the capability's
+   profile; canopy's tools scoped `agent ∩ caller`. *This phase closes the gap
+   the spec opened with.*
+6. **On-behalf-of for host tools** — canopy forwarding, connect-labs verifying.
 
-1. **Initiator on every turn + the context block.** No behaviour change; the agent
-   simply knows who asked, on every channel including email and Slack. Sequenced
-   AFTER the in-flight Slack work lands, and touching `apps/slack` at exactly one
-   call site, so the two do not fight over the same lines.
-2. **Arrival resolution** — widget visitors with an existing canopy account
-   arrive as themselves; everyone else is a contact. Then move ace-web onto this
-   path and remove the user-creating `token-exchange`. (Contact → user linking
-   waits until canopy is public.)
-3. **canopy's tools run as `agent ∩ initiator`** — per-session MCP endpoint.
-   *This is the phase that removes the "Alice can ask for more than she can
-   see" gap for canopy data.*
-4. **`access.yaml`** — publish, tool-list filtering, `gating_guard` enforcement,
-   factory scaffold, allowlist compatibility.
-5. **On-behalf-of for host tools** — the gateway and connect-labs' verifier.
-
-Until phase 5, the rule in the host guide (§8a) stands: give an embedded agent
-only the host-tool access that is fine for everyone who can reach it.
+Until phase 5, the host guide's rule stands: give an embedded agent only access
+that is fine for everyone who can reach it.
 
 ## Decisions
 
-- **D1 — How a visitor becomes their canopy account. DECIDED 2026-09-18.** No
-  dynamic user creation: an existing account is used (matched by a host-verified
-  email where the site owner opted in, or by a prior link); anyone else is a
-  contact. While canopy is not public there is no sign-up or linking in the
-  widget; contact → user comes later via `promote_to_user` (§2).
-- **D2 — Multiplayer.** Initiator per turn (whoever sent that message) or per
-  session (whoever opened it). *Recommended: per turn — which Slack already
-  requires, since several people post into one thread session (§1a).*
-- **D3 — Scheduled and dispatched turns.** Act with the creator's/dispatcher's
-  grant, or with the agent's own. *Recommended: the creator's — someone set it
-  up, and that person should bound it.*
-- **D4 — Host tools.** canopy as gateway with signed on-behalf-of assertions, or
-  host-side introspection. *Recommended: gateway.*
-- **D5 — Where policy lives.** `config/access.yaml` in the agent repo, published
-  to canopy, or edited in canopy's UI. *Recommended: the repo, with a read-only
-  view in the agent's canopy page — the same split skills already have.*
+- **D1 — decided 2026-09-18.** No dynamic user creation; existing accounts only;
+  no sign-up or linking in the widget while canopy is private (§2).
+- **D2 — Multiplayer.** Who asked is per turn (whoever sent that message).
+  *Recommended, and effectively settled by Slack (§1a).*
+- **D3 — Scheduled turns.** Bounded by the creator (recorded in #846); a schedule
+  created by an admin runs in the admin profile, anyone else's in the capability
+  it invokes. *Recommended.*
+- **D4 — Host tools.** canopy as gateway with signed on-behalf-of assertions.
+  *Recommended.*
+- **D5 — Where the interface lives.** `config/interface.yaml` in the agent repo,
+  published to canopy, with a read-only view on the agent's page. *Recommended.*
+- **D6 — Seeding admins.** When `Agent.admins` ships, who is in it on day one?
+  *Recommended: the agent's owner plus the workspace's `owner`-role members, so
+  nobody who can change an agent today silently loses it; editors do not carry
+  over, since theirs was never a deliberate grant.*
+- **D7 — Secrets.** Today the agent's credentials are writable by workspace
+  owners only. After admins: *recommended* the agent's owner only — credentials
+  control the agent end to end, and the owner is the one accountable person.
