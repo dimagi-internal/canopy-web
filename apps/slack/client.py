@@ -32,11 +32,21 @@ def call(method: str, *, token: str = "", data: dict | None = None, json: dict |
     return body
 
 
-def post_message(token: str, *, channel: str, text: str, thread_ts: str = "") -> str:
+def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
+                 blocks: list | None = None) -> str:
+    # `text` is always sent, blocks or not: it is what notifications, screen
+    # readers and any client that cannot render blocks show.
     payload = {"channel": channel, "text": text, "unfurl_links": False}
     if thread_ts:
         payload["thread_ts"] = thread_ts
+    if blocks:
+        payload["blocks"] = blocks
     return call("chat.postMessage", token=token, json=payload)["ts"]
+
+
+def update_message(token: str, *, channel: str, ts: str, text: str, blocks: list | None = None) -> None:
+    call("chat.update", token=token, json={"channel": channel, "ts": ts, "text": text,
+                                           "blocks": blocks or []})
 
 
 def post_ephemeral(token: str, *, channel: str, user: str, text: str, thread_ts: str = "") -> None:

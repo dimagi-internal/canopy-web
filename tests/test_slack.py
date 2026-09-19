@@ -726,3 +726,128 @@ def test_parse_answer_is_strict():
     assert parse_answer("Cancel", MENU) == CANCEL
     for bad in ("", "0", "3", "1 2", "two", "2 please", "1;2"):
         assert parse_answer(bad, MENU) is None, bad
+
+
+# ---- buttons: the question as Block Kit, answered by a click ------------------------
+
+def click(action_id, value, *, state=None, user=ALICE, channel="C1", message_ts="1700000999.000100",
+          thread_ts="1700000000.000100"):
+    from urllib.parse import urlencode
+    payload = {"type": "block_actions", "team": {"id": TEAM}, "user": {"id": user},
+               "channel": {"id": channel},
+               "container": {"type": "message", "message_ts": message_ts, "channel_id": channel},
+               "message": {"ts": message_ts, "thread_ts": thread_ts},
+               "actions": [{"action_id": action_id, "value": value}],
+               "state": state or {"values": {}}}
+    body = urlencode({"payload": json.dumps(payload)}).encode()
+    return _post("/api/slack/interactions", body, "application/x-www-form-urlencoded")
+
+
+def _buttons(post):
+    return {e["action_id"]: e for b in post.get("blocks", []) if b["type"] == "actions" for e in b["elements"]}
+
+
+def test_the_question_comes_with_a_button_per_option(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    (post,) = slack.said("chat.postMessage")
+    buttons = _buttons(post)
+    assert set(buttons) == {"menu_pick_1", "menu_pick_2", "menu_dismiss"}
+    assert buttons["menu_pick_2"]["text"]["text"] == "Stop the run here"
+    assert "How should the run proceed?" in post["text"]           # the fallback is still there
+
+
+def test_a_click_answers_it_and_the_buttons_go_away(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    value = _buttons(slack.said("chat.postMessage")[0])["menu_pick_2"]["value"]
+    assert click("menu_pick_2", value).status_code == 200
+    assert RunnerBinding.objects.get(session=session).pending_answer["selections"] == [[2]]
+    (update,) = slack.said("chat.update")
+    assert update["ts"] == "1700000999.000100"
+    assert f"Answered by <@{ALICE}>: Stop the run here" in update["text"]
+    assert not [b for b in update["blocks"] if b["type"] == "actions"]
+    # When the dialog then clears, that "Answered by" is not overwritten.
+    _report(runner, pairer, None, django_capture_on_commit_callbacks)
+    assert len(slack.said("chat.update")) == 1
+
+
+def test_a_question_answered_elsewhere_loses_its_buttons(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    _report(runner, pairer, None, django_capture_on_commit_callbacks)      # answered at the laptop
+    (update,) = slack.said("chat.update")
+    assert "Answered." in update["text"] and not [b for b in update["blocks"] if b["type"] == "actions"]
+
+
+def test_a_click_on_a_question_that_moved_on_answers_nothing(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    old = _buttons(slack.said("chat.postMessage")[0])["menu_pick_1"]["value"]
+    _report(runner, pairer, {**MENU, "question": "A different question now?"}, django_capture_on_commit_callbacks)
+    click("menu_pick_1", old)
+    assert RunnerBinding.objects.get(session=session).pending_answer is None
+    assert "no longer open" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_a_click_naming_another_channels_session_answers_nothing(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    value = _buttons(slack.said("chat.postMessage")[0])["menu_pick_1"]["value"]
+    click("menu_pick_1", value, channel="C_OTHER")
+    assert RunnerBinding.objects.get(session=session).pending_answer is None
+
+
+def test_pick_any_and_several_questions_submit_their_state(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    two = {**MENU, "questions": [
+        {"index": 0, "question": "Colours?", "header": "", "multi_select": True,
+         "options": [{"number": 1, "label": "Red"}, {"number": 2, "label": "Blue"}, {"number": 3, "label": "Green"}]},
+        {"index": 1, "question": "Ship?", "header": "", "multi_select": False,
+         "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
+    ]}
+    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    post = slack.said("chat.postMessage")[0]
+    kinds = {e["action_id"]: e["type"] for b in post["blocks"] if b["type"] == "actions" for e in b["elements"]}
+    assert kinds == {"q0": "checkboxes", "q1": "radio_buttons", "menu_submit": "button", "menu_dismiss": "button"}
+    # A toggle is only a change of selection — nothing happens until Submit,
+    # and nothing is said either (a note per tick would be noise).
+    before = len(slack.calls)
+    click("q0", "")
+    assert RunnerBinding.objects.get(session=session).pending_answer is None
+    assert len(slack.calls) == before
+    state = {"values": {
+        "menu_q0": {"q0": {"type": "checkboxes", "selected_options": [{"value": "1"}, {"value": "3"}]}},
+        "menu_q1": {"q1": {"type": "radio_buttons", "selected_option": {"value": "2"}}},
+    }}
+    click("menu_submit", _buttons(post)["menu_submit"]["value"], state=state)
+    assert RunnerBinding.objects.get(session=session).pending_answer["selections"] == [[1, 3], [2]]
+
+
+def test_submit_with_a_question_unanswered_is_refused(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    two = {**MENU, "questions": [
+        {"index": 0, "question": "Ship?", "header": "", "multi_select": False,
+         "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
+        {"index": 1, "question": "When?", "header": "", "multi_select": False,
+         "options": [{"number": 1, "label": "Now"}, {"number": 2, "label": "Later"}]},
+    ]}
+    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    value = _buttons(slack.said("chat.postMessage")[0])["menu_submit"]["value"]
+    click("menu_submit", value, state={"values": {"menu_q0": {"q0": {"selected_option": {"value": "1"}}}}})
+    assert RunnerBinding.objects.get(session=session).pending_answer is None
+    assert "each question" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_dismiss_button(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    click("menu_dismiss", _buttons(slack.said("chat.postMessage")[0])["menu_dismiss"]["value"])
+    assert RunnerBinding.objects.get(session=session).pending_answer["option"] is None
+
+
+def test_an_unsigned_click_is_refused(bound, slack):
+    from urllib.parse import urlencode
+    body = urlencode({"payload": "{}"}).encode()
+    assert _post("/api/slack/interactions", body, "application/x-www-form-urlencoded",
+                 secret="wrong").status_code == 401
