@@ -10,6 +10,7 @@ with the right origin and actor, or it does not exist at all.
 from __future__ import annotations
 
 import json
+import json as _json
 import time
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -57,6 +58,18 @@ class FakeSlack:
         }
         self.installer = ALICE
         self.fail: dict[str, str] = {}
+        # The Slack APP's own config, as apps.manifest.export returns it.
+        self.manifest = {
+            "display_information": {"name": "Canopy"},
+            "features": {"slash_commands": [
+                {"command": "/canopy", "url": "https://canopy.test/canopy/api/slack/commands",
+                 "description": "Ask a canopy agent"},
+                {"command": "/standup", "url": "https://elsewhere.example/standup",
+                 "description": "Not canopy's"},
+            ]},
+            "settings": {"event_subscriptions": {"bot_events": ["app_mention", "message.im"]}},
+        }
+        self.rotations = 0
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -71,8 +84,18 @@ class FakeSlack:
         elif method == "chat.postMessage":
             body = {"ok": True, "ts": "1700000999.000100"}
         elif method == "oauth.v2.access":
-            body = {"ok": True, "access_token": "xoxb-new", "bot_user_id": BOT,
+            body = {"ok": True, "access_token": "xoxb-new", "bot_user_id": BOT, "app_id": "A_CANOPY",
                     "team": {"id": TEAM, "name": "Dimagi"}, "authed_user": {"id": self.installer}}
+        elif method == "tooling.tokens.rotate":
+            self.rotations += 1
+            n = self.rotations
+            body = {"ok": True, "token": f"xoxe.xoxp-access-{n}", "refresh_token": f"xoxe-refresh-{n}",
+                    "iat": 1000, "exp": 1000 + 43200}
+        elif method == "apps.manifest.export":
+            body = {"ok": True, "manifest": _json.loads(_json.dumps(self.manifest))}
+        elif method == "apps.manifest.update":
+            self.manifest = _json.loads(payload["manifest"])
+            body = {"ok": True, "app_id": payload["app_id"], "permissions_updated": False}
         else:
             body = {"ok": True}
         resp.json = lambda: body
@@ -1309,3 +1332,118 @@ def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, djang
     _stream(runner, pairer, session, [{"seq": 3, "index": 3000, "kind": "assistant",
                                        "payload": {"text": "mid-turn text"}}], django_capture_on_commit_callbacks)
     assert not slack.said("chat.postMessage")                    # the ledger relay owns a live turn
+
+
+# ---- canopy keeps the app's /<agent> commands in step (apps/slack/commands.py) -------
+
+def _commands(slack) -> dict[str, dict]:
+    return {c["command"]: c for c in slack.manifest["features"]["slash_commands"]}
+
+
+@pytest.fixture
+def owner_client(ws):
+    return _link_client(_owner(ws))
+
+
+@pytest.fixture
+def managed(slack, installation, owner_client, ws):
+    installation.app_id = "A_CANOPY"
+    installation.save()
+    resp = owner_client.put(f"/api/slack-config/{ws.slug}/config-token", {"refresh_token": "xoxe-pasted"},
+                            content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    return resp.json()
+
+
+def test_connecting_the_token_rotates_it_and_syncs_enabled_agents(slack, hal, installation, managed):
+    rotate = slack.said("tooling.tokens.rotate")[0]
+    assert rotate["refresh_token"] == "xoxe-pasted"
+    installation.refresh_from_db()
+    # The pasted refresh token is spent; the NEW pair is what is kept, encrypted.
+    from apps.common.encryption import decrypt_secret as _dec
+    assert installation.config_refresh_enc and "xoxe" not in installation.config_refresh_enc
+    assert _dec(installation.config_refresh_enc) == "xoxe-refresh-1"
+    assert managed["status"] == "synced" and managed["added"] == ["/hal"]
+    cmds = _commands(slack)
+    assert set(cmds) == {"/canopy", "/standup", "/hal"}
+    assert cmds["/hal"]["url"] == "https://canopy.test/canopy/api/slack/commands"
+    # Everything else in the manifest is written back untouched.
+    assert slack.manifest["settings"]["event_subscriptions"]["bot_events"] == ["app_mention", "message.im"]
+    assert cmds["/standup"]["url"] == "https://elsewhere.example/standup"
+
+
+def test_flipping_the_switch_adds_and_removes_the_command(slack, hal, managed, owner_client):
+    off = owner_client.patch("/api/agents/hal/slack", {"slack_enabled": False},
+                             content_type="application/json").json()
+    assert off == {"slack_enabled": False, "command_status": "synced", "command_detail": "Removed /hal from Slack."}
+    assert "/hal" not in _commands(slack) and "/canopy" in _commands(slack)
+    on = owner_client.patch("/api/agents/hal/slack", {"slack_enabled": True},
+                            content_type="application/json").json()
+    assert on["command_detail"] == "Added /hal to Slack." and "/hal" in _commands(slack)
+
+
+def test_a_command_canopy_does_not_own_is_never_removed(slack, ws, managed, owner_client):
+    # `/hal` exists but points somewhere else: not canopy's to remove.
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=False)
+    slack.manifest["features"]["slash_commands"].append(
+        {"command": "/hal", "url": "https://elsewhere.example/hal", "description": "someone else's"})
+    owner_client.post(f"/api/slack-config/{ws.slug}/sync")
+    assert _commands(slack)["/hal"]["url"] == "https://elsewhere.example/hal"
+
+
+def test_an_expired_config_token_is_rotated_before_use_and_never_reused(slack, hal, installation, managed,
+                                                                          owner_client, ws):
+    from django.utils import timezone as tz
+    installation.refresh_from_db()
+    installation.config_expires_at = tz.now()
+    installation.save()
+    owner_client.post(f"/api/slack-config/{ws.slug}/sync")
+    rotations = slack.said("tooling.tokens.rotate")
+    assert len(rotations) == 2 and rotations[1]["refresh_token"] == "xoxe-refresh-1"
+
+
+def test_without_a_config_token_the_switch_still_works_and_says_so(slack, installation, alice, ws, owner_client):
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+    resp = owner_client.patch("/api/agents/hal/slack", {"slack_enabled": True},
+                              content_type="application/json").json()
+    assert resp["slack_enabled"] is True and resp["command_status"] == "not_configured"
+    assert Agent.objects.get(slug="hal").slack_enabled is True
+
+
+def test_when_slack_refuses_the_switch_still_flips_and_the_error_is_kept(slack, hal, installation, managed,
+                                                                          owner_client):
+    slack.fail["apps.manifest.update"] = "invalid_manifest"
+    resp = owner_client.patch("/api/agents/hal/slack", {"slack_enabled": False},
+                              content_type="application/json").json()
+    assert resp["slack_enabled"] is False and resp["command_status"] == "error"
+    installation.refresh_from_db()
+    assert "invalid_manifest" in installation.commands_sync_error
+
+
+def test_a_slug_too_long_for_slack_is_reported_not_truncated(slack, installation, managed, ws, owner_client):
+    long = "a" * 40
+    Agent.objects.create(slug=long, name="Long", workspace=ws)
+    resp = owner_client.patch(f"/api/agents/{long}/slack", {"slack_enabled": True},
+                              content_type="application/json").json()
+    assert "too long" in resp["command_detail"]
+    assert not [c for c in _commands(slack) if c.startswith("/aaa")]
+
+
+def test_only_an_owner_hands_canopy_the_config_token(slack, installation, alice, ws):
+    resp = _link_client(alice).put(f"/api/slack-config/{ws.slug}/config-token",
+                                   {"refresh_token": "xoxe-x"}, content_type="application/json")
+    assert resp.status_code == 403 and not slack.said("tooling.tokens.rotate")
+
+
+def test_the_config_read_never_returns_a_token(slack, installation, managed, alice, ws):
+    body = _link_client(alice).get(f"/api/slack-config/{ws.slug}").content.decode()
+    assert "xoxe" not in body
+    assert '"managed":true' in body.replace(" ", "")
+
+
+def test_install_records_the_app_id(slack, ws):
+    c = _link_client(_owner(ws))
+    start = c.get("/auth/slack/install/", {"workspace": ws.slug})
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    c.get("/auth/slack/callback/", {"code": "abc", "state": state})
+    assert SlackInstallation.objects.get(team_id=TEAM).app_id == "A_CANOPY"

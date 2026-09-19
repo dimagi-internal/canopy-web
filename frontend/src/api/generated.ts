@@ -822,6 +822,62 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/slack-config/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** This workspace's Slack connection */
+        readonly get: operations["apps_slack_api_get_config"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-config/{workspace}/config-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Let canopy manage the Slack app's slash commands (owner)
+         * @description Takes the REFRESH token of a Slack app configuration token, then syncs
+         *     the app's slash commands to the agents that are on for Slack.
+         */
+        readonly put: operations["apps_slack_api_set_config_token"];
+        readonly post?: never;
+        /** Stop managing the Slack app's slash commands (owner) */
+        readonly delete: operations["apps_slack_api_clear_config_token"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-config/{workspace}/sync": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Sync slash commands now (owner) */
+        readonly post: operations["apps_slack_api_sync"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/": {
         readonly parameters: {
             readonly query?: never;
@@ -1774,7 +1830,8 @@ export interface paths {
         /**
          * Turn Slack access to an agent on or off
          * @description Whether people in this workspace's connected Slack can talk to the agent
-         *     (by mention, DM, or `/canopy`). Owner only.
+         *     (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
+         *     the agent's `/<slug>` command in the Slack app when canopy manages it.
          */
         readonly patch: operations["apps_agents_api_set_slack_enabled"];
         readonly trace?: never;
@@ -6085,6 +6142,65 @@ export interface components {
              */
             readonly error: string;
         };
+        /** SlackCommandsOut */
+        readonly SlackCommandsOut: {
+            /** Managed */
+            readonly managed: boolean;
+            /** App Id */
+            readonly app_id: string;
+            /** Set By Email */
+            readonly set_by_email: string;
+            /** Synced At */
+            readonly synced_at: string;
+            /** Error */
+            readonly error: string;
+        };
+        /** SlackConfigOut */
+        readonly SlackConfigOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Connected */
+            readonly connected: boolean;
+            /** Team Name */
+            readonly team_name: string;
+            /** Installed By Email */
+            readonly installed_by_email: string;
+            /** Installed At */
+            readonly installed_at: string;
+            /** Install Url */
+            readonly install_url: string;
+            readonly commands: components["schemas"]["SlackCommandsOut"];
+        };
+        /** SlackSyncOut */
+        readonly SlackSyncOut: {
+            /** Status */
+            readonly status: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Added
+             * @default []
+             */
+            readonly added: readonly string[];
+            /**
+             * Removed
+             * @default []
+             */
+            readonly removed: readonly string[];
+            /**
+             * Unfit
+             * @default []
+             */
+            readonly unfit: readonly string[];
+        };
+        /** SlackConfigTokenIn */
+        readonly SlackConfigTokenIn: {
+            /** Refresh Token */
+            readonly refresh_token: string;
+        };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
             /** Slug */
@@ -7783,6 +7899,25 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+        };
+        /**
+         * SlackEnabledOut
+         * @description The switch's new state, and what happened to the agent's `/<slug>` command.
+         *
+         *     `command_status` is `synced` | `not_configured` | `error`. Reported rather
+         *     than swallowed: a switch that left `/hal` unregistered would look exactly
+         *     like one that worked, until somebody typed it.
+         */
+        readonly SlackEnabledOut: {
+            /** Slack Enabled */
+            readonly slack_enabled: boolean;
+            /** Command Status */
+            readonly command_status: string;
+            /**
+             * Command Detail
+             * @default
+             */
+            readonly command_detail: string;
         };
         /**
          * SlackEnabledIn
@@ -13013,6 +13148,98 @@ export interface operations {
             };
         };
     };
+    readonly apps_slack_api_get_config: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackConfigOut"];
+                };
+            };
+        };
+    };
+    readonly apps_slack_api_set_config_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackConfigTokenIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackSyncOut"];
+                };
+            };
+        };
+    };
+    readonly apps_slack_api_clear_config_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackConfigOut"];
+                };
+            };
+        };
+    };
+    readonly apps_slack_api_sync: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackSyncOut"];
+                };
+            };
+        };
+    };
     readonly apps_storyboards_api_list_storyboards: {
         readonly parameters: {
             readonly query?: never;
@@ -14384,7 +14611,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                    readonly "application/json": components["schemas"]["SlackEnabledOut"];
                 };
             };
         };

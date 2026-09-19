@@ -68,6 +68,18 @@ class SlackEnabledIn(StrictModel):
     slack_enabled: bool
 
 
+class SlackEnabledOut(StrictModel):
+    """The switch's new state, and what happened to the agent's `/<slug>` command.
+
+    `command_status` is `synced` | `not_configured` | `error`. Reported rather
+    than swallowed: a switch that left `/hal` unregistered would look exactly
+    like one that worked, until somebody typed it."""
+
+    slack_enabled: bool
+    command_status: str
+    command_detail: str = ""
+
+
 class AgentRunnerOut(StrictModel):
     """One row of an agent's ordered runner list (the routing-matrix UI's read
     model). `online`/`ready` are computed per row from `Runner.live_status` /

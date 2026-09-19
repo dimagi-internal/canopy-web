@@ -10,7 +10,7 @@ const authed = { isAuthed: true, active: 'connect' }
 
 describe('NAV_GROUPS', () => {
   it('keeps every destination the flat nav carried', () => {
-    // The row this replaced held 15 links (Storyboards and Guide are the two added since).
+    // The row this replaced held 15 links (Storyboards, Guide and Slack are the three added since).
     // Grouping is meant to reorganize the header, never to quietly drop a
     // surface out of it.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
@@ -18,7 +18,7 @@ describe('NAV_GROUPS', () => {
       [
         'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Inbound', 'Insights', 'Members',
         'Projects', 'Schedule', 'Sessions', 'Shareouts', 'Storyboards', 'Supervisor',
-        'System', 'Timeline', 'Walkthroughs',
+        'Slack', 'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
   })
@@ -118,7 +118,7 @@ describe('isNavGroupActive', () => {
       '/w/connect', '/w/connect/chat', '/insights', '/supervisor',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
-      '/sessions', '/w/connect/members', '/w/connect/inbound', '/system',
+      '/sessions', '/w/connect/members', '/w/connect/inbound', '/w/connect/slack', '/system',
     ]) {
       const hits = groups.filter((g) => isNavGroupActive(g, pathname)).map((g) => g.label)
       expect(hits, pathname).toHaveLength(1)

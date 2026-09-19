@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { setAgentSlackEnabled } from '@/api/agents'
 
 // Owner-only switch for Slack access (apps/slack). Off by default: turning it
@@ -12,8 +13,13 @@ export function SlackAccessToggle({
   initialEnabled: boolean
 }) {
   const [enabled, setEnabled] = useState(initialEnabled)
+  const { workspace = '' } = useParams()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // What the flip did to the agent's `/<slug>` command in Slack, said out loud:
+  // a switch that left the command unregistered would otherwise look exactly
+  // like one that worked, until somebody typed it.
+  const [command, setCommand] = useState<{ ok: boolean; text: string } | null>(null)
 
   const flip = async (next: boolean) => {
     if (next === enabled || busy) return
@@ -21,7 +27,8 @@ export function SlackAccessToggle({
     setError(null)
     setEnabled(next)
     try {
-      await setAgentSlackEnabled(agentSlug, next)
+      const r = await setAgentSlackEnabled(agentSlug, next)
+      setCommand(r.command_detail ? { ok: r.command_status === 'synced', text: r.command_detail } : null)
     } catch (e: unknown) {
       setEnabled(!next)
       setError(e instanceof Error ? e.message : 'Failed to change Slack access')
@@ -58,6 +65,12 @@ export function SlackAccessToggle({
         ))}
       </div>
       {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+      {command && (
+        <p className={`mt-1 text-[11px] ${command.ok ? 'text-success' : 'text-warning'}`} data-testid="slack-command-note">
+          {command.text}{' '}
+          {!command.ok && <Link to={`/w/${workspace}/slack`} className="underline">Slack settings</Link>}
+        </p>
+      )}
     </div>
   )
 }

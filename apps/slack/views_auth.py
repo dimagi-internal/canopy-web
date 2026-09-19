@@ -109,6 +109,7 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
     inst = existing or SlackInstallation(team_id=team_id)
     inst.team_name = str(team.get("name") or "")
     inst.bot_user_id = str(data.get("bot_user_id") or "")
+    inst.app_id = str(data.get("app_id") or "") or inst.app_id
     inst.bot_token = str(data.get("access_token") or "")
     inst.workspace_id = slug
     inst.installed_by = request.user
