@@ -311,6 +311,37 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
     return f"not delivered — the agent is waiting on {question}"
 
 
+# (task, unsent line) -> (choice, when asked). A deferred chat turn is failed with no
+# session, so the server requeues it (up to MAX_SESSIONLESS_RETRIES) and this runner
+# claims it again on the very next tick — into the same unsent text. Asking again on
+# every attempt put up a fresh 30s modal each time, and the claim loop waited on it:
+# 4 popups, ~2.5 min during which no other turn on this box could be claimed
+# (2026-09-18, four chat turns queued 100-131s behind one). The human's answer to
+# "this text is in the way" does not change while the text is unchanged, so ask once.
+_COLLISION_ANSWERS: dict[tuple[str, str], tuple[str, float]] = {}
+COLLISION_ANSWER_TTL = 600.0
+
+
+def _chat_collision_choice(task: str, line: str, now_fn=time.monotonic) -> str:
+    """The human's choice for this unsent line, asking only the first time.
+
+    Only a timeout-or-NEW (the defer) and a CANCEL are remembered. CLEAR is never
+    reused: it deletes text, so it needs a human yes for each line it deletes, and
+    once it has run the line is gone anyway. A DIFFERENT line (the human kept
+    typing, or cleared it and started over) is a new question and is asked."""
+    now = now_fn()
+    for key, (_, asked) in list(_COLLISION_ANSWERS.items()):
+        if now - asked > COLLISION_ANSWER_TTL:
+            del _COLLISION_ANSWERS[key]
+    key = (task, line or "")
+    if key in _COLLISION_ANSWERS:
+        return _COLLISION_ANSWERS[key][0]
+    choice = dialog.collision_choice(task, line)
+    if choice != dialog.CLEAR:
+        _COLLISION_ANSWERS[key] = (choice, now)
+    return choice
+
+
 def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
     and REGISTER a bridge that carries the assistant reply back into the ledger — unlike
@@ -375,7 +406,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # there.
         if res.get("action") == "collision":
             line = res.get("line", "")
-            choice = dialog.collision_choice(task, line)
+            choice = _chat_collision_choice(task, line)
             logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
                         "human chose %r", task, turn_id, _preview(line), choice)
             if choice == dialog.CLEAR:
