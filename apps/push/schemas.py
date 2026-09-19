@@ -22,3 +22,12 @@ class PushSubscribeIn(StrictModel):
 
 class PushUnsubscribeIn(StrictModel):
     endpoint: str
+
+
+class NotificationPreferenceOut(StrictModel):
+    session_idle_minutes: int
+
+
+class NotificationPreferenceIn(StrictModel):
+    # 0 = off. Capped at a day: past that "it went quiet" is no longer news.
+    session_idle_minutes: int = Field(ge=0, le=1440)

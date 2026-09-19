@@ -1,4 +1,5 @@
 import type { JSX } from 'react'
+import { QuietMinutes } from './QuietMinutes'
 import { usePush } from './usePush'
 
 /**
@@ -30,6 +31,7 @@ export function PushToggle(): JSX.Element | null {
       >
         {subscribed ? 'Notifications on — tap to turn off' : 'Notify me when the fleet needs me'}
       </button>
+      {subscribed && <QuietMinutes />}
       {error && <p className="text-[11px] text-destructive">{error}</p>}
     </div>
   )

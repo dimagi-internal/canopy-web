@@ -418,6 +418,10 @@ Authoring: `python manage.py import_storyboard storyboard.yaml --workspace <slug
 - `GET /api/push/vapid-public-key` — The VAPID public key the browser needs to subscribe
 - `POST /api/push/subscribe` — Register this browser (upsert by endpoint)
 - `DELETE /api/push/subscribe` — Unregister this browser (idempotent)
+- `GET|PATCH /api/push/preferences` — `session_idle_minutes` (default 5, 0 = off, max 1440): how long a chat must stay quiet after a turn ends before "it's done" is pushed. Set from the "Notify me" block on `/supervisor`.
+- `PUT /api/canopy-sessions/{id}/notify` — `{every_completion: bool}` (default false, served as `notify_every_completion` on the session): push on every finished turn instead of waiting for the chat to go quiet. The 🔔 toggle in the chat header.
+
+**"Your chat is done."** A session never ends — an agent answers, goes quiet, may pick up a minute later — so the default is not a push per finished turn (an agent's back-to-back turns would buzz once each). A DONE/FAILED session turn stamps `Session.finish_push_due_at` = now + the recipient's `session_idle_minutes`; the next turn enqueued on that session clears it; **the runner heartbeat drains** whatever has fallen due (`send_due_session_pushes` — canopy has no scheduler, and every runner beats every ~10s; a conditional UPDATE on the exact due time means only one of several concurrent beats sends). It re-checks at send time and stays silent if the session is busy again, archived, or blocked on a question (that one already pushed). Recipient: the turn's `initiator_user`, else `enqueued_by`, else the question-push audience. The push deep-links to `/w/{ws}/chat/{id}`. CANCELLED/MISSED never push. Not covered: text typed into an emdash session directly, which has no `Turn` to finish.
 
 Push needs BOTH keys: either one empty → the endpoints 503 (`_push_configured`) and sends are skipped. Gated on both deliberately — the endpoints once checked only the public key, so a public-key-only deployment accepted subscriptions and silently never sent. Also set `VAPID_SUBJECT` (a `mailto:` URL, rides as `vapid_claims.sub`).
 

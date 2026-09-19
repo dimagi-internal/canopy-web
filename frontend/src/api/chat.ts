@@ -197,6 +197,18 @@ export function resetSession(id: string): Promise<ResetResult> {
   });
 }
 
+/**
+ * Push on every finished turn in this session (`true`), or only once it has
+ * gone quiet for the user's chosen minutes (`false`, the default).
+ */
+export function setSessionNotify(id: string, everyCompletion: boolean): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/notify`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ every_completion: everyCompletion }),
+  });
+}
+
 export type CloseResult = { ok: boolean; closing: boolean; reason: string };
 
 /**

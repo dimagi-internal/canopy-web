@@ -8,8 +8,14 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 
-from .models import PushSubscription
-from .schemas import PushSubscribeIn, PushUnsubscribeIn, VapidKeyOut
+from .models import NotificationPreference, PushSubscription, session_idle_minutes_for
+from .schemas import (
+    NotificationPreferenceIn,
+    NotificationPreferenceOut,
+    PushSubscribeIn,
+    PushUnsubscribeIn,
+    VapidKeyOut,
+)
 
 router = Router(auth=session_auth, tags=["push"])
 
@@ -59,3 +65,19 @@ def unsubscribe(request: HttpRequest, payload: PushUnsubscribeIn):
     own is a silent no-op, not a 404 — no existence leak either way."""
     PushSubscription.objects.filter(endpoint=payload.endpoint, user=request.user).delete()
     return 204, None
+
+
+@router.get("/preferences", response=NotificationPreferenceOut, summary="Your notification settings")
+def get_preferences(request: HttpRequest) -> NotificationPreferenceOut:
+    """`session_idle_minutes`: how long a chat must stay quiet after its agent
+    finishes before you are notified that it is done (0 = never)."""
+    return NotificationPreferenceOut(session_idle_minutes=session_idle_minutes_for(request.user))
+
+
+@router.patch("/preferences", response=NotificationPreferenceOut, summary="Change your notification settings")
+def set_preferences(request: HttpRequest, payload: NotificationPreferenceIn) -> NotificationPreferenceOut:
+    """Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you."""
+    NotificationPreference.objects.update_or_create(
+        user=request.user, defaults={"session_idle_minutes": payload.session_idle_minutes}
+    )
+    return NotificationPreferenceOut(session_idle_minutes=payload.session_idle_minutes)

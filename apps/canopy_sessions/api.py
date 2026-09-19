@@ -48,6 +48,7 @@ from .schemas import (
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
+    SessionNotifyIn,
     SessionOut,
     StreamStateOut,
     TransferIn,
@@ -132,6 +133,7 @@ def _out(session: Session) -> dict:
         # anything still coming?" directly instead of inferring it from an
         # absence.
         "backfill_pending": bool(binding and binding.backfill_requested),
+        "notify_every_completion": session.notify_every_completion,
     }
 
 
@@ -421,6 +423,18 @@ def unarchive_session(request: HttpRequest, session_id: uuid.UUID):
     is also past SESSION_STALE_AFTER stays out of `state=active` until its runner
     reports it again, because that half is derived on every read."""
     return _set_status(request, session_id, Session.ACTIVE)
+
+
+@router.put("/{session_id}/notify", response=SessionOut, summary="Set a session's completion notifications")
+def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: SessionNotifyIn):
+    """`every_completion: true` pushes a notification each time a turn in this
+    session finishes. Off (the default), one notification is sent once the session
+    has been quiet for your chosen number of minutes."""
+    session = _session_or_404(request, session_id)
+    if session.notify_every_completion != payload.every_completion:
+        session.notify_every_completion = payload.every_completion
+        session.save(update_fields=["notify_every_completion", "updated_at"])
+    return _out(session)
 
 
 @router.post("/{session_id}/send", response=SendOut, summary="Send a message")

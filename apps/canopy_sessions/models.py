@@ -128,6 +128,17 @@ class Session(models.Model):
     #: rows a page displays, because the contract is that a page sends its
     #: SELECTION and the agent re-reads the rows itself under the user's ACL.
     page_state = models.JSONField(default=dict, blank=True)
+    #: Push on EVERY finished turn, immediately — instead of the default, which
+    #: waits until the session has been quiet for the recipient's
+    #: `NotificationPreference.session_idle_minutes`. Off by default: a buzz per
+    #: reply is only wanted for the chat you asked it for.
+    notify_every_completion = models.BooleanField(default=False)
+    #: When the "this chat has gone quiet" push is owed. Set when a turn ends,
+    #: cleared by the next turn (the session was not done after all) and by the
+    #: send itself. Drained by `apps.push.services.send_due_session_pushes` on the
+    #: runner heartbeat — there is no scheduler, and a timer in a web process
+    #: would die with the request.
+    finish_push_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

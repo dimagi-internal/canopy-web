@@ -4127,6 +4127,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/push/preferences": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your notification settings
+         * @description `session_idle_minutes`: how long a chat must stay quiet after its agent
+         *     finishes before you are notified that it is done (0 = never).
+         */
+        readonly get: operations["apps_push_api_get_preferences"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change your notification settings
+         * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you.
+         */
+        readonly patch: operations["apps_push_api_set_preferences"];
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/": {
         readonly parameters: {
             readonly query?: never;
@@ -4274,6 +4299,28 @@ export interface paths {
          *     reports it again, because that half is derived on every read.
          */
         readonly post: operations["apps_canopy_sessions_api_unarchive_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/notify": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a session's completion notifications
+         * @description `every_completion: true` pushes a notification each time a turn in this
+         *     session finishes. Off (the default), one notification is sent once the session
+         *     has been quiet for your chosen number of minutes.
+         */
+        readonly put: operations["apps_canopy_sessions_api_set_session_notify"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -7495,6 +7542,11 @@ export interface components {
              * @default false
              */
             readonly waiting_on_you: boolean;
+            /**
+             * Notify Every Completion
+             * @default false
+             */
+            readonly notify_every_completion: boolean;
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -10961,6 +11013,16 @@ export interface components {
             /** Endpoint */
             readonly endpoint: string;
         };
+        /** NotificationPreferenceOut */
+        readonly NotificationPreferenceOut: {
+            /** Session Idle Minutes */
+            readonly session_idle_minutes: number;
+        };
+        /** NotificationPreferenceIn */
+        readonly NotificationPreferenceIn: {
+            /** Session Idle Minutes */
+            readonly session_idle_minutes: number;
+        };
         /** SessionOut */
         readonly SessionOut: {
             /**
@@ -11021,6 +11083,11 @@ export interface components {
              * @default false
              */
             readonly waiting_on_you: boolean;
+            /**
+             * Notify Every Completion
+             * @default false
+             */
+            readonly notify_every_completion: boolean;
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -11124,6 +11191,11 @@ export interface components {
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Has More Before */
             readonly has_more_before: boolean;
+        };
+        /** SessionNotifyIn */
+        readonly SessionNotifyIn: {
+            /** Every Completion */
+            readonly every_completion: boolean;
         };
         /** SendOut */
         readonly SendOut: {
@@ -17491,6 +17563,50 @@ export interface operations {
             };
         };
     };
+    readonly apps_push_api_get_preferences: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NotificationPreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly apps_push_api_set_preferences: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["NotificationPreferenceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NotificationPreferenceOut"];
+                };
+            };
+        };
+    };
     readonly apps_canopy_sessions_api_list_sessions: {
         readonly parameters: {
             readonly query?: {
@@ -17674,6 +17790,32 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_set_session_notify: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionNotifyIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {
