@@ -125,6 +125,10 @@ class Inbound:
 
 SENT, NOT_INSTALLED, BLOCKED, NO_AGENT, EMPTY = (
     "sent", "not_installed", "blocked", "no_agent", "empty")
+# A reply to a question the agent is blocked on, and the ways that can go.
+ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "answer_undeliverable"
+#: Outcomes that are the system working, not refusing — nothing to log.
+OK_STATUSES = {SENT, ANSWERED}
 
 
 @dataclass
@@ -339,6 +343,10 @@ def handle_message(inbound: Inbound) -> Outcome:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=prompt)
+    if not created:
+        answered = _answer_if_waiting(session, agent, prompt)
+        if answered is not None:
+            return answered
     _message, turn = session_services.send_message(
         session=session,
         text=prompt,
@@ -358,3 +366,37 @@ def handle_message(inbound: Inbound) -> Outcome:
         note = f"Sent to `{agent.slug}` — the reply will come back here. Also on canopy: {session_url(session)}"
     return Outcome(SENT, note, session=session, turn=turn, agent=agent,
                    extra={"new_session": created})
+
+
+def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | None:
+    """If the agent is blocked on a question, treat the reply as the answer.
+
+    Returns None when there is no answerable question, and the message is then
+    an ordinary send. While there IS one, a reply that is not an answer is NOT
+    sent to the agent — the dialog is drawn where the prompt would be, so the
+    message would bounce, and canopy-web refuses the same send for the same
+    reason. Saying how to answer beats a message that silently goes nowhere.
+    """
+    from apps.canopy_sessions.serializers import pending_menu
+
+    from . import menus
+
+    menu = pending_menu(session)
+    if not menus.answerable(menu):
+        return None
+    choice = menus.parse_answer(reply, menu)
+    if choice is None:
+        return Outcome(NOT_AN_ANSWER, (
+            f"`{agent.slug}` is waiting on its question above — reply with the option number, "
+            "or `cancel`."), session=session, agent=agent)
+    if choice == menus.CANCEL:
+        result = session_services.answer_menu(session=session, option=None)
+        said = "Dismissed the question."
+    else:
+        result = session_services.answer_menu(session=session, option=choice[0][0], selections=choice)
+        said = f"Answered: {menus.describe(choice, menu)}"
+    if result != "sent":
+        return Outcome(ANSWER_UNDELIVERABLE, (
+            "Couldn't deliver that answer — the runner holding this session is offline. "
+            "It will need answering once it is back."), session=session, agent=agent)
+    return Outcome(ANSWERED, said, session=session, agent=agent)

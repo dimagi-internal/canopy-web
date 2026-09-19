@@ -15,13 +15,14 @@ like the bug that started all this (a reply that never came).
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
-from . import client
-from .models import SlackRelayPost
+from . import client, menus
+from .models import SlackMenuPost, SlackRelayPost
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,13 @@ def split(text: str, limit: int = MAX_POST_CHARS) -> list[str]:
 
 def _destination(turn):
     """(installation, channel, thread_ts) for a Slack-born session's turn, else None."""
+    return session_destination(getattr(turn, "chat_session", None))
+
+
+def session_destination(session):
+    """(installation, channel, thread_ts) for a Slack-born session, else None."""
     from .services import SLACK_THREAD_KEY, installation_for
 
-    session = getattr(turn, "chat_session", None)
     meta = (getattr(session, "metadata", None) or {}) if session is not None else {}
     if not meta.get(SLACK_THREAD_KEY):
         return None
@@ -109,7 +114,11 @@ def relay(turn, rows) -> int:
         if not text:
             continue
         try:
-            record = SlackRelayPost.objects.create(turn=turn, seq=row.seq, channel_id=channel)
+            # A savepoint: a caught IntegrityError otherwise poisons whatever
+            # transaction this runs inside (the same trap CLAUDE.md records for
+            # SESSION_SAVE_EVERY_REQUEST).
+            with transaction.atomic():
+                record = SlackRelayPost.objects.create(turn=turn, seq=row.seq, channel_id=channel)
         except IntegrityError:
             continue  # already relayed — a re-delivered signal, or a concurrent append
         try:
@@ -128,7 +137,7 @@ def relay(turn, rows) -> int:
     return posted
 
 
-def _log_failure(installation, turn, channel: str, error: str) -> None:
+def _log_failure(installation, subject, channel: str, error: str) -> None:
     from apps.events import services as events_services
     from apps.events.models import Event
 
@@ -140,8 +149,53 @@ def _log_failure(installation, turn, channel: str, error: str) -> None:
             # One row per channel, counting — a channel the bot was removed from
             # fails every reply until someone notices.
             "key": f"relay_failed:{channel}",
-            "summary": f"could not post {turn.id}'s reply to Slack: {error}"[:500],
-            "payload": {"turn": str(turn.id), "channel": channel},
+            "summary": f"could not post {subject.id}'s reply to Slack: {error}"[:500],
+            "payload": {"subject": str(subject.id), "channel": channel},
         }], workspace=installation.workspace)
     except Exception:  # noqa: BLE001
         logger.exception("could not record a Slack relay failure")
+
+
+def relay_menu(session_id, menu) -> bool:
+    """Post a blocked agent's question into its Slack thread, once per question.
+
+    A cleared dialog (menu None) forgets what was posted, so asking the same
+    thing again later is news again. Returns whether anything was posted.
+    """
+    from apps.canopy_sessions.models import Session
+
+    from .services import session_url
+
+    session = Session.objects.select_related("agent").filter(pk=session_id).first()
+    dest = session_destination(session)
+    if dest is None:
+        return False
+    if not menu:
+        SlackMenuPost.objects.filter(session=session).delete()
+        return False
+    installation, channel, thread_ts = dest
+    agent_slug = session.agent.slug if session.agent_id else "the agent"
+    posted = False
+    notes = [("q:" + menus.content_key(menu),
+              menus.to_text(agent_slug, menu, session_url(session) if session.created_by_id else ""))]
+    # A refused answer comes back INSIDE the menu (`answer_note`) on the next
+    # report — say it where the person who answered is looking.
+    if menu.get("answer_note"):
+        note = str(menu["answer_note"])
+        notes.append(("n:" + hashlib.sha256(note.encode()).hexdigest()[:60],
+                      f":warning: That answer didn't land: {note}"))
+    for key, text in notes:
+        try:
+            with transaction.atomic():
+                record = SlackMenuPost.objects.create(session=session, key=key[:64])
+        except IntegrityError:
+            continue
+        try:
+            record.slack_ts = client.post_message(installation.bot_token, channel=channel,
+                                                  text=text, thread_ts=thread_ts)
+            record.save(update_fields=["slack_ts"])
+            posted = True
+        except Exception as e:  # noqa: BLE001 — never break the runner's report over Slack
+            logger.exception("could not post a question to Slack")
+            _log_failure(installation, session, channel, str(e))
+    return posted
