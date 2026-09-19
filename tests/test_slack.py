@@ -381,7 +381,7 @@ def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
 
 def test_slash_command_from_a_contact_is_answered(slack, installation, hal):
     resp = command("hal draft the update")
-    assert resp.json()["text"] == "Sent to `hal`."
+    assert resp.json()["text"] == "Sent to `hal` — the reply will come back here."
     _is_contact_turn(Turn.objects.get())
 
 
@@ -473,3 +473,123 @@ def test_only_an_owner_turns_slack_on(ws, alice):
                                         content_type="application/json")
     assert ok.status_code == 200 and ok.json()["slack_enabled"] is True
     assert Agent.objects.get(slug="hal").slack_enabled is True
+
+
+# ---- replies come back to the thread (apps/slack/relay.py) -------------------------
+#
+# Driven through `append_events`, the call the runner's POST lands on, with
+# on_commit callbacks executed — the signal is post-commit, so a test that did
+# not run them would pass with the relay disconnected.
+
+from apps.harness import services as harness_services  # noqa: E402
+from apps.slack.models import SlackRelayPost  # noqa: E402
+
+
+def _reply(turn, *events, capture):
+    with capture(execute=True):
+        harness_services.append_events(turn, list(events))
+
+
+def test_the_agents_reply_is_posted_into_the_thread(slack, linked, hal, django_capture_on_commit_callbacks):
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    _reply(turn,
+           {"kind": "status", "payload": {"status": "running"}},
+           {"kind": "tool_start", "payload": {"text": "Bash"}},
+           {"kind": "assistant", "payload": {"text": "**Done.** See [the doc](https://example.com/d)."}},
+           capture=django_capture_on_commit_callbacks)
+    (post,) = slack.said("chat.postMessage")
+    assert post["channel"] == "C1" and post["thread_ts"] == "1700000000.000100"
+    assert post["text"] == "*Done.* See <https://example.com/d|the doc>."   # Slack's dialect
+    assert SlackRelayPost.objects.get(turn=turn).slack_ts == "1700000999.000100"
+
+
+def test_a_reply_is_never_posted_twice(slack, linked, hal, django_capture_on_commit_callbacks):
+    from apps.slack.relay import relay
+
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    _reply(turn, {"kind": "assistant", "payload": {"text": "once"}}, capture=django_capture_on_commit_callbacks)
+    relay(turn, list(turn.events.all()))          # a re-delivered signal
+    assert len(slack.said("chat.postMessage")) == 1
+
+
+def test_a_failed_turn_says_so_in_the_thread(slack, linked, hal, django_capture_on_commit_callbacks):
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    _reply(turn, {"kind": "status", "payload": {"status": "failed", "result_note": "runner lost"}},
+           capture=django_capture_on_commit_callbacks)
+    assert "failed: runner lost" in slack.said("chat.postMessage")[0]["text"]
+
+
+def test_a_dm_reply_goes_to_the_dm_unthreaded(slack, linked, hal, django_capture_on_commit_callbacks):
+    event({"type": "message", "channel_type": "im", "user": ALICE, "text": "hal hi",
+           "ts": "1700000000.000100", "channel": "D1"})
+    _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hello"}},
+           capture=django_capture_on_commit_callbacks)
+    (post,) = slack.said("chat.postMessage")
+    assert post["channel"] == "D1" and "thread_ts" not in post
+
+
+def test_a_long_reply_is_split_into_whole_posts(slack, linked, hal, django_capture_on_commit_callbacks):
+    mention("hal summarise")
+    body = "\n\n".join(f"paragraph {i} " + "x" * 900 for i in range(8))
+    _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": body}},
+           capture=django_capture_on_commit_callbacks)
+    posts = slack.said("chat.postMessage")
+    assert len(posts) > 1 and all(len(p["text"]) <= 3500 for p in posts)
+    assert "".join(p["text"] for p in posts).count("paragraph") == 8
+
+
+def test_a_non_slack_session_is_left_alone(slack, hal, alice, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as session_services
+
+    session = session_services.create_session(workspace=hal.workspace, created_by=alice, agent=hal)
+    _msg, turn = session_services.send_message(session=session, text="hi", user=alice)
+    _reply(turn, {"kind": "assistant", "payload": {"text": "web only"}}, capture=django_capture_on_commit_callbacks)
+    assert not slack.said("chat.postMessage")
+
+
+def test_a_relay_that_fails_is_logged_and_does_not_break_the_append(slack, linked, hal, ws,
+                                                                      django_capture_on_commit_callbacks):
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    slack.fail["chat.postMessage"] = "not_in_channel"
+    _reply(turn, {"kind": "assistant", "payload": {"text": "lost"}}, capture=django_capture_on_commit_callbacks)
+    assert turn.events.filter(kind="assistant").exists()          # the ledger still has it
+    assert "not_in_channel" in SlackRelayPost.objects.get(turn=turn).error
+    assert Event.objects.filter(workspace=ws, kind="slack.relay_failed").exists()
+
+
+# ---- back and forth: plain replies in a thread canopy is in ------------------------
+
+def thread_reply(text: str, *, user=ALICE, ts="1700000050.000100", thread_ts="1700000000.000100"):
+    return event({"type": "message", "channel_type": "channel", "user": user, "text": text,
+                  "ts": ts, "thread_ts": thread_ts, "channel": "C1"})
+
+
+def test_a_plain_reply_in_the_thread_continues_the_conversation(slack, linked, hal):
+    mention("hal first")
+    thread_reply("and what about next week?")
+    turns = list(Turn.objects.order_by("created_at"))
+    assert len(turns) == 2 and turns[0].chat_session_id == turns[1].chat_session_id
+    assert turns[1].prompt == "and what about next week?"
+    # Only the conversation's first message gets the private "sent" note.
+    assert len(slack.said("chat.postEphemeral")) == 1
+
+
+def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
+    thread_reply("colleagues talking among themselves", thread_ts="1699999999.000100")
+    event({"type": "message", "channel_type": "channel", "user": ALICE, "text": "hal top level",
+           "ts": "1700000070.000100", "channel": "C1"})
+    assert not Turn.objects.exists() and not Session.objects.exists()
+    assert not slack.calls                      # not even a users.info lookup
+    assert not Event.objects.filter(source="slack").exists()
+
+
+def test_a_reply_that_mentions_the_bot_is_handled_once(slack, linked, hal):
+    mention("hal first")
+    text = f"<@{BOT}> hal again"
+    mention(text, ts="1700000050.000100", thread_ts="1700000000.000100")
+    thread_reply(text)                          # Slack sends both events for this one message
+    assert Turn.objects.count() == 2

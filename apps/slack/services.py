@@ -108,6 +108,8 @@ class Inbound:
     ts: str
     thread_ts: str = ""
     is_dm: bool = False
+    #: A plain reply (no mention) inside a thread canopy is already in.
+    follow: bool = False
 
     @property
     def anchor(self) -> str:
@@ -276,8 +278,15 @@ def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple
     return None, text
 
 
+def has_thread_session(installation: SlackInstallation, inbound: Inbound) -> bool:
+    """Whether canopy is already in this thread — the gate on a plain reply."""
+    key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
+    return Session.objects.filter(workspace=installation.workspace,
+                                  **{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
+
+
 def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
-                   title: str) -> Session:
+                   title: str) -> tuple[Session, bool]:
     """The Session for this (agent, Slack thread) — found, or created once.
 
     Owned by whoever started the thread. A member owns it as `created_by`, so
@@ -292,7 +301,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     if existing is not None:
         if principal.user is not None and existing.created_by_id != principal.user.pk:
             ensure_participant(existing, principal.user, SessionParticipant.EDITOR)
-        return existing
+        return existing, False
     metadata = {
         SLACK_THREAD_KEY: key,
         "slack_team": inbound.team_id,
@@ -303,7 +312,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         return session_services.create_session(
             workspace=agent.workspace, created_by=principal.user, agent=agent,
             title=title[:200], metadata=metadata,
-        )
+        ), True
     # No `created_by`, exactly like a widget contact's session (tokens.contact_api):
     # null is what keeps it out of every member's list.
     if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
@@ -311,7 +320,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     return Session.objects.create(
         workspace=agent.workspace, agent=agent, contact=principal.contact,
         title=title[:200], metadata=metadata,
-    )
+    ), True
 
 
 def handle_message(inbound: Inbound) -> Outcome:
@@ -328,7 +337,8 @@ def handle_message(inbound: Inbound) -> Outcome:
         return Outcome(NO_AGENT, agent_list(installation))
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
-    session = thread_session(agent=agent, principal=principal, key=key, inbound=inbound, title=prompt)
+    session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
+                                      title=prompt)
     _message, turn = session_services.send_message(
         session=session,
         text=prompt,
@@ -343,7 +353,8 @@ def handle_message(inbound: Inbound) -> Outcome:
     )
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
-        note = f"Sent to `{agent.slug}`."
+        note = f"Sent to `{agent.slug}` — the reply will come back here."
     else:
-        note = f"Sent to `{agent.slug}` — follow along: {session_url(session)}"
-    return Outcome(SENT, note, session=session, turn=turn, agent=agent)
+        note = f"Sent to `{agent.slug}` — the reply will come back here. Also on canopy: {session_url(session)}"
+    return Outcome(SENT, note, session=session, turn=turn, agent=agent,
+                   extra={"new_session": created})

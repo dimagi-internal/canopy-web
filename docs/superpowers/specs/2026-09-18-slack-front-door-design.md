@@ -157,9 +157,13 @@ feature.
 
 What canopy makes true is that it **never does**, enforced in one module:
 
-1. **No passive ingestion.** Subscribe to `app_mention` and `message.im` only —
-   never `message.channels` / `message.groups`. Nothing is read unless a linked
-   human asks, at that moment.
+1. **No passive ingestion.** Nothing is read or stored unless someone is
+   talking to an agent. *Amended 2026-09-19:* to let a thread continue without
+   re-mentioning the bot, canopy now subscribes to `message.channels` /
+   `message.groups`, so Slack delivers every message in the bot's channels —
+   and every one that is not a reply inside a thread canopy already has a
+   session for is dropped before anything is looked up or recorded. The
+   channel-window read (below) is still only ever done on request.
 2. **Only the channel the request came from.** The channel id comes from the
    verified event, never from message text, so "read #finance" cannot redirect
    it. No cross-channel reads — so no membership check is needed either: the
