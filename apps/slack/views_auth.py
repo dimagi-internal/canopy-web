@@ -113,6 +113,14 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
     inst.workspace_id = slug
     inst.installed_by = request.user
     inst.save()
+    # The installer just proved both identities in one browser trip — Slack
+    # authenticated them as `authed_user`, canopy as `request.user` — so link
+    # them now rather than making the first message a refusal.
+    installer = str((data.get("authed_user") or {}).get("id") or "")
+    if installer:
+        SlackUserLink.objects.get_or_create(
+            installation=inst, slack_user_id=installer, defaults={"user": request.user},
+        )
     return _page("Slack connected",
                  f"<b>{escape(inst.team_name)}</b> now talks to the <b>{escape(slug)}</b> workspace. "
                  "Turn on the agents you want reachable from each agent's Overview page.")

@@ -22,6 +22,9 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from apps.events import services as events_services
+from apps.events.models import Event
+
 from . import client, services
 from .verify import SignatureError, verify_slack_signature
 
@@ -46,15 +49,48 @@ def _verified(request: HttpRequest) -> HttpResponse | None:
 
 
 def _tell(installation, inbound: services.Inbound, text: str) -> None:
-    """Say something only the sender sees, in the thread they wrote in."""
+    """Say something only the sender sees, where they will see it.
+
+    Threaded ONLY when they wrote inside a thread. For a top-level message,
+    threading under that message is invisible: an ephemeral reply leaves no
+    "1 reply" marker, so the note exists only for someone who opens a thread
+    they have no reason to open. That is how the first live mention on labs
+    (2026-09-19) got its "link your account" reply and looked like silence.
+    """
     if installation is None:
         return
     try:
         client.post_ephemeral(installation.bot_token, channel=inbound.channel_id,
                               user=inbound.slack_user_id, text=text,
-                              thread_ts=inbound.reply_thread_ts)
-    except Exception:  # noqa: BLE001 — a failed courtesy note must not fail the event
+                              thread_ts=inbound.thread_ts)
+    except Exception as e:  # noqa: BLE001 — a failed courtesy note must not fail the event
         logger.exception("could not post a Slack ephemeral reply")
+        _record(installation, inbound, "reply_failed", str(e), level=Event.ERROR)
+
+
+def _record(installation, inbound: services.Inbound, status: str, summary: str,
+            level: str = "") -> None:
+    """Every message canopy did NOT turn into a turn leaves a row in the fleet log.
+
+    The access log only says `POST /api/slack/events 200` whatever happened, so
+    "I mentioned it and nothing happened" was answerable only by elimination.
+    Coalesced per (status, sender, channel): a user retrying while unlinked
+    bumps one row's count instead of writing one per attempt.
+    """
+    if installation is None:
+        return
+    try:
+        events_services.record([{
+            "source": "slack",
+            "kind": f"slack.{status}",
+            "level": level or Event.WARN,
+            "key": f"{status}:{inbound.slack_user_id}:{inbound.channel_id}",
+            "summary": summary[:500],
+            "payload": {"team": inbound.team_id, "channel": inbound.channel_id,
+                        "user": inbound.slack_user_id, "ts": inbound.ts},
+        }], workspace=installation.workspace)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the event
+        logger.exception("could not record a Slack event")
 
 
 def _inbound_from_event(body: dict) -> services.Inbound | None:
@@ -98,14 +134,21 @@ def events(request: HttpRequest) -> HttpResponse:
     inbound = _inbound_from_event(body)
     if inbound is None or not inbound.slack_user_id:
         return JsonResponse({"ok": True})
+    installation = services.installation_for(inbound.team_id)
+    if installation is None:
+        # Nothing to reply with (no bot token) and no tenant to log against.
+        logger.warning("slack event for a team with no installation: %s", inbound.team_id)
+        return JsonResponse({"ok": True})
     try:
         outcome = services.handle_message(inbound)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         logger.exception("slack event failed")
-        _tell(services.installation_for(inbound.team_id), inbound,
-              "Something went wrong handing that to canopy. It has been logged.")
+        _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
+        _tell(installation, inbound, "Something went wrong handing that to canopy. It has been logged.")
         return JsonResponse({"ok": True})
-    _tell(services.installation_for(inbound.team_id), inbound, outcome.message)
+    if outcome.status != services.SENT:
+        _record(installation, inbound, outcome.status, outcome.message)
+    _tell(installation, inbound, outcome.message)
     return JsonResponse({"ok": True})
 
 
@@ -137,7 +180,7 @@ def commands(request: HttpRequest) -> HttpResponse:
     if word in ("", "help", "agents"):
         return _ephemeral(services.agent_list(installation))
 
-    user, refusal = services.authorize(installation, slack_user_id)
+    _principal, refusal = services.resolve_principal(installation, slack_user_id)
     if refusal is not None:
         return _ephemeral(refusal.message)
     agents = {a.slug.lower(): a for a in services.enabled_agents(installation)}

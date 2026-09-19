@@ -46,9 +46,12 @@ def post_ephemeral(token: str, *, channel: str, user: str, text: str, thread_ts:
     call("chat.postEphemeral", token=token, json=payload)
 
 
+def user_info(token: str, slack_user_id: str) -> dict:
+    return call("users.info", token=token, data={"user": slack_user_id}).get("user") or {}
+
+
 def user_email(token: str, slack_user_id: str) -> str:
-    user = call("users.info", token=token, data={"user": slack_user_id}).get("user") or {}
-    return str((user.get("profile") or {}).get("email") or "")
+    return str((user_info(token, slack_user_id).get("profile") or {}).get("email") or "")
 
 
 def oauth_access(*, client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:

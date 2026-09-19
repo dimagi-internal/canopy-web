@@ -44,6 +44,7 @@ SESSION = "session"            # signed in to canopy in this very request
 PAT = "pat"                    # a personal access token (a machine acting as its owner)
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
 SLACK_LINKED = "slack_linked"  # a Slack user linked by signing in to canopy
+SLACK_EMAIL = "slack_email"    # a Slack member matched to a canopy user by profile email
 APPROVAL = "approval"          # a person approved an item whose work this is
 INTERNAL = "internal"          # canopy started it; see `accountable` for the human
 # Contacts carry their own grade from `Contact.AUTH_*` (dmarc, dkim, spf, none,

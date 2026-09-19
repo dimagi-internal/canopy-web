@@ -66,6 +66,11 @@ class Contact(models.Model):
     # Tier 2 — a signature covers this specific message or visitor.
     AUTH_DKIM = "dkim"
     AUTH_APP_SIGNED = "app_signed"
+    # Slack signs every event it delivers, so the Slack ACCOUNT behind a
+    # message is established by the platform — per message, like a DKIM
+    # signature. What it does not establish is that the account's profile
+    # email is the person's real-world identity, hence tier 2 and not 3.
+    AUTH_SLACK = "slack"
     # Tier 3 — the signature is also tied to the identity the reader sees.
     AUTH_DMARC = "dmarc"
     AUTH_APP_SIGNED_ORIGIN = "app_signed_origin"
@@ -75,13 +80,14 @@ class Contact(models.Model):
         (AUTH_APP_SECRET, "App credential (proves the app, not the person)"),
         (AUTH_DKIM, "DKIM signed"),
         (AUTH_APP_SIGNED, "Signed assertion from the app"),
+        (AUTH_SLACK, "Slack account (event signed by Slack)"),
         (AUTH_DMARC, "DMARC aligned"),
         (AUTH_APP_SIGNED_ORIGIN, "Signed assertion from a framed origin"),
     ]
     AUTH_RANK = {
         AUTH_NONE: 0,
         AUTH_SPF: 1, AUTH_APP_SECRET: 1,
-        AUTH_DKIM: 2, AUTH_APP_SIGNED: 2,
+        AUTH_DKIM: 2, AUTH_APP_SIGNED: 2, AUTH_SLACK: 2,
         AUTH_DMARC: 3, AUTH_APP_SIGNED_ORIGIN: 3,
     }
     #: Tier-level aliases. Prefer these in a rule: `auth_at_least(TIER_SIGNED)`
@@ -94,9 +100,11 @@ class Contact(models.Model):
     #: How canopy came to know this person.
     SOURCE_EMAIL = "email"
     SOURCE_EMBED = "embed"
+    SOURCE_SLACK = "slack"
     SOURCE_CHOICES = [
         (SOURCE_EMAIL, "Wrote to an agent's inbox"),
         (SOURCE_EMBED, "Used an agent embedded in a connected site"),
+        (SOURCE_SLACK, "Messaged an agent in the connected Slack"),
     ]
 
     workspace = models.ForeignKey(
@@ -233,6 +241,14 @@ class Contact(models.Model):
                 fields=["workspace", "app", "external_id"],
                 condition=~models.Q(external_id=""),
                 name="uniq_contact_per_app_external_id",
+            ),
+            # A Slack contact has no app, and NULLs never collide in a unique
+            # index — so the constraint above would not stop two rows for one
+            # Slack user. Keyed on `<team>:<user>`, Slack's own stable ids.
+            models.UniqueConstraint(
+                fields=["workspace", "external_id"],
+                condition=models.Q(source="slack") & ~models.Q(external_id=""),
+                name="uniq_contact_per_slack_user",
             ),
         ]
         indexes = [
