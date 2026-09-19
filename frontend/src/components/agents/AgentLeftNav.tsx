@@ -44,7 +44,6 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     { to: 'turns', label: 'Turns' },
     { to: 'schedules', label: 'Schedules' },
     { to: 'syncs', label: 'Syncs' },
-    { to: 'credentials', label: 'Credentials' },
     { to: 'work-products', label: 'Work products' },
     { to: 'skills', label: 'Skills' },
     { to: 'history', label: 'History' },

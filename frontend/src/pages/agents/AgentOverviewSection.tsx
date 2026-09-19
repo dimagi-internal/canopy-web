@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useOutletContext } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useLocation, useOutletContext } from 'react-router-dom'
 import {
   listAgentSyncs,
   listAgentTasks,
@@ -13,6 +13,7 @@ import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { CountStat, SyncCard } from '@/components/agents/cards'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
@@ -43,9 +44,8 @@ function QuickTurn({ slug }: { slug: string }) {
   }
 
   return (
-    <div className="mb-6 rounded-lg border border-border bg-card p-3">
-      <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">Take a turn</span>
-      <div className="mt-2 flex gap-2">
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="flex gap-2">
         <input
           value={prompt}
           onChange={(e) => {
@@ -123,6 +123,17 @@ export function AgentOverviewSection() {
     }
   }, [agent.slug])
 
+  // A link to a section (`#credentials`, and the Google sign-in's return trip)
+  // lands on it. The router does not scroll to a hash by itself, and the old
+  // Credentials page is now a section here, so without this its links would
+  // open at the top of a long page.
+  const { hash } = useLocation()
+  useEffect(() => {
+    if (!hash) return
+    const el = document.getElementById(decodeURIComponent(hash.slice(1)))
+    el?.scrollIntoView?.({ block: 'start' })
+  }, [hash])
+
   const tasksLoading = tasks === null
   const countFor = (status: AgentTaskStatus) =>
     (tasks ?? []).filter((t) => t.status === status).length
@@ -131,154 +142,201 @@ export function AgentOverviewSection() {
     <div className="max-w-4xl px-6 py-8">
       <WorkbenchSubHeader title="Overview" />
 
-      {/* Persona / description */}
-      {(agent.persona || agent.description) && (
+      {/* Jump links. The page is long now that it holds the agent's settings
+          and credentials, and the thing people come for is usually one of
+          them — so each section is one click away. */}
+      <nav aria-label="On this page" className="-mt-2 mb-8 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+        {SECTIONS.map((sec) => (
+          <a key={sec.id} href={`#${sec.id}`} className="text-muted-foreground hover:text-primary transition-colors">
+            {sec.title}
+          </a>
+        ))}
+      </nav>
+
+      <Section id="about" title="About" description={`What ${agent.name} is, and how much it has done.`}>
+        {agent.persona && <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>}
+        {agent.description && (
+          <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
+        )}
+        <div className="mt-4 flex flex-wrap gap-6">
+          <CountStat value={agent.task_count} label="Tasks" />
+          <CountStat value={agent.sync_count} label="Syncs" />
+          <CountStat value={agent.work_product_count} label="Work" />
+          <CountStat value={agent.skill_count} label="Skills" />
+        </div>
+      </Section>
+
+      <Section id="take-a-turn" title="Take a turn" description={`Send ${agent.name} a one-off prompt. A runner picks it up.`}>
+        <QuickTurn slug={agent.slug} />
+      </Section>
+
+      <Section id="activity" title="Activity" description="Where its work stands.">
         <div className="mb-6">
-          {agent.persona && (
-            <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>
-          )}
-          {agent.description && (
-            <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
-          )}
-        </div>
-      )}
-
-      {/* Dispatch a turn to this agent, inline */}
-      <QuickTurn slug={agent.slug} />
-
-      {/* Owner — the person who operates this agent; its GitHub-backed features read through their GitHub connection */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">Owner</span>
-        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
-          The person who operates {agent.name}. Its GitHub-backed features, including History, read the
-          repository through this person&apos;s GitHub connection. Workspace owners and the current owner can transfer it.
-        </p>
-        <AgentOwnerControl
-          agentSlug={agent.slug}
-          workspace={agent.workspace ?? ''}
-          initialOwner={agent.owner ?? null}
-          canTransfer={agent.can_transfer_owner ?? false}
-        />
-      </div>
-
-      {/* Turn mode — the runtime autonomy switch (state lives here, not in the repo) */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
-          Turn mode
-        </span>
-        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
-          How {agent.name}&apos;s turns handle outbound actions. Read at the start of every turn.
-        </p>
-        <TurnModeToggle agentSlug={agent.slug} initialMode={agent.turn_mode} />
-      </div>
-
-      {/* Slack — whether people in the workspace's connected Slack can reach this agent */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
-          Slack
-        </span>
-        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
-          Let linked members talk to {agent.name} from Slack by mention, DM, or <code>/canopy {agent.slug}</code>.
-          Each Slack thread becomes a private chat session. Owners only.
-        </p>
-        <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
-      </div>
-
-      {/* Ranked runner assignments — which paired runners this agent routes to, in order */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-primary">
-          Runner assignments
-        </span>
-        <p className="mt-1 mb-2 text-[11px] text-muted-foreground">
-          Ranked runners for {agent.name}&apos;s turns. The top online + ready runner claims first.
-        </p>
-        <RunnerAssignments agentSlug={agent.slug} />
-      </div>
-
-      {/* Counts row */}
-      <div className="flex flex-wrap gap-6 pb-6 mb-6 border-b border-border">
-        <CountStat value={agent.task_count} label="Tasks" />
-        <CountStat value={agent.sync_count} label="Syncs" />
-        <CountStat value={agent.work_product_count} label="Work" />
-        <CountStat value={agent.skill_count} label="Skills" />
-      </div>
-
-      {/* Task summary — counts per board column */}
-      <div className="mb-8">
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-primary">
-            Tasks
-          </h2>
-          <Link
-            to="../tasks"
-            className="text-[11px] text-muted-foreground hover:text-primary transition-colors"
-          >
-            Open board →
-          </Link>
-        </div>
-        {tasksLoading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {TASK_COLUMNS.map((c) => (
-              <div key={c.status} className="h-16 rounded-lg bg-muted border border-border animate-pulse" />
-            ))}
+          <div className="flex items-baseline justify-between mb-3">
+            <h3 className="text-[12px] font-semibold text-foreground">Tasks</h3>
+            <Link to="../tasks" className="text-[11px] text-muted-foreground hover:text-primary transition-colors">
+              Open board →
+            </Link>
           </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {TASK_COLUMNS.map((c) => (
-              <div
-                key={c.status}
-                className="rounded-lg bg-card border border-border px-3 py-3"
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                    {c.label}
+          {tasksLoading ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {TASK_COLUMNS.map((c) => (
+                <div key={c.status} className="h-16 rounded-lg bg-muted border border-border animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {TASK_COLUMNS.map((c) => (
+                <div key={c.status} className="rounded-lg bg-card border border-border px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                      {c.label}
+                    </span>
+                  </div>
+                  <span className="block text-lg font-semibold text-foreground leading-none mt-2">
+                    {countFor(c.status)}
                   </span>
                 </div>
-                <span className="block text-lg font-semibold text-foreground leading-none mt-2">
-                  {countFor(c.status)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Latest sync */}
-      <div className="mb-8">
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-primary">
-            Latest sync
-          </h2>
-          <Link
-            to="../syncs"
-            className="text-[11px] text-muted-foreground hover:text-primary transition-colors"
-          >
-            All syncs →
-          </Link>
+              ))}
+            </div>
+          )}
         </div>
-        {latestSync === null && tasksLoading ? (
-          <WorkbenchSkeleton rows={1} />
-        ) : latestSync ? (
-          <SyncCard sync={latestSync} />
-        ) : (
-          <p className="text-[13px] text-muted-foreground">No syncs yet.</p>
-        )}
-      </div>
 
-      {/* Quick links */}
-      <div className="flex flex-wrap gap-2">
-        {QUICK_LINKS.map((l) => (
-          <Link
-            key={l.to}
-            to={l.to}
-            className="inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground hover:text-primary bg-card border border-border hover:border-primary/40 px-3 py-1.5 rounded-md transition-colors"
+        <div className="mb-6">
+          <div className="flex items-baseline justify-between mb-3">
+            <h3 className="text-[12px] font-semibold text-foreground">Latest sync</h3>
+            <Link to="../syncs" className="text-[11px] text-muted-foreground hover:text-primary transition-colors">
+              All syncs →
+            </Link>
+          </div>
+          {latestSync === null && tasksLoading ? (
+            <WorkbenchSkeleton rows={1} />
+          ) : latestSync ? (
+            <SyncCard sync={latestSync} />
+          ) : (
+            <p className="text-[13px] text-muted-foreground">No syncs yet.</p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {QUICK_LINKS.map((l) => (
+            <Link
+              key={l.to}
+              to={l.to}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground hover:text-primary bg-card border border-border hover:border-primary/40 px-3 py-1.5 rounded-md transition-colors"
+            >
+              {l.label}
+              <span className="text-primary/70">→</span>
+            </Link>
+          ))}
+        </div>
+      </Section>
+
+      <Section id="settings" title="Settings" description={`How ${agent.name} runs, who operates it, and who can reach it.`}>
+        <div className="divide-y divide-border rounded-lg border border-border bg-card">
+          <Setting
+            title="Owner"
+            who="Workspace owners and the current owner"
+            description={`The person who operates ${agent.name}. Its GitHub-backed features, including History, read the repository through this person's GitHub connection.`}
           >
-            {l.label}
-            <span className="text-primary/70">→</span>
-          </Link>
-        ))}
+            <AgentOwnerControl
+              agentSlug={agent.slug}
+              workspace={agent.workspace ?? ''}
+              initialOwner={agent.owner ?? null}
+              canTransfer={agent.can_transfer_owner ?? false}
+            />
+          </Setting>
+          <Setting
+            title="Turn mode"
+            who="Workspace editors and owners"
+            description={`How ${agent.name}'s turns handle outbound actions. Read at the start of every turn.`}
+          >
+            <TurnModeToggle agentSlug={agent.slug} initialMode={agent.turn_mode} />
+          </Setting>
+          <Setting
+            title="Slack"
+            who="Workspace owners"
+            description={`Whether people can talk to ${agent.name} from the connected Slack — by @mention, DM, or /canopy ${agent.slug}. Members act as themselves; anyone else is answered as a contact.`}
+          >
+            <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
+          </Setting>
+          <Setting
+            title="Runners"
+            who="Workspace editors and owners"
+            description={`Which runners execute ${agent.name}'s turns, in order. The top online and ready runner claims first.`}
+          >
+            <RunnerAssignments agentSlug={agent.slug} />
+          </Setting>
+        </div>
+      </Section>
+
+      <Section
+        id="credentials"
+        title="Credentials"
+        description={`The secrets ${agent.name} needs to run, and whether each is set. Anyone here can see the status; only workspace owners can change a value.`}
+      >
+        <AgentCredentialsPanel agent={agent} />
+      </Section>
+    </div>
+  )
+}
+
+const SECTIONS: { id: string; title: string }[] = [
+  { id: 'about', title: 'About' },
+  { id: 'take-a-turn', title: 'Take a turn' },
+  { id: 'activity', title: 'Activity' },
+  { id: 'settings', title: 'Settings' },
+  { id: 'credentials', title: 'Credentials' },
+]
+
+// One titled block of the Overview. The title is a real heading (the rail used
+// to hold these as separate pages, so each needs to read as a destination) and
+// `scroll-mt` keeps an anchor jump from tucking it under the header.
+function Section({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <section id={id} aria-labelledby={`${id}-title`} className="mb-10 scroll-mt-6 border-t border-border pt-6 first-of-type:border-t-0 first-of-type:pt-0">
+      <h2 id={`${id}-title`} className="text-[15px] font-semibold text-foreground">
+        {title}
+      </h2>
+      <p className="mt-0.5 mb-4 text-[12px] text-muted-foreground">{description}</p>
+      {children}
+    </section>
+  )
+}
+
+// One setting: what it is, who may change it, and the control. "Who" is shown
+// because several of these refuse most people, and discovering that by
+// clicking and reading an error is the worst way to learn it.
+function Setting({
+  title,
+  who,
+  description,
+  children,
+}: {
+  title: string
+  who: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <div className="p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h3 className="text-[13px] font-semibold text-foreground">{title}</h3>
+        <span className="text-[11px] text-muted-foreground">{who}</span>
       </div>
+      <p className="mt-1 mb-3 text-[12px] text-muted-foreground">{description}</p>
+      {children}
     </div>
   )
 }

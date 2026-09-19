@@ -9,6 +9,7 @@ import { NotFound } from './components/NotFound'
 import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
+import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
@@ -70,11 +71,6 @@ const SchedulesSection = lazySection(() =>
 )
 const AgentSyncsSection = lazySection(() =>
   import('./pages/agents/AgentSyncsSection').then((m) => ({ default: m.AgentSyncsSection })),
-)
-const AgentCredentialsSection = lazySection(() =>
-  import('./pages/agents/AgentCredentialsSection').then((m) => ({
-    default: m.AgentCredentialsSection,
-  })),
 )
 const AgentWorkProductsSection = lazySection(() =>
   import('./pages/agents/AgentWorkProductsSection').then((m) => ({ default: m.AgentWorkProductsSection })),
@@ -257,7 +253,9 @@ export const routeTable: RouteObject[] = [
           { path: 'items', element: <LazySection><ItemsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'syncs', element: <LazySection><AgentSyncsSection /></LazySection> },
-          { path: 'credentials', element: <LazySection><AgentCredentialsSection /></LazySection> },
+          // Credentials is a section of Overview now. Old links (and bookmarks)
+          // keep working and keep their query, e.g. `?google=ok`.
+          { path: 'credentials', element: <CredentialsRedirect /> },
           { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },
           { path: 'skills', element: <LazySection><AgentSkillsSection /></LazySection> },
           { path: 'history', element: <LazySection><AgentHistorySection /></LazySection> },
