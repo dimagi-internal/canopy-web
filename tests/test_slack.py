@@ -1112,3 +1112,140 @@ def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, djang
     _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
                                        "payload": {"text": "run it"}}], django_capture_on_commit_callbacks)
     assert not slack.said("chat.postMessage")
+
+
+# ---- a runner that goes away MID-turn --------------------------------------------
+#
+# The laptop-lid case. Unlike a queued turn on an offline box, nothing marks the
+# moment: the turn was claimed, reads RUNNING, and the runner simply stops
+# heartbeating. The line must notice on its own (the sweep), ping the thread,
+# offer the move, and ping again if the box returns.
+
+from apps.slack import status as slack_status  # noqa: E402
+
+
+def _lapse(runner):
+    Runner.objects.filter(pk=runner.pk).update(last_heartbeat_at=timezone.now() - _dt.timedelta(minutes=5))
+
+
+def _revive(runner):
+    Runner.objects.filter(pk=runner.pk).update(last_heartbeat_at=timezone.now())
+
+
+def _claimed(slack, hal, alice, capture, text="hal summarise"):
+    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    mention(text)
+    with capture(execute=True):
+        turn = harness_services.claim_next_turn(runner)
+    assert turn is not None
+    return runner, turn
+
+
+def _pings(slack, needle):
+    return [p for p in slack.said("chat.postMessage") if needle in p["text"]]
+
+
+def test_a_runner_dying_mid_turn_is_noticed_and_pinged_once(slack, linked, hal, alice, cloud,
+                                                            django_capture_on_commit_callbacks):
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    slack_status.sweep(force=True)                 # the next pass: no second ping
+
+    line = slack.said("chat.update")[-1]
+    assert "Paused — *jj-mbp* went offline while `hal` was working" in line["text"]
+    assert _route_button(line)["text"]["text"] == "Run on cloud-ec2-1"
+    (ping,) = _pings(slack, "went offline while")
+    assert ping["thread_ts"] == "1700000000.000100"
+
+
+def test_the_runner_coming_back_is_pinged_and_the_line_recovers(slack, linked, hal, alice,
+                                                                django_capture_on_commit_callbacks):
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    _revive(runner)
+    slack_status.sweep(force=True)
+
+    assert _pings(slack, "*jj-mbp* is back online")
+    assert "working on this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
+    assert SlackTurnPost.objects.get(turn=turn).offline_notice_ts == ""
+    _lapse(runner)                                 # a second outage pings again
+    slack_status.sweep(force=True)
+    assert len(_pings(slack, "went offline while")) == 2
+
+
+def test_the_sweep_rides_other_runners_reports(slack, linked, hal, alice, cloud,
+                                               django_capture_on_commit_callbacks):
+    from django.core.cache import cache
+
+    from apps.harness.signals import sessions_reported
+
+    runner, _turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    cache.delete(slack_status.SWEEP_LOCK)
+    sessions_reported.send(sender=Runner, runner=cloud)       # the cloud box's routine report
+    assert _pings(slack, "went offline while")
+
+
+def test_an_admin_moves_a_stranded_turn_to_the_cloud(slack, linked, hal, alice, cloud,
+                                                     django_capture_on_commit_callbacks):
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    value = _route_button(slack.said("chat.update")[-1])["value"]
+
+    with django_capture_on_commit_callbacks(execute=True):
+        click("route_cloud", value)
+
+    turn.refresh_from_db()
+    assert turn.status == Turn.LOST                           # the dead box lets go
+    again = Turn.objects.exclude(pk=turn.pk).get(prompt="summarise")
+    assert again.pinned_runner == cloud                       # the same ask, on the cloud
+    assert harness_services.claim_next_turn(cloud) == again
+    # The thread sees the new attempt, and the old line loses its button.
+    assert SlackTurnPost.objects.filter(turn=again).exclude(slack_ts="").exists()
+    old = [u for u in slack.said("chat.update") if u["ts"] == SlackTurnPost.objects.get(turn=turn).slack_ts][-1]
+    assert "went away before it was done" in old["text"]
+    assert not [b for b in old["blocks"] if b["type"] == "actions"]
+
+
+def test_a_stranded_turn_is_not_moved_by_a_non_admin(slack, linked, hal, alice, cloud,
+                                                     django_capture_on_commit_callbacks):
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    click("route_cloud", _route_button(slack.said("chat.update")[-1])["value"])
+    turn.refresh_from_db()
+    assert turn.status == Turn.CLAIMED and Turn.objects.count() == 1
+
+
+def test_a_move_leaves_a_runner_that_is_still_there_alone(slack, linked, hal, alice, cloud,
+                                                          django_capture_on_commit_callbacks):
+    """A stale button pressed after the laptop came back must not kill live work."""
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    value = _route_button(slack.said("chat.update")[-1])["value"]
+    _revive(runner)
+    click("route_cloud", value)
+    turn.refresh_from_db()
+    assert turn.status == Turn.CLAIMED and Turn.objects.count() == 1
+
+
+def test_a_lost_turn_can_be_run_again_on_the_cloud(slack, linked, hal, alice, cloud,
+                                                   django_capture_on_commit_callbacks):
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    Turn.objects.filter(pk=turn.pk).update(lease_expires_at=timezone.now() - _dt.timedelta(seconds=1))
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.sweep_expired_leases()               # what the fleet does 15 min later
+    line = slack.said("chat.update")[-1]
+    assert "went away before it was done" in line["text"]
+    with django_capture_on_commit_callbacks(execute=True):
+        click("route_cloud", _route_button(line)["value"])
+    again = Turn.objects.exclude(pk=turn.pk).get(prompt="summarise")
+    assert again.pinned_runner == cloud

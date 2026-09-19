@@ -421,6 +421,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
         return Outcome(FORBIDDEN, (
             f"Only an admin of *{runner.name}* can send work to it. Its owner can add you "
             "from the runner's page in canopy."), session=session)
+    closed, asked = _requeue_stranded(session, user, via)
     try:
         moved = session_services.move_queued_turns(
             session=session, placement=str(runner.id), user=user,
@@ -431,10 +432,63 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
                        session=session)
     except (ValueError, RuntimeError) as e:
         return Outcome(MOVE_FAILED, f"Couldn't move it to *{runner.name}*: {e}", session=session)
+    for t in closed:
+        status.refresh(t)
+    for t in asked:
+        status.post(t)          # a re-asked turn is new to the thread: give it its line
     for t in moved:
         status.refresh(t)
     return Outcome(MOVED, f"Sent {len(moved)} waiting message(s) to *{runner.name}*.",
                    session=session, agent=session.agent, extra={"runner": runner, "moved": moved})
+
+
+def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], list[Turn]]:
+    """Turn work a dead runner is holding back into QUEUED work that can move.
+
+    `move_queued_turns` moves queued turns, and refuses while one is executing
+    — right for a live box mid-thought, wrong for a laptop that closed with the
+    turn in hand, which can never finish it or let go of it. So:
+
+    * an executing turn whose runner is gone is closed as LOST (what the lease
+      sweep does anyway, up to 15 minutes later), and
+    * a LOST turn that is still the conversation's last word
+
+    are each re-asked as a fresh queued turn with the same words. Returns
+    (closed, re-asked), so both sets of status lines can be brought up to date.
+    A turn on a runner
+    that is still there is left alone, and the move then refuses as before.
+    """
+    from django.utils import timezone
+
+    from apps.harness import services as harness
+
+    from . import status
+
+    closed: list[Turn] = []
+    for turn in (Turn.objects.select_related("claimed_by")
+                 .filter(chat_session=session, status__in=list(harness.EXECUTING))):
+        if not status.runner_gone(turn):
+            continue
+        if Turn.objects.filter(pk=turn.pk, status__in=list(harness.EXECUTING)) \
+                .update(status=Turn.LOST, finished_at=timezone.now()):
+            harness.append_events(turn, [{"kind": "status", "payload": {
+                "status": Turn.LOST, "reason": "runner_offline_moved"}}])
+            turn.refresh_from_db()
+            closed.append(turn)
+    if not closed:
+        last = Turn.objects.filter(chat_session=session).order_by("-created_at").first()
+        if last is not None and status.movable_lost(last):
+            closed.append(last)
+    asked: list[Turn] = []
+    for turn in closed:
+        _msg, again = session_services.send_message(
+            session=session, text=turn.prompt, user=user,
+            # Idempotent per lost turn: a double click re-asks once.
+            client_id=f"requeue:{turn.pk}", origin=turn.origin,
+            initiator=who.for_user(user, via=via, assurance=""),
+        )
+        asked.append(again)
+    return closed, asked
 
 
 def route_from_click(installation: SlackInstallation, *, slack_user_id: str, channel_id: str,

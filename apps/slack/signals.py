@@ -10,7 +10,12 @@ import logging
 
 from django.dispatch import receiver
 
-from apps.harness.signals import session_menu_changed, transcript_user_rows, turn_events_appended
+from apps.harness.signals import (
+    session_menu_changed,
+    sessions_reported,
+    transcript_user_rows,
+    turn_events_appended,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,3 +57,15 @@ def _relay_menu(sender, session_id, menu, **kwargs):
         relay_menu(session_id, menu)
     except Exception:  # noqa: BLE001
         logger.exception("slack menu relay failed")
+
+
+@receiver(sessions_reported, dispatch_uid="slack_status_sweep")
+def _status_sweep(sender, runner, **kwargs):
+    # The clock for the one change nothing reports: a runner that died. Every
+    # OTHER runner's ~10s report drives a throttled re-check (status.sweep).
+    from .status import sweep
+
+    try:
+        sweep()
+    except Exception:  # noqa: BLE001 — never break a runner's report over Slack
+        logger.exception("slack status sweep failed")

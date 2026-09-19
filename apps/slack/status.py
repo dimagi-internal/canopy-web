@@ -11,6 +11,12 @@ thread, posted at once and edited in place as the turn moves:
   **Run on <cloud runner>** button when there is one to run it on
 * queued, nothing could ever take it  -> "no runner is set up for <agent>"
 * claimed / running / done / failed   -> the same line, edited
+* claimed, and then its runner stopped heartbeating (a closed laptop) ->
+  "paused: <runner> went offline", a thread ping (an edit notifies nobody),
+  the same Run-on-cloud button, and a "back online" ping if it returns. No
+  event marks that moment, so `sweep` finds it on other runners' reports.
+* lost (the lease ran out on a dead runner) -> "could not finish", with the
+  button while it is still the conversation's last word
 
 A turn that started ELSEWHERE on a Slack-born session (someone continuing the
 conversation from canopy-web or the phone) gets a line too, quoting what they
@@ -96,6 +102,18 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         if cloud is not None and (reach is None or reach.kind != harness.LIVE):
             line += f" A runner admin can send it to *{cloud.name}* now."
             button = cloud
+    elif runner_gone(turn):
+        # Claimed, and then its box stopped heartbeating — a closed laptop. The
+        # turn still reads RUNNING (a dead runner cannot say otherwise, and the
+        # lease takes up to 15 minutes to run out), so this is the one state the
+        # status alone gets wrong.
+        seen = _when(turn.claimed_by.last_heartbeat_at)
+        line = (f":double_vertical_bar: Paused — {runner} went offline while {agent} was working "
+                f"on this (last seen {seen}). It carries on if the runner comes back.")
+        if cloud is not None:
+            line += (f" A runner admin can move it to *{cloud.name}* now — a fresh session there, "
+                     f"so anything {runner} had not pushed stays behind.")
+            button = cloud
     elif status == Turn.CLAIMED or status == Turn.RUNNING:
         line = f":gear: {agent} is working on this on {runner}."
     elif status == Turn.NEEDS_HUMAN:
@@ -106,6 +124,11 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = ":heavy_minus_sign: Cancelled."
     elif status == Turn.MISSED:
         line = ":heavy_minus_sign: Missed — nothing picked it up in time."
+    elif status == Turn.LOST and turn.claimed_by_id:
+        line = f":x: {agent} could not finish this — {runner} went away before it was done."
+        if cloud is not None:
+            line += f" A runner admin can run it again on *{cloud.name}*."
+            button = cloud
     else:  # FAILED / LOST — the relay posts the reason as its own message
         line = f":x: {agent} could not finish this" + (f" on {runner}." if turn.claimed_by_id else ".")
 
@@ -134,12 +157,41 @@ def _load(turn: Turn) -> Turn:
             .get(pk=turn.pk))
 
 
+def runner_gone(turn: Turn) -> bool:
+    """Claimed and not finished, on a runner that has stopped heartbeating.
+
+    `is_reachable`, not `is_available`: a paused or degraded box still has its
+    daemon up and will finish what it holds, so neither is "gone".
+    """
+    return (turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+            and turn.claimed_by_id is not None and not turn.claimed_by.is_reachable)
+
+
+def movable_lost(turn: Turn) -> bool:
+    """A lost turn is worth re-running only while it is the conversation's last
+    word — once anything newer exists, the thread has moved on without it."""
+    return (turn.status == Turn.LOST and turn.chat_session_id is not None
+            and not Turn.objects.filter(chat_session_id=turn.chat_session_id,
+                                        created_at__gt=turn.created_at).exists())
+
+
+def _when(ts) -> str:
+    """A Slack date token, so each reader sees it in their own timezone."""
+    if ts is None:
+        return "never"
+    return f"<!date^{int(ts.timestamp())}^{{time}}|{ts.isoformat(timespec='minutes')}>"
+
+
 def _reach_and_cloud(turn: Turn):
-    """(reach, cloud runner) for a QUEUED turn; (None, None) once it has moved on."""
+    """(reach, cloud runner): reach only for a QUEUED turn; a cloud runner
+    wherever a button could rescue it — queued with no live runner, stranded
+    on a runner that went offline mid-turn, or lost."""
     from apps.canopy_sessions import services as session_services
     from apps.harness import services as harness
 
     if turn.status != Turn.QUEUED:
+        if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
+            return None, session_services.available_cloud_runner(turn.chat_session)
         return None, None
     reach = harness.turn_reach(turn)
     cloud = None
@@ -191,7 +243,8 @@ def refresh(turn: Turn) -> bool:
     dest = session_destination(turn.chat_session)
     if dest is None:
         return False
-    installation = dest[0]
+    installation, _channel, thread_ts = dest
+    _sync_offline_notice(installation, thread_ts, turn, record)
     reach, cloud = _reach_and_cloud(turn)
     text, blocks = render(turn, reach=reach, cloud=cloud)
     if text == record.rendered:
@@ -206,6 +259,79 @@ def refresh(turn: Turn) -> bool:
     record.rendered = text
     record.save(update_fields=["rendered"])
     return True
+
+
+PENDING = "pending"
+
+
+def _sync_offline_notice(installation, thread_ts: str, turn: Turn, record: SlackTurnPost) -> None:
+    """Ping the thread when a turn's runner dies mid-turn, and when it returns.
+
+    The status line is edited either way, but an edit notifies nobody. Only the
+    two edges get a reply: going offline, and coming back while the turn is
+    still running. A turn that ends while its runner is gone (moved, lost) just
+    clears the marker — its line says what happened.
+    """
+    gone = runner_gone(turn)
+    if gone and not record.offline_notice_ts:
+        if not SlackTurnPost.objects.filter(pk=record.pk, offline_notice_ts="") \
+                .update(offline_notice_ts=PENDING):
+            return
+        agent = f"`{turn.chat_session.agent.slug}`" if turn.chat_session.agent_id else "the agent"
+        text = (f":double_vertical_bar: *{turn.claimed_by.name}* went offline while {agent} was "
+                "working on this — see the status line above for what happens next.")
+        try:
+            ts = client.post_message(installation.bot_token, channel=record.channel_id, text=text,
+                                     thread_ts=thread_ts)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not post a Slack offline notice")
+            ts = PENDING
+        SlackTurnPost.objects.filter(pk=record.pk).update(offline_notice_ts=ts)
+        record.offline_notice_ts = ts
+    elif not gone and record.offline_notice_ts:
+        if not SlackTurnPost.objects.filter(pk=record.pk, offline_notice_ts=record.offline_notice_ts) \
+                .update(offline_notice_ts=""):
+            return
+        record.offline_notice_ts = ""
+        if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
+            try:
+                client.post_message(installation.bot_token, channel=record.channel_id, thread_ts=thread_ts,
+                                    text=f":arrow_forward: *{turn.claimed_by.name}* is back online — "
+                                         "carrying on.")
+            except Exception:  # noqa: BLE001
+                logger.exception("could not post a Slack back-online notice")
+
+
+SWEEP_EVERY_SECONDS = 15
+SWEEP_LOCK = "slack:status_sweep"
+
+
+def sweep(*, force: bool = False) -> int:
+    """Re-check every status line that could be going stale. Throttled.
+
+    Needed because the failure it catches produces no event at all: a runner
+    whose laptop closes simply stops heartbeating, and a dead runner cannot
+    report its own death. So this rides `sessions_reported` — every OTHER
+    runner's ~10s report — at most once per SWEEP_EVERY_SECONDS across the
+    fleet (a cache lock, so all web workers share it). "Could be going stale":
+    the turn is not finished, or an offline ping is still outstanding.
+    """
+    from django.core.cache import cache
+    from django.db.models import Q
+
+    if not force and not cache.add(SWEEP_LOCK, 1, timeout=SWEEP_EVERY_SECONDS):
+        return 0
+    live = (SlackTurnPost.objects.exclude(slack_ts="")
+            .filter(Q(turn__status__in=list(Turn.NON_TERMINAL)) | ~Q(offline_notice_ts=""))
+            .select_related("turn"))
+    n = 0
+    for record in live:
+        try:
+            refresh(record.turn)
+        except Exception:  # noqa: BLE001 — one bad line must not stop the rest
+            logger.exception("slack status sweep: refresh failed")
+        n += 1
+    return n
 
 
 def on_status(turn: Turn) -> None:

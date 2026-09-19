@@ -114,6 +114,12 @@ class SlackTurnPost(models.Model):
     slack_ts = models.CharField(max_length=32, blank=True, default="")
     #: The text last rendered, so an event that changes nothing is not an edit.
     rendered = models.TextField(blank=True, default="")
+    #: The thread reply saying this turn's runner went offline mid-turn. An edit
+    #: to the line notifies nobody, and "your runner died" is the one change
+    #: somebody must hear about. Cleared when the episode ends, so a second
+    #: outage pings again. Claimed with a conditional UPDATE ("pending") so two
+    #: sweeps noticing the same dead runner post one reply between them.
+    offline_notice_ts = models.CharField(max_length=32, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
 
