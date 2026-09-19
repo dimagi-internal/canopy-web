@@ -524,6 +524,54 @@ def test_cdp_down_still_polls_inbox_and_schedules(monkeypatch, tmp_path):
     assert ran == {"inbox": True, "sched": True}
 
 
+def test_the_claim_runs_before_the_reporting_sweep(monkeypatch, tmp_path):
+    """The latency fix (2026-09-19): on a lossy link every canopy-web call can take
+    its full timeout, so status reports ahead of the claim held a Slack turn queued
+    for 162s. The claim must come first; the sweep still runs after it."""
+    _stub_cdp(monkeypatch, healthy=True)
+    order = []
+    for name in ("sync_session_streams", "drain_menu_answers", "drain_closes",
+                 "drain_backfills"):
+        monkeypatch.setattr(f"canopy_runner.streams.{name}",
+                            lambda *a, _n=name, **k: order.append(_n))
+    monkeypatch.setattr(sessions, "maybe_report_sessions",
+                        lambda *a, **k: order.append("sessions"))
+
+    class C(_CdpLoopClient):
+        def claim(self, runner_id, paused_agents=None):
+            order.append("claim")
+            return None
+
+    assert run_once(_cdp_loop_cfg(tmp_path), C()) == "idle"
+    assert order == ["claim", "sessions", "sync_session_streams", "drain_menu_answers",
+                     "drain_closes", "drain_backfills"]
+
+
+def test_a_failing_status_step_does_not_cost_the_claim(monkeypatch, tmp_path):
+    """A connection reset in any non-claim step used to crash run_once, and a crashed
+    tick claims nothing — 14 claim-less ticks in a row on 2026-09-19."""
+    _stub_cdp(monkeypatch, healthy=True)
+
+    def boom(*a, **k):
+        raise ConnectionResetError(54, "Connection reset by peer")
+
+    for target in ("canopy_runner.chat_pump.pump_chat_bridges",
+                   "canopy_runner.session_interrupt.drain",
+                   "canopy_runner.streams.sync_session_streams",
+                   "canopy_runner.streams.drain_backfills"):
+        monkeypatch.setattr(target, boom)
+    monkeypatch.setattr(main_mod, "_maybe_check_inboxes", boom)
+    monkeypatch.setattr(main_mod, "_fire_due_schedules", boom)
+    monkeypatch.setattr(sessions, "maybe_report_sessions", boom)
+    monkeypatch.setattr(
+        "canopy_runner.execute.execute_turn",
+        lambda cfg, client, rid, turn, cancel_check=None: f"created:{turn['id']}:task",
+    )
+    client = _CdpLoopClient(turns=[{"id": "t-1", "agent_slug": "hal"}])
+    assert run_once(_cdp_loop_cfg(tmp_path), client) == "created:t-1:task"
+    assert client.claims == 1
+
+
 def test_cdp_recovery_drains_the_backlog(monkeypatch, tmp_path):
     """When emdash comes back, the next tick claims + drains the queued turn normally."""
     _stub_cdp(monkeypatch, healthy=False)
