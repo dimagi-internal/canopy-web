@@ -123,6 +123,31 @@ class SlackTurnPost(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class SlackTranscriptPost(models.Model):
+    """Agent text written OUTSIDE any turn that was posted into its Slack thread.
+
+    `SlackRelayPost` covers what the ledger carries, which ends when the turn
+    does — and emdash ends a turn the moment the agent yields to background
+    work, so a reply finished after waiting on CI or a deploy never reached the
+    thread (2026-09-19: the summary of the very change that built this). Keyed
+    on the transcript ordinal, inserted before posting, so a re-shipped stream
+    batch cannot post twice.
+    """
+
+    session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.CASCADE, related_name="slack_transcript_posts",
+    )
+    index = models.BigIntegerField()
+    slack_ts = models.CharField(max_length=32, blank=True, default="")
+    error = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "index"], name="slack_transcript_post_once"),
+        ]
+
+
 class SlackMenuPost(models.Model):
     """A blocked agent's question that was posted into its Slack thread.
 

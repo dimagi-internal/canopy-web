@@ -13,7 +13,7 @@ from django.dispatch import receiver
 from apps.harness.signals import (
     session_menu_changed,
     sessions_reported,
-    transcript_user_rows,
+    transcript_rows_streamed,
     turn_events_appended,
 )
 
@@ -39,14 +39,14 @@ def _relay_replies(sender, turn, rows, **kwargs):
             logger.exception("slack status line failed")
 
 
-@receiver(transcript_user_rows, dispatch_uid="slack_elsewhere_notice")
-def _elsewhere(sender, session, texts, **kwargs):
-    from .relay import notify_elsewhere
+@receiver(transcript_rows_streamed, dispatch_uid="slack_transcript_rows")
+def _transcript(sender, session, rows, **kwargs):
+    from .relay import on_transcript
 
     try:
-        notify_elsewhere(session, texts)
-    except Exception:  # noqa: BLE001
-        logger.exception("slack elsewhere notice failed")
+        on_transcript(session, rows)
+    except Exception:  # noqa: BLE001 — never break the runner's stream over Slack
+        logger.exception("slack transcript relay failed")
 
 
 @receiver(session_menu_changed, dispatch_uid="slack_relay_menu")
