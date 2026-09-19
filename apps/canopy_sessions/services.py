@@ -1153,6 +1153,73 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
     return turn
 
 
+def available_cloud_runner(session: Session):
+    """An ONLINE, session-capable cloud runner this session could be placed on,
+    or None. Same `_placeable_runner` gate as every other placement, so the
+    answer is never a box that would leave the turn pinned and unclaimable."""
+    from apps.harness.models import Runner
+
+    for runner in (Runner.objects.filter(kind=Runner.CLOUD, paired_by__isnull=False)
+                   .exclude(status=Runner.RETIRED).order_by("name")):
+        if runner.live_status != Runner.ONLINE:
+            continue
+        if _placeable_runner(session, str(runner.id)) is not None:
+            return runner
+    return None
+
+
+MOVE_BRIEF = (
+    "{source} was offline with {n} message(s) waiting in this conversation, so it was "
+    "moved here. Those messages arrive as the next turn(s) — answer them once you have "
+    "checked the state above."
+)
+
+
+def move_queued_turns(*, session: Session, placement: str, user=None, initiator=None) -> list[Turn]:
+    """Send a session's QUEUED turns to another runner — the "its box is offline,
+    run it somewhere else" move. Returns the turns moved.
+
+    Two cases, because a session that already lives on a box cannot simply have
+    its next turn pinned elsewhere (that is `place_queued_turn`, and the
+    `transfer_session` docstring records what it cost when done by hand):
+
+    * **Unbound** (a new conversation whose first message never got picked up):
+      nothing exists on any box yet, so pinning the waiting turns is the whole
+      move, and `requested_runner_id` makes later sends follow.
+    * **Bound** to another box: a real transfer, carrying the history and a
+      handoff turn. The handoff must run BEFORE the waiting messages — the new
+      box is cold, and answering them first is answering blind — and claiming
+      is ordered by `created_at`, so the handoff is stamped just ahead of them.
+
+    Raises like `transfer_session`: ValueError (bad target), LookupError
+    (nothing queued), RuntimeError (a turn is still executing).
+    """
+    target = _placeable_runner(session, placement)
+    if target is None:
+        raise ValueError("unknown runner")
+    queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
+    if not queued:
+        raise LookupError("no queued turn to move")
+    binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
+    if binding is not None and binding.runner_id and binding.runner_id != target.id:
+        _binding, handoff = transfer_session(
+            session=session, placement=str(target.id),
+            brief=MOVE_BRIEF.format(source=binding.runner.name, n=len(queued)),
+            user=user, initiator=initiator,
+        )
+        Turn.objects.filter(pk=handoff.pk).update(
+            created_at=queued[0].created_at - _dt.timedelta(milliseconds=1))
+    else:
+        metadata = dict(session.metadata or {})
+        metadata["requested_runner_id"] = str(target.id)
+        session.metadata = metadata
+        session.save(update_fields=["metadata", "updated_at"])
+    Turn.objects.filter(pk__in=[t.pk for t in queued], status=Turn.QUEUED).update(pinned_runner=target)
+    for t in queued:
+        t.refresh_from_db()
+    return [t for t in queued if t.pinned_runner_id == target.id]
+
+
 def _send_transcript_sourced_message(
     *, session: Session, text: str, user=None, client_id: str = "",
     placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,

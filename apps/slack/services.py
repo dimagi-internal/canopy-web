@@ -47,6 +47,8 @@ LINK_SALT = "canopy.slack.link"
 LINK_MAX_AGE = 30 * 60
 # A top-level DM to the bot has no thread; the whole DM is one conversation.
 DM_ANCHOR = "dm"
+#: `/canopy cloud` / `@canopy cloud`: run my waiting work on a cloud runner.
+CLOUD_WORD = "cloud"
 
 _MENTION = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]*)?>")
 
@@ -128,8 +130,11 @@ SENT, NOT_INSTALLED, BLOCKED, NO_AGENT, EMPTY = (
 # A reply to a question the agent is blocked on, and the ways that can go.
 ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "answer_undeliverable"
 STALE = "stale"
+# Sending waiting work to a cloud runner, and the ways that can go.
+MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
+    "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
 #: Outcomes that are the system working, not refusing — nothing to log.
-OK_STATUSES = {SENT, ANSWERED, STALE}
+OK_STATUSES = {SENT, ANSWERED, STALE, MOVED, NOTHING_QUEUED}
 
 
 @dataclass
@@ -336,6 +341,10 @@ def handle_message(inbound: Inbound) -> Outcome:
     if refusal is not None:
         return refusal
     text = strip_mentions(inbound.text, installation.bot_user_id)
+    # `@canopy cloud` — the mention form of `/canopy cloud`. Not on a plain
+    # thread reply: there "cloud" is far more likely a word meant for the agent.
+    if not inbound.follow and text.lower().rstrip(".!") == CLOUD_WORD:
+        return route_mine_to_cloud(installation, inbound.slack_user_id)
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
     agent, prompt = resolve_agent(installation, text, key)
     if agent is None:
@@ -360,6 +369,13 @@ def handle_message(inbound: Inbound) -> Outcome:
         origin=Turn.ORIGIN_SLACK,
         initiator=principal.initiator(inbound.team_id),
     )
+    # The public status line in the thread IS the acknowledgement: it says at
+    # once whether a live runner is taking this or it is stuck, and carries the
+    # canopy link for a member. Posted for every message, not just the first —
+    # "is anything happening?" is a per-message question.
+    from . import status
+
+    status.post(turn)
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
         note = f"Sent to `{agent.slug}` — the reply will come back here."
@@ -367,6 +383,108 @@ def handle_message(inbound: Inbound) -> Outcome:
         note = f"Sent to `{agent.slug}` — the reply will come back here. Also on canopy: {session_url(session)}"
     return Outcome(SENT, note, session=session, turn=turn, agent=agent,
                    extra={"new_session": created})
+
+
+def _slack_session(installation: SlackInstallation, session_id, channel_id: str) -> Session | None:
+    """The session a button names — only if it is THIS workspace's and this
+    channel's Slack session. A click is a claim about which session to act on,
+    and it is re-checked, never trusted."""
+    if not session_id:
+        return None
+    try:
+        return (Session.objects.select_related("agent")
+                .filter(pk=session_id, workspace=installation.workspace,
+                        metadata__slack_team=installation.team_id,
+                        metadata__slack_channel=channel_id)
+                .first())
+    except Exception:  # noqa: BLE001 — a malformed id is just "no such session"
+        return None
+
+
+def _move_to_cloud(session: Session, user, via: str) -> Outcome:
+    """Move this session's queued turns to a live cloud runner, if `user` may.
+
+    The gate is `can_administer_runner` on the CLOUD box: running work there
+    spends that box's credentials, which is exactly what its admin grant is for.
+    Being a workspace member is not enough — the dimagi workspace auto-joins
+    every dimagi.com address.
+    """
+    from apps.canopy_sessions import services as session_services
+    from apps.harness import services as harness
+
+    from . import status
+
+    runner = session_services.available_cloud_runner(session)
+    if runner is None:
+        return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)
+    if not harness.can_administer_runner(user, runner):
+        return Outcome(FORBIDDEN, (
+            f"Only an admin of *{runner.name}* can send work to it. Its owner can add you "
+            "from the runner's page in canopy."), session=session)
+    try:
+        moved = session_services.move_queued_turns(
+            session=session, placement=str(runner.id), user=user,
+            initiator=who.for_user(user, via=via, assurance=""),
+        )
+    except LookupError:
+        return Outcome(STALE, "Nothing is waiting on this any more — it was already picked up.",
+                       session=session)
+    except (ValueError, RuntimeError) as e:
+        return Outcome(MOVE_FAILED, f"Couldn't move it to *{runner.name}*: {e}", session=session)
+    for t in moved:
+        status.refresh(t)
+    return Outcome(MOVED, f"Sent {len(moved)} waiting message(s) to *{runner.name}*.",
+                   session=session, agent=session.agent, extra={"runner": runner, "moved": moved})
+
+
+def route_from_click(installation: SlackInstallation, *, slack_user_id: str, channel_id: str,
+                     action: dict) -> Outcome:
+    """The **Run on <cloud>** button on a status line."""
+    import json
+
+    try:
+        value = json.loads(action.get("value") or "{}")
+    except ValueError:
+        value = {}
+    session = _slack_session(installation, value.get("s"), channel_id)
+    if session is None:
+        return Outcome(STALE, "That conversation is no longer here.")
+    principal, refusal = resolve_principal(installation, slack_user_id)
+    if refusal is not None:
+        return refusal
+    if principal.user is None:
+        return Outcome(FORBIDDEN, "Only a canopy member who administers the cloud runner can do that.")
+    return _move_to_cloud(session, principal.user, via=f"slack:{installation.team_id}")
+
+
+def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> Outcome:
+    """`/canopy cloud` — "anything of mine stuck behind an offline runner, run
+    it on the cloud". Only the caller's own queued conversation turns, only the
+    ones no live runner is about to take, and only onto a box they administer."""
+    from apps.harness import services as harness
+
+    principal, refusal = resolve_principal(installation, slack_user_id)
+    if refusal is not None:
+        return refusal
+    if principal.user is None:
+        return Outcome(FORBIDDEN, "Only a canopy member who administers the cloud runner can do that.")
+    queued = (Turn.objects.filter(status=Turn.QUEUED, enqueued_by=principal.user,
+                                  chat_session__workspace=installation.workspace)
+              .select_related("chat_session").order_by("created_at"))
+    stuck: dict = {}
+    for turn in queued:
+        if turn.chat_session_id not in stuck and harness.turn_reach(turn).kind != harness.LIVE:
+            stuck[turn.chat_session_id] = turn.chat_session
+    if not stuck:
+        return Outcome(NOTHING_QUEUED, "Nothing of yours is waiting on an offline runner.")
+    results = [(s, _move_to_cloud(s, principal.user, via=f"slack:{installation.team_id}"))
+               for s in stuck.values()]
+    lines = []
+    for s, outcome in results:
+        name = s.agent.slug if s.agent_id else (s.title or "a conversation")
+        lines.append(f"• `{name}` — {outcome.message}")
+    ok = any(o.status == MOVED for _s, o in results)
+    return Outcome(MOVED if ok else results[0][1].status, "\n".join(lines))
 
 
 def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | None:

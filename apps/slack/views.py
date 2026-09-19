@@ -165,12 +165,10 @@ def events(request: HttpRequest) -> HttpResponse:
     if outcome.status not in services.OK_STATUSES:
         _record(installation, inbound, outcome.status, outcome.message)
         _tell(installation, inbound, outcome.message)
-    elif outcome.status == services.ANSWERED:
+    elif outcome.status in (services.ANSWERED, services.MOVED, services.NOTHING_QUEUED):
         _tell(installation, inbound, outcome.message)
-    elif outcome.extra.get("new_session"):
-        # Only when a conversation starts. After that the agent's reply in the
-        # thread is the acknowledgement, and a private note per message is noise.
-        _tell(installation, inbound, outcome.message)
+    # A SENT message is acknowledged by its public status line in the thread
+    # (apps/slack/status.py) — picked up, or blocked and why — so no private note.
     return JsonResponse({"ok": True})
 
 
@@ -209,7 +207,11 @@ def commands(request: HttpRequest) -> HttpResponse:
     if word == "link":
         return _ephemeral(f"Link your canopy account: {services.link_url(team_id, slack_user_id)}")
     if word in ("", "help", "agents"):
-        return _ephemeral(services.agent_list(installation))
+        return _ephemeral(services.agent_list(installation)
+                          + " `/canopy cloud` sends anything of yours stuck behind an offline"
+                          " runner to a cloud runner (runner admins only).")
+    if word == services.CLOUD_WORD:
+        return _ephemeral(services.route_mine_to_cloud(installation, slack_user_id).message)
 
     _principal, refusal = services.resolve_principal(installation, slack_user_id)
     if refusal is not None:
@@ -245,7 +247,7 @@ def interactions(request: HttpRequest) -> HttpResponse:
     checkbox or radio toggle also arrives here, one payload per click, and is
     just a change of selection that the eventual Submit carries in `state`.
     """
-    from . import menus
+    from . import menus, status
 
     refused = _verified(request)
     if refused is not None:
@@ -258,7 +260,8 @@ def interactions(request: HttpRequest) -> HttpResponse:
         return HttpResponse(status=200)
     action = (payload.get("actions") or [{}])[0]
     action_id = str(action.get("action_id") or "")
-    if not (action_id.startswith(menus.PICK) or action_id in (menus.SUBMIT, menus.DISMISS)):
+    if not (action_id.startswith(menus.PICK)
+            or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD)):
         return HttpResponse(status=200)
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
     if installation is None:
@@ -273,10 +276,16 @@ def interactions(request: HttpRequest) -> HttpResponse:
         thread_ts=str(message.get("thread_ts") or ""),
     )
     try:
-        outcome = services.answer_from_click(
-            installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
-            message_ts=inbound.ts, action=action, state=payload.get("state") or {},
-        )
+        if action_id == status.ROUTE_CLOUD:
+            outcome = services.route_from_click(
+                installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
+                action=action,
+            )
+        else:
+            outcome = services.answer_from_click(
+                installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
+                message_ts=inbound.ts, action=action, state=payload.get("state") or {},
+            )
     except Exception as e:  # noqa: BLE001
         logger.exception("slack interaction failed")
         _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
@@ -284,6 +293,6 @@ def interactions(request: HttpRequest) -> HttpResponse:
     if outcome.status not in services.OK_STATUSES:
         _record(installation, inbound, outcome.status, outcome.message)
         _tell(installation, inbound, outcome.message)
-    elif outcome.status == services.STALE:
+    elif outcome.status in (services.STALE, services.MOVED):
         _tell(installation, inbound, outcome.message)
     return HttpResponse(status=200)

@@ -223,6 +223,68 @@ def relay_menu(session_id, menu) -> bool:
     return posted
 
 
+#: At most one "carried on elsewhere" notice per thread per window — a person
+#: typing ten messages at the laptop is one fact for the thread, not ten.
+ELSEWHERE_WINDOW_SECONDS = 30 * 60
+ELSEWHERE_AT = "slack_elsewhere_at"
+
+
+def notify_elsewhere(session, texts) -> bool:
+    """Someone typed straight into this Slack-born conversation's session on its
+    box (emdash), bypassing every canopy surface. That is not a Turn, so neither
+    the reply relay nor a status line will ever see it, and the thread would
+    silently fall behind. Say so, once per window, with the way to follow along.
+
+    A message a TURN delivered also lands in the transcript as the human's
+    words; those are recognised (a turn is executing, or the text is a recent
+    turn's prompt) and ignored.
+    """
+    import time
+
+    from apps.canopy_sessions.models import Session
+    from apps.canopy_sessions.transcript_noise import is_system_noise
+    from apps.harness.models import Turn
+
+    from .services import session_url
+
+    dest = session_destination(session)
+    if dest is None:
+        return False
+    texts = [t.strip() for t in texts if t and t.strip() and not is_system_noise(t)]
+    if not texts:
+        return False
+    turns = Turn.objects.filter(chat_session=session)
+    if turns.filter(status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED})).exists():
+        return False
+    recent = {" ".join((p or "").split()) for p in turns.order_by("-created_at")
+              .values_list("prompt", flat=True)[:20]}
+    if all(" ".join(t.split()) in recent for t in texts):
+        return False
+    now = time.time()
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(locked.metadata or {})
+        if now - float(meta.get(ELSEWHERE_AT) or 0) < ELSEWHERE_WINDOW_SECONDS:
+            return False
+        meta[ELSEWHERE_AT] = now
+        locked.metadata = meta
+        locked.save(update_fields=["metadata", "updated_at"])
+    installation, channel, thread_ts = dest
+    binding = getattr(locked, "runner_binding", None)
+    where = f" on *{binding.runner.name}*" if binding is not None and binding.runner_id else ""
+    text = (f":eyes: This conversation is carrying on directly in the agent's session{where}, "
+            "outside Slack — what's said there won't show up in this thread.")
+    if locked.created_by_id:
+        text += f" <{session_url(locked)}|Follow along in canopy>"
+    try:
+        client.post_message(installation.bot_token, channel=channel, text=text, thread_ts=thread_ts)
+    except Exception as e:  # noqa: BLE001 — never break the runner's stream over Slack
+        logger.exception("could not post a Slack elsewhere notice")
+        _log_failure(installation, locked, channel, str(e))
+        return False
+    return True
+
+
 def _close_question_posts(installation, session, outcome: str) -> None:
     """Rewrite this session's still-open question posts without their buttons."""
     open_posts = SlackMenuPost.objects.filter(session=session, key__startswith="q:", resolved=False) \
