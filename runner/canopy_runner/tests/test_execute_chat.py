@@ -238,3 +238,76 @@ def test_a_stop_before_delivery_sends_nothing_at_all(monkeypatch, tmp_path):
     assert sent == [], "nothing may be delivered into the agent's session"
     assert client.finished_status == "cancelled"
     assert chat_bridge.IN_FLIGHT == {}, "no bridge to pump — the turn is already over"
+
+
+# -- a requeued chat turn must not re-open the same collision popup ------------
+
+@pytest.fixture()
+def _fresh_collision_answers():
+    execute._COLLISION_ANSWERS.clear()
+    yield
+    execute._COLLISION_ANSWERS.clear()
+
+
+def _requeued_into_collision(monkeypatch, choice, lines):
+    """Run one chat turn per `lines` entry into a prompt holding that unsent line —
+    the shape of a deferred turn the server requeues and this runner re-claims."""
+    asked = []
+    lines = list(lines)
+
+    def fake_open_and_send(task, text, clear_first=False, port=9222):
+        if clear_first:
+            return {"ok": True, "action": "sent-cleared", "task": task}
+        return {"ok": True, "action": "collision", "task": task, "line": lines[0]}
+
+    def fake_choice(task, line, **k):
+        asked.append(line)
+        return choice
+
+    monkeypatch.setattr(execute.cdp_control, "open_and_send", fake_open_and_send)
+    monkeypatch.setattr(execute.dialog, "collision_choice", fake_choice)
+    monkeypatch.setattr(execute.emdash, "task_state", lambda *a, **k: "open")
+    cfg = types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent")
+    results = []
+    while lines:
+        client = _ReuseClient()
+        results.append((execute.execute_chat_turn(cfg, client, "runner1", _turn()), client))
+        lines.pop(0)
+    return asked, results
+
+
+def test_a_requeued_turn_does_not_ask_again_about_the_same_text(
+    monkeypatch, _fresh_collision_answers
+):
+    """2026-09-18: one deferred chat turn re-claimed 4 times put up 4 thirty-second
+    popups, and nothing else on the box could be claimed while each was up."""
+    asked, results = _requeued_into_collision(
+        monkeypatch, execute.dialog.NEW, ["half typed"] * 4
+    )
+    assert asked == ["half typed"]  # one popup, not four
+    for res, client in results:
+        assert res.startswith("deferred:")  # still deferred every time, never sent
+        assert "unsent text" in client.failed
+
+
+def test_changed_text_is_a_new_question(monkeypatch, _fresh_collision_answers):
+    asked, _ = _requeued_into_collision(
+        monkeypatch, execute.dialog.NEW, ["half typed", "half typed and more"]
+    )
+    assert asked == ["half typed", "half typed and more"]
+
+
+def test_clear_is_never_reused_without_asking(monkeypatch, _fresh_collision_answers):
+    """Clear deletes the human's text; each deletion needs its own yes."""
+    asked, _ = _requeued_into_collision(
+        monkeypatch, execute.dialog.CLEAR, ["half typed"] * 2
+    )
+    assert asked == ["half typed", "half typed"]
+
+
+def test_a_remembered_answer_expires(monkeypatch, _fresh_collision_answers):
+    monkeypatch.setattr(execute.dialog, "collision_choice", lambda *a, **k: execute.dialog.NEW)
+    assert execute._chat_collision_choice("t", "x", now_fn=lambda: 0.0) == execute.dialog.NEW
+    assert ("t", "x") in execute._COLLISION_ANSWERS
+    execute._chat_collision_choice("t", "y", now_fn=lambda: execute.COLLISION_ANSWER_TTL + 1)
+    assert ("t", "x") not in execute._COLLISION_ANSWERS
