@@ -49,7 +49,7 @@ DEFAULT_LEASE_SECONDS = 900
 MAX_SESSIONLESS_RETRIES = 3
 
 
-def _record_email_contact(agent, origin_ref) -> None:
+def _record_email_contact(agent, origin_ref):
     """Upsert a Contact for an email turn's sender, in the AGENT's workspace.
 
     The agent's tenant, not the enqueuer's: `Turn.enqueued_by` on an email turn
@@ -67,8 +67,10 @@ def _record_email_contact(agent, origin_ref) -> None:
     ref = origin_ref if isinstance(origin_ref, dict) else {}
     sender = str(ref.get("from") or "")
     if not sender:
-        return
-    contacts.record_inbound_sender(
+        return None
+    # Returned so the turn can name its initiator (`apps/harness/initiator.py`):
+    # the person who wrote in, not the runner that posted the turn.
+    return contacts.record_inbound_sender(
         workspace=agent.workspace,
         address=sender,
         display_name=str(ref.get("from_name") or ""),
@@ -91,6 +93,7 @@ def enqueue_turn(
     routing: str = Turn.PREFER_LOCAL,
     enqueued_by=None,
     pinned_runner=None,
+    initiator=None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -141,9 +144,18 @@ def enqueue_turn(
         # spoofable identity and "a message creates a member" is exactly the
         # pattern this codebase spent a release removing from five endpoints.
         try:
-            _record_email_contact(agent, origin_ref)
+            email_contact = _record_email_contact(agent, origin_ref)
         except Exception:  # noqa: BLE001
+            email_contact = None
             logger.exception("could not record the sender of an email turn")
+        if initiator is None:
+            # The one channel whose asker enqueue_turn can know on its own. NOT
+            # `enqueued_by`: on an email turn that is the runner's account, and
+            # recording it as the initiator is exactly the confusion this field
+            # exists to end. No recordable sender -> unknown, honestly.
+            from . import initiator as who
+            initiator = (who.for_contact(email_contact, via="email") if email_contact
+                         else who.unknown(via="email"))
 
     if session is None and agent is not None and origin == Turn.ORIGIN_EMAIL:
         thread_id = str((origin_ref or {}).get("thread_id") or "")
@@ -166,9 +178,17 @@ def enqueue_turn(
     existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
     if existing is not None:
         return existing, False
+    if initiator is None:
+        # A caller that says nothing gets `unknown`, not a guess from
+        # `enqueued_by`: that field is the CALLER, which for a runner-posted turn
+        # is the wrong person. `tests/test_turn_initiator.py` fails on any
+        # production path that still lands here.
+        from . import initiator as who
+        initiator = who.unknown(via=origin)
     try:
         with transaction.atomic():
             turn = Turn.objects.create(
+                **initiator.fields(),
                 agent=agent,
                 project=project,
                 chat_session=session,
@@ -1343,6 +1363,12 @@ def supersede_open_turns(schedule, *, reason: str) -> int:
     return count
 
 
+def _schedule_initiator(schedule, *, manual: bool = False):
+    from . import initiator as who
+    via = f"schedule:{schedule.id}" + (":manual" if manual else "")
+    return who.system(via=via, accountable=schedule.created_by)
+
+
 def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     """Materialize `slot` as a queued Turn. Supersedes any still-open occurrence
     of the same schedule first — you only ever owe the newest.
@@ -1366,6 +1392,9 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
             origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat(),
                         "schedule_name": schedule.name},
             routing=schedule.routing,
+            # canopy fired it; the schedule's creator is the person accountable
+            # for it (spec D3), recorded so a later phase can bound the turn.
+            initiator=_schedule_initiator(schedule),
         )
         if created and (schedule.last_slot is None or slot > schedule.last_slot):
             schedule.last_slot = slot
@@ -1398,6 +1427,7 @@ def run_schedule_now(schedule) -> Turn:
             origin_ref={"schedule_id": schedule.id, "manual": True,
                         "schedule_name": schedule.name},
             routing=schedule.routing,
+            initiator=_schedule_initiator(schedule, manual=True),
         )
     return turn
 
@@ -2637,6 +2667,11 @@ Verify you can operate end-to-end in THIS environment, then report.
    nothing after reporting."""
 
 
+def _drill_initiator(runner):
+    from . import initiator as who
+    return who.system(via="drill", accountable=runner.paired_by)
+
+
 def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
     """Fan a readiness drill out over `agents`: reset each (runner, agent)
     RunnerDrill to pending and enqueue one hard-pinned, read-only doctor turn
@@ -2656,6 +2691,9 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
             idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
             prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url),
             pinned_runner=runner,
+            # A readiness drill is canopy checking a box; the runner's pairer is
+            # the person it is being run for.
+            initiator=_drill_initiator(runner),
         )
         drill.turn = turn
         drill.save(update_fields=["turn"])

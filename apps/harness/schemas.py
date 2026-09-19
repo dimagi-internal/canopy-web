@@ -357,6 +357,23 @@ class TurnIn(Schema):
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
 
+class InitiatorPersonOut(Schema):
+    id: int
+    email: str
+    name: str
+
+
+class InitiatorOut(Schema):
+    """Who asked for this turn, and how that was established."""
+
+    kind: str
+    via: str
+    assurance: str
+    user: InitiatorPersonOut | None = None
+    contact: InitiatorPersonOut | None = None
+    agent: str | None = None
+
+
 class TurnOut(Schema):
     id: uuid.UUID
     # Exactly one of these is set — a turn targets an agent or a repo, never
@@ -376,6 +393,7 @@ class TurnOut(Schema):
     origin_ref: dict
     claimed_by_name: str | None
     enqueued_by_email: str | None
+    initiator: InitiatorOut
     session_id: str
     result_note: str
     created_at: dt.datetime
@@ -423,6 +441,14 @@ class TurnOut(Schema):
     @staticmethod
     def resolve_enqueued_by_email(obj) -> str | None:
         return obj.enqueued_by.email if obj.enqueued_by_id else None
+
+    @staticmethod
+    def resolve_initiator(obj) -> dict:
+        # Distinct from enqueued_by_email: that is the CALLER of the enqueue (a
+        # runner, for an email turn); this is the person the turn is for.
+        from .initiator import describe
+
+        return describe(obj)
 
 
 class TurnEventIn(Schema):

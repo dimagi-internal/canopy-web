@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.core import signing
 
+from apps.harness import initiator as who
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session, SessionParticipant
@@ -235,6 +236,11 @@ def handle_message(inbound: Inbound) -> Outcome:
         # collapse onto the same turn rather than asking the agent twice.
         client_id=f"slack:{inbound.channel_id}:{inbound.ts}",
         origin=Turn.ORIGIN_SLACK,
+        # The one Slack line the who-is-asking work touches, deliberately: the
+        # linked canopy user who sent THIS message (not the thread's starter,
+        # and not the channel history the bot reads in as context).
+        initiator=who.for_user(user, via=f"slack:{inbound.team_id}",
+                               assurance=who.SLACK_LINKED),
     )
     return Outcome(SENT, f"Sent to `{agent.slug}` — follow along: {session_url(session)}",
                    session=session, turn=turn, agent=agent)

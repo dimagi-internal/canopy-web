@@ -72,6 +72,17 @@ def _with_reply(prompt: str, item: Item) -> str:
     )
 
 
+def _dispatch_initiator(item):
+    """Who this dispatched work is for. The person who APPROVED the item, when a
+    person did — they are the one who authorised it, whatever agent drafted the
+    card. With no human decision behind it, it is the agent that raised it."""
+    from . import initiator as who
+    via = f"item:{item.id}"
+    if getattr(item, "decided_by_user", None) is not None:
+        return who.for_user(item.decided_by_user, via=via, assurance=who.APPROVAL)
+    return who.for_agent(item.agent.slug, via=via)
+
+
 def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
     """Enqueue an approved Item's work. Idempotent per (item, index).
 
@@ -135,6 +146,7 @@ def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
             prompt=_with_reply(brief, item),
             origin_ref=origin_ref,
             routing=spec.routing,
+            initiator=_dispatch_initiator(item),
         )
         if turn.raised_from_id is None:
             turn.raised_from = item
