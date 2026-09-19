@@ -1,6 +1,7 @@
 # Who is asking: initiator identity and access, end to end
 
-**Status:** proposed — D1 decided 2026-09-18 (no dynamic user creation; see §2); D2–D5 open.
+**Status:** proposed — D1 decided 2026-09-18 (no dynamic user creation, and no sign-up or linking in the widget while canopy is not public; see §2); D2–D5 open.
+**Channels in scope:** the widget, canopy chat (web + phone), email, **Slack** (`apps/slack`, being brought back up in parallel — see §1a), schedules and dispatch.
 **Spans:** canopy-web (identity, tool authorization), the canopy agent framework
 (`agent-core`, the agent factory, `gating_guard`), and each embedding host's MCP
 server (connect-labs first).
@@ -65,6 +66,7 @@ is one vocabulary:
 | assurance | meaning | example |
 | --- | --- | --- |
 | `session` | signed in to canopy in this request | phone composer, `/w/:ws/chat` |
+| `slack_linked` | a Slack user linked by signing in to canopy (emails matched), re-checked for membership per message | a mention of the bot in Slack |
 | `host_signed` | a registered host signed a statement about this visitor | the widget on connect-labs |
 | `dmarc` / `dkim` / `spf` / `none` | as today for email | an inbound email |
 | `internal` | canopy itself started it | a schedule firing, one agent dispatching to another |
@@ -80,6 +82,38 @@ as the accountable user, and that person's permissions bound the turn. (D3.)
 `enqueued_by` and `origin_ref["from"]` become derived/compat reads of the new
 fields rather than a second source of truth.
 
+## 1a. Slack: already the strongest identity, and per-message by nature
+
+`apps/slack` (#838, being brought back up now) already resolves a sender the way
+this spec wants every channel to:
+
+- **A Slack user is a canopy user only through `SlackUserLink`** — made by that
+  person signing in to canopy, and only when the two email addresses agree — and
+  must ALSO be a member of the installation's workspace at send time. Being in the
+  Slack workspace grants nothing.
+- **An unlinked or non-member sender is refused** with words and a link, and never
+  becomes a contact. That differs from the widget on purpose: a Slack workspace is
+  a population canopy did not vouch for, and while canopy is not public there is
+  nothing a stranger there should be able to reach.
+- **Every message is authorized on its own** (`services.authorize`), and a thread
+  is one `Session` that several people can post into. So in Slack the initiator is
+  unavoidably per MESSAGE — which is D2's recommendation, arrived at by a channel
+  that already works that way.
+
+What this spec adds for Slack is small, deliberately, so it does not collide with
+the Slack work in flight:
+
+- the initiator is set from the link: `kind=user`, `assurance=slack_linked`,
+  `via=slack:<team>` (`enqueued_by` already carries the linked user — the same
+  value, now in the common shape);
+- **the channel context Slack feeds a turn is DATA, not the initiator.** The bot
+  reads the channel's recent history and the mentioning thread into the prompt;
+  those messages were written by other people, and none of them is who the agent
+  acts for. The context block (§3) names the sender of the triggering message
+  only;
+- the per-session MCP endpoint (§5) covers Slack for free, since a Slack thread IS
+  a session.
+
 ## 2. Arrival: canopy resolves user vs contact
 
 The host keeps doing exactly what it does now — its server signs a short-lived
@@ -87,9 +121,7 @@ statement about the visitor (`sub` = the host's own id, `aud`, `exp` ≤ 120 s,
 single-use `jti`). Two claims are added: `email` and `email_verified`.
 
 **Arrival never creates a canopy account.** A visitor becomes a canopy user only
-if one already exists; otherwise they are a contact, and becoming a user is a
-separate, deliberate step the person takes themselves (below). canopy then
-resolves, in order:
+if one already exists; otherwise they are a contact. canopy resolves, in order:
 
 1. **An existing link** — the visitor's contact `(app, host sub)` already has a
    `user` (`Contact.user`, set by `contacts.services.promote_to_user`) → resolve
@@ -103,25 +135,15 @@ resolves, in order:
 3. **Otherwise → contact**, exactly as today. No user is created, whatever the
    email says.
 
-### From contact to user: create an account, then link
+### Deferred: a contact becoming a user
 
-A contact who wants their canopy account is offered it in the widget — *"Sign in
-to canopy to use your account here"*. That opens canopy's own sign-in in a popup:
-
-- **If they have no account**, they create one through canopy's normal sign-up —
-  the same rules as anyone else (the allowed login domains, or an invite). The
-  widget grants no shortcut past those rules.
-- **Once signed in**, canopy has proved the account *itself* — not taken the host's
-  word for it — and calls `promote_to_user(contact, user)`. From the next token on,
-  step 1 above resolves them to that user.
-- **Their contact history comes with them**: conversations they had as the
-  contact become visible to the linked user, since it is the same person on the
-  same site.
-- **Linking grants no membership**, exactly as `promote_to_user` already
-  guarantees. Being known and being let into a workspace stay two decisions.
-
-This popup is also the fallback for step 2: a person whose domain the site owner
-has not opted in, or whose host sends no verified email, links the same way.
+canopy is not public yet, so **the widget offers no sign-up and no "sign in to
+link" step** for now. A visitor with no matching account is a contact, and stays
+one. When canopy opens up, the upgrade is: the person creates an account through
+canopy's normal sign-up, signs in once from the widget, and is linked with the
+existing `contacts.services.promote_to_user` (which grants no membership), their
+contact history following them. Slack's `SlackUserLink` sign-in flow (§1a) is the
+working precedent to copy.
 
 ### A path that breaks this rule today
 
@@ -143,9 +165,8 @@ EXISTING canopy users in that domain (never create new ones). That is the old em
 smaller: it is per-visitor and signed rather than one static secret; it is opt-in
 per domain on a page the owner sees; every resolution is audited with
 `assurance=host_signed`; and (§4) a `host_signed` user can be given less than a
-`session` user in the agent's policy. The sign-in link above is the stronger
-path, and a site owner who does not want host-asserted matching simply leaves
-step 2 off — every visitor then starts as a contact and links by signing in.
+`session` user in the agent's policy. A site owner who does not want
+host-asserted matching simply leaves step 2 off, and every visitor is a contact.
 
 ## 3. The agent knows who asked
 
@@ -159,8 +180,10 @@ You are acting for this person. You may: read opportunities, read insights,
   scroll/highlight on their page. You may not: send email, change payments.
 ```
 
-An email turn reads the same way (`contact · dmarc-verified · via email`), and so
-does a schedule (`system · schedule "weekly digest" · owner Jonathan`). The same
+An email turn reads the same way (`contact · dmarc-verified · via email`), as do
+Slack (`canopy user · editor in workspace connect · via slack:dimagi ·
+slack-linked`) and a schedule (`system · schedule "weekly digest" · owner
+Jonathan`). The same
 data is re-readable mid-turn through an MCP tool, `who_is_asking()`, because a
 long turn outlives the top of its context.
 
@@ -269,8 +292,9 @@ tried `canopy email send`" is blocked by the same rail that blocks raw
 
 | where | change |
 | --- | --- |
-| canopy-web `harness` | initiator fields on `Turn`; set on every enqueue path (widget, chat, email, schedule, dispatch, Slack) |
-| canopy-web `tokens` | arrival resolution (linked contact → existing account by verified email → contact), never creating a user; `email`/`email_verified` claims; the per-domain "resolve visitors to existing canopy accounts" setting; the sign-in-to-link flow calling `promote_to_user`; contact history visible to the linked user |
+| canopy-web `harness` | initiator fields on `Turn`, taken as ONE argument by `enqueue_turn` / `send_message`, so each channel changes one call site; set on every enqueue path (widget, chat, email, schedule, dispatch, Slack) |
+| canopy-web `slack` | pass the initiator from `SlackUserLink` (`slack_linked`); nothing else — deliberately, while the Slack work is in flight |
+| canopy-web `tokens` | arrival resolution (linked contact → existing account by verified email → contact), never creating a user; `email`/`email_verified` claims; the per-domain "resolve visitors to existing canopy accounts" setting. (Sign-up / sign-in-to-link: deferred until canopy is public.) |
 | canopy-web `mcp` | per-session endpoint; turn → initiator resolution; intersection in every tool; tool-list filtering; `who_is_asking()`; the gateway + OBO signing (D4) |
 | canopy-web `agents` | publish + store `access.yaml` alongside the skill catalog |
 | runner | per-task MCP URL on task creation; turn context block; initiator written beside the turn for the hook |
@@ -283,11 +307,13 @@ tried `canopy email send`" is blocked by the same rail that blocks raw
 Each ships alone and is useful alone.
 
 1. **Initiator on every turn + the context block.** No behaviour change; the agent
-   simply knows who asked, on every channel including email.
-2. **Arrival resolution + sign-in-to-link** — widget visitors with canopy
-   accounts arrive as themselves; everyone else starts as a contact and can link
-   once they have an account. Then move ace-web onto this path and remove the
-   user-creating `token-exchange`.
+   simply knows who asked, on every channel including email and Slack. Sequenced
+   AFTER the in-flight Slack work lands, and touching `apps/slack` at exactly one
+   call site, so the two do not fight over the same lines.
+2. **Arrival resolution** — widget visitors with an existing canopy account
+   arrive as themselves; everyone else is a contact. Then move ace-web onto this
+   path and remove the user-creating `token-exchange`. (Contact → user linking
+   waits until canopy is public.)
 3. **canopy's tools run as `agent ∩ initiator`** — per-session MCP endpoint.
    *This is the phase that removes the "Alice can ask for more than she can
    see" gap for canopy data.*
@@ -302,11 +328,12 @@ only the host-tool access that is fine for everyone who can reach it.
 
 - **D1 — How a visitor becomes their canopy account. DECIDED 2026-09-18.** No
   dynamic user creation: an existing account is used (matched by a host-verified
-  email where the site owner opted in, or by a prior link); anyone else starts as
-  a contact, and once they have created an account through canopy's normal
-  sign-up they sign in from the widget and are linked (§2).
+  email where the site owner opted in, or by a prior link); anyone else is a
+  contact. While canopy is not public there is no sign-up or linking in the
+  widget; contact → user comes later via `promote_to_user` (§2).
 - **D2 — Multiplayer.** Initiator per turn (whoever sent that message) or per
-  session (whoever opened it). *Recommended: per turn.*
+  session (whoever opened it). *Recommended: per turn — which Slack already
+  requires, since several people post into one thread session (§1a).*
 - **D3 — Scheduled and dispatched turns.** Act with the creator's/dispatcher's
   grant, or with the agent's own. *Recommended: the creator's — someone set it
   up, and that person should bound it.*
