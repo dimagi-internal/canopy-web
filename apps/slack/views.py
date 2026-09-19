@@ -100,10 +100,18 @@ def _inbound_from_event(body: dict) -> services.Inbound | None:
     # `message.im` events in a DM. `subtype` covers edits, joins, deletions.
     if event.get("bot_id") or event.get("subtype"):
         return None
+    follow = False
     if kind == "app_mention":
         is_dm = False
     elif kind == "message" and event.get("channel_type") == "im":
         is_dm = True
+    elif kind == "message" and event.get("channel_type") in ("channel", "group") \
+            and event.get("thread_ts"):
+        # A plain reply in a channel thread. Slack sends EVERY message in every
+        # channel the bot is in once `message.channels` is subscribed; only
+        # replies in a thread canopy is already part of go any further, and
+        # that check (`events`) happens before anything is recorded.
+        is_dm, follow = False, True
     else:
         return None
     return services.Inbound(
@@ -114,6 +122,7 @@ def _inbound_from_event(body: dict) -> services.Inbound | None:
         ts=str(event.get("ts") or ""),
         thread_ts=str(event.get("thread_ts") or ""),
         is_dm=is_dm,
+        follow=follow,
     )
 
 
@@ -139,6 +148,13 @@ def events(request: HttpRequest) -> HttpResponse:
         # Nothing to reply with (no bot token) and no tenant to log against.
         logger.warning("slack event for a team with no installation: %s", inbound.team_id)
         return JsonResponse({"ok": True})
+    if inbound.follow:
+        # A reply that mentions the bot also arrives as `app_mention`, which
+        # handles it; and a thread canopy is not in is none of canopy's business.
+        # Dropped here, unread and unrecorded.
+        if f"<@{installation.bot_user_id}>" in inbound.text or \
+                not services.has_thread_session(installation, inbound):
+            return JsonResponse({"ok": True})
     try:
         outcome = services.handle_message(inbound)
     except Exception as e:  # noqa: BLE001
@@ -148,7 +164,11 @@ def events(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"ok": True})
     if outcome.status != services.SENT:
         _record(installation, inbound, outcome.status, outcome.message)
-    _tell(installation, inbound, outcome.message)
+        _tell(installation, inbound, outcome.message)
+    elif outcome.extra.get("new_session"):
+        # Only when a conversation starts. After that the agent's reply in the
+        # thread is the acknowledgement, and a private note per message is noise.
+        _tell(installation, inbound, outcome.message)
     return JsonResponse({"ok": True})
 
 

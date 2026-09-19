@@ -69,3 +69,26 @@ class SlackUserLink(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.slack_user_id} -> {self.user_id}"
+
+
+class SlackRelayPost(models.Model):
+    """One agent reply (a ledger row) that was posted into a Slack thread.
+
+    Exists to make relaying exactly-once: the row is INSERTED before the post,
+    under a unique (turn, seq), so a re-delivered signal or two processes
+    handling the same append cannot both post. A relay that failed keeps its
+    row with the error, and is not retried — a reply that arrives twice in a
+    thread is worse than one that arrives never plus a logged reason.
+    """
+
+    turn = models.ForeignKey("harness.Turn", on_delete=models.CASCADE, related_name="slack_posts")
+    seq = models.PositiveIntegerField()
+    channel_id = models.CharField(max_length=32)
+    slack_ts = models.CharField(max_length=32, blank=True, default="")
+    error = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["turn", "seq"], name="slack_relay_once_per_row"),
+        ]
