@@ -76,6 +76,16 @@ def _destination(turn):
     return session_destination(getattr(turn, "chat_session", None))
 
 
+def persona(agent) -> dict | None:
+    """Post as the agent — its name, and its avatar when Slack can fetch it."""
+    if agent is None:
+        return None
+    out = {"username": (agent.name or agent.slug)[:80]}
+    if str(agent.avatar_url or "").startswith("https://"):
+        out["icon_url"] = agent.avatar_url
+    return out
+
+
 def session_destination(session):
     """(installation, channel, thread_ts) for a Slack-born session, else None."""
     from .services import SLACK_THREAD_KEY, installation_for
@@ -125,7 +135,7 @@ def relay(turn, rows) -> int:
             ts = ""
             for chunk in split(to_mrkdwn(text)):
                 ts = client.post_message(installation.bot_token, channel=channel, text=chunk,
-                                         thread_ts=thread_ts)
+                                         thread_ts=thread_ts, persona=persona(turn.chat_session.agent))
             record.slack_ts = ts
             record.save(update_fields=["slack_ts"])
             posted += 1
@@ -203,7 +213,8 @@ def relay_menu(session_id, menu) -> bool:
             continue
         try:
             record.slack_ts = client.post_message(installation.bot_token, channel=channel,
-                                                  text=text, thread_ts=thread_ts, blocks=blocks)
+                                                  text=text, thread_ts=thread_ts, blocks=blocks,
+                                                  persona=persona(session.agent))
             record.save(update_fields=["slack_ts"])
             posted = True
         except Exception as e:  # noqa: BLE001 — never break the runner's report over Slack

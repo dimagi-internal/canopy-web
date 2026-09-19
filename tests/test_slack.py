@@ -851,3 +851,60 @@ def test_an_unsigned_click_is_refused(bound, slack):
     body = urlencode({"payload": "{}"}).encode()
     assert _post("/api/slack/interactions", body, "application/x-www-form-urlencoded",
                  secret="wrong").status_code == 401
+
+
+# ---- speaking as the agent, and /<agent> commands -----------------------------------
+
+def test_replies_are_posted_as_the_agent(slack, linked, hal, django_capture_on_commit_callbacks):
+    hal.avatar_url = "https://example.com/hal.png"
+    hal.save()
+    mention("hal summarise")
+    _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hi"}},
+           capture=django_capture_on_commit_callbacks)
+    (post,) = slack.said("chat.postMessage")
+    assert (post["username"], post["icon_url"]) == ("Hal", "https://example.com/hal.png")
+
+
+def test_an_install_without_the_customize_scope_still_gets_the_reply(slack, linked, hal,
+                                                                     django_capture_on_commit_callbacks):
+    real = slack.__call__
+
+    def no_customize(url, headers=None, json=None, data=None, timeout=None):
+        if url.endswith("chat.postMessage") and json and "username" in json:
+            slack.calls.append(("chat.postMessage", json))
+            resp = mock.Mock(status_code=200)
+            resp.raise_for_status = lambda: None
+            resp.json = lambda: {"ok": False, "error": "missing_scope"}
+            return resp
+        return real(url, headers=headers, json=json, data=data, timeout=timeout)
+
+    mention("hal summarise")
+    with mock.patch("apps.slack.client.requests.post", side_effect=no_customize):
+        _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hi"}},
+               capture=django_capture_on_commit_callbacks)
+    posts = slack.said("chat.postMessage")
+    assert len(posts) == 2 and "username" not in posts[-1] and posts[-1]["text"] == "hi"
+
+
+def _agent_command(command: str, text: str, user=ALICE):
+    from urllib.parse import urlencode
+    body = urlencode({"team_id": TEAM, "channel_id": "C1", "user_id": user,
+                      "command": command, "text": text}).encode()
+    return _post("/api/slack/commands", body, "application/x-www-form-urlencoded")
+
+
+def test_a_command_named_after_an_agent_goes_to_that_agent(slack, linked, hal):
+    _agent_command("/hal", "what's on my plate?")
+    turn = Turn.objects.get()
+    assert turn.chat_session.agent == hal and turn.prompt == "what's on my plate?"
+
+
+def test_a_command_for_an_agent_not_on_for_slack_does_nothing(slack, linked, ws):
+    Agent.objects.create(slug="ace", name="ACE", workspace=ws, slack_enabled=False)
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=True)
+    resp = _agent_command("/ace", "run it")
+    assert not Turn.objects.exists() and "`hal`" in resp.json()["text"]
+
+
+def test_a_bare_agent_command_says_how_to_use_it(slack, linked, hal):
+    assert "`/hal <ask>`" in _agent_command("/hal", "").json()["text"]
