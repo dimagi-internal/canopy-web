@@ -162,8 +162,10 @@ def events(request: HttpRequest) -> HttpResponse:
         _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
         _tell(installation, inbound, "Something went wrong handing that to canopy. It has been logged.")
         return JsonResponse({"ok": True})
-    if outcome.status != services.SENT:
+    if outcome.status not in services.OK_STATUSES:
         _record(installation, inbound, outcome.status, outcome.message)
+        _tell(installation, inbound, outcome.message)
+    elif outcome.status == services.ANSWERED:
         _tell(installation, inbound, outcome.message)
     elif outcome.extra.get("new_session"):
         # Only when a conversation starts. After that the agent's reply in the

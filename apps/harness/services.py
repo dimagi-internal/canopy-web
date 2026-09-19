@@ -2098,6 +2098,14 @@ def replace_reported_sessions(
             groups.publish(groups.session_group(session_id),
                            {"type": "session.menu", "menu": menu})
 
+        from apps.harness.signals import session_menu_changed
+
+        for session_id, menu in menu_changes:
+            try:
+                session_menu_changed.send(sender=RunnerBinding, session_id=session_id, menu=menu)
+            except Exception:  # noqa: BLE001 — a consumer must not break the report
+                logger.exception("session_menu_changed receiver failed")
+
         # And to the phone in your pocket, for the agents that just STARTED
         # waiting. Only the null -> menu edge: a retraction is not news, and the
         # UI it would correct is already corrected by the frame above.

@@ -21,6 +21,13 @@ turn_events_appended = Signal()
 # of every client polling. Post-commit, same reasoning as turn_events_appended.
 sessions_reported = Signal()
 
+# Sent with: sender=RunnerBinding, session_id=<uuid>, menu=<dict|None> for each
+# session whose blocked-agent dialog appeared, changed or cleared in a report.
+# Post-commit. The realtime frame and the phone push are sent inline in the
+# report path; this is for consumers outside it (apps/slack posts the question
+# into the thread the conversation started in).
+session_menu_changed = Signal()
+
 
 # --- page invalidation -------------------------------------------------------
 #

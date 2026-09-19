@@ -92,3 +92,26 @@ class SlackRelayPost(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["turn", "seq"], name="slack_relay_once_per_row"),
         ]
+
+
+class SlackMenuPost(models.Model):
+    """A blocked agent's question that was posted into its Slack thread.
+
+    Keyed on the question's CONTENT, not the report: the runner re-reports an
+    open dialog every ~10s, and some producers re-stamp `observed_at` on every
+    sighting, so "the menu changed" fires far more often than a new question
+    exists. Rows are deleted when the dialog clears, so the same question asked
+    again later is posted again.
+    """
+
+    session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.CASCADE, related_name="slack_menu_posts",
+    )
+    key = models.CharField(max_length=64)
+    slack_ts = models.CharField(max_length=32, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "key"], name="slack_menu_once_per_question"),
+        ]

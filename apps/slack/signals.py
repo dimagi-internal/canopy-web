@@ -10,7 +10,7 @@ import logging
 
 from django.dispatch import receiver
 
-from apps.harness.signals import turn_events_appended
+from apps.harness.signals import session_menu_changed, turn_events_appended
 
 logger = logging.getLogger(__name__)
 
@@ -25,3 +25,13 @@ def _relay_replies(sender, turn, rows, **kwargs):
         relay(turn, rows)
     except Exception:  # noqa: BLE001 — never break the runner's append over Slack
         logger.exception("slack relay failed")
+
+
+@receiver(session_menu_changed, dispatch_uid="slack_relay_menu")
+def _relay_menu(sender, session_id, menu, **kwargs):
+    from .relay import relay_menu
+
+    try:
+        relay_menu(session_id, menu)
+    except Exception:  # noqa: BLE001
+        logger.exception("slack menu relay failed")

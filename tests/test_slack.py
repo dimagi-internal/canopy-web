@@ -593,3 +593,136 @@ def test_a_reply_that_mentions_the_bot_is_handled_once(slack, linked, hal):
     mention(text, ts="1700000050.000100", thread_ts="1700000000.000100")
     thread_reply(text)                          # Slack sends both events for this one message
     assert Turn.objects.count() == 2
+
+
+# ---- a blocked agent's question, over Slack ----------------------------------------
+#
+# The question reaches canopy through the runner's session REPORT, the same POST
+# that puts it on the phone, so these drive that endpoint rather than setting
+# `pending_question` by hand.
+
+from django.utils import timezone  # noqa: E402
+
+from apps.canopy_sessions.models import RunnerBinding  # noqa: E402
+from apps.harness.models import Runner  # noqa: E402
+
+MENU = {
+    "question": "How should the run proceed?", "title": "Phase 3→4", "body": "", "selected": None,
+    "options": [{"number": 1, "label": "Proceed to Phase 4", "description": "carry on"},
+                {"number": 2, "label": "Stop the run here", "description": ""}],
+    "source": "hook",
+}
+
+
+@pytest.fixture
+def bound(slack, linked, hal, alice):
+    """A Slack thread whose session a runner is driving (task `c-hal-slack`)."""
+    mention("hal run it")
+    session = Session.objects.get()
+    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=alice,
+                                   workspace=hal.workspace, status=Runner.ONLINE,
+                                   last_heartbeat_at=timezone.now())
+    RunnerBinding.objects.create(session=session, runner=runner, session_key="c-hal-slack",
+                                 emdash_project="hal", thread_key=str(session.id))
+    slack.calls.clear()
+    return session, runner, alice
+
+
+def _report(runner, pairer, question, capture, observed_at=1.0):
+    c = Client()
+    c.force_login(pairer)
+    task = {"emdash_task": "c-hal-slack", "project": "hal"}
+    if question:
+        task["question"] = {**question, "observed_at": observed_at}
+    with capture(execute=True):
+        assert c.post(f"/api/harness/runners/{runner.id}/sessions", {"sessions": [task]},
+                      content_type="application/json").status_code == 200
+
+
+def test_the_question_is_posted_into_the_thread_once(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    # Re-reported every ~10s, re-stamped by some producers: still ONE post.
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks, observed_at=2.0)
+    (post,) = slack.said("chat.postMessage")
+    assert post["thread_ts"] == "1700000000.000100"
+    assert "waiting on you" in post["text"] and "How should the run proceed?" in post["text"]
+    assert "`1` Proceed to Phase 4 — carry on" in post["text"]
+
+
+def test_the_same_question_asked_again_later_is_posted_again(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    _report(runner, pairer, None, django_capture_on_commit_callbacks)          # answered at the laptop
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks, observed_at=9.0)
+    assert len(slack.said("chat.postMessage")) == 2
+
+
+def test_a_number_in_the_thread_answers_it(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    thread_reply("2", ts="1700000200.000100")
+    binding = RunnerBinding.objects.get(session=session)
+    assert binding.pending_answer["option"] == 2 and binding.pending_answer["selections"] == [[2]]
+    assert Turn.objects.count() == 1                 # an answer is not a new message to the agent
+    assert "Answered: Stop the run here" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_cancel_dismisses_it(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    thread_reply("cancel", ts="1700000200.000100")
+    assert RunnerBinding.objects.get(session=session).pending_answer["option"] is None
+
+
+def test_anything_else_while_it_waits_is_not_sent(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    for reply in ("what do you recommend?", "3", "1,2"):
+        thread_reply(reply, ts=f"17000002{len(reply):02d}.000100")
+    assert Turn.objects.count() == 1 and RunnerBinding.objects.get(session=session).pending_answer is None
+    assert "reply with the option number" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_multi_select_and_several_questions(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    two = {**MENU, "questions": [
+        {"index": 0, "question": "Colours?", "header": "", "multi_select": True,
+         "options": [{"number": 1, "label": "Red"}, {"number": 2, "label": "Blue"}, {"number": 3, "label": "Green"}]},
+        {"index": 1, "question": "Ship?", "header": "", "multi_select": False,
+         "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
+    ]}
+    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    assert "one answer per question" in slack.said("chat.postMessage")[0]["text"]
+    thread_reply("1, 3; 2", ts="1700000200.000100")
+    assert RunnerBinding.objects.get(session=session).pending_answer["selections"] == [[1, 3], [2]]
+
+
+def test_a_question_canopy_cannot_read_is_shown_but_does_not_capture_replies(
+        bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    marker = {"question": "Claude needs your permission to use Bash", "title": "Waiting on you",
+              "body": "", "selected": None, "options": [], "source": "notification"}
+    _report(runner, pairer, marker, django_capture_on_commit_callbacks)
+    assert "can't read the options" in slack.said("chat.postMessage")[0]["text"]
+    thread_reply("go ahead", ts="1700000200.000100")
+    assert Turn.objects.count() == 2                 # an ordinary message, as on canopy-web
+
+
+def test_a_refused_answer_comes_back_to_the_thread(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    _report(runner, pairer, {**MENU, "answer_error": "wrong_pane",
+                             "answer_note": "The terminal shown was not the Claude pane."},
+            django_capture_on_commit_callbacks)
+    assert "didn't land: The terminal shown" in slack.said("chat.postMessage")[-1]["text"]
+
+
+def test_parse_answer_is_strict():
+    from apps.slack.menus import CANCEL, parse_answer
+
+    assert parse_answer("2", MENU) == [[2]]
+    assert parse_answer(" 1. ", MENU) == [[1]]
+    assert parse_answer("Cancel", MENU) == CANCEL
+    for bad in ("", "0", "3", "1 2", "two", "2 please", "1;2"):
+        assert parse_answer(bad, MENU) is None, bad
