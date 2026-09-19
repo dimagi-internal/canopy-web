@@ -285,6 +285,100 @@ def notify_elsewhere(session, texts) -> bool:
     return True
 
 
+def _norm(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def on_transcript(session, rows) -> None:
+    """A runner streamed transcript text for a session; keep its Slack thread in step.
+
+    `rows` is [(index, kind, text)] in order. Human rows may be someone typing
+    into the session directly (announced, not mirrored); agent rows may be text
+    written after the turn closed (relayed, when it is still answering the thread).
+    """
+    if session_destination(session) is None:
+        return
+    users = [t for _i, k, t in rows if k == "user"]
+    if users:
+        notify_elsewhere(session, users)
+    replies = [(i, t) for i, k, t in rows if k == "assistant"]
+    if replies:
+        relay_after_turn(session, replies)
+
+
+def relay_after_turn(session, replies) -> int:
+    """Post agent text written outside any turn, when it is still answering an
+    ask the thread knows about. Returns posts made.
+
+    The case this is for: emdash ends a turn the moment the agent yields to
+    background work, so the ledger relay posts what was written up to then and
+    nothing after — the actual result of waiting on CI, a merge or a deploy
+    reached canopy-web and never the thread that asked for it.
+
+    Three guards, each against a specific wrong post:
+
+    * **a turn is executing** -> skip; the ledger relay owns that reply, and
+      posting both would say everything twice.
+    * **the latest human message is not an ask the thread saw** (a turn's
+      prompt — Slack's own, or one announced by a status line) -> skip; the
+      conversation moved into emdash, which `notify_elsewhere` says instead of
+      mirroring a private exchange into a channel.
+    * **the text was already bridged** into the last turn's ledger -> skip.
+    """
+    from apps.canopy_sessions.models import Message
+    from apps.canopy_sessions.transcript_noise import is_system_noise
+    from apps.harness.models import Turn, TurnEvent
+
+    from .models import SlackTranscriptPost
+
+    dest = session_destination(session)
+    if dest is None:
+        return 0
+    turns = Turn.objects.filter(chat_session=session)
+    if turns.filter(status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED})).exists():
+        return 0
+    last = turns.order_by("-created_at").first()
+    if last is None:
+        return 0
+    asks = {_norm(p) for p in turns.order_by("-created_at").values_list("prompt", flat=True)[:20]}
+    latest_human = next(
+        (m.plaintext for m in Message.objects.filter(session=session, role=Message.USER)
+         .order_by("-turn_index")[:10] if not is_system_noise(m.plaintext or "")),
+        None,
+    )
+    if latest_human is None or _norm(latest_human) not in asks:
+        return 0
+    bridged = {_norm(str((p or {}).get("text") or "")) for p in
+               TurnEvent.objects.filter(turn=last, kind="assistant").values_list("payload", flat=True)}
+
+    installation, channel, thread_ts = dest
+    agent = session.agent if session.agent_id else None
+    posted = 0
+    for index, text in replies:
+        text = (text or "").strip()
+        if not text or _norm(text) in bridged:
+            continue
+        try:
+            with transaction.atomic():
+                record = SlackTranscriptPost.objects.create(session=session, index=index)
+        except IntegrityError:
+            continue
+        try:
+            ts = ""
+            for chunk in split(to_mrkdwn(text)):
+                ts = client.post_message(installation.bot_token, channel=channel, text=chunk,
+                                         thread_ts=thread_ts, persona=persona(agent))
+            record.slack_ts = ts
+            record.save(update_fields=["slack_ts"])
+            posted += 1
+        except Exception as e:  # noqa: BLE001 — never break the runner's stream over Slack
+            logger.exception("could not relay after-turn text to Slack")
+            record.error = str(e)[:200]
+            record.save(update_fields=["error"])
+            _log_failure(installation, session, channel, str(e))
+    return posted
+
+
 def _close_question_posts(installation, session, outcome: str) -> None:
     """Rewrite this session's still-open question posts without their buttons."""
     open_posts = SlackMenuPost.objects.filter(session=session, key__startswith="q:", resolved=False) \

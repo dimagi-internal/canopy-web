@@ -1249,3 +1249,63 @@ def test_a_lost_turn_can_be_run_again_on_the_cloud(slack, linked, hal, alice, cl
         click("route_cloud", _route_button(line)["value"])
     again = Turn.objects.exclude(pk=turn.pk).get(prompt="summarise")
     assert again.pinned_runner == cloud
+
+
+# ---- text the agent writes after its turn closed ---------------------------------
+#
+# emdash ends a turn when the agent yields to background work, so the ledger relay
+# posts what was written up to then; the real answer (after CI, a merge, a deploy)
+# arrives only on the transcript stream. 2026-09-19: the summary of the change that
+# built the status line never reached the thread that asked for it.
+
+def _yielded(bound, capture, bridged="Waiting on CI — back when it lands."):
+    """The Slack turn delivered, bridged its reply so far, then closed on a yield."""
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    turn = Turn.objects.get(chat_session=session)
+    _reply(turn, {"kind": "assistant", "payload": {"text": bridged}}, capture=capture)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    _stream(runner, pairer, session, [
+        {"seq": 1, "index": 1000, "kind": "user", "payload": {"text": "run it"}},
+        {"seq": 2, "index": 2000, "kind": "assistant", "payload": {"text": bridged}},
+    ], capture)
+    return session, runner, pairer
+
+
+def test_the_answer_written_after_the_turn_closed_reaches_the_thread(
+        bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    slack.calls.clear()
+    done = {"seq": 3, "index": 3000, "kind": "assistant", "payload": {"text": "**Merged** and deployed."}}
+    _stream(runner, pairer, session, [done], django_capture_on_commit_callbacks)
+    _stream(runner, pairer, session, [done], django_capture_on_commit_callbacks)      # re-shipped batch
+    (post,) = slack.said("chat.postMessage")
+    assert post["text"] == "*Merged* and deployed." and post["thread_ts"] == "1700000000.000100"
+    assert post["username"] == "Hal"                                                  # as the agent
+
+
+def test_text_already_bridged_by_the_turn_is_not_posted_again(bound, slack, django_capture_on_commit_callbacks):
+    _yielded(bound, django_capture_on_commit_callbacks)
+    # The yield's own text arrived on the stream too; only the ledger's copy was posted.
+    assert [p["text"] for p in slack.said("chat.postMessage")].count("Waiting on CI — back when it lands.") == 1
+
+
+def test_a_reply_to_something_typed_in_emdash_is_not_mirrored(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    slack.calls.clear()
+    _stream(runner, pairer, session, [
+        {"seq": 3, "index": 3000, "kind": "user", "payload": {"text": "private aside, just for me"}},
+        {"seq": 4, "index": 4000, "kind": "assistant", "payload": {"text": "sure — here's the aside"}},
+    ], django_capture_on_commit_callbacks)
+    (note,) = slack.said("chat.postMessage")
+    assert "outside Slack" in note["text"]                       # announced, not mirrored
+
+
+def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING)
+    slack.calls.clear()
+    _stream(runner, pairer, session, [{"seq": 3, "index": 3000, "kind": "assistant",
+                                       "payload": {"text": "mid-turn text"}}], django_capture_on_commit_callbacks)
+    assert not slack.said("chat.postMessage")                    # the ledger relay owns a live turn

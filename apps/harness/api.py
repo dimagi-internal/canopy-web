@@ -1005,14 +1005,16 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
             for e in payload.events if e.index >= 0
         ])
-        texts = [str((e.payload or {}).get("text") or "") for e in payload.events
-                 if e.index >= 0 and e.kind == "user"]
-        if created and any(texts):
-            from apps.harness.signals import transcript_user_rows
+        streamed = [(e.index, e.kind, str((e.payload or {}).get("text") or ""))
+                    for e in payload.events
+                    if e.index >= 0 and e.kind in ("user", "assistant")
+                    and (e.payload or {}).get("text")]
+        if created and streamed:
+            from apps.harness.signals import transcript_rows_streamed
 
             session = binding.session
-            transaction.on_commit(lambda: transcript_user_rows.send(
-                sender=type(session), session=session, texts=texts))
+            transaction.on_commit(lambda: transcript_rows_streamed.send(
+                sender=type(session), session=session, rows=streamed))
     if not binding.stream_desired:
         # Persisted above, but nobody is watching, so there is nothing to push.
         # The runner now tails EVERY session it backs so the durable record stops

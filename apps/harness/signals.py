@@ -28,13 +28,15 @@ sessions_reported = Signal()
 # into the thread the conversation started in).
 session_menu_changed = Signal()
 
-# Sent with: sender=Session, session=<Session>, texts=<list[str]> — the human's
-# words from a runner's live transcript stream, i.e. someone typing straight into
-# the agent's session on its box rather than through any canopy surface. Such a
-# message is not a Turn, so nothing on the ledger ever sees it; apps/slack uses
-# this to tell a Slack thread that its conversation carried on elsewhere.
+# Sent with: sender=Session, session=<Session>, rows=<list[(index, kind, text)]>
+# — the `user` and `assistant` text records of a runner's live transcript stream,
+# for a batch that persisted something new. This is the half of a conversation
+# the ledger never sees: someone typing straight into the agent's session on its
+# box, and the agent writing AFTER its turn closed (emdash reads a background
+# yield as the end of the turn, so a reply finished after waiting on CI lands
+# here and nowhere else). apps/slack uses it to keep a Slack thread in step.
 # Post-commit.
-transcript_user_rows = Signal()
+transcript_rows_streamed = Signal()
 
 
 # --- page invalidation -------------------------------------------------------
