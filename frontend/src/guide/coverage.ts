@@ -39,6 +39,7 @@ const NOT_DOCUMENTABLE = new Set([
   '/ddd-plans',
   '/reviews',
   '/w/:workspace/agents/:slug/needs-you',
+  '/w/:workspace/agents/:slug/credentials',
   '/w/:workspace/agents/:slug',
 ])
 

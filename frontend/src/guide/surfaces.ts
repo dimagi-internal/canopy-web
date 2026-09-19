@@ -234,8 +234,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/agents/:slug/overview',
     title: 'Agent overview',
     audience: 'The person(s) who own this agent',
-    what: "The agent's control surface: dispatch a one-off prompt straight to it, manage its ordered runner assignment list, toggle its turn mode, and see recent syncs/tasks at a glance.",
-    actions: ['Send a quick prompt to the agent', 'Reorder or edit runner assignments', 'Toggle turn mode'],
+    what: "Everything about one agent on one page, in titled sections: About (persona and counts), Take a turn (send it a one-off prompt), Activity (tasks and latest sync), Settings (owner, turn mode, Slack access, runner assignments — each saying who may change it) and Credentials (what is set and what is missing for it to run: write-only status rows, never the secret itself).",
+    actions: ['Send a quick prompt to the agent', 'Transfer ownership', 'Toggle turn mode or Slack access', 'Reorder or edit runner assignments', 'Set or clear a credential', 'Mint a Google credential'],
   },
   {
     path: '/w/:workspace/agents/:slug/tasks',
@@ -272,13 +272,6 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'The person(s) who own this agent',
     what: "The agent's sync log — its periodic check-ins (e.g. a manager sync) recorded as cards.",
     actions: ['Browse past syncs'],
-  },
-  {
-    path: '/w/:workspace/agents/:slug/credentials',
-    title: 'Agent credentials',
-    audience: 'The person(s) who own this agent',
-    what: "What is set and what is missing for this agent to actually run — write-only status rows (set/unset + when, never the secret itself) for each required credential, plus a vault of less-common ones collapsed by default. Answers \"what is stopping this agent from running\" without an SSH session.",
-    actions: ['Set or clear a credential', 'Mint a Google credential', 'See when each credential was last set'],
   },
   {
     path: '/w/:workspace/agents/:slug/work-products',

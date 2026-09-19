@@ -233,7 +233,7 @@ def test_the_callback_stores_a_gog_importable_token(fleet, monkeypatch):
     monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
     state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert res.status_code == 302 and res["Location"].endswith("?google=ok")
+    assert res.status_code == 302 and res["Location"].endswith("?google=ok#credentials")
 
     stored = json.loads(_stored_token(fleet["agent"]))
     assert stored["email"] == "ace@dimagi-ai.com"
@@ -267,7 +267,7 @@ def test_a_response_without_a_refresh_token_is_refused_not_stored(fleet, monkeyp
     monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response(refresh=""))
     state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert res["Location"].endswith("?google=no-refresh-token")
+    assert res["Location"].endswith("?google=no-refresh-token#credentials")
     assert not AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
 
 
@@ -289,7 +289,7 @@ def test_the_callback_refuses_unsigned_state(fleet):
 def test_a_denied_consent_stores_nothing_and_says_so(fleet):
     state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
     res = fleet["client"].get(CALLBACK, {"error": "access_denied", "state": state})
-    assert res["Location"].endswith("?google=denied")
+    assert res["Location"].endswith("?google=denied#credentials")
     assert not AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
 
 
@@ -329,7 +329,7 @@ def test_the_return_trip_keeps_the_deployment_path_prefix(fleet, monkeypatch, se
 
     assert res["Location"] == (
         "https://labs.connect.dimagi.com/canopy"
-        "/w/connect/agents/ace/credentials?google=ok"
+        "/w/connect/agents/ace/overview?google=ok#credentials"
     )
 
 
@@ -343,4 +343,4 @@ def test_a_failed_mint_returns_to_the_same_prefixed_page(fleet, monkeypatch, set
     state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
     assert res["Location"].startswith("https://labs.connect.dimagi.com/canopy/w/connect/")
-    assert res["Location"].endswith("?google=no-refresh-token")
+    assert res["Location"].endswith("?google=no-refresh-token#credentials")

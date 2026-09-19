@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useOutletContext, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   deleteAgentCredential,
   getAgentCredentialStatus,
@@ -7,12 +7,11 @@ import {
   startGoogleMint,
   type AgentCredentialStatusOut,
 } from '@/api/agents'
-import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { headline, sections } from '@/pages/agents/agentCredentials'
 import { relativeAge } from '@/lib/relativeAge'
 import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
-import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
+import { WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
 // cost an SSH to a box and a `gog auth list`. ACE's mailbox had been dead since
@@ -23,9 +22,12 @@ import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 // never plaintext, so this page can say "set" and "when" and cannot render a
 // secret. A blank field is not sent — the write is non-clobbering, and "" would
 // wipe a working credential.
+//
+// A panel, not a page: it lives in the Credentials section of the agent's
+// Overview (it used to be its own rail entry, which is why people could not
+// find settings that sat one click away from each other).
 
-export function AgentCredentialsSection() {
-  const { agent } = useOutletContext<AgentOutletContext>()
+export function AgentCredentialsPanel({ agent }: { agent: { slug: string } }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -95,12 +97,7 @@ export function AgentCredentialsSection() {
   }
 
   if (rows === null) {
-    return (
-      <div className="max-w-4xl px-6 py-8">
-        <WorkbenchSubHeader title="Credentials" />
-        <WorkbenchSkeleton />
-      </div>
-    )
+    return <WorkbenchSkeleton />
   }
 
   const sec = sections(rows)
@@ -172,8 +169,7 @@ export function AgentCredentialsSection() {
   )
 
   return (
-    <div className="max-w-4xl px-6 py-8" data-testid="agent-credentials">
-      <WorkbenchSubHeader title="Credentials" count={rows.length} />
+    <div data-testid="agent-credentials">
 
       {outcome && (
         <p
