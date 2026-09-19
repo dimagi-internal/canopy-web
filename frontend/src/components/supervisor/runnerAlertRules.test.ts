@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DARK_AFTER_MS, humanizeSilence, macAccount, runnerAlerts } from './runnerAlertRules'
+import { DARK_AFTER_MS, runnerAlerts } from './runnerAlertRules'
 import type { RunnerOut } from '@/api/harness'
 
 // RunnerOut has many fields; the helper only reads these.
@@ -179,46 +179,32 @@ describe('runnerAlerts — shared', () => {
   })
 })
 
-describe('runnerAlerts — dark (the box itself is gone)', () => {
-  // 2026-08-27, acedimagi-mbp-cdp: silent for three days because its macOS
-  // account was logged out, which takes down the runner AND the separate
-  // launchd updater that exists to rescue it. The only banner in the product
-  // said "out of date", so the visible problem was a version number and the
-  // actual problem — an unattended box running nothing at all — had no signal.
+describe('runnerAlerts — dark (silent past a day)', () => {
+  // Most of the fleet is expected to be dark (2026-09-19). A dark box raises
+  // nothing, and its last-reported branch/sha does not fall through either —
+  // that is history, not the code it is running.
   const NOW = 1787000000000
   const agoMs = (ms: number) => new Date(NOW - ms).toISOString()
   const HOUR = 60 * 60 * 1000
 
-  it('silence past a day outranks everything the box last reported', () => {
-    const [alert] = runnerAlerts(
-      [
-        runner('acedimagi-mbp-cdp', {
-          status: 'stale',
-          last_heartbeat_at: agoMs(3 * 24 * HOUR),
-          code_sha: OLD,
-          expected_code_sha: SHIPPED,
-        }),
-      ],
-      NOW,
-    )
-    expect(alert.kind).toBe('dark')
-    expect(alert.silentForMs).toBe(3 * 24 * HOUR)
-    expect(alert.unreachable).toBe(true)
+  it('raises nothing, even with a stale sha and wrong branch on its last report', () => {
+    expect(
+      runnerAlerts(
+        [
+          runner('acedimagi-mbp-cdp', {
+            status: 'stale',
+            last_heartbeat_at: agoMs(3 * 24 * HOUR),
+            code_sha: OLD,
+            expected_code_sha: SHIPPED,
+            code_branch: 'feat-x',
+          }),
+        ],
+        NOW,
+      ),
+    ).toEqual([])
   })
 
-  it('outranks a wrong branch too — one banner, and it is the box, not the code', () => {
-    const alerts = runnerAlerts(
-      [runner('r', { status: 'stale', last_heartbeat_at: agoMs(2 * 24 * HOUR), code_branch: 'feat-x' })],
-      NOW,
-    )
-    expect(alerts).toHaveLength(1)
-    expect(alerts[0].kind).toBe('dark')
-  })
-
-  it('a briefly-quiet runner is NOT dark — a closed lid is not an incident', () => {
-    // live_status calls a runner stale after 90 SECONDS. Promoting that to a red
-    // banner would fire on every laptop every night, which is how a real alert
-    // gets ignored — the failure this file already paid for twice.
+  it('a briefly-quiet runner still gets its outdated banner, flagged unreachable', () => {
     const [alert] = runnerAlerts(
       [runner('r', { status: 'stale', last_heartbeat_at: agoMs(2 * HOUR), code_sha: OLD, expected_code_sha: SHIPPED })],
       NOW,
@@ -227,46 +213,28 @@ describe('runnerAlerts — dark (the box itself is gone)', () => {
     expect(alert.unreachable).toBe(true)
   })
 
-  it('is silent for an online runner however old its last heartbeat parses', () => {
-    // Only a QUIET runner can be dark. An online row with a lagging timestamp is
-    // a clock/propagation artifact, not a dead box.
-    expect(
-      runnerAlerts([runner('r', { status: 'online', last_heartbeat_at: agoMs(9 * 24 * HOUR) })], NOW),
-    ).toEqual([])
+  it('an online runner is judged on its code however old its heartbeat parses', () => {
+    // Only a QUIET runner can be dark; a lagging timestamp on an online row is a
+    // clock/propagation artifact.
+    const [alert] = runnerAlerts(
+      [runner('r', { status: 'online', last_heartbeat_at: agoMs(9 * 24 * HOUR), code_branch: 'x' })],
+      NOW,
+    )
+    expect(alert.kind).toBe('branch')
   })
 
-  it('is silent when the heartbeat is unknown — never checked in is not a measurable age', () => {
-    // Empty means unknown, the same rule the sha comparison follows. A pairing
-    // that never started is hygiene (retire it), not an incident to shout about.
-    for (const last_heartbeat_at of [null, undefined, 'not-a-date']) {
-      expect(runnerAlerts([runner('never', { status: 'disconnected', last_heartbeat_at })], NOW)).toEqual([])
-    }
+  it('a never-heartbeated runner is not measurably dark, so its code is still judged', () => {
+    const [alert] = runnerAlerts(
+      [runner('never', { status: 'disconnected', last_heartbeat_at: null, code_branch: 'x' })],
+      NOW,
+    )
+    expect(alert.kind).toBe('branch')
   })
 
-  it('fires exactly at the threshold, not before', () => {
+  it('drops out exactly at the threshold, not before', () => {
     const at = (ms: number) =>
-      runnerAlerts([runner('r', { status: 'stale', last_heartbeat_at: agoMs(ms), code_branch: 'x' })], NOW)[0]
-    expect(at(DARK_AFTER_MS - 1).kind).toBe('branch')
-    expect(at(DARK_AFTER_MS).kind).toBe('dark')
-  })
-})
-
-describe('humanizeSilence', () => {
-  it('reports the coarsest useful unit', () => {
-    expect(humanizeSilence(45 * 60 * 1000)).toBe('45m')
-    expect(humanizeSilence(26 * 60 * 60 * 1000)).toBe('26h')
-    expect(humanizeSilence(3 * 24 * 60 * 60 * 1000)).toBe('3d')
-  })
-})
-
-describe('macAccount', () => {
-  it('names the macOS account to log back into', () => {
-    // The remedy for a dark emdash runner is "log THIS account back in", and
-    // naming it is the difference between an instruction and a hint.
-    expect(macAccount('acedimagi@Jonathans-MacBook-Pro.local')).toBe('acedimagi')
-  })
-
-  it('is empty when host is not user@machine — the caller must fall back', () => {
-    for (const host of ['cloud-ec2-1', '', '@nohost']) expect(macAccount(host)).toBe('')
+      runnerAlerts([runner('r', { status: 'stale', last_heartbeat_at: agoMs(ms), code_branch: 'x' })], NOW)
+    expect(at(DARK_AFTER_MS - 1)[0].kind).toBe('branch')
+    expect(at(DARK_AFTER_MS)).toEqual([])
   })
 })
