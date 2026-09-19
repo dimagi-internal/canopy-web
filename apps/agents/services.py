@@ -89,6 +89,13 @@ def _definition_summary(agent: Agent) -> dict:
     }
 
 
+def _owner_summary(agent: Agent) -> dict | None:
+    owner = agent.owner
+    if owner is None:
+        return None
+    return {"user_id": owner.pk, "name": owner.get_full_name() or owner.email, "email": owner.email}
+
+
 def agent_detail(agent: Agent) -> dict:
     latest = agent.syncs.order_by("-period_end").first()
     return {
@@ -101,6 +108,7 @@ def agent_detail(agent: Agent) -> dict:
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
         "definition": _definition_summary(agent),
+        "owner": _owner_summary(agent),
         "runner_preference": list(agent.runner_preference or []),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,

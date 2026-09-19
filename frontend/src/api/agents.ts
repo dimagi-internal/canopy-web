@@ -251,6 +251,17 @@ export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<Tu
 
 // Turn Slack access to the agent on or off (owner only). Same return shape as
 // setAgentTurnMode, for the same reason: the toggle only needs the flag back.
+// Browser-only: the server refuses this with any Authorization header, so no
+// agent, plugin or assistant can move ownership. `null` clears the owner
+// (workspace owners only). Returns the refreshed detail.
+export async function transferAgentOwner(slug: string, userId: number | null): Promise<AgentDetailOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/owner', {
+    params: { path: { slug } },
+    body: { user_id: userId },
+  })
+  return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
+}
+
 export async function setAgentSlackEnabled(slug: string, enabled: boolean): Promise<boolean> {
   const res = await apiV2.PATCH('/api/agents/{slug}/slack', {
     params: { path: { slug } },

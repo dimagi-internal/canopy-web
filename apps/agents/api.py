@@ -23,6 +23,7 @@ from .schemas import (
     AgentDetailOut,
     AgentIn,
     AgentOut,
+    AgentOwnerIn,
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleOut,
@@ -240,10 +241,53 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     return Status(201, AgentOut.model_validate(agent))
 
 
+def _may_transfer_owner(request: HttpRequest, agent) -> bool:
+    """A workspace owner, or the agent's current owner."""
+    if agent.owner_id is not None and agent.owner_id == request.user.pk:
+        return True
+    return _caller_role(request, agent.workspace_id) == wsvc.WorkspaceMembership.OWNER
+
+
+def _detail(request: HttpRequest, agent) -> AgentDetailOut:
+    return AgentDetailOut.model_validate(
+        {**services.agent_detail(agent), "can_transfer_owner": _may_transfer_owner(request, agent)}
+    )
+
+
 @router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
 def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
-    return AgentDetailOut.model_validate(services.agent_detail(agent))
+    return _detail(request, agent)
+
+
+# Browser-only by design. The owner is whose GitHub grant the agent's
+# GitHub-backed features read through, so moving it is a credential decision a
+# PERSON makes in the canopy UI. Any Authorization header — a PAT, the embedded
+# widget's delegated token (which rides alongside the session cookie, same
+# origin), a contact token — means a machine is in the loop, and is refused.
+# Resolve first so a non-member still gets 404, never 403.
+@router.put("/{slug}/owner", response=AgentDetailOut,
+            summary="Transfer the agent's ownership to a member of its workspace (canopy UI only)")
+def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
+    agent = _get_agent_or_404(request, slug)
+    if request.META.get("HTTP_AUTHORIZATION"):
+        raise HttpError(403, "ownership can only be transferred from the canopy web app")
+    if not _may_transfer_owner(request, agent):
+        raise HttpError(403, "only a workspace owner or the agent's current owner can transfer it")
+    if payload.user_id is None:
+        if _caller_role(request, agent.workspace_id) != wsvc.WorkspaceMembership.OWNER:
+            raise HttpError(403, "only a workspace owner can leave an agent without an owner")
+        agent.owner = None
+    else:
+        from django.contrib.auth import get_user_model
+
+        target = get_user_model().objects.filter(pk=payload.user_id).first()
+        # A question about the TARGET, asked through the one authorizer.
+        if target is None or not wsvc.is_member(target, agent.workspace_id):
+            raise HttpError(422, "the new owner must be a member of this agent's workspace")
+        agent.owner = target
+    agent.save(update_fields=["owner", "updated_at"])
+    return _detail(request, agent)
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",)
@@ -292,7 +336,7 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
     agent = _agent_for_write(request, slug)
     agent.runner_preference = list(payload.runner_preference)
     agent.save(update_fields=["runner_preference", "updated_at"])
-    return AgentDetailOut.model_validate(services.agent_detail(agent))
+    return _detail(request, agent)
 
 
 @router.patch("/{slug}/turn-mode", response=AgentDetailOut,
@@ -305,7 +349,7 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     agent = _agent_for_write(request, slug)
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
-    return AgentDetailOut.model_validate(services.agent_detail(agent))
+    return _detail(request, agent)
 
 
 @router.patch("/{slug}/slack", response=AgentDetailOut,
@@ -318,7 +362,7 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     agent = _agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
-    return AgentDetailOut.model_validate(services.agent_detail(agent))
+    return _detail(request, agent)
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

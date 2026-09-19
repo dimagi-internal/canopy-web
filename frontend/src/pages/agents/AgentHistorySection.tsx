@@ -27,7 +27,7 @@ function CredentialNotice({ h }: { h: SkillHistoryOut }) {
       body = 'This agent has no repository configured, so there is no history to read.'
       break
     case 'no_owner':
-      body = 'History reads through the agent owner’s GitHub connection, and this agent has no owner.'
+      body = <>History reads through the agent owner’s GitHub connection, and this agent has no owner. A workspace owner can assign one on <Link to="../overview" className="underline">Overview</Link>.</>
       break
     case 'owner_not_connected':
       body = h.viewer_is_owner
