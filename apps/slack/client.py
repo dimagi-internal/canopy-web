@@ -33,7 +33,13 @@ def call(method: str, *, token: str = "", data: dict | None = None, json: dict |
 
 
 def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
-                 blocks: list | None = None) -> str:
+                 blocks: list | None = None, persona: dict | None = None) -> str:
+    """Post, optionally AS an agent (`persona` = {"username", "icon_url"}).
+
+    A persona needs the `chat:write.customize` scope. An install from before it
+    was added answers `missing_scope`; the post is retried as the plain bot, so
+    a scope nobody has re-approved costs the agent's face, never the reply.
+    """
     # `text` is always sent, blocks or not: it is what notifications, screen
     # readers and any client that cannot render blocks show.
     payload = {"channel": channel, "text": text, "unfurl_links": False}
@@ -41,6 +47,12 @@ def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
         payload["thread_ts"] = thread_ts
     if blocks:
         payload["blocks"] = blocks
+    if persona:
+        try:
+            return call("chat.postMessage", token=token, json={**payload, **persona})["ts"]
+        except SlackApiError as e:
+            if e.error != "missing_scope":
+                raise
     return call("chat.postMessage", token=token, json=payload)["ts"]
 
 

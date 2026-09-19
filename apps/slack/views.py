@@ -181,11 +181,16 @@ def _ephemeral(text: str) -> JsonResponse:
 @csrf_exempt
 @require_POST
 def commands(request: HttpRequest) -> HttpResponse:
-    """``/canopy <agent> <ask>`` · ``/canopy link`` · ``/canopy agents``.
+    """``/canopy <agent> <ask>`` · ``/<agent> <ask>`` · ``/canopy link`` · ``/canopy agents``.
 
     A slash command has no message of its own to thread under, so the bot posts
     one — "<user> asked <agent>: …" — and the conversation lives in that
     message's thread, exactly as if it had started with a mention.
+
+    Every command is registered in the Slack APP's config, not here, and Slack
+    shows every one to everyone in the workspace. So `/hal` is just a command
+    whose name is an agent's slug: whether hal answers is decided here, per
+    request, by the same switch and the same member/contact rule as a mention.
     """
     refused = _verified(request)
     if refused is not None:
@@ -196,6 +201,10 @@ def commands(request: HttpRequest) -> HttpResponse:
     installation = services.installation_for(team_id)
     if installation is None:
         return _ephemeral("This Slack workspace isn't connected to canopy.")
+    command = str(post.get("command") or "").lstrip("/").lower()
+    if command and command != "canopy":
+        # `/hal what's on today?` is `/canopy hal what's on today?`.
+        text = f"{command} {text}".strip()
     word = text.split(" ", 1)[0].lower()
     if word == "link":
         return _ephemeral(f"Link your canopy account: {services.link_url(team_id, slack_user_id)}")
@@ -211,7 +220,8 @@ def commands(request: HttpRequest) -> HttpResponse:
         return _ephemeral(services.agent_list(installation))
     ask = text.split(" ", 1)[1].strip() if " " in text else ""
     if not ask:
-        return _ephemeral(f"What would you like `{agent.slug}` to do? `/canopy {agent.slug} <ask>`")
+        usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
+        return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>`")
     try:
         root_ts = client.post_message(installation.bot_token, channel=channel_id,
                                       text=f"<@{slack_user_id}> asked *{agent.slug}*: {ask}")
