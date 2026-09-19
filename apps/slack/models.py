@@ -94,6 +94,29 @@ class SlackRelayPost(models.Model):
         ]
 
 
+class SlackTurnPost(models.Model):
+    """The one status line a turn gets in its Slack thread, edited as it moves.
+
+    Posted the moment a Slack message is enqueued — "picked up on X", or
+    "queued: X is offline" with a way out — so the sender learns at once whether
+    anything is happening, instead of inferring it from silence. Edited in place
+    on every status change after that, so a thread carries one line per ask
+    rather than a line per transition. A turn that started somewhere else
+    (canopy-web, the phone) on a Slack-born session gets one too, which is what
+    tells the thread that the conversation moved on without it.
+
+    Inserted before posting under a unique turn, like `SlackRelayPost`, so a
+    re-delivered signal cannot post a second line.
+    """
+
+    turn = models.OneToOneField("harness.Turn", on_delete=models.CASCADE, related_name="slack_status")
+    channel_id = models.CharField(max_length=32)
+    slack_ts = models.CharField(max_length=32, blank=True, default="")
+    #: The text last rendered, so an event that changes nothing is not an edit.
+    rendered = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class SlackMenuPost(models.Model):
     """A blocked agent's question that was posted into its Slack thread.
 

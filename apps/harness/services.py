@@ -543,6 +543,125 @@ def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
 UNCLAIMABLE_GRACE = dt.timedelta(seconds=150)
 
 
+def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
+    """The SAME rows claim_next_turn composes from, so the two answers cannot
+    diverge — including the session leg's agent, which routes by its agent's
+    rules while the session is not yet bound."""
+    agent_ids = {t.agent_id for t in turns if t.agent_id} | {
+        t.chat_session.agent_id
+        for t in turns
+        if t.chat_session_id and t.chat_session.agent_id
+    }
+    return load_assignment_rows(agent_ids)
+
+
+def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> bool:
+    """The per-candidate refinements claim_next_turn applies after the coarse
+    target match — same checks, same ORDER, so coverage can't overstate what
+    claiming will do."""
+    # A pin trumps everything below it (claim_next_turn's `pinned_here`).
+    if t.pinned_runner_id == r.id:
+        return True
+    if t.chat_session_id:
+        # STICKINESS, mirroring the claim loop's bound_to_me short-circuit: a
+        # session bound to this runner claims on it regardless of assignments.
+        # Surviving runner_target_q is what IDENTIFIES the holder, so running
+        # the assignment check here would report a live chat as `config`
+        # ("no runner is assigned") while claiming takes it happily.
+        binding = getattr(t.chat_session, "runner_binding", None)
+        if binding is not None and binding.runner_id == r.id:
+            return True
+        routed_agent = t.chat_session.agent_id
+    else:
+        routed_agent = t.agent_id
+    if not routed_agent:
+        return True  # project turn / agentless session: runner_target_q had the last word
+    # The SAME actor resolution the claim path uses. These two disagreeing is
+    # the drift class tests/test_claim_schedule_parity.py exists for: a strict
+    # actor rule pointing at an offline box must report `offline`
+    # (recoverable), never `config` (never runs).
+    rows = assignment_rows_for(
+        routed_agent, t.origin, actors.actor_of(t), defaults, priorities
+    )
+    return any(rr.id == r.id for _rank, rr in rows)
+
+
+def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
+    """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
+    `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
+    warning and the Slack acknowledgement cannot disagree about the same turn."""
+    out: dict = {}
+    for r in runners:
+        # Same coarse target predicate the claim path uses (assignments +
+        # projects + binding-sticky sessions), plus the pin arm — a turn
+        # pinned to an offline standby must read "offline", not "config".
+        q = runner_target_q(r) | Q(pinned_runner=r)
+        covered = set()
+        for t in (
+            Turn.objects.filter(pk__in=ids).filter(q)
+            # A turn pinned ELSEWHERE is invisible to this runner in the claim
+            # path; the coarse predicate above does not say so on its own.
+            .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=r))
+            .select_related("agent", "chat_session", "chat_session__runner_binding")
+        ):
+            # Then the per-source refinement. A runner assigned the agent but
+            # excluded by a strict rule for THIS turn's source does not cover
+            # it, and saying otherwise would mask a genuinely parked queue.
+            if _refined_allows(r, t, defaults, priorities):
+                covered.add(t.pk)
+        out[r] = covered
+    return out
+
+
+LIVE, OFFLINE, UNROUTED = "live", "offline", "config"
+
+
+@dataclass
+class Reach:
+    """Where one queued turn stands, right now.
+
+    `live` — an ONLINE runner will claim it; `runners` are those runners.
+    `offline` — runners could take it, none is online; `runners` are those.
+    `config` (UNROUTED) — nothing could ever take it until routing changes.
+    """
+
+    kind: str
+    runners: list
+
+
+def turn_reach(turn: Turn) -> Reach:
+    """Will a live runner pick this turn up? Asked the moment it is enqueued, so
+    the person who sent it hears "working on it" or "blocked" at once rather than
+    inferring it from silence.
+
+    Stricter than `unclaimable_queued_turns` about liveness on purpose: that one
+    is an alarm and counts a DEGRADED runner as reachable so a CDP blip does not
+    page anyone; this one is a promise, and `claim_next_turn` only claims on
+    ONLINE, so a degraded box is not "picking it up".
+    """
+    turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__runner_binding")
+            .get(pk=turn.pk))
+    if turn.chat_session_id:
+        ws = turn.chat_session.workspace_id
+    elif turn.agent_id:
+        ws = turn.agent.workspace_id
+    else:
+        ws = turn.workspace_id
+    runners = [
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
+        .order_by("name")
+        if ws in runner_tenant_slugs(r)
+    ]
+    defaults, priorities = _assignment_rows_for_turns([turn])
+    covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
+    live = [r for r in covering if r.live_status == Runner.ONLINE]
+    if live:
+        return Reach(LIVE, live)
+    if covering:
+        return Reach(OFFLINE, covering)
+    return Reach(UNROUTED, [])
+
+
 def unclaimable_queued_turns(user) -> list[dict]:
     """Queued turns that look genuinely stuck — otherwise a silent stall.
 
@@ -589,70 +708,14 @@ def unclaimable_queued_turns(user) -> list[dict]:
         if runner_tenant_slugs(r) & ws_slugs
     ]
     ids = {t.id for t in queued}
-    # The SAME rows claim_next_turn composes from, so the two answers cannot
-    # diverge — including the session leg's agent, which routes by its agent's
-    # rules while the session is not yet bound.
-    agent_ids = {t.agent_id for t in queued if t.agent_id} | {
-        t.chat_session.agent_id
-        for t in queued
-        if t.chat_session_id and t.chat_session.agent_id
-    }
-    defaults, priorities = load_assignment_rows(agent_ids)
-
-    def _refined_allows(r, t) -> bool:
-        """The per-candidate refinements claim_next_turn applies after the coarse
-        target match — same checks, same ORDER, so coverage can't overstate what
-        claiming will do."""
-        # A pin trumps everything below it (claim_next_turn's `pinned_here`).
-        if t.pinned_runner_id == r.id:
-            return True
-        if t.chat_session_id:
-            # STICKINESS, mirroring the claim loop's bound_to_me short-circuit: a
-            # session bound to this runner claims on it regardless of assignments.
-            # Surviving runner_target_q is what IDENTIFIES the holder, so running
-            # the assignment check here would report a live chat as `config`
-            # ("no runner is assigned") while claiming takes it happily.
-            binding = getattr(t.chat_session, "runner_binding", None)
-            if binding is not None and binding.runner_id == r.id:
-                return True
-            routed_agent = t.chat_session.agent_id
-        else:
-            routed_agent = t.agent_id
-        if not routed_agent:
-            return True  # project turn / agentless session: runner_target_q had the last word
-        # The SAME actor resolution the claim path uses. These two disagreeing is
-        # the drift class tests/test_claim_schedule_parity.py exists for: a strict
-        # actor rule pointing at an offline box must report `offline`
-        # (recoverable), never `config` (never runs).
-        rows = assignment_rows_for(
-            routed_agent, t.origin, actors.actor_of(t), defaults, priorities
-        )
-        return any(rr.id == r.id for _rank, rr in rows)
-
-    def _covered_by(rs) -> set:
-        out: set = set()
-        for r in rs:
-            # Same coarse target predicate the claim path uses (assignments +
-            # projects + binding-sticky sessions), plus the pin arm — a turn
-            # pinned to an offline standby must read "offline", not "config".
-            q = runner_target_q(r) | Q(pinned_runner=r)
-            for t in (
-                Turn.objects.filter(pk__in=ids).filter(q)
-                .select_related("agent", "chat_session", "chat_session__runner_binding")
-            ):
-                # Then the per-source refinement. A runner assigned the agent but
-                # excluded by a strict rule for THIS turn's source does not cover
-                # it, and saying otherwise would mask a genuinely parked queue.
-                if _refined_allows(r, t):
-                    out.add(t.pk)
-        return out
+    defaults, priorities = _assignment_rows_for_turns(queued)
 
     reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED)]
-    claimable_now = _covered_by(reachable)
+    claimable_now = set().union(*_coverage(ids, reachable, defaults, priorities).values())
     # Would ANY paired runner take it if it were up? Separates "misconfigured" from
     # "temporarily unreachable" — the difference between "fix the routing matrix"
     # and "wait, or check the runner".
-    claimable_ever = _covered_by(runners)
+    claimable_ever = set().union(*_coverage(ids, runners, defaults, priorities).values())
 
     out = []
     for t in queued:

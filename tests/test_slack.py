@@ -191,12 +191,14 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     assert not Session.objects.filter(visible_session_q(bob), pk=session.pk).exists()
     assert Session.objects.filter(visible_session_q(alice), pk=session.pk).exists()
 
-    # She is told where it went, visible to her alone — in the CHANNEL, not
-    # threaded under her own top-level message, where an ephemeral reply leaves
-    # no marker and reads as silence (the first live mention on labs).
-    (note,) = slack.said("chat.postEphemeral")
-    assert note["user"] == ALICE and "thread_ts" not in note
-    assert f"/w/{hal.workspace_id}/chat/{session.id}" in note["text"]
+    # She is told at once, in the thread, where it stands — here, that nothing
+    # can run it — with the canopy link. Public and threaded: a status line,
+    # not a private note that reads as silence (the first live mention on labs).
+    assert not slack.said("chat.postEphemeral")
+    (line,) = slack.said("chat.postMessage")
+    assert line["thread_ts"] == "1700000000.000100"
+    assert "no runner is set up to run `hal`" in line["text"]
+    assert f"/w/{hal.workspace_id}/chat/{session.id}" in line["text"]
 
 
 def test_slack_redelivery_does_not_ask_the_agent_twice(slack, linked, hal):
@@ -248,7 +250,7 @@ def test_bots_and_edits_are_ignored(slack, linked, hal):
 
 def test_reply_inside_a_thread_stays_in_that_thread(slack, linked, hal):
     mention("hal more", ts="1700000050.000100", thread_ts="1700000000.000100")
-    assert slack.said("chat.postEphemeral")[0]["thread_ts"] == "1700000000.000100"
+    assert slack.said("chat.postMessage")[0]["thread_ts"] == "1700000000.000100"
 
 
 def test_member_matched_by_email_is_linked_without_a_click(slack, installation, hal, alice):
@@ -279,8 +281,8 @@ def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installa
     assert not WorkspaceMembership.objects.filter(workspace=ws, user__email="alice@dimagi.com").exists()
     owner = _owner(ws)
     assert not Session.objects.filter(visible_session_q(owner)).exists()
-    # No canopy link in the note — a contact could not open it.
-    assert "/w/" not in slack.said("chat.postEphemeral")[0]["text"]
+    # No canopy link in the status line — a contact could not open it.
+    assert "/w/" not in slack.said("chat.postMessage")[0]["text"]
 
 
 def test_the_same_slack_user_is_one_contact(slack, installation, hal):
@@ -365,8 +367,9 @@ def test_only_enabled_agent_is_the_default(slack, linked, hal):
 def test_slash_command_anchors_a_thread_and_queues(slack, linked, hal):
     resp = command("hal draft the update")
     assert resp.status_code == 200 and resp.json()["response_type"] == "ephemeral"
-    (anchor,) = slack.said("chat.postMessage")
+    anchor, line = slack.said("chat.postMessage")          # the anchor, then the status line under it
     assert anchor["channel"] == "C1" and "hal" in anchor["text"]
+    assert line["thread_ts"] == "1700000999.000100"
     turn = Turn.objects.get()
     assert turn.origin == Turn.ORIGIN_SLACK and turn.prompt == "draft the update"
     assert turn.chat_session.metadata["slack_thread_ts"] == "1700000999.000100"
@@ -493,6 +496,7 @@ def _reply(turn, *events, capture):
 def test_the_agents_reply_is_posted_into_the_thread(slack, linked, hal, django_capture_on_commit_callbacks):
     mention("hal summarise")
     turn = Turn.objects.get()
+    slack.calls.clear()                            # the status line; replies are what is under test
     _reply(turn,
            {"kind": "status", "payload": {"status": "running"}},
            {"kind": "tool_start", "payload": {"text": "Bash"}},
@@ -509,6 +513,7 @@ def test_a_reply_is_never_posted_twice(slack, linked, hal, django_capture_on_com
 
     mention("hal summarise")
     turn = Turn.objects.get()
+    slack.calls.clear()
     _reply(turn, {"kind": "assistant", "payload": {"text": "once"}}, capture=django_capture_on_commit_callbacks)
     relay(turn, list(turn.events.all()))          # a re-delivered signal
     assert len(slack.said("chat.postMessage")) == 1
@@ -517,6 +522,7 @@ def test_a_reply_is_never_posted_twice(slack, linked, hal, django_capture_on_com
 def test_a_failed_turn_says_so_in_the_thread(slack, linked, hal, django_capture_on_commit_callbacks):
     mention("hal summarise")
     turn = Turn.objects.get()
+    slack.calls.clear()
     _reply(turn, {"kind": "status", "payload": {"status": "failed", "result_note": "runner lost"}},
            capture=django_capture_on_commit_callbacks)
     assert "failed: runner lost" in slack.said("chat.postMessage")[0]["text"]
@@ -525,6 +531,7 @@ def test_a_failed_turn_says_so_in_the_thread(slack, linked, hal, django_capture_
 def test_a_dm_reply_goes_to_the_dm_unthreaded(slack, linked, hal, django_capture_on_commit_callbacks):
     event({"type": "message", "channel_type": "im", "user": ALICE, "text": "hal hi",
            "ts": "1700000000.000100", "channel": "D1"})
+    slack.calls.clear()
     _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hello"}},
            capture=django_capture_on_commit_callbacks)
     (post,) = slack.said("chat.postMessage")
@@ -574,8 +581,8 @@ def test_a_plain_reply_in_the_thread_continues_the_conversation(slack, linked, h
     turns = list(Turn.objects.order_by("created_at"))
     assert len(turns) == 2 and turns[0].chat_session_id == turns[1].chat_session_id
     assert turns[1].prompt == "and what about next week?"
-    # Only the conversation's first message gets the private "sent" note.
-    assert len(slack.said("chat.postEphemeral")) == 1
+    # Every message gets its own public status line; nothing private.
+    assert len(slack.said("chat.postMessage")) == 2 and not slack.said("chat.postEphemeral")
 
 
 def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
@@ -859,6 +866,7 @@ def test_replies_are_posted_as_the_agent(slack, linked, hal, django_capture_on_c
     hal.avatar_url = "https://example.com/hal.png"
     hal.save()
     mention("hal summarise")
+    slack.calls.clear()                            # the status line is canopy's, not the agent's
     _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hi"}},
            capture=django_capture_on_commit_callbacks)
     (post,) = slack.said("chat.postMessage")
@@ -879,6 +887,7 @@ def test_an_install_without_the_customize_scope_still_gets_the_reply(slack, link
         return real(url, headers=headers, json=json, data=data, timeout=timeout)
 
     mention("hal summarise")
+    slack.calls.clear()
     with mock.patch("apps.slack.client.requests.post", side_effect=no_customize):
         _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "hi"}},
                capture=django_capture_on_commit_callbacks)
@@ -908,3 +917,198 @@ def test_a_command_for_an_agent_not_on_for_slack_does_nothing(slack, linked, ws)
 
 def test_a_bare_agent_command_says_how_to_use_it(slack, linked, hal):
     assert "`/hal <ask>`" in _agent_command("/hal", "").json()["text"]
+
+
+# ---- the status line: working on it, or blocked and why ----------------------
+#
+# Driven through real routing: a runner with an assignment for `hal`, online or
+# with a lapsed heartbeat, and the real claim/finish calls a runner's POSTs land
+# on — so "picked up" is asserted against what claiming actually does.
+
+import datetime as _dt  # noqa: E402
+
+from apps.harness.models import RunnerAdmin, RunnerAssignment  # noqa: E402
+from apps.slack.models import SlackTurnPost  # noqa: E402
+
+
+def _runner(name, *, kind=Runner.EMDASH, online=True, pairer, agent=None):
+    beat = timezone.now() - (_dt.timedelta(0) if online else _dt.timedelta(hours=2))
+    r = Runner.objects.create(name=name, kind=kind, host=name, paired_by=pairer, workspace_id=pairer_ws(pairer),
+                              status=Runner.ONLINE, last_heartbeat_at=beat,
+                              capabilities={"sessions": True})
+    if agent is not None:
+        RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
+    return r
+
+
+def pairer_ws(user):
+    return WorkspaceMembership.objects.filter(user=user).values_list("workspace_id", flat=True).first()
+
+
+def _line(slack):
+    return slack.said("chat.postMessage")[-1]
+
+
+def test_a_live_runner_says_it_is_picking_it_up(slack, linked, hal, alice):
+    _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal summarise")
+    line = _line(slack)
+    assert "`hal` is picking this up on *jj-mbp*" in line["text"]
+    assert "Open in canopy" in line["text"] and not line.get("blocks")
+
+
+def test_an_offline_runner_says_it_is_blocked(slack, linked, hal, alice):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    mention("hal summarise")
+    assert "*jj-mbp* is offline" in _line(slack)["text"]
+    assert not _line(slack).get("blocks")          # no cloud runner, so no button
+
+
+def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal summarise")
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = harness_services.claim_next_turn(runner)
+    assert turn is not None
+    assert "working on this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.finish_turn(turn, status=Turn.DONE)
+    assert "finished this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
+    assert slack.said("chat.update")[-1]["ts"] == SlackTurnPost.objects.get(turn=turn).slack_ts
+    assert len(slack.said("chat.postMessage")) == 1          # one line per ask, edited in place
+
+
+@pytest.fixture
+def cloud(ws, hal):
+    """An online cloud runner owned by someone else, and an offline laptop for hal."""
+    owner = a_user("ops@dimagi.com")
+    wsvc.ensure_member(ws, owner, WorkspaceMembership.EDITOR)
+    return _runner("cloud-ec2-1", kind=Runner.CLOUD, pairer=owner)
+
+
+def _route_button(post):
+    return next(e for b in post.get("blocks", []) if b["type"] == "actions" for e in b["elements"]
+                if e["action_id"] == "route_cloud")
+
+
+def test_blocked_with_a_cloud_runner_offers_the_button(slack, linked, hal, alice, cloud):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    mention("hal summarise")
+    line = _line(slack)
+    assert "send it to *cloud-ec2-1*" in line["text"]
+    assert _route_button(line)["text"]["text"] == "Run on cloud-ec2-1"
+
+
+def test_only_a_cloud_runner_admin_may_press_it(slack, linked, hal, alice, cloud):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    mention("hal summarise")
+    value = _route_button(_line(slack))["value"]
+    click("route_cloud", value)
+    turn = Turn.objects.get()
+    assert turn.pinned_runner_id is None
+    assert "Only an admin of *cloud-ec2-1*" in slack.said("chat.postEphemeral")[-1]["text"]
+    assert Event.objects.filter(kind="slack.forbidden").exists()
+
+
+def test_an_admin_sends_an_unbound_conversation_to_the_cloud(slack, linked, hal, alice, cloud):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    mention("hal summarise")
+    click("route_cloud", _route_button(_line(slack))["value"])
+    turn = Turn.objects.get()
+    assert turn.pinned_runner == cloud
+    assert turn.chat_session.metadata["requested_runner_id"] == str(cloud.id)   # later sends follow
+    assert "Sent to *cloud-ec2-1*" in slack.said("chat.update")[-1]["text"]
+    assert not [b for b in slack.said("chat.update")[-1]["blocks"] if b["type"] == "actions"]
+    # And the cloud box really claims it.
+    assert harness_services.claim_next_turn(cloud) == turn
+
+
+def test_a_bound_conversation_is_transferred_and_the_handoff_runs_first(
+        slack, linked, hal, alice, cloud, django_capture_on_commit_callbacks):
+    laptop = _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    mention("hal first")
+    session = Session.objects.get()
+    RunnerBinding.objects.create(session=session, runner=laptop, session_key="c-hal",
+                                 emdash_project="hal", thread_key=str(session.id))
+    mention("and then this", ts="1700000050.000100", thread_ts="1700000000.000100")
+    click("route_cloud", _route_button(_line(slack))["value"])
+    assert RunnerBinding.objects.get(session=session).runner == cloud
+    first = harness_services.claim_next_turn(cloud)
+    assert "transferred from jj-mbp to cloud-ec2-1" in first.prompt
+    assert "2 message(s) waiting" in first.prompt
+
+
+def test_slash_cloud_moves_everything_of_mine_that_is_stuck(slack, linked, hal, alice, cloud):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    mention("hal one", ts="1700000000.000100")
+    mention("hal two", ts="1700000100.000100")
+    resp = command("cloud")
+    assert "Sent 1 waiting message(s) to *cloud-ec2-1*" in resp.json()["text"]
+    assert set(Turn.objects.values_list("pinned_runner_id", flat=True)) == {cloud.id}
+
+
+def test_mention_cloud_is_the_same_and_leaves_live_work_alone(slack, linked, hal, alice, cloud):
+    _runner("jj-mbp", pairer=alice, agent=hal)                  # online: nothing is stuck
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    mention("hal one")
+    mention("cloud", ts="1700000200.000100")
+    assert "Nothing of yours is waiting" in slack.said("chat.postEphemeral")[-1]["text"]
+    assert Turn.objects.get().pinned_runner_id is None
+
+
+# ---- the conversation carrying on somewhere else --------------------------------
+
+def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
+        slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as session_services
+
+    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal first")
+    session = Session.objects.get()
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.finish_turn(harness_services.claim_next_turn(runner), status=Turn.DONE)
+    slack.calls.clear()
+    session_services.send_message(session=session, text="now do the second half", user=alice)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.claim_next_turn(runner)
+    (line,) = slack.said("chat.postMessage")
+    assert line["thread_ts"] == "1700000000.000100"
+    assert "continued this in canopy: _now do the second half_" in line["text"]
+    assert "working on this on *jj-mbp*" in line["text"]
+
+
+def _stream(runner, pairer, session, events, capture):
+    c = Client()
+    c.force_login(pairer)
+    with capture(execute=True):
+        resp = c.post(f"/api/harness/runners/{runner.id}/session-stream",
+                      {"session_id": str(session.id), "transcript_id": "t1", "events": events},
+                      content_type="application/json")
+    assert resp.status_code == 200, resp.content
+
+
+def test_typing_straight_into_emdash_is_announced_once(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
+    ev = lambda i, kind, text: {"seq": i, "index": i * 1000, "kind": kind, "payload": {"text": text}}  # noqa: E731
+    _stream(runner, pairer, session, [ev(1, "user", "actually, check the logs first")],
+            django_capture_on_commit_callbacks)
+    _stream(runner, pairer, session, [ev(2, "user", "and the metrics")], django_capture_on_commit_callbacks)
+    (note,) = slack.said("chat.postMessage")
+    assert "carrying on directly in the agent's session on *jj-mbp*" in note["text"]
+    assert note["thread_ts"] == "1700000000.000100"
+
+
+def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
+    _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
+                                       "payload": {"text": "run it"}}], django_capture_on_commit_callbacks)
+    assert not slack.said("chat.postMessage")

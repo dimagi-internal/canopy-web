@@ -28,6 +28,14 @@ sessions_reported = Signal()
 # into the thread the conversation started in).
 session_menu_changed = Signal()
 
+# Sent with: sender=Session, session=<Session>, texts=<list[str]> — the human's
+# words from a runner's live transcript stream, i.e. someone typing straight into
+# the agent's session on its box rather than through any canopy surface. Such a
+# message is not a Turn, so nothing on the ledger ever sees it; apps/slack uses
+# this to tell a Slack thread that its conversation carried on elsewhere.
+# Post-commit.
+transcript_user_rows = Signal()
+
 
 # --- page invalidation -------------------------------------------------------
 #
