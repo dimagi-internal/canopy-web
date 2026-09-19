@@ -53,6 +53,7 @@ from .schemas import (
     RunnerPreferenceIn,
     SkillHistoryOut,
     SlackEnabledIn,
+    SlackEnabledOut,
     TurnModeIn,
 )
 
@@ -352,17 +353,32 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     return _detail(request, agent)
 
 
-@router.patch("/{slug}/slack", response=AgentDetailOut,
+@router.patch("/{slug}/slack", response=SlackEnabledOut,
               summary="Turn Slack access to an agent on or off")
-def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) -> AgentDetailOut:
+def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) -> SlackEnabledOut:
     """Whether people in this workspace's connected Slack can talk to the agent
-    (by mention, DM, or `/canopy`). Owner only."""
+    (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
+    the agent's `/<slug>` command in the Slack app when canopy manages it."""
     # Owner, not editor: editor is what anyone who self-joined already holds,
     # and this opens the agent to everyone in a Slack workspace.
+    from apps.slack import commands as slack_commands
+    from apps.slack.models import SlackInstallation
+
     agent = _agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
-    return _detail(request, agent)
+    result = slack_commands.sync_quietly(SlackInstallation.objects.filter(workspace=agent.workspace).first())
+    detail = result.get("detail", "")
+    if result["status"] == "synced":
+        name = slack_commands.command_name(agent.slug)
+        if name is None:
+            detail = f"`{agent.slug}` is too long to be a Slack command; use `/canopy {agent.slug}`."
+        elif name in result.get("added", []):
+            detail = f"Added {name} to Slack."
+        elif name in result.get("removed", []):
+            detail = f"Removed {name} from Slack."
+    return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
+                           command_detail=detail)
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

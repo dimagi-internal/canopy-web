@@ -262,12 +262,15 @@ export async function transferAgentOwner(slug: string, userId: number | null): P
   return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
 }
 
-export async function setAgentSlackEnabled(slug: string, enabled: boolean): Promise<boolean> {
+export type SlackEnabledOut = Schemas['SlackEnabledOut']
+
+// Also reports what happened to the agent's `/<slug>` command in Slack.
+export async function setAgentSlackEnabled(slug: string, enabled: boolean): Promise<SlackEnabledOut> {
   const res = await apiV2.PATCH('/api/agents/{slug}/slack', {
     params: { path: { slug } },
     body: { slack_enabled: enabled },
   })
-  return unwrap(res, 'setAgentSlackEnabled').slack_enabled
+  return unwrap(res, 'setAgentSlackEnabled')
 }
 
 // Wholesale replace of an agent's ordered runner list — index = rank. Each

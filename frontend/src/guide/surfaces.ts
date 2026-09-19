@@ -146,6 +146,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add or remove a watched mailbox', 'Enable/disable a mailbox', 'Copy the GCP setup commands'],
   },
   {
+    path: '/w/:workspace/slack',
+    title: 'Slack',
+    audience: 'Workspace owner connecting Slack',
+    what: "This workspace's Slack connection, and whether canopy manages the Slack app's slash commands — so that switching an agent on for Slack adds its /<agent> command, and switching it off removes it. Holds the app configuration token that allows that, encrypted and never shown.",
+    actions: ['Connect or reinstall Slack', 'Let canopy manage the slash commands', 'Sync the commands now'],
+  },
+  {
     path: '/w/:workspace/timeline',
     title: 'Timeline',
     audience: 'Anyone tracking cross-app activity',
