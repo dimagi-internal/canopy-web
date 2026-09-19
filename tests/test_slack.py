@@ -20,6 +20,9 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.canopy_sessions.access import visible_session_q
 from apps.canopy_sessions.models import Session
+from apps.contacts import services as contacts_services
+from apps.contacts.models import Contact
+from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.slack import services
 from apps.slack.models import SlackInstallation, SlackUserLink
@@ -48,7 +51,11 @@ class FakeSlack:
 
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
-        self.emails = {ALICE: "alice@dimagi.com", BOB: "bob@dimagi.com"}
+        self.users = {
+            ALICE: {"name": "alice", "profile": {"email": "alice@dimagi.com", "real_name": "Alice A"}},
+            BOB: {"name": "bob", "profile": {"email": "bob@dimagi.com", "real_name": "Bob B"}},
+        }
+        self.installer = ALICE
         self.fail: dict[str, str] = {}
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
@@ -60,12 +67,12 @@ class FakeSlack:
         if method in self.fail:
             body = {"ok": False, "error": self.fail[method]}
         elif method == "users.info":
-            body = {"ok": True, "user": {"profile": {"email": self.emails.get(payload["user"], "")}}}
+            body = {"ok": True, "user": self.users.get(payload["user"], {"profile": {}})}
         elif method == "chat.postMessage":
             body = {"ok": True, "ts": "1700000999.000100"}
         elif method == "oauth.v2.access":
             body = {"ok": True, "access_token": "xoxb-new", "bot_user_id": BOT,
-                    "team": {"id": TEAM, "name": "Dimagi"}}
+                    "team": {"id": TEAM, "name": "Dimagi"}, "authed_user": {"id": self.installer}}
         else:
             body = {"ok": True}
         resp.json = lambda: body
@@ -184,9 +191,11 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     assert not Session.objects.filter(visible_session_q(bob), pk=session.pk).exists()
     assert Session.objects.filter(visible_session_q(alice), pk=session.pk).exists()
 
-    # She is told where it went, in her thread, visible to her alone.
+    # She is told where it went, visible to her alone — in the CHANNEL, not
+    # threaded under her own top-level message, where an ephemeral reply leaves
+    # no marker and reads as silence (the first live mention on labs).
     (note,) = slack.said("chat.postEphemeral")
-    assert note["user"] == ALICE and note["thread_ts"] == "1700000000.000100"
+    assert note["user"] == ALICE and "thread_ts" not in note
     assert f"/w/{hal.workspace_id}/chat/{session.id}" in note["text"]
 
 
@@ -237,21 +246,96 @@ def test_bots_and_edits_are_ignored(slack, linked, hal):
 
 # ---- and when it must not ----------------------------------------------------
 
-def test_unlinked_user_gets_a_link_and_nothing_is_queued(slack, installation, hal):
-    mention("hal do it")
-    assert not Turn.objects.exists()
-    (note,) = slack.said("chat.postEphemeral")
-    assert "/auth/slack/link/?token=" in note["text"]
+def test_reply_inside_a_thread_stays_in_that_thread(slack, linked, hal):
+    mention("hal more", ts="1700000050.000100", thread_ts="1700000000.000100")
+    assert slack.said("chat.postEphemeral")[0]["thread_ts"] == "1700000000.000100"
 
 
-def test_linked_but_not_a_member_is_refused(slack, installation, hal, ws):
+def test_member_matched_by_email_is_linked_without_a_click(slack, installation, hal, alice):
+    mention("hal hello")
+    assert SlackUserLink.objects.get(slack_user_id=ALICE).user == alice
+    turn = Turn.objects.get()
+    assert turn.enqueued_by == alice
+    assert (turn.initiator_kind, turn.initiator_assurance) == ("user", "slack_email")
+    assert turn.chat_session.created_by == alice and turn.chat_session.contact is None
+
+
+def _is_contact_turn(turn) -> Contact:
+    session = turn.chat_session
+    assert session.created_by is None and session.contact is not None
+    assert turn.enqueued_by is None
+    assert (turn.initiator_kind, turn.initiator_contact) == ("contact", session.contact)
+    return session.contact
+
+
+def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installation, hal, ws):
+    mention("hal who owns the budget?")
+    contact = _is_contact_turn(Turn.objects.get())
+    assert contact.workspace == ws and contact.source == Contact.SOURCE_SLACK
+    assert contact.external_id == f"{TEAM}:{ALICE}"
+    assert contact.auth_result == Contact.AUTH_SLACK
+    assert (contact.email, contact.display_name) == ("alice@dimagi.com", "Alice A")
+    # Grants nothing: not a member, and no member can open the conversation.
+    assert not WorkspaceMembership.objects.filter(workspace=ws, user__email="alice@dimagi.com").exists()
+    owner = _owner(ws)
+    assert not Session.objects.filter(visible_session_q(owner)).exists()
+    # No canopy link in the note — a contact could not open it.
+    assert "/w/" not in slack.said("chat.postEphemeral")[0]["text"]
+
+
+def test_the_same_slack_user_is_one_contact(slack, installation, hal):
+    mention("hal one", ts="1700000000.000100")
+    mention("hal two", ts="1700000100.000100")
+    assert Contact.objects.count() == 1
+    assert Contact.objects.get().message_count == 2
+
+
+def test_a_guest_is_a_contact_even_with_a_member_email(slack, installation, hal, alice):
+    slack.users[ALICE]["is_restricted"] = True
+    mention("hal hello")
+    _is_contact_turn(Turn.objects.get())
+    assert not SlackUserLink.objects.exists()
+
+
+def test_an_ambiguous_email_is_not_linked(slack, installation, hal, alice):
+    a_user("ALICE@dimagi.com")          # a second account, same address
+    mention("hal hello")
+    _is_contact_turn(Turn.objects.get())
+    assert not SlackUserLink.objects.exists()
+
+
+def test_a_linked_user_outside_the_workspace_is_a_contact(slack, installation, hal):
     outsider = a_user("outsider@dimagi.com")
-    other = a_workspace("elsewhere")
-    wsvc.ensure_member(other, outsider, WorkspaceMembership.OWNER)
+    wsvc.ensure_member(a_workspace("elsewhere"), outsider, WorkspaceMembership.OWNER)
     SlackUserLink.objects.create(installation=installation, slack_user_id=ALICE, user=outsider)
     mention("hal do it")
-    assert not Turn.objects.exists()
-    assert "isn't a member" in slack.said("chat.postEphemeral")[0]["text"]
+    _is_contact_turn(Turn.objects.get())
+    assert not wsvc.is_member(outsider, installation.workspace_id)
+
+
+def test_a_blocked_contact_is_refused_and_logged(slack, installation, hal, ws):
+    mention("hal first", ts="1700000000.000100")
+    contacts_services.block(Contact.objects.get(), reason="spam")
+    mention("hal again", ts="1700000100.000100")
+    assert Turn.objects.count() == 1
+    assert Event.objects.filter(workspace=ws, source="slack", kind="slack.blocked").exists()
+
+
+def test_a_member_joining_a_contacts_thread_can_then_see_it(slack, installation, hal, alice):
+    slack.users[BOB] = {"profile": {"email": "stranger@partner.org"}}
+    mention("hal hi", user=BOB)
+    mention("hal me too", ts="1700000060.000100", thread_ts="1700000000.000100")
+    session = Session.objects.get()
+    assert session.contact is not None
+    assert Session.objects.filter(visible_session_q(alice), pk=session.pk).exists()
+
+
+def test_a_refusal_leaves_a_row_in_the_event_log(slack, linked, ws):
+    Agent.objects.create(slug="eva", name="Eva", workspace=ws, slack_enabled=True)
+    Agent.objects.create(slug="ada", name="Ada", workspace=ws, slack_enabled=True)
+    mention("no agent named here")
+    event = Event.objects.get(source="slack")
+    assert event.kind == "slack.no_agent" and event.payload["user"] == ALICE
 
 
 def test_agent_not_turned_on_for_slack_is_unreachable(slack, linked, ws):
@@ -295,10 +379,10 @@ def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
     assert not Turn.objects.exists()
 
 
-def test_slash_command_from_unlinked_user_posts_nothing(slack, installation, hal):
+def test_slash_command_from_a_contact_is_answered(slack, installation, hal):
     resp = command("hal draft the update")
-    assert "/auth/slack/link/" in resp.json()["text"]
-    assert not slack.said("chat.postMessage") and not Turn.objects.exists()
+    assert resp.json()["text"] == "Sent to `hal`."
+    _is_contact_turn(Turn.objects.get())
 
 
 # ---- linking an account --------------------------------------------------------
@@ -355,6 +439,8 @@ def test_install_round_trip_stores_an_encrypted_token(slack, ws):
     assert resp.status_code == 200
     inst = SlackInstallation.objects.get(team_id=TEAM)
     assert inst.workspace == ws and inst.bot_user_id == BOT
+    # The installer proved both identities in that one trip, so they are linked.
+    assert SlackUserLink.objects.get(slack_user_id=ALICE).user.email == "owner@dimagi.com"
     assert inst.bot_token == "xoxb-new" and "xoxb-new" not in inst.bot_token_enc
 
 

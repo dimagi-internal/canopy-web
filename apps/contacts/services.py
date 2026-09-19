@@ -226,6 +226,58 @@ def record_embed_visitor(
     return contact
 
 
+def record_slack_user(
+    *,
+    workspace,
+    team_id: str,
+    slack_user_id: str,
+    email: str = "",
+    display_name: str = "",
+) -> Contact | None:
+    """Upsert the contact behind a Slack user who is not a workspace member.
+
+    **This grants nothing**, like the other two recorders. Someone who can post
+    in a channel an agent is invited to — a guest from a partner org, or a
+    colleague with no canopy membership — reaches that agent the way an
+    emailer reaches its inbox: as a person canopy knows, never as a member.
+
+    Keyed on Slack's own ids (`<team>:<user>`), which Slack signs on every
+    event. The profile email is recorded as a DESCRIPTION, not matched on:
+    joining this row to an email contact because the addresses agree would be
+    believing an assertion the grade does not cover.
+    """
+    team_id, slack_user_id = (team_id or "").strip(), (slack_user_id or "").strip()
+    if workspace is None or not team_id or not slack_user_id:
+        return None
+    grade = Contact.AUTH_SLACK
+    contact, created = Contact.objects.get_or_create(
+        workspace=workspace,
+        source=Contact.SOURCE_SLACK,
+        external_id=f"{team_id}:{slack_user_id}"[:200],
+        defaults={
+            "email": _normalize(email),
+            "display_name": (display_name or "").strip()[:200],
+            "auth_result": grade,
+            "last_auth_result": grade,
+            "message_count": 1,
+        },
+    )
+    if created:
+        logger.info("contact %s recorded from Slack in %s — no membership granted",
+                    contact.pk, workspace.pk)
+        return contact
+    updates = {"last_auth_result": grade, "message_count": F("message_count") + 1}
+    # Fill blanks only, for the same reason as the widget: a later message must
+    # not be able to relabel an established contact.
+    if not contact.display_name and (display_name or "").strip():
+        updates["display_name"] = display_name.strip()[:200]
+    if not contact.email and _normalize(email):
+        updates["email"] = _normalize(email)
+    Contact.objects.filter(pk=contact.pk).update(**updates)
+    contact.refresh_from_db()
+    return contact
+
+
 def block(contact: Contact, *, reason: str = "") -> Contact:
     """Stop this person reaching an agent, without disconnecting the site.
 

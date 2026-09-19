@@ -1,4 +1,4 @@
-"""A Slack message becomes a turn on a chat session. Nothing here talks HTTP.
+"""A Slack message becomes a turn on a chat session.
 
 The shape is the email path's (``harness.services.email_thread_session``): a
 Slack thread is a conversation, so it maps to one ``canopy_sessions.Session``
@@ -9,9 +9,10 @@ the session UI, interjection — with no Slack-specific execution path.
 
 What this module decides, and nothing else:
 
-* **who** — the linked canopy user, who must be a member of the installation's
-  workspace. An unlinked or non-member Slack user gets words back and nothing
-  queued: being in the Slack workspace grants nothing in canopy.
+* **who** — a workspace member (linked, or matched by Slack profile email),
+  who acts as their own account; or anyone else, recorded as a CONTACT and
+  answered as one, like an email sender. Being in the Slack workspace grants
+  nothing in canopy either way.
 * **which agent** — named first word, else the thread's existing agent, else the
   only enabled one. Only agents their owner turned on for Slack are candidates.
 * **which session** — keyed on (team, channel, thread), per agent.
@@ -24,16 +25,19 @@ from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 
-from apps.harness import initiator as who
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
+from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
+from . import client
 from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
@@ -117,8 +121,8 @@ class Inbound:
         return "" if self.anchor == DM_ANCHOR else self.anchor
 
 
-SENT, NOT_INSTALLED, UNLINKED, NOT_MEMBER, NO_AGENT, EMPTY = (
-    "sent", "not_installed", "unlinked", "not_member", "no_agent", "empty")
+SENT, NOT_INSTALLED, BLOCKED, NO_AGENT, EMPTY = (
+    "sent", "not_installed", "blocked", "no_agent", "empty")
 
 
 @dataclass
@@ -129,6 +133,26 @@ class Outcome:
     turn: Turn | None = None
     agent: Agent | None = None
     extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class Principal:
+    """Who is speaking: a workspace member, or a contact. Never both, never neither.
+
+    The same split the web surface makes (`request.user` vs `request.contact`),
+    for the same reason: a contact arriving through a user-shaped path would be
+    an unspecified permission, not a smaller one.
+    """
+
+    user: object = None
+    contact: object = None
+    assurance: str = ""
+
+    def initiator(self, team_id: str):
+        via = f"slack:{team_id}"
+        if self.contact is not None:
+            return who.for_contact(self.contact, via=via)
+        return who.for_user(self.user, via=via, assurance=self.assurance)
 
 
 def installation_for(team_id: str) -> SlackInstallation | None:
@@ -154,20 +178,84 @@ def agent_list(installation: SlackInstallation) -> str:
         ". Start your message with one, e.g. `@canopy " + slugs[0] + " summarise this thread`."
 
 
-def authorize(installation: SlackInstallation, slack_user_id: str) -> tuple[object | None, Outcome | None]:
-    """The linked canopy user, or the Outcome that says why there isn't one."""
+def slack_profile(installation: SlackInstallation, slack_user_id: str) -> dict:
+    """`users.info` for this person, or {} if Slack cannot be reached."""
+    try:
+        return client.user_info(installation.bot_token, slack_user_id)
+    except Exception:  # noqa: BLE001 — unreachable Slack degrades to "a contact we know less about"
+        logger.exception("slack users.info failed")
+        return {}
+
+
+def _is_guest(info: dict) -> bool:
+    return bool(info.get("is_restricted") or info.get("is_ultra_restricted"))
+
+
+def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
+    """Link a Slack user to the canopy user with the same email, if exactly one.
+
+    The manual link page proves exactly this — Slack email equals canopy email —
+    plus a click. The click added friction and no assurance, so it is now the
+    fallback for someone whose two emails differ. Requiring it first is what
+    made the first live mention on labs (2026-09-19) look like silence.
+
+    Not for a guest, a bot or a deactivated account: a guest is someone the
+    organisation invited in, and is answered as a CONTACT whatever their email
+    says. Not on an ambiguous match either — two canopy accounts sharing an
+    address is not something to resolve by picking one.
+
+    Grants nothing: membership is still checked on every message.
+    """
+    if not info or info.get("is_bot") or info.get("deleted") or _is_guest(info):
+        return None
+    email = str((info.get("profile") or {}).get("email") or "").strip()
+    if not email:
+        return None
+    matches = list(get_user_model().objects.filter(email__iexact=email, is_active=True)[:2])
+    if len(matches) != 1:
+        return None
+    link, _ = SlackUserLink.objects.get_or_create(
+        installation=installation, slack_user_id=slack_user_id, defaults={"user": matches[0]},
+    )
+    return link.user
+
+
+def resolve_principal(installation: SlackInstallation, slack_user_id: str) -> tuple[Principal | None, Outcome | None]:
+    """A member if we can establish one, otherwise a contact. Only a blocked
+    contact is turned away.
+
+    Everyone who can post where an agent is invited gets an answer, the way
+    anyone who can send an email gets one. What differs is WHAT they are to
+    canopy: a member acts as their own account (their session, their routing
+    rules); anyone else — a Slack guest, a colleague with no canopy membership —
+    is recorded as a contact, whose conversation no member can open and who is
+    granted nothing.
+    """
+    from apps.contacts import services as contacts
+
     link = (SlackUserLink.objects.select_related("user")
             .filter(installation=installation, slack_user_id=slack_user_id).first())
-    if link is None:
-        return None, Outcome(UNLINKED, (
-            "I don't know who you are in canopy yet. Link your account (sign in with "
-            f"the same email as your Slack account), then send that again: "
-            f"{link_url(installation.team_id, slack_user_id)}"))
-    if not wsvc.is_member(link.user, installation.workspace_id):
-        return None, Outcome(NOT_MEMBER, (
-            f"Your canopy account isn't a member of the `{installation.workspace_id}` "
-            "workspace, which is the one this Slack is connected to. Ask an owner to invite you."))
-    return link.user, None
+    info: dict | None = None
+    user, assurance = (link.user, who.SLACK_LINKED) if link is not None else (None, "")
+    if user is None:
+        info = slack_profile(installation, slack_user_id)
+        user, assurance = auto_link(installation, slack_user_id, info), who.SLACK_EMAIL
+    if user is not None and wsvc.is_member(user, installation.workspace_id):
+        return Principal(user=user, assurance=assurance), None
+
+    if info is None:
+        info = slack_profile(installation, slack_user_id)
+    profile = info.get("profile") or {}
+    contact = contacts.record_slack_user(
+        workspace=installation.workspace,
+        team_id=installation.team_id,
+        slack_user_id=slack_user_id,
+        email=str(profile.get("email") or ""),
+        display_name=str(profile.get("real_name") or profile.get("display_name") or info.get("name") or ""),
+    )
+    if contact is None or contact.is_blocked:
+        return None, Outcome(BLOCKED, "You can't reach agents from this Slack.")
+    return Principal(contact=contact), None
 
 
 def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple[Agent | None, str]:
@@ -188,28 +276,41 @@ def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple
     return None, text
 
 
-def thread_session(*, agent: Agent, user, key: str, inbound: Inbound, title: str) -> Session:
+def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
+                   title: str) -> Session:
     """The Session for this (agent, Slack thread) — found, or created once.
 
-    Private to whoever started it (``created_by`` + ``origin=web``, so
-    ``visible_session_q`` shows it to them and nobody else). Someone else who
-    joins the same Slack thread is added as a participant: they can already read
-    the thread in Slack, and the agent is answering there.
+    Owned by whoever started the thread. A member owns it as `created_by`, so
+    `visible_session_q` shows it to them and nobody else; a contact owns it as
+    `contact`, so no member sees it at all. A MEMBER who joins someone else's
+    thread becomes a participant — they can already read it in Slack. A contact
+    who joins gains nothing in canopy: they see the thread in Slack, which is
+    all a contact is ever given.
     """
     existing = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
                 .order_by("created_at").first())
     if existing is not None:
-        if existing.created_by_id != user.pk:
-            ensure_participant(existing, user, SessionParticipant.EDITOR)
+        if principal.user is not None and existing.created_by_id != principal.user.pk:
+            ensure_participant(existing, principal.user, SessionParticipant.EDITOR)
         return existing
-    return session_services.create_session(
-        workspace=agent.workspace, created_by=user, agent=agent, title=title[:200],
-        metadata={
-            SLACK_THREAD_KEY: key,
-            "slack_team": inbound.team_id,
-            "slack_channel": inbound.channel_id,
-            "slack_thread_ts": inbound.reply_thread_ts,
-        },
+    metadata = {
+        SLACK_THREAD_KEY: key,
+        "slack_team": inbound.team_id,
+        "slack_channel": inbound.channel_id,
+        "slack_thread_ts": inbound.reply_thread_ts,
+    }
+    if principal.user is not None:
+        return session_services.create_session(
+            workspace=agent.workspace, created_by=principal.user, agent=agent,
+            title=title[:200], metadata=metadata,
+        )
+    # No `created_by`, exactly like a widget contact's session (tokens.contact_api):
+    # null is what keeps it out of every member's list.
+    if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
+        metadata[session_services.TRANSCRIPT_SOURCED] = True
+    return Session.objects.create(
+        workspace=agent.workspace, agent=agent, contact=principal.contact,
+        title=title[:200], metadata=metadata,
     )
 
 
@@ -217,7 +318,7 @@ def handle_message(inbound: Inbound) -> Outcome:
     installation = installation_for(inbound.team_id)
     if installation is None:
         return Outcome(NOT_INSTALLED, "This Slack workspace isn't connected to canopy.")
-    user, refusal = authorize(installation, inbound.slack_user_id)
+    principal, refusal = resolve_principal(installation, inbound.slack_user_id)
     if refusal is not None:
         return refusal
     text = strip_mentions(inbound.text, installation.bot_user_id)
@@ -227,20 +328,22 @@ def handle_message(inbound: Inbound) -> Outcome:
         return Outcome(NO_AGENT, agent_list(installation))
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
-    session = thread_session(agent=agent, user=user, key=key, inbound=inbound, title=prompt)
+    session = thread_session(agent=agent, principal=principal, key=key, inbound=inbound, title=prompt)
     _message, turn = session_services.send_message(
         session=session,
         text=prompt,
-        user=user,
+        # A contact has no account; enqueue_turn ignores an anonymous user, so
+        # the turn carries no `enqueued_by` and the initiator names the contact.
+        user=principal.user or AnonymousUser(),
         # Slack redelivers an event it thinks we missed; the same message must
         # collapse onto the same turn rather than asking the agent twice.
         client_id=f"slack:{inbound.channel_id}:{inbound.ts}",
         origin=Turn.ORIGIN_SLACK,
-        # The one Slack line the who-is-asking work touches, deliberately: the
-        # linked canopy user who sent THIS message (not the thread's starter,
-        # and not the channel history the bot reads in as context).
-        initiator=who.for_user(user, via=f"slack:{inbound.team_id}",
-                               assurance=who.SLACK_LINKED),
+        initiator=principal.initiator(inbound.team_id),
     )
-    return Outcome(SENT, f"Sent to `{agent.slug}` — follow along: {session_url(session)}",
-                   session=session, turn=turn, agent=agent)
+    if principal.user is None:
+        # A contact cannot open canopy, so a link would be a dead end.
+        note = f"Sent to `{agent.slug}`."
+    else:
+        note = f"Sent to `{agent.slug}` — follow along: {session_url(session)}"
+    return Outcome(SENT, note, session=session, turn=turn, agent=agent)
