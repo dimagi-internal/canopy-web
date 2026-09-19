@@ -1,6 +1,6 @@
 # Who is asking: initiator identity and access, end to end
 
-**Status:** proposed, revised 2026-09-18 around **owner + admins** and a **declared interface** for everyone else. D1 decided; D2–D7 open. Phase 1a shipped (#846).
+**Status:** proposed, revised 2026-09-18 around **owner + admins** and a **declared interface** for everyone else. D1 and D7 decided; D2–D6 open. Phase 1a: #846.
 **Channels in scope:** the widget, canopy chat (web + phone), email, **Slack** (`apps/slack`, being brought back up in parallel — see §1a), schedules and dispatch.
 **Spans:** canopy-web (identity, admins, the interface, tool authorization),
 the runner, the canopy agent framework (`agent-core`, the agent factory,
@@ -197,9 +197,10 @@ and that code says plainly that `editor` "is not a deliberate grant": self-join
 hands it to anyone from an allowed domain who clicks join. Being in a workspace
 and being trusted with an agent's full session are different things.
 
-**A name to retire.** `_agent_for_admin` today means "WORKSPACE owner only, for
-the agent's secrets". Once admins exist, that name would mean two things; it is
-renamed (`_agent_for_secrets`) and its rule is D7.
+**Credentials follow the same line (D7, decided).** The agent's owner or any
+admin may set up all of its credentials. Today that gate is `_agent_for_admin`,
+which — confusingly — means "WORKSPACE owner"; it becomes "the agent's owner or
+an admin", so the name finally means what it says.
 
 ## 4. The declared interface: what an agent offers callers
 
@@ -316,7 +317,7 @@ agent reaches while answering — both are needed.
 | where | change |
 | --- | --- |
 | canopy-web `harness` | initiator on every turn (**shipped, #846**); capability on caller turns; envelope in the claim response |
-| canopy-web `agents` | `Agent.admins`; reshaping gated on admin instead of workspace editor; `_agent_for_admin` → `_agent_for_secrets`; publish + store `interface.yaml` |
+| canopy-web `agents` | `Agent.admins`; reshaping AND credentials gated on owner-or-admin (credentials today: workspace owner only); publish + store `interface.yaml` |
 | canopy-web `tokens` | arrival resolution (§2), never creating a user |
 | canopy-web `mcp` | each agent's interface served as per-caller MCP tools; `who_is_asking()`; tool scoping `agent ∩ caller`; host on-behalf-of forwarding |
 | canopy-web `slack` | the one initiator line (shipped in #846); later, invoke `ask` rather than open a working session |
@@ -332,8 +333,8 @@ agent reaches while answering — both are needed.
 2. **Arrival resolution** (§2) — existing canopy accounts arrive as themselves,
    everyone else is a contact; then ace-web onto this path and the
    user-creating `token-exchange` removed.
-3. **Owner and admins** — `Agent.admins`, the owner's UI to grant it, reshaping
-   and the full working session gated on it, the rename. Useful alone: it is the
+3. **Owner and admins** — `Agent.admins`, the owner's UI to grant it, and
+   reshaping, credentials and the full working session gated on owner-or-admin. Useful alone: it is the
    explicit trust grant the workspace `editor` role was standing in for.
 4. **The declared interface** — `interface.yaml`, published and served as
    per-caller MCP tools; caller turns carry their capability; channels invoke it.
@@ -362,6 +363,8 @@ that is fine for everyone who can reach it.
   *Recommended: the agent's owner plus the workspace's `owner`-role members, so
   nobody who can change an agent today silently loses it; editors do not carry
   over, since theirs was never a deliberate grant.*
-- **D7 — Secrets.** Today the agent's credentials are writable by workspace
-  owners only. After admins: *recommended* the agent's owner only — credentials
-  control the agent end to end, and the owner is the one accountable person.
+- **D7 — Credentials. DECIDED 2026-09-18:** the agent's **owner or any admin**
+  may set up all of its credentials. Today that is workspace owners only
+  (`_agent_for_admin`); it moves to the agent's own owner + admins, which is also
+  why the admins list must be a deliberate grant rather than a workspace role —
+  granting admin now hands over the agent's keys.
