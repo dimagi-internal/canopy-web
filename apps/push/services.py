@@ -6,17 +6,20 @@ snapshot each agent's open-item count and push only when it goes UP.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 
 from django.conf import settings
 from django.db import connection, transaction
+from django.utils import timezone
 from pywebpush import WebPushException, webpush
 
 from apps.agents.models import Agent
-from apps.harness.models import Item
+from apps.canopy_sessions.models import Message, Session
+from apps.harness.models import Item, Turn
 
-from .models import AgentWaitingSnapshot, PushSubscription
+from .models import AgentWaitingSnapshot, PushSubscription, session_idle_minutes_for
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +223,121 @@ def notify_session_question(session, menu: dict) -> int:
     except Exception:  # noqa: BLE001 — never let a notification break the report
         logger.exception("push: session-question notify failed for %s", session.pk)
         return 0
+
+
+# ---- "your chat is done" ---------------------------------------------------
+#
+# A session never "ends" — an agent answers, goes quiet, and may pick up again
+# a minute later. So the default is NOT a push per finished turn (an agent's
+# back-to-back turns would buzz once each) but one push once the session has
+# stayed quiet for the recipient's `session_idle_minutes` (default 5). A turn
+# ending stamps `Session.finish_push_due_at`; the next turn clears it; the
+# runner heartbeat drains whatever falls due. A session flagged
+# `notify_every_completion` skips the wait and pushes on every finished turn.
+#
+# CANCELLED and MISSED never push: a cancel is the human saying stop, and they
+# already know.
+
+FINISH_BODY_MAX = 140
+FINISH_PUSH_BATCH = 50
+_PUSHABLE = (Turn.DONE, Turn.FAILED)
+_OPEN = (Turn.QUEUED, Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+
+
+def _finish_audience(turn: Turn):
+    """Who asked for this turn; else whoever a question on this session would go to."""
+    return turn.initiator_user or turn.enqueued_by or _question_audience(turn.chat_session)
+
+
+def _finish_body(session: Session, turn: Turn) -> str:
+    reply = (
+        Message.objects.filter(session=session, role=Message.ASSISTANT)
+        .exclude(plaintext="")
+        .order_by("-turn_index")
+        .values_list("plaintext", flat=True)
+        .first()
+    )
+    text = " ".join((reply or turn.result_note or "").split())
+    if not text:
+        return "Reply ready" if turn.status == Turn.DONE else "The turn failed"
+    if len(text) > FINISH_BODY_MAX:
+        text = text[: FINISH_BODY_MAX - 1].rstrip() + "…"
+    return text
+
+
+def _send_finish(session: Session, turn: Turn, user) -> int:
+    """Deep-linked to the chat itself — the tap lands on the reply."""
+    name = (session.title or "").strip() or "Your chat"
+    title = f"{name} failed" if turn.status == Turn.FAILED else f"{name} is done"
+    try:
+        return send_to_user(
+            user, title=title, body=_finish_body(session, turn),
+            url=f"/w/{session.workspace_id}/chat/{session.id}",
+        )
+    except Exception:  # noqa: BLE001 — a notification must never break its caller
+        logger.exception("push: session-finish notify failed for %s", session.pk)
+        return 0
+
+
+def on_session_turn_finished(turn: Turn) -> None:
+    """Called by `finish_turn` for a session turn that just reached a terminal state."""
+    if not turn.chat_session_id or turn.status not in _PUSHABLE:
+        return
+    session = turn.chat_session
+    user = _finish_audience(turn)
+    if user is None:
+        return
+    if session.notify_every_completion:
+        Session.objects.filter(pk=session.pk).update(finish_push_due_at=None)
+        transaction.on_commit(lambda: _send_finish(session, turn, user))
+        return
+    minutes = session_idle_minutes_for(user)
+    due = timezone.now() + dt.timedelta(minutes=minutes) if minutes > 0 else None
+    Session.objects.filter(pk=session.pk).update(finish_push_due_at=due)
+
+
+def cancel_session_finish_push(session_id) -> None:
+    """A new turn: the session was not done after all."""
+    Session.objects.filter(pk=session_id, finish_push_due_at__isnull=False).update(
+        finish_push_due_at=None
+    )
+
+
+def send_due_session_pushes(now=None) -> int:
+    """Send every "gone quiet" push that has fallen due. Returns pushes sent.
+
+    Every runner heartbeats, so several can drain at once: each row is claimed by
+    a conditional UPDATE on the exact due time it was read with, and only the
+    runner whose update lands sends.
+    """
+    now = now or timezone.now()
+    due = list(
+        Session.objects.filter(finish_push_due_at__lte=now)
+        .order_by("finish_push_due_at")
+        .values_list("pk", "finish_push_due_at")[:FINISH_PUSH_BATCH]
+    )
+    sent = 0
+    for pk, due_at in due:
+        if not Session.objects.filter(pk=pk, finish_push_due_at=due_at).update(finish_push_due_at=None):
+            continue  # another runner took it, or a new turn cleared it
+        session = (
+            Session.objects.select_related("runner_binding").filter(pk=pk).first()
+        )
+        if session is None or session.status != Session.ACTIVE:
+            continue
+        if Turn.objects.filter(chat_session=session, status__in=_OPEN).exists():
+            continue  # busy again — its own finish will re-arm this
+        binding = getattr(session, "runner_binding", None)
+        if binding is not None and binding.pending_question:
+            continue  # waiting on a human: the question push already said so
+        turn = (
+            Turn.objects.filter(chat_session=session, finished_at__isnull=False)
+            .order_by("-finished_at")
+            .first()
+        )
+        if turn is None or turn.status not in _PUSHABLE:
+            continue
+        user = _finish_audience(turn)
+        if user is not None:
+            sent += _send_finish(session, turn, user)
+    return sent

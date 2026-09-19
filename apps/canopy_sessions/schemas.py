@@ -144,6 +144,8 @@ class SessionOut(Schema):
     # an idle one are indistinguishable in the list — the "it looks like the
     # session stopped" half of the 2026-07-31 spark report.
     waiting_on_you: bool = False
+    # Push on every finished turn, rather than once the chat has gone quiet.
+    notify_every_completion: bool = False
 
 
 class SessionDetailOut(SessionOut):
@@ -162,6 +164,10 @@ class SessionDetailOut(SessionOut):
 class SendOut(Schema):
     turn_id: uuid.UUID | None
     message: MessageOut
+
+
+class SessionNotifyIn(Schema):
+    every_completion: bool
 
 
 class StreamStateOut(Schema):

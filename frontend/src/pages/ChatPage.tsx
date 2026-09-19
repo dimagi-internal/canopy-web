@@ -18,6 +18,7 @@ import {
   requestBackfill,
   resetSession,
   closeSession,
+  setSessionNotify,
   placeTurn,
   answerMenu,
   ChatApiError,
@@ -674,6 +675,17 @@ export function ChatPage() {
   const staleRunning = liveWorking === undefined && Boolean(meta?.running);
   const title = meta?.title?.trim() || 'Chat'
 
+  const toggleNotify = async () => {
+    if (!id || !meta) return
+    const next = !meta.notify_every_completion
+    setMeta((prev) => (prev ? { ...prev, notify_every_completion: next } : prev))
+    try {
+      await setSessionNotify(id, next)
+    } catch {
+      setMeta((prev) => (prev ? { ...prev, notify_every_completion: !next } : prev))
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
@@ -712,6 +724,26 @@ export function ChatPage() {
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {meta && (
+            <button
+              type="button"
+              data-testid="notify-every-completion"
+              aria-pressed={meta.notify_every_completion}
+              onClick={() => void toggleNotify()}
+              title={
+                meta.notify_every_completion
+                  ? 'Notifying on every reply — click to only notify once this chat goes quiet'
+                  : 'Notify me on every reply (otherwise: once this chat goes quiet)'
+              }
+              className={
+                meta.notify_every_completion
+                  ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-[12px] text-primary hover:bg-primary/20'
+                  : 'rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted'
+              }
+            >
+              {meta.notify_every_completion ? '🔔 Every reply' : '🔕 Every reply'}
+            </button>
+          )}
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           <button
             type="button"

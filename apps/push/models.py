@@ -54,3 +54,27 @@ class AgentWaitingSnapshot(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"snapshot:{self.agent_id}:{self.waiting_count}"
+
+
+class NotificationPreference(models.Model):
+    """Per-user push knobs. No row means the defaults."""
+
+    DEFAULT_SESSION_IDLE_MINUTES = 5
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notification_preference"
+    )
+    # How long a chat must stay quiet after a turn ends before "it's done" is
+    # pushed. 0 turns that push off; a chat's `notify_every_completion` still
+    # fires. Waiting (rather than pushing on every turn end) is what keeps an
+    # agent's back-to-back turns from buzzing once each.
+    session_idle_minutes = models.PositiveIntegerField(default=DEFAULT_SESSION_IDLE_MINUTES)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"notify:{self.user_id}:{self.session_idle_minutes}m"
+
+
+def session_idle_minutes_for(user) -> int:
+    pref = NotificationPreference.objects.filter(user=user).first()
+    return pref.session_idle_minutes if pref else NotificationPreference.DEFAULT_SESSION_IDLE_MINUTES

@@ -210,6 +210,11 @@ def enqueue_turn(
         if replay is not None:
             return replay, False
         raise
+    if session is not None:
+        # New work on the session: it was not done, so drop any pending "done" push.
+        from apps.push import services as push_services
+
+        push_services.cancel_session_finish_push(session.pk)
     return turn, True
 
 
@@ -279,6 +284,15 @@ def heartbeat(
             claimed_by=runner,
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
         ).update(lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
+    # The fleet's heartbeats are canopy's only clock (no celery, no beat), so the
+    # delayed "your chat has gone quiet" pushes are drained here. Best-effort: a
+    # push must never cost a runner its heartbeat.
+    try:
+        from apps.push import services as push_services
+
+        push_services.send_due_session_pushes(now)
+    except Exception:  # noqa: BLE001
+        logger.exception("push: draining due session pushes failed")
     return runner
 
 
@@ -1299,6 +1313,15 @@ def finish_turn(
         append_events(turn, [{"kind": "error", "payload": {
             "detail": "your stop never reached the runner — this turn ran to completion",
         }}])
+    if turn.chat_session_id:
+        # "Your chat is done" — arms the quiet-timer (or pushes now, if the chat
+        # asked for every completion). Never allowed to fail the finish.
+        try:
+            from apps.push import services as push_services
+
+            push_services.on_session_turn_finished(turn)
+        except Exception:  # noqa: BLE001
+            logger.exception("push: could not arm the finish push for turn %s", turn.pk)
     # A finished scheduled occurrence discharges any open nag for its schedule —
     # you no longer owe attention to a slot that has since completed.
     if status == Turn.DONE:
