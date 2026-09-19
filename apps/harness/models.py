@@ -433,6 +433,23 @@ class Turn(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="turns_enqueued",
     )
+
+    # WHO ASKED, in one shape for every channel — see `apps/harness/initiator.py`
+    # and the who-is-asking spec. Distinct from `enqueued_by`, which records the
+    # CALLER of the enqueue: for an email that is the runner that posted it, not
+    # the person who wrote in. Record-only today; the access phases read these.
+    initiator_kind = models.CharField(max_length=16, blank=True, default="")
+    initiator_via = models.CharField(max_length=64, blank=True, default="")
+    initiator_assurance = models.CharField(max_length=32, blank=True, default="")
+    initiator_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="turns_initiated",
+    )
+    initiator_contact = models.ForeignKey(
+        "contacts.Contact", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="turns_initiated",
+    )
+    initiator_agent = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     # ---- the report half (was apps.agents.AgentTurn, merged here 2026-08-11) ----

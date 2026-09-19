@@ -19,6 +19,7 @@ from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import initiator as who
 from . import services
 from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn
 from .schedule_services import serialize_schedule
@@ -1258,6 +1259,12 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         routing=payload.routing,
         enqueued_by=request.user,  # the human launching a manual / composer turn
         pinned_runner=pinned,
+        # The CALLER is the asker for every postable origin except email, which a
+        # runner posts on a stranger's behalf — enqueue_turn names that sender
+        # itself. Passing the caller for email would record the runner's owner as
+        # the person who wrote in.
+        initiator=(None if payload.origin == Turn.ORIGIN_EMAIL
+                   else who.for_request(request, via=payload.origin)),
     )
     return Status(201 if created else 200, turn)
 
@@ -1271,7 +1278,9 @@ def list_turns(
 ):
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
-    qs = Turn.objects.select_related("agent", "claimed_by").order_by("-created_at")
+    qs = Turn.objects.select_related(
+        "agent", "claimed_by", "initiator_user", "initiator_contact",
+    ).order_by("-created_at")
     if agent:
         # Resolve the TARGET before filtering. The tenant filter below would
         # otherwise express a permission denial as an empty list — 200 [] — which

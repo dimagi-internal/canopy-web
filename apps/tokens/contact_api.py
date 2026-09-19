@@ -21,6 +21,8 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
+from apps.harness import initiator as who
+
 from . import assertions
 from .audit import client_ip, record as audit
 from .models import ContactToken, EmbedAuditLog
@@ -340,6 +342,7 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         message, turn = session_services.send_message(
             session=session, text=payload.text, user=request.user,
             client_id=payload.client_id,
+            initiator=who.for_request(request, via=who.channel(request, "contact")),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

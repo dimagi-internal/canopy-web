@@ -59,6 +59,10 @@ class BearerTokenAuthMiddleware:
             if token is not None:
                 PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
                 request.user = token.user
+                # How this request authenticated — the assurance a turn's
+                # initiator records (apps/harness/initiator.py). Absent means
+                # canopy's own session did it.
+                request.auth_method = "pat"
                 request._dont_enforce_csrf_checks = True
                 return
 
@@ -71,6 +75,7 @@ class BearerTokenAuthMiddleware:
         if ctok is not None:
             request.contact = ctok.contact
             request.delegated_app = ctok.app
+            request.auth_method = "contact"
             request._dont_enforce_csrf_checks = True
             return
 
@@ -101,6 +106,7 @@ class BearerTokenAuthMiddleware:
         # answer, and it is the one every other view on this request already saw.
         if not already_signed_in:
             request.user = dtok.user
+            request.auth_method = "delegated"
 
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its

@@ -831,7 +831,19 @@ Anything that was never pushed from {source} did not come with you.
 """
 
 
-def transfer_session(*, session: Session, placement: str, brief: str = "", user=None):
+def _initiator(initiator, user, via: str):
+    """The turn's asker (`apps/harness/initiator.py`). Callers pass it, because
+    only the caller knows how the person authenticated. A caller that has not
+    been taught to still gets the right PERSON with an empty assurance — true
+    about who, silent about how — rather than a guessed grade."""
+    if initiator is not None:
+        return initiator
+    from apps.harness import initiator as who
+    return who.for_user(user, via=via, assurance="")
+
+
+def transfer_session(*, session: Session, placement: str, brief: str = "", user=None,
+                     initiator=None):
     """Move a live session onto another runner, carrying its history.
 
     The three things a transfer has to do, which pinning a turn alone does NOT:
@@ -944,6 +956,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
                         "transfer_from": source_name},
             enqueued_by=user,
             pinned_runner=target,
+            initiator=_initiator(initiator, user, "transfer"),
         )
     return binding, turn
 
@@ -1013,7 +1026,7 @@ def default_origin(session) -> str:
 
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
-    origin: str | None = None,
+    origin: str | None = None, initiator=None,
 ) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
@@ -1046,7 +1059,7 @@ def send_message(
     if transcript_sourced(session):
         return _send_transcript_sourced_message(
             session=session, text=text, user=user, client_id=client_id,
-            placement=placement, origin=origin,
+            placement=placement, origin=origin, initiator=initiator,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -1098,6 +1111,7 @@ def send_message(
             # unauthenticated user, so this is safe to pass unconditionally.
             enqueued_by=user,
             pinned_runner=pinned,
+            initiator=_initiator(initiator, user, origin),
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
     # the human's message is an interjection. Push it down to the runner executing
@@ -1142,6 +1156,7 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
 def _send_transcript_sourced_message(
     *, session: Session, text: str, user=None, client_id: str = "",
     placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
+    initiator=None,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -1190,6 +1205,7 @@ def _send_transcript_sourced_message(
         # unauthenticated user, so this is safe to pass unconditionally.
         enqueued_by=user,
         pinned_runner=pinned,
+        initiator=_initiator(initiator, user, origin),
     )
     _maybe_interject(session, message)
     return message, turn

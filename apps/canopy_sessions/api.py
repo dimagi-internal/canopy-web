@@ -17,6 +17,7 @@ from ninja import File, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
+from apps.harness import initiator as who
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
@@ -432,6 +433,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
             session=session, text=payload.text, user=request.user,
             client_id=payload.client_id, placement=payload.placement,
             origin=payload.origin,
+            initiator=who.for_request(request, via=who.channel(request, "chat")),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
@@ -481,6 +483,7 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
         binding, turn = services.transfer_session(
             session=session, placement=payload.runner, brief=payload.brief,
             user=request.user,
+            initiator=who.for_request(request, via="transfer"),
         )
     except LookupError as exc:
         raise HttpError(404, str(exc))

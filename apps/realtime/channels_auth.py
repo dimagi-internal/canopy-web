@@ -64,6 +64,16 @@ def _user_from_session(scope):
 
 
 @database_sync_to_async
+def _bearer_method(scope) -> str:
+    """`pat` or `delegated` for the bearer token `_user_from_bearer` accepted."""
+    raw = _header(scope, b"authorization")
+    token_value = raw[7:].decode("latin1").strip() if raw else ""
+    from apps.tokens.models import PersonalToken
+
+    return "pat" if PersonalToken.lookup(token_value) is not None else "delegated"
+
+
+@database_sync_to_async
 def _user_from_bearer(scope):
     raw = _header(scope, b"authorization")
     if not raw or not raw.lower().startswith(b"bearer "):
@@ -128,13 +138,21 @@ class RealtimeAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        user = (
-            await _user_from_session(scope)
-            or await _user_from_bearer(scope)
-            or await _user_from_query_token(scope)
-        )
+        # WHICH door authenticated this socket, alongside who — the "how sure are
+        # we" grade a turn's initiator carries (apps/harness/initiator.py). A PAT
+        # and an app-delegated token resolve to the same user and are not the
+        # same claim.
+        method = "session"
+        user = await _user_from_session(scope)
+        if user is None:
+            user = await _user_from_bearer(scope)
+            method = await _bearer_method(scope) if user is not None else ""
+        if user is None:
+            user = await _user_from_query_token(scope)
+            method = "delegated" if user is not None else ""
         scope = dict(scope)
         scope["user"] = user or AnonymousUser()
+        scope["auth_method"] = method
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
         # `scope["user"]` stays anonymous for a contact, so any consumer that

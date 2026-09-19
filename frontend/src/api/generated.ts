@@ -10268,6 +10268,31 @@ export interface components {
             /** Projects */
             readonly projects?: readonly string[] | null;
         };
+        /**
+         * InitiatorOut
+         * @description Who asked for this turn, and how that was established.
+         */
+        readonly InitiatorOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Via */
+            readonly via: string;
+            /** Assurance */
+            readonly assurance: string;
+            readonly user?: components["schemas"]["InitiatorPersonOut"] | null;
+            readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
+            /** Agent */
+            readonly agent?: string | null;
+        };
+        /** InitiatorPersonOut */
+        readonly InitiatorPersonOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+        };
         /** TurnOut */
         readonly TurnOut: {
             /**
@@ -10299,6 +10324,7 @@ export interface components {
             readonly claimed_by_name: string | null;
             /** Enqueued By Email */
             readonly enqueued_by_email: string | null;
+            readonly initiator: components["schemas"]["InitiatorOut"];
             /** Session Id */
             readonly session_id: string;
             /** Result Note */

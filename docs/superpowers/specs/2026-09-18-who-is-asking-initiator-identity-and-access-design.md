@@ -75,6 +75,9 @@ is one vocabulary:
 | `slack_linked` | a Slack user linked by signing in to canopy (emails matched), re-checked for membership per message | a mention of the bot in Slack |
 | `host_signed` | a registered host signed a statement about this visitor | the widget on connect-labs |
 | `dmarc` / `dkim` / `spf` / `none` | as today for email | an inbound email |
+| `pat` | a personal access token — a machine acting as its owner | a script or runner posting a turn |
+| `delegated` | a token an app minted FOR the user | canopy's own widget on canopy's pages |
+| `approval` | a person approved an item whose work this is | an Item's `implement` dispatching a turn |
 | `internal` | canopy itself started it | a schedule firing, one agent dispatching to another |
 
 **Multiplayer sessions:** the initiator is per TURN — whoever sent *that*

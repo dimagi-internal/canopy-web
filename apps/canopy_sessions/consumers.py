@@ -12,6 +12,7 @@ import uuid
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from apps.harness import initiator as who
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.realtime.groups import session_group
@@ -284,7 +285,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         text = drafts.commit_active_draft(self.session)
         if not text.strip():
             return None
-        msg, turn = chat_services.send_message(session=self.session, text=text, user=self.user)
+        msg, turn = chat_services.send_message(
+            session=self.session, text=text, user=self.user,
+            initiator=who.for_scope(self.scope, via="chat"),
+        )
         chat_services.maybe_execute_inline(turn)
         return str(msg.pk)
 
