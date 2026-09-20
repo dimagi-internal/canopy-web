@@ -10,6 +10,8 @@ seam the spec names.
 """
 from __future__ import annotations
 
+import base64
+
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -247,3 +249,38 @@ def test_staleness(agent, granted):
     assert skill_history.is_stale(agent)
     skill_history.sync(agent)
     assert not skill_history.is_stale(agent)
+
+
+def test_the_clone_authenticates_the_way_git_over_https_requires():
+    """BASIC, not Bearer.
+
+    GitHub's API takes `Bearer <token>`; git-over-HTTPS rejects it as "invalid
+    credentials" and then asks for a username, which is the failure this pins
+    (observed live on labs, 2026-09-19). Every other test in this file rewrites
+    the GitHub URL to a local repo, so none of them authenticates at all — this
+    is the only assertion on the header's form.
+    """
+    header = skill_history.auth_header("ghu_TOKEN")
+
+    scheme, _, payload = header.partition(" ")[2].partition(" ")
+    assert scheme == "Basic"
+    assert base64.b64decode(payload).decode() == "x-access-token:ghu_TOKEN"
+    assert "Bearer" not in header
+
+
+def test_the_clone_passes_that_header_in_the_environment_not_argv(agent, granted, tmp_path):
+    """The token must not reach a process list, so it rides GIT_CONFIG_*."""
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env") or {}
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    with mock.patch.object(skill_history.subprocess, "run", side_effect=fake_run):
+        row = skill_history.sync(agent, force=True)
+
+    assert row.last_state == "ok"  # a timeout is transient, not a grant problem
+    assert seen["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert seen["env"]["GIT_CONFIG_VALUE_0"] == skill_history.auth_header(TOKEN)
+    assert TOKEN not in " ".join(seen["cmd"])
