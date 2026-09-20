@@ -51,7 +51,7 @@ describe('guideGroups', () => {
     // /w/:workspace prefixes every tenant route; if it prefix-matched, the group
     // holding Projects would absorb the entire app.
     const work = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace'))
-    expect(work?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/members')
+    expect(work?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/settings')
   })
 
   it('keeps Elsewhere a small remainder, not a dumping ground', () => {

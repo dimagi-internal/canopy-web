@@ -1,6 +1,6 @@
 # Runbook — provisioning Gmail push for a workspace
 
-**Everything here is done in the UI at `/w/:workspace/inbound`.** This file
+**Everything here is done in the UI at `/w/:workspace/settings/inbound`.** This file
 explains what the steps mean; the page generates the exact commands from your
 workspace's own values, so you should not need to copy anything out of here.
 

@@ -160,7 +160,7 @@ export function InboundPushPage(): JSX.Element | null {
   if (!slug) return null
 
   return (
-    <div className="space-y-8 p-6">
+    <div className="max-w-4xl space-y-8">
       <WorkbenchSubHeader title="Inbound email push" />
       <p className="-mt-6 text-sm text-foreground-secondary">
         Deliver mail to an agent in seconds instead of waiting out the 5-minute poll.

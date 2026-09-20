@@ -36,7 +36,7 @@ entry could be deleted with CI still green.
 
 Four ways, and the fourth is the only one you do not do yourself:
 
-- **An invite.** An owner creates one at `/w/:workspace/members`; you open the
+- **An invite.** An owner creates one at `/w/:workspace/settings/members`; you open the
   `/invite/:token` link. Canopy sends no email — the link is copied and sent by a human.
 - **Self-join.** If a workspace lists your email domain in `self_join_domains`, you may
   join it yourself: `GET /api/workspaces/joinable` tells you which, `POST

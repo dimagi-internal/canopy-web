@@ -74,9 +74,11 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: 'shareouts', label: 'Shareouts', tenant: true },
       { path: 'timeline', label: 'Timeline', tenant: true },
       { path: '/sessions', label: 'Sessions', tenant: false },
-      { path: 'members', label: 'Members', tenant: true },
-      { path: 'inbound', label: 'Inbound', tenant: true },
-      { path: 'slack', label: 'Slack', tenant: true },
+      // ONE entry for the workspace's configuration. Members, Slack and
+      // Inbound were three of the four sections behind it; the fourth
+      // (Connected sites) was in no menu at all, which is what a surface with
+      // no home looks like.
+      { path: 'settings', label: 'Settings', tenant: true },
       { path: '/system', label: 'System', tenant: false },
       { path: '/guide', label: 'Guide', tenant: false },
     ],

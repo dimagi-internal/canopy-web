@@ -57,7 +57,7 @@ export function SlackSettingsPage(): JSX.Element {
 
   if (config === null) {
     return (
-      <div className="max-w-3xl px-6 py-8">
+      <div className="max-w-3xl">
         <WorkbenchSubHeader title="Slack" />
         <WorkbenchSkeleton />
       </div>
@@ -66,7 +66,7 @@ export function SlackSettingsPage(): JSX.Element {
   const cmds = config.commands
 
   return (
-    <div className="max-w-3xl px-6 py-8" data-testid="slack-settings">
+    <div className="max-w-3xl" data-testid="slack-settings">
       <WorkbenchSubHeader title="Slack" />
 
       <section className="mb-8">

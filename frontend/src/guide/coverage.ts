@@ -38,6 +38,11 @@ const NOT_DOCUMENTABLE = new Set([
   '/ddd/*',
   '/ddd-plans',
   '/reviews',
+  // The four pages that became sections of /w/:workspace/settings.
+  '/w/:workspace/members',
+  '/w/:workspace/connected-apps',
+  '/w/:workspace/inbound',
+  '/w/:workspace/slack',
   '/w/:workspace/agents/:slug/needs-you',
   '/w/:workspace/agents/:slug/credentials',
   '/w/:workspace/agents/:slug',
