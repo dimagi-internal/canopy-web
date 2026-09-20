@@ -423,8 +423,56 @@ class AgentTaskLink(StrictModel):
     url: str = Field(min_length=1, max_length=500)
 
 
+class AgentProjectIn(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    ext_id: str = Field(default="", max_length=64)
+    outcome: str = ""
+    status: str = "active"
+    owner_note: str = Field(default="", max_length=200)
+    drive_folder_id: str = Field(default="", max_length=128)
+    drive_folder_url: str = Field(default="", max_length=500)
+    repo_slug: str = Field(default="", max_length=100)
+    notes: str = ""
+    links: list[AgentTaskLink] = Field(default_factory=list)
+
+
+class AgentProjectPatch(StrictModel):
+    name: str | None = Field(default=None, max_length=200)
+    outcome: str | None = None
+    status: str | None = None
+    owner_note: str | None = Field(default=None, max_length=200)
+    drive_folder_id: str | None = Field(default=None, max_length=128)
+    drive_folder_url: str | None = Field(default=None, max_length=500)
+    repo_slug: str | None = Field(default=None, max_length=100)
+    notes: str | None = None
+    links: list[AgentTaskLink] | None = None
+
+
+class AgentProjectOut(StrictModel):
+    id: int
+    agent_slug: str
+    ext_id: str
+    name: str
+    outcome: str
+    status: Literal["active", "done", "archived"]
+    owner_note: str
+    owner_email: str | None = None
+    drive_folder_id: str
+    drive_folder_url: str
+    repo_slug: str
+    notes: str
+    links: list[AgentTaskLink] = Field(default_factory=list)
+    task_count: int = 0
+    open_task_count: int = 0
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
 class AgentTaskIn(StrictModel):
     ext_id: str = Field(min_length=1, max_length=64)
+    #: The project this task belongs to, by its `ext_id` ("P3") or numeric id.
+    #: Empty means a one-off, which plenty of work legitimately is.
+    project: str = Field(default="", max_length=64)
     title: str = Field(min_length=1, max_length=300)
     next_action: str = Field(default="", max_length=300)
     status: str = "suggested"  # normalized server-side
@@ -453,6 +501,8 @@ class AgentTaskOut(StrictModel):
     id: int
     agent_slug: str
     ext_id: str
+    project_ext_id: str | None = None
+    project_name: str | None = None
     title: str
     next_action: str
     status: Literal["suggested", "in_progress", "done", "declined"]
@@ -474,6 +524,9 @@ class AgentTaskOut(StrictModel):
 class AgentTaskPatch(StrictModel):
     """Partial update — only the fields sent are written."""
 
+    #: `""` takes the task OUT of its project; omitting it leaves the task where
+    #: it is. The two must differ, or patching a title would silently unfile it.
+    project: str | None = Field(default=None, max_length=64)
     title: str | None = Field(default=None, max_length=300)
     next_action: str | None = Field(default=None, max_length=300)
     status: str | None = None

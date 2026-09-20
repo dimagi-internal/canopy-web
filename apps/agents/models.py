@@ -28,6 +28,11 @@ class Agent(models.Model):
         related_name="agents",
         help_text="The human who operates the agent.",
     )
+    #: How many projects this agent has ever been given, so `P<N>` is never
+    #: reused. Deriving the next id from what EXISTS would hand "P2" back out
+    #: after P2 was deleted, and an old link (a task's Links, a Drive folder
+    #: name, an email) would then point at different work.
+    project_seq = models.PositiveIntegerField(default=0)
     #: The agent's OWN canopy login — not `owner`, which is the human operating
     #: it. An agent authenticates to canopy's own MCP with its own PAT
     #: (`secret_refs: canopy-pat`), so the caller behind a tool call is this
@@ -363,6 +368,104 @@ class AgentSkill(models.Model):
         return self.agent.slug
 
 
+class AgentProject(models.Model):
+    """A real project of this agent's — the thing its `Projects/<name>` Drive
+    folder holds.
+
+    **Why canopy holds a record and Drive still holds the files.** The layout in
+    `agent-core/deliverables.md` is per agent and non-negotiable: one Drive root
+    per agent, `Projects/<name>/` beneath it, deliverables inside. That is a good
+    home for FILES and a poor one for state — a folder cannot say who the work is
+    waiting on, whether it is finished, or which tasks belong to it, and nothing
+    can list "everything in flight" across agents by reading Drive. So the folder
+    stays exactly where it is and this row points AT it.
+
+    **Per agent, deliberately** (Jonathan, 2026-09-19). Two agents working the
+    same initiative have a project each, as they have a Drive folder each, and
+    share files across them when they want to. A single shared project would have
+    to own a folder that the Drive layout gives no place to.
+
+    Distinct from the workbench's own `Project` (product tier — the list of
+    REPOS: canopy-web, connect-labs, the agent repos, each carrying insights). A
+    project HERE is a piece of work with an end — "UNGA 2026 conference
+    planning" — and names a repo it touches only as a slug (`repo_slug`), never
+    an FK, because framework code may not reach into a product app at all. The
+    architecture test even forbids naming that module in a string, which is how
+    this paragraph came to describe it instead.
+    """
+
+    ACTIVE, DONE, ARCHIVED = "active", "done", "archived"
+    STATUS_CHOICES = [(ACTIVE, "Active"), (DONE, "Done"), (ARCHIVED, "Archived")]
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="projects")
+    #: Stable id the agent addresses it by, unique per agent — the same shape as
+    #: `AgentTask.ext_id` ("P1", "P2"), so the CLI can name a project without
+    #: guessing at database ids.
+    ext_id = models.CharField(max_length=64, help_text="Stable id, unique per agent (P1, P2 …).")
+    name = models.CharField(max_length=200, help_text="What the project is called — and its Drive folder's name.")
+    outcome = models.TextField(blank=True, default="", help_text="What done looks like.")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ACTIVE)
+
+    #: The human who owns the outcome. A real person where canopy knows them, so
+    #: "waiting on you" can reach someone; free text otherwise, because half the
+    #: stakeholders in the fleet's boards today are names canopy has never seen.
+    owner_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="agent_projects",
+    )
+    owner_note = models.CharField(max_length=200, blank=True, default="")
+
+    #: The agent's own `Projects/<name>` folder. The id is what `gog drive` needs;
+    #: the url is what a human clicks. Blank until the agent files something.
+    drive_folder_id = models.CharField(max_length=128, blank=True, default="")
+    drive_folder_url = models.URLField(max_length=500, blank=True, default="")
+
+    #: The repo this work touches, as a slug, if any — deliberately a string and
+    #: not an FK: `apps.projects` is product tier and `agents` is framework, and
+    #: framework may not import product (ARCHITECTURE.md).
+    repo_slug = models.CharField(max_length=100, blank=True, default="")
+
+    notes = models.TextField(blank=True, default="")
+    links = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["status", "-updated_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "ext_id"], name="agent_project_ext_id_unique"),
+        ]
+        indexes = [models.Index(fields=["agent", "status"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_id}:{self.ext_id} {self.name}"
+
+    # Schemas here are plain pydantic (`StrictModel`), not ninja `Schema`, so a
+    # `resolve_*` on the schema is ignored — the models carry these instead, the
+    # way `AgentTask.agent_slug` already does.
+    @property
+    def agent_slug(self) -> str:
+        return self.agent.slug
+
+    @property
+    def owner_email(self) -> str | None:
+        return self.owner_user.email if self.owner_user_id else None
+
+    @property
+    def task_count(self) -> int:
+        # The list route counts every project in one query and caches it here;
+        # a single fetched project counts its own.
+        cached = getattr(self, "_task_count", None)
+        return self.tasks.count() if cached is None else cached
+
+    @property
+    def open_task_count(self) -> int:
+        cached = getattr(self, "_open_task_count", None)
+        if cached is not None:
+            return cached
+        return self.tasks.filter(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]).count()
+
+
 class AgentTask(models.Model):
     """A task in the agent's tracker. Source of truth is a Google Sheet the
     agent maintains; Echo syncs rows here so canopy-web can render a board.
@@ -383,6 +486,14 @@ class AgentTask(models.Model):
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="tasks")
     ext_id = models.CharField(max_length=64, help_text="Stable id from the source sheet.")
+    #: The project this task is part of. Optional: plenty of work is a one-off,
+    #: and forcing a project on it would produce a project per task, which is
+    #: what the Drive layout already warns against ("never dump flat in
+    #: Projects/"). SET_NULL so closing a project does not delete its history.
+    project = models.ForeignKey(
+        "agents.AgentProject", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="tasks",
+    )
     # A task can mean "execute this run" — the run-lifecycle backing for the
     # board (spec §5). String FK ref ("agent_runs.AgentRun") so this framework
     # app doesn't import apps.agent_runs at module load (both are framework and
@@ -430,6 +541,14 @@ class AgentTask(models.Model):
 
     def __str__(self):
         return f"task:{self.agent.slug}:{self.ext_id}:{self.status}"
+
+    @property
+    def project_ext_id(self) -> str | None:
+        return self.project.ext_id if self.project_id else None
+
+    @property
+    def project_name(self) -> str | None:
+        return self.project.name if self.project_id else None
 
     @property
     def agent_slug(self) -> str:
