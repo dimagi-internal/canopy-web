@@ -2631,11 +2631,11 @@ export interface paths {
         };
         /**
          * Fleet inbox — items across every agent you can see
-         * @description The supervisor's home screen, as a pure query: open items across the
-         *     caller's visible agents, ranked review -> question then oldest-first. Replaces
-         *     the old needs_you aggregation. Defaults to state=open (the inbox); pass an
-         *     explicit state to widen. Authz reuses the single agent-visibility predicate, so
-         *     it can never show an item whose agent the agents list would hide.
+         * @description The supervisor's home screen, as a pure query: open asks across the
+         *     caller's visible agents, ranked review -> question then oldest-first.
+         *     Defaults to state=open (the inbox); pass an explicit state to widen. Authz
+         *     reuses the single agent-visibility predicate, so it can never show an ask
+         *     whose agent the agents list would hide.
          */
         readonly get: operations["apps_harness_items_api_list_fleet_items"];
         readonly put?: never;

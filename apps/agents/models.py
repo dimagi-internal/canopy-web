@@ -575,6 +575,10 @@ class AgentTask(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="tasks_decided",
     )
+    #: Retired without acting, as opposed to answered. Both close the ask and
+    #: both can leave the task declined, so the verb alone cannot tell them
+    #: apart — and "dismissed" vs "decided" is exactly what a queue shows.
+    ask_dismissed = models.BooleanField(default=False)
     #: The presence of this — not any status — is what closes an ask. A
     #: question's answer sets it while `decision` stays blank, because a
     #: question has no verb to click.
@@ -612,6 +616,13 @@ class AgentTask(models.Model):
 
     def __str__(self):
         return f"task:{self.agent.slug}:{self.ext_id}:{self.status}"
+
+    @property
+    def ask_state(self) -> str:
+        """`open` · `decided` · `dismissed` — the three words the queue speaks."""
+        if self.ask_is_open:
+            return "open"
+        return "dismissed" if self.ask_dismissed else "decided"
 
     @property
     def ask_is_open(self) -> bool:

@@ -7,7 +7,8 @@ from __future__ import annotations
 from django.db.models import Q
 
 from apps.agents import services as agent_services
-from apps.harness.models import Item, Runner
+from apps.agents.models import AgentTask
+from apps.harness.models import Runner
 from apps.workspaces import services as wsvc
 
 
@@ -32,9 +33,10 @@ def supervisor_snapshot(user) -> dict:
     # the same allow-on-NULL leg the REST surfaces were fixed for. Unrepresentable
     # since agents/0013 made Agent.workspace NOT NULL.
     agents = [a for a in agent_services.list_agents() if a.workspace_id in slugs]
-    # Waiting = open items on the agent — the inbox is a pure Item query now.
+    # Waiting = open ASKS on the agent's tasks (an Item is a task now).
     waiting = {
-        a.slug: Item.objects.filter(agent=a, state=Item.OPEN).count() for a in agents
+        a.slug: AgentTask.objects.filter(agent=a, decided_at__isnull=True)
+                                 .exclude(ask_kind="").count() for a in agents
     }
 
     runners = Runner.objects.exclude(status=Runner.RETIRED).filter(

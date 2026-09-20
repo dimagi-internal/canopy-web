@@ -17,7 +17,8 @@ from pywebpush import WebPushException, webpush
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Message, Session
-from apps.harness.models import Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import Turn
 
 from .models import AgentWaitingSnapshot, PushSubscription, session_idle_minutes_for
 
@@ -104,7 +105,12 @@ def refresh_agent_waiting(agent: Agent) -> int:
     subscribed — otherwise the first push after subscribing would fire for items
     that were already sitting there.
     """
-    count = Item.objects.filter(agent=agent, state=Item.OPEN).count()
+    # Open asks on the agent's tasks. This read items until 2026-09-19, which
+    # is why the fleet's ~24 tasks waiting on a person notified nobody: they
+    # were never items.
+    count = AgentTask.objects.filter(
+        agent=agent, decided_at__isnull=True
+    ).exclude(ask_kind="").count()
     snap, created = AgentWaitingSnapshot.objects.get_or_create(agent=agent)
     previous = 0 if created else snap.waiting_count
     if count != previous:

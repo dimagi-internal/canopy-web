@@ -1,6 +1,6 @@
-"""The nag: a grace-released (unattended) scheduled occurrence raises a real Item.
+"""The nag: a grace-released (unattended) scheduled occurrence raises a real ask.
 
-This is not a projection — release_stale_occurrence_turns raises a review Item whose
+This is not a projection — release_stale_occurrence_turns raises a review ask whose
 `implement` re-runs the schedule; a later finished occurrence dismisses it via
 finish_turn. Firing alone does NOT nag: only holding the agent past grace does.
 """
@@ -12,7 +12,8 @@ import pytest
 
 from apps.agents.models import Agent
 from apps.harness import services as hsvc
-from apps.harness.models import AgentSchedule, Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import AgentSchedule, Turn
 
 pytestmark = pytest.mark.django_db
 
@@ -29,9 +30,12 @@ def _claimed_long_ago(turn: Turn, *, minutes: int) -> Turn:
     return turn
 
 
-def _open_nags(agent) -> list[Item]:
+def _open_nags(agent) -> list:
+    """Open nags — tasks whose ask is still unanswered (`decided_at` is null)."""
     return list(
-        agent.items.filter(state=Item.OPEN, origin_ref__kind="schedule_nag").order_by("created_at")
+        agent.tasks.filter(decided_at__isnull=True, origin_ref__kind="schedule_nag")
+        .exclude(ask_kind="")
+        .order_by("created_at")
     )
 
 
@@ -68,7 +72,7 @@ def test_grace_released_occurrence_raises_a_review_nag(agent, schedule):
     assert released == 1
     nags = _open_nags(agent)
     assert len(nags) == 1
-    assert nags[0].kind == Item.REVIEW
+    assert nags[0].ask_kind == AgentTask.ASK_REVIEW
     assert nags[0].title == "Scheduled turn unattended: Goal review"
     # implement re-runs the schedule's prompt (self-dispatch) — the generic
     # replacement for the old "Run now" button.
@@ -97,10 +101,10 @@ def test_implementing_the_nag_re_runs_the_schedule(agent, schedule):
     nag = _open_nags(agent)[0]
 
     item, turns = hsvc.decide_item(
-        nag, decision=Item.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs=set(),
+        nag, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs=set(),
     )
 
-    assert item.state == Item.DECIDED
+    assert item.ask_state == "decided"
     assert len(turns) == 1
     # Stamped: a nag item's brief is machine-authored like any other card prompt.
     assert turns[0].prompt.startswith("/eva:goal-review")

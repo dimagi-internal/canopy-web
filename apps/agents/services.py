@@ -624,8 +624,9 @@ def dismiss_ask(task: AgentTask, *, by: str, decided_by_user=None, comment: str 
     task.decided_at = timezone.now()
     task.waiting_on_user = None
     task.status = AgentTask.DECLINED
+    task.ask_dismissed = True
     fields = ["decided_by", "decided_by_user", "decided_at", "status",
-              "waiting_on_user", "updated_at"]
+              "ask_dismissed", "waiting_on_user", "updated_at"]
     if comment:
         task.comment = comment
         fields.append("comment")

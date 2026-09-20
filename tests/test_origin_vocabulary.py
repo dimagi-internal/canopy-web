@@ -9,9 +9,20 @@ import pytest
 
 from apps.agents.models import Agent
 from apps.harness import services
-from apps.harness.models import Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import Turn
 from apps.harness.schemas import ItemIn, TurnIn
 from apps.workspaces.testing import a_workspace
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 pytestmark = pytest.mark.django_db
 
@@ -61,8 +72,7 @@ def test_both_origin_columns_hold_the_longest_value():
     turn = Turn.objects.create(
         agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="k1"
     )
-    item = Item.objects.create(
-        agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, title="t", idempotency_key="i1"
+    item = AgentTask.objects.create(agent=agent, ext_id=_ext(), origin=Turn.ORIGIN_CANOPY_SCHEDULER, title="t", idempotency_key="i1"
     )
     turn.refresh_from_db()
     item.refresh_from_db()

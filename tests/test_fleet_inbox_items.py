@@ -11,8 +11,19 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.harness.models import Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 pytestmark = pytest.mark.django_db
 
@@ -36,10 +47,18 @@ def client(owner):
     return c
 
 
-def _item(agent, title, *, kind=Item.REVIEW, state=Item.OPEN):
-    return Item.objects.create(
-        agent=agent, kind=kind, state=state, title=title, origin=Turn.ORIGIN_API,
-        idempotency_key=f"k-{agent.slug}-{title}",
+def _item(agent, title, *, ask_kind=AgentTask.ASK_REVIEW, state="open"):
+    """A task carrying an ask, in the given state. `state` is derived on a task
+    (`decided_at` + `ask_dismissed`) rather than stored, so it is set here the
+    way the verbs would have left it."""
+    from django.utils import timezone
+
+    return AgentTask.objects.create(
+        agent=agent, ext_id=_ext(), ask_kind=ask_kind, title=title,
+        origin=Turn.ORIGIN_API, idempotency_key=f"k-{agent.slug}-{title}",
+        decided_at=None if state == "open" else timezone.now(),
+        ask_dismissed=(state == "dismissed"),
+        status=AgentTask.SUGGESTED if state == "open" else AgentTask.DECLINED,
     )
 
 
@@ -58,8 +77,8 @@ def test_fleet_inbox_lists_open_items_across_agents(client, workspace):
 
 def test_review_items_outrank_question_items(client, workspace):
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
-    _item(echo, "answer me", kind=Item.QUESTION)
-    _item(echo, "decide me", kind=Item.REVIEW)
+    _item(echo, "answer me", ask_kind=AgentTask.ASK_QUESTION)
+    _item(echo, "decide me", ask_kind=AgentTask.ASK_REVIEW)
 
     rows = client.get("/api/items/?state=open").json()
     assert [r["kind"] for r in rows] == ["review", "question"]
@@ -68,8 +87,8 @@ def test_review_items_outrank_question_items(client, workspace):
 def test_decided_and_dismissed_items_are_absent_from_the_inbox(client, workspace):
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
     _item(echo, "still open")
-    _item(echo, "already decided", state=Item.DECIDED)
-    _item(echo, "already dismissed", state=Item.DISMISSED)
+    _item(echo, "already decided", state="decided")
+    _item(echo, "already dismissed", state="dismissed")
 
     rows = client.get("/api/items/?state=open").json()
     assert [r["title"] for r in rows] == ["still open"]
