@@ -470,6 +470,33 @@ def create_task(agent: Agent, data) -> AgentTask:
     return AgentTask.objects.create(agent=agent, ext_id=data.ext_id, project=project, **payload)
 
 
+class UnknownPersonError(Exception):
+    """canopy cannot route a wait to somebody it has never seen."""
+
+
+def resolve_waiting_on(agent: Agent, email: str):
+    """The member of this agent's workspace with that email, or None to clear.
+
+    Scoped to the workspace on purpose: "waiting on you" is a claim on somebody
+    canopy can notify AND who can see the agent, so routing it to a stranger
+    would create a wait nobody will ever answer.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    from django.contrib.auth import get_user_model
+
+    from apps.workspaces import services as wsvc
+
+    user = get_user_model().objects.filter(email__iexact=email).first()
+    if user is None or not wsvc.is_member(user, agent.workspace_id):
+        raise UnknownPersonError(
+            f"{email or 'that person'} is not a member of this agent's workspace — "
+            f"put the name in `assigned` instead"
+        )
+    return user
+
+
 def patch_task(task: AgentTask, data) -> AgentTask:
     """Partial update — only fields present in `data` (a dict) are written."""
     for f in _TASK_FIELDS:
@@ -477,6 +504,8 @@ def patch_task(task: AgentTask, data) -> AgentTask:
             setattr(task, f, _norm_status(data[f]) if f == "status" else data[f])
     if "links" in data:
         task.links = data["links"]
+    if "waiting_on_email" in data:
+        task.waiting_on_user = resolve_waiting_on(task.agent, data["waiting_on_email"])
     if "project" in data:
         # Present-and-empty means "take it out of its project"; absent means
         # "leave it where it is" (the schema keeps the two apart).
@@ -644,16 +673,45 @@ def next_task_ext_id(agent: Agent) -> str:
     return f"T{agent.task_seq}"
 
 
+#: Statuses a task is still LIVE in. A done or declined card waits on nobody.
+LIVE_STATUSES = [AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]
+
+
+def waiting_q():
+    """"Somebody has to do something" — as ONE predicate.
+
+    Two shapes count, and both are real:
+      * an open ASK (a review or question nobody has answered), and
+      * a live task PARKED ON A PERSON, which is most of what the fleet's
+        boards actually hold — "waiting on Andrea for the numbers" is a wait
+        even though nothing is being asked.
+
+    One definition because three consumers read it (the inbox, the waiting
+    badge, push), and this codebase has already paid for the same predicate
+    written three times.
+    """
+    from django.db.models import Q
+
+    return Q(status__in=LIVE_STATUSES) & (
+        (~Q(ask_kind="") & Q(decided_at__isnull=True)) | Q(waiting_on_user__isnull=False)
+    )
+
+
 def tasks_waiting_on(user, *, agent: Agent | None = None):
-    """The inbox: tasks whose ask is open and which wait on THIS person.
+    """The inbox: live tasks parked on THIS person.
 
     `waiting_on_user`, not the free-text `assigned`: canopy cannot notify a
     string, and the fleet's boards spell one human three ways
     ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
     """
+    from django.db.models import Q
+
     qs = (
-        AgentTask.objects.filter(waiting_on_user=user, decided_at__isnull=True)
-        .exclude(ask_kind="")
+        AgentTask.objects.filter(
+            Q(waiting_on_user=user),
+            Q(status__in=LIVE_STATUSES),
+            Q(decided_at__isnull=True),
+        )
         .select_related("agent", "project")
         .order_by("-updated_at")
     )

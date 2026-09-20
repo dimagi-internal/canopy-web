@@ -2099,6 +2099,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/tasks/waiting/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This agent's tasks waiting on you
+         * @description The inbox, per agent: tasks parked on the CALLER.
+         *
+         *     Routed on `waiting_on_user`, never on the free-text `assigned`: canopy
+         *     cannot notify a string, and the fleet's boards spell one person three ways
+         *     ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
+         */
+        readonly get: operations["apps_agents_api_list_waiting_tasks"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/tasks/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -8727,6 +8751,11 @@ export interface components {
             /** Project Name */
             readonly project_name?: string | null;
             /**
+             * Uuid
+             * Format: uuid
+             */
+            readonly uuid: string;
+            /**
              * Ask Kind
              * @default
              */
@@ -8873,6 +8902,8 @@ export interface components {
         readonly AgentTaskPatch: {
             /** Project */
             readonly project?: string | null;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
             /** Title */
             readonly title?: string | null;
             /** Next Action */
@@ -15392,6 +15423,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_waiting_tasks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
         };

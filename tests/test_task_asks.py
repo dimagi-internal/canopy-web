@@ -258,3 +258,68 @@ def test_free_text_assigned_is_kept_but_is_not_the_inbox(world):
 
     assert task.assigned == "Jonathan Jackson"
     assert list(services.tasks_waiting_on(human)) == []
+
+
+# --- waiting on a real person ---------------------------------------------
+
+
+def test_a_task_can_wait_on_a_person_without_asking_anything(world):
+    """Most of what a board holds: "waiting on Andrea for the numbers" is a
+    wait, and it reached no inbox at all until a task could name a person."""
+    human, _ws, agent = world
+    task = AgentTask.objects.create(agent=agent, ext_id="T5", title="EOI numbers",
+                                    assigned="Andrea", waiting_on_user=human)
+
+    assert not task.ask_is_open                    # nothing is being ASKED
+    assert list(services.tasks_waiting_on(human)) == [task]
+
+
+def test_a_finished_task_waits_on_nobody(world):
+    human, _ws, agent = world
+    AgentTask.objects.create(agent=agent, ext_id="T6", title="done thing",
+                             status=AgentTask.DONE, waiting_on_user=human)
+
+    assert list(services.tasks_waiting_on(human)) == []
+
+
+def test_routing_a_wait_to_a_stranger_is_refused(world):
+    """A wait that looks routed but reaches nobody is the failure the field
+    exists to end, so an unknown person is refused rather than dropped."""
+    _human, _ws, agent = world
+    task = AgentTask.objects.create(agent=agent, ext_id="T7", title="x")
+
+    with pytest.raises(services.UnknownPersonError):
+        services.patch_task(task, {"waiting_on_email": "stranger@example.org"})
+
+
+def test_routing_a_wait_to_a_member_sticks(world):
+    human, _ws, agent = world
+    task = AgentTask.objects.create(agent=agent, ext_id="T8", title="x")
+
+    services.patch_task(task, {"waiting_on_email": human.email.upper()})
+
+    task.refresh_from_db()
+    assert task.waiting_on_user == human
+    assert list(services.tasks_waiting_on(human)) == [task]
+
+
+def test_clearing_the_wait_takes_it_out_of_the_inbox(world):
+    human, _ws, agent = world
+    task = AgentTask.objects.create(agent=agent, ext_id="T9", title="x", waiting_on_user=human)
+
+    services.patch_task(task, {"waiting_on_email": ""})
+
+    assert list(services.tasks_waiting_on(human)) == []
+
+
+def test_the_badge_counts_asks_and_parked_tasks_through_one_predicate(world):
+    """The inbox, the waiting badge and push all read `waiting_q`. Three copies
+    of this question is exactly what this codebase has paid for before."""
+    human, _ws, agent = world
+    _ask(agent, key="k-ask")                                     # an open ask
+    AgentTask.objects.create(agent=agent, ext_id="T10", title="parked",
+                             waiting_on_user=human)              # parked on a person
+    AgentTask.objects.create(agent=agent, ext_id="T11", title="agent's own work",
+                             status=AgentTask.IN_PROGRESS)       # neither
+
+    assert AgentTask.objects.filter(services.waiting_q(), agent=agent).count() == 2

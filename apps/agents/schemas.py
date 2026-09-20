@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid as uuid_mod
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -505,6 +506,10 @@ class AgentTaskOut(StrictModel):
     project_name: str | None = None
     # The ask, where the task carries one (what an `Item` used to be). Blank
     # `ask_kind` means the task asks nothing and is simply work in flight.
+    #: The ask's public id — what `/api/items/{id}/` addresses, and what a
+    #: migrated Item kept. Lets a client tell "this task's ask" and "that item"
+    #: apart as the same thing, which is what stops the inbox counting it twice.
+    uuid: uuid_mod.UUID
     ask_kind: str = ""
     ask_state: str = ""
     waiting_on_email: str | None = None
@@ -532,6 +537,11 @@ class AgentTaskPatch(StrictModel):
     #: `""` takes the task OUT of its project; omitting it leaves the task where
     #: it is. The two must differ, or patching a title would silently unfile it.
     project: str | None = Field(default=None, max_length=64)
+    #: Who the next step waits on, by email. `""` clears it. A person canopy
+    #: does not know is refused rather than silently dropped — the free-text
+    #: `assigned` is where an unknown counterpart belongs, and a wait that
+    #: looks routed but reaches nobody is the failure this field exists to end.
+    waiting_on_email: str | None = Field(default=None, max_length=254)
     title: str | None = Field(default=None, max_length=300)
     next_action: str | None = Field(default=None, max_length=300)
     status: str | None = None

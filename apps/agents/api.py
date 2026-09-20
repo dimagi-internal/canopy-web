@@ -768,6 +768,20 @@ def list_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
     return [AgentTaskOut.model_validate(t) for t in services.list_tasks(agent)]
 
 
+@router.get("/{slug}/tasks/waiting/", response=list[AgentTaskOut],
+            summary="This agent's tasks waiting on you",)
+def list_waiting_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
+    """The inbox, per agent: tasks parked on the CALLER.
+
+    Routed on `waiting_on_user`, never on the free-text `assigned`: canopy
+    cannot notify a string, and the fleet's boards spell one person three ways
+    ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
+    """
+    agent = _get_agent_or_404(request, slug)
+    return [AgentTaskOut.model_validate(t)
+            for t in services.tasks_waiting_on(request.user, agent=agent)]
+
+
 @router.post("/{slug}/tasks/sync", response=CountOut,
              summary="Upsert the agent's tasks from the (legacy) source sheet",)
 def sync_tasks(request: HttpRequest, slug: str, payload: AgentTaskSyncIn) -> CountOut:
@@ -793,7 +807,10 @@ def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTask
     agent = _agent_for_write(request, slug)
     task = _get_task_or_404(agent, task_id)
     data = payload.model_dump(exclude_unset=True)
-    return AgentTaskOut.model_validate(services.patch_task(task, data))
+    try:
+        return AgentTaskOut.model_validate(services.patch_task(task, data))
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
 
 
 # ---- task commands (the board's action queue) ----
