@@ -311,3 +311,17 @@ def test_a_remembered_answer_expires(monkeypatch, _fresh_collision_answers):
     assert ("t", "x") in execute._COLLISION_ANSWERS
     execute._chat_collision_choice("t", "y", now_fn=lambda: execute.COLLISION_ANSWER_TTL + 1)
     assert ("t", "x") not in execute._COLLISION_ANSWERS
+
+
+def test_the_undelivered_note_tells_the_person_what_to_do(
+    monkeypatch, _fresh_collision_answers
+):
+    """The note is the whole explanation a person gets: apps/slack/relay.py posts a
+    failed turn's result_note into the thread. It must name the session and the fix,
+    not an internal task id on its own."""
+    _, results = _requeued_into_collision(monkeypatch, execute.dialog.NEW, ["half typed"])
+    note = results[0][1].failed
+    assert "ada-chat-1435" in note          # WHICH session is in the way
+    assert "unsent text" in note            # WHY it could not be delivered
+    assert "send your message again" in note  # WHAT to do about it
+    assert "deferred" not in note           # not runner jargon
