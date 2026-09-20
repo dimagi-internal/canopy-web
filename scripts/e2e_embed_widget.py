@@ -147,7 +147,7 @@ def main() -> int:
            json.dumps(self_) if isinstance(self_, dict) else str(self_)[:60])
     if not offered:
         print("\n  Nothing else can be checked until a connected site is shown on "
-              "canopy's own pages.\n  Tick it on /w/<workspace>/connected-apps "
+              "canopy's own pages.\n  Tick it on /w/<workspace>/settings/connected-apps "
               "(owner only).\n")
         return 1
     app_name = self_["app"]

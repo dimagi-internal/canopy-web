@@ -81,11 +81,11 @@ function invite(overrides: Partial<InviteOut> = {}): InviteOut {
   }
 }
 
-function renderPage(initialEntry = '/w/acme/members') {
+function renderPage(initialEntry = '/w/acme/settings/members') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/w/:workspace/members" element={<WorkspaceMembersPage />} />
+        <Route path="/w/:workspace/settings/members" element={<WorkspaceMembersPage />} />
         <Route path="/" element={<div>HOME</div>} />
       </Routes>
     </MemoryRouter>,
