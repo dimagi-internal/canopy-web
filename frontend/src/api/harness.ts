@@ -183,3 +183,31 @@ export async function cancelTurn(turnId: string): Promise<TurnOut> {
   })
   return unwrap(res, 'cancelTurn')
 }
+
+// Who may ADMINISTER a box — the explicit grant that lets someone other than the
+// pairer set its credentials, sign it back in, and send work to it. Listing is
+// open to anyone who already administers it; granting and revoking stay with the
+// PAIRER (a grantee minting grantees makes the list self-propagating).
+export type RunnerAdmin = components['schemas']['RunnerAdminOut']
+
+export async function listRunnerAdmins(runnerId: string): Promise<RunnerAdmin[]> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/admins', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return Array.from(unwrap(res, 'listRunnerAdmins'))
+}
+
+export async function grantRunnerAdmin(runnerId: string, email: string): Promise<RunnerAdmin> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/admins', {
+    params: { path: { runner_id: runnerId } },
+    body: { email },
+  })
+  return unwrap(res, 'grantRunnerAdmin')
+}
+
+export async function revokeRunnerAdmin(runnerId: string, userId: number): Promise<void> {
+  const { error } = await apiV2.DELETE('/api/harness/runners/{runner_id}/admins/{user_id}', {
+    params: { path: { runner_id: runnerId, user_id: userId } },
+  })
+  if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
+}

@@ -15,7 +15,15 @@ import type { AgentOut } from '@/api/agents'
 const pauseRunner = vi.fn<(id: string, note?: string) => Promise<RunnerOut>>()
 const unpauseRunner = vi.fn<(id: string) => Promise<RunnerOut>>()
 
-vi.mock('@/api/harness', () => ({ pauseRunner, unpauseRunner }))
+vi.mock('@/api/harness', () => ({
+  pauseRunner,
+  unpauseRunner,
+  // The administrators panel reads on mount; who may administer a box is its own
+  // component's subject (RunnerAdmins.test.tsx), so here it just has to resolve.
+  listRunnerAdmins: vi.fn().mockResolvedValue([]),
+  grantRunnerAdmin: vi.fn(),
+  revokeRunnerAdmin: vi.fn(),
+}))
 vi.mock('@/api/drills', () => ({
   startDrill: vi.fn(),
   listDrills: vi.fn().mockResolvedValue([]),
