@@ -27,6 +27,7 @@ makes `--numstat` fetch every blob lazily and did not finish in five minutes.
 """
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import os
 import re
@@ -202,6 +203,24 @@ def _run_git(args: list[str], *, cwd: str, deadline: float) -> str:
     return res.stdout
 
 
+def auth_header(token: str) -> str:
+    """The `Authorization` header git needs for github.com over HTTPS.
+
+    BASIC, not Bearer, and the difference is not cosmetic: GitHub's REST API
+    accepts `Bearer <token>`, but git-over-HTTPS answers it with "invalid
+    credentials" and git then falls back to asking for a username — which, with
+    `GIT_TERMINAL_PROMPT=0`, surfaces as "could not read Username". That is what
+    shipped first, and no test caught it: the sync tests rewrite the GitHub URL
+    to a LOCAL repo (`insteadOf`), so nothing in them ever authenticates. This
+    function exists to be asserted on directly, because the only other place the
+    form is checked is a live clone.
+
+    The username is the conventional `x-access-token` placeholder; GitHub reads
+    the credential from the password half.
+    """
+    return "Authorization: Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+
 def _clone(agent: Agent, token: str, dest: str, deadline: float) -> None:
     """The one command that touches the network, and the only one that ever
     sees the token.
@@ -224,7 +243,7 @@ def _clone(agent: Agent, token: str, dest: str, deadline: float) -> None:
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
+        "GIT_CONFIG_VALUE_0": auth_header(token),
     }
     cmd = [
         "git", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
