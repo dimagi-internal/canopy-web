@@ -322,6 +322,26 @@ _COLLISION_ANSWERS: dict[tuple[str, str], tuple[str, float]] = {}
 COLLISION_ANSWER_TTL = 600.0
 
 
+def _undelivered_note(task: str, *, cancelled: bool = False) -> str:
+    """What the HUMAN reads when a chat message could not be delivered.
+
+    This string is not a log line. `apps/slack/relay.py` posts a failed turn's
+    `result_note` straight into the thread ("⚠️ This turn failed: <note>"), and the
+    chat UI shows the same field — so it is the entire explanation the person gets
+    for a message that went nowhere. It used to read `chat send deferred: unsent
+    text in 'c-some-session-4795'`, which names an internal task id and no action.
+
+    It matters more since the retries stopped waiting on a 30s modal each (#859):
+    the attempts are spent in seconds now, so this note arrives almost at once and
+    IS the recovery path — the person clears the line and sends again."""
+    lead = "You stopped the delivery" if cancelled else "Your message was not delivered"
+    return (
+        f"{lead}: the emdash session \"{task}\" has unsent text sitting in its prompt, "
+        f"and sending would have joined your message onto it. Clear that line (or press "
+        f"Enter to send it) in emdash, then send your message again."
+    )
+
+
 def _chat_collision_choice(task: str, line: str, now_fn=time.monotonic) -> str:
     """The human's choice for this unsent line, asking only the first time.
 
@@ -414,13 +434,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             elif choice == dialog.CANCEL:
                 # Deliver nothing and let the turn be retried, rather than finishing
                 # a turn whose message never arrived.
-                client.fail_turn(turn_id, f"chat send cancelled by human (collision on '{task}')")
+                client.fail_turn(turn_id, _undelivered_note(task, cancelled=True))
                 return f"cancelled:{turn_id}"
             else:
                 # NEW (and the timeout default): never destroy what the human typed.
                 # A fresh session is wrong for a CHAT — the conversation lives in this
                 # one — so the honest outcome is to leave it and retry.
-                client.fail_turn(turn_id, f"chat send deferred: unsent text in '{task}'")
+                client.fail_turn(turn_id, _undelivered_note(task))
                 return f"deferred:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
