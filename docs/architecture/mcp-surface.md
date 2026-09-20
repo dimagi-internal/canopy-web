@@ -63,7 +63,7 @@ app by MultiAuth.
 | `update_schedule` | write (rate-limited) | Update a schedule; only the fields passed are changed. |
 | `delete_schedule` | write (rate-limited) | Delete a schedule, retiring any open occurrence it fired first. |
 | `run_schedule_now` | write (rate-limited) | Trigger a schedule off-cycle immediately. |
-| `skill_history` | read | An agent's skill revisions from its repo's git history (date, subject, body, line change, checking skills), filterable by `skill`/`group`/`commit` (sha prefix)/`since`/`until`. Backs the History page: a selected commit maps to `commit`, the page's `as_of` date to `until`. |
+| `skill_history` | read | An agent's skill revisions from its repo's git history (date, subject, body, line change, checking skills), filterable by `skill`/`group`/`commit` (sha prefix)/`since`/`until`. Backs the History page: a selected commit maps to `commit`, the page's `as_of` date to `until`. Returns 25 revisions by default (ceiling 300) with each body summarised to 700 chars + `body_truncated`; asking for one `commit` returns that body whole — a mature skill has hundreds of revisions whose bodies run to thousands of words, and the old 300/4000 default produced ~640 KB, which a tool result cannot carry. |
 | `skill_revision_diff` | read | The unified diff one commit made to one skill's `SKILL.md`, fetched live from GitHub and truncated to 20 KB. |
 
 The six schedule tools call `apps/harness/schedule_services.py`, the same

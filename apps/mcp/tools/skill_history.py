@@ -61,7 +61,7 @@ async def skill_history(
     group: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    limit: int = 300,
+    limit: int | None = None,
     commit: str | None = None,
 ) -> dict:
     """How an agent's skills changed, from its repository's git history.
@@ -73,7 +73,14 @@ async def skill_history(
 
     Filters: `skill` name, `group` title (a phase or agent from the History
     page), `commit` (a sha or sha prefix, 7 to 64 hex characters),
-    `since` / `until` as YYYY-MM-DD. `limit` is capped at 300.
+    `since` / `until` as YYYY-MM-DD.
+
+    Returns the 25 most recent matches by default; `limit` raises that, capped
+    at 300. In a list each body is summarised to its first 700 characters and
+    `body_truncated` says so — ask for that one `commit` to read it whole. A
+    mature skill has hundreds of revisions and its bodies run to thousands of
+    words each, so narrow with `skill`, `since`/`until` or `commit` rather than
+    asking for everything.
 
     On the History page, read `current_page` first: it says which skill, group
     or commit the user has selected and the date they are looking at. Its
