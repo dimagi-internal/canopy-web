@@ -39,8 +39,7 @@ def _open_items(user_id: int | None, agent_slug: str | None, kind: str | None, l
     the question `workspace_slugs_for_user_id` exists to be the only answer to,
     and a second implementation is how a predicate drifts.
     """
-    from apps.agents.models import Agent
-    from apps.harness.models import Item
+    from apps.agents.models import Agent, AgentTask
     from apps.workspaces import services as wsvc
 
     slugs = wsvc.workspace_slugs_for_user_id(user_id)
@@ -48,25 +47,28 @@ def _open_items(user_id: int | None, agent_slug: str | None, kind: str | None, l
     if agent_slug:
         agents = agents.filter(slug=agent_slug)
 
+    # Open ASKS on tasks — an Item is a task with an ask since 2026-09-19.
     qs = (
-        Item.objects.filter(agent__in=agents, state=Item.OPEN)
+        AgentTask.objects.filter(agent__in=agents, decided_at__isnull=True)
+        .exclude(ask_kind="")
         .select_related("agent")
         .order_by("-created_at")
     )
     if kind:
-        qs = qs.filter(kind=kind)
+        qs = qs.filter(ask_kind=kind)
 
     return [
         {
-            "id": str(item.id),
+            "id": str(item.uuid),
             "agent": item.agent.slug,
-            "kind": item.kind,
+            "kind": item.ask_kind,
             "title": item.title,
-            # Truncated deliberately: an item body can be a whole review, and a
+            # Truncated deliberately: an ask's body can be a whole review, and a
             # tool result that buries the question is worse than one that
             # points at it.
-            "body": (item.body or "")[:600],
+            "body": (item.ask_body or "")[:600],
             "origin": item.origin,
+            "project": item.project.name if item.project_id else "",
             "created_at": item.created_at.isoformat(),
         }
         for item in qs[: max(1, min(limit, 100))]
@@ -81,9 +83,10 @@ async def list_items(
 ) -> list[dict]:
     """Open items across the fleet — the "waiting on you" queue.
 
-    An Item is work a HUMAN does, as opposed to a Turn, which is work an agent
-    does. Returns only OPEN items, newest first, in the agent workspaces the
-    caller can see.
+    An item is a task's ASK — something a human must answer, as opposed to a
+    Turn, which is work an agent does. Returns only OPEN asks, newest first, in
+    the agent workspaces the caller can see, each with the project it belongs to
+    where it has one.
 
     Filters (optional): `agent` slug, `kind` (e.g. review, question).
     `limit` is clamped to 100.

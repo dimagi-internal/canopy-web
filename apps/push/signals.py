@@ -14,13 +14,13 @@ import logging
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from apps.harness.models import Item
+from apps.agents.models import AgentTask
 
 from .services import mark_dirty
 
 logger = logging.getLogger(__name__)
 
 
-@receiver([post_save, post_delete], sender=Item)
-def _item_changed(sender, instance: Item, **kwargs) -> None:
+@receiver([post_save, post_delete], sender=AgentTask)
+def _item_changed(sender, instance: AgentTask, **kwargs) -> None:
     mark_dirty(instance.agent_id)  # the FK shadow attribute — no query

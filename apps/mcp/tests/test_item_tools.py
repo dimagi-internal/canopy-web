@@ -9,6 +9,8 @@ from __future__ import annotations
 import contextlib
 import uuid
 
+from django.utils import timezone
+
 import pytest
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
@@ -16,9 +18,19 @@ from fastmcp.server.auth import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents.models import Agent
-from apps.harness.models import Item
+from apps.agents.models import AgentTask
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 User = get_user_model()
 
@@ -51,9 +63,13 @@ def _agent(ws, slug):
     return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws)
 
 
-def _item(agent, title, *, kind=Item.REVIEW, state=Item.OPEN):
-    return Item.objects.create(
-        agent=agent, title=title, kind=kind, state=state, origin="manual",
+def _item(agent, title, *, ask_kind=AgentTask.ASK_REVIEW, state="open"):
+    return AgentTask.objects.create(
+        agent=agent, ext_id=_ext(), title=title, ask_kind=ask_kind, origin="manual",
+        # `state` is derived on a task (`decided_at` + `ask_dismissed`), so it is
+        # set here the way the verbs would have left it.
+        decided_at=None if state == "open" else timezone.now(),
+        ask_dismissed=(state == "dismissed"),
         idempotency_key=str(uuid.uuid4()),
     )
 
@@ -83,7 +99,7 @@ def test_a_decided_item_is_not_waiting_on_anyone():
     user = User.objects.create_user(username="jj", email="jj@dimagi.com")
     agent = _agent(_workspace("connect", user), "echo")
     _item(agent, "still open")
-    _item(agent, "already handled", state=Item.DECIDED)
+    _item(agent, "already handled", state="decided")
 
     with as_user(user):
         rows = _call()
@@ -119,12 +135,12 @@ def test_it_filters_by_agent_and_by_kind():
     ws = _workspace("connect", user)
     echo, spark = _agent(ws, "echo"), _agent(ws, "spark")
     _item(echo, "echo review")
-    _item(echo, "echo question", kind=Item.QUESTION)
+    _item(echo, "echo question", ask_kind=AgentTask.ASK_QUESTION)
     _item(spark, "spark review")
 
     with as_user(user):
         assert {r["title"] for r in _call(agent="echo")} == {"echo review", "echo question"}
-        assert [r["title"] for r in _call(kind=Item.QUESTION)] == ["echo question"]
+        assert [r["title"] for r in _call(kind=AgentTask.ASK_QUESTION)] == ["echo question"]
 
 
 def test_limit_is_clamped_so_a_page_cannot_ask_for_the_whole_table():

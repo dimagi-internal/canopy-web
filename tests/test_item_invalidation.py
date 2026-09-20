@@ -10,15 +10,26 @@ decided ten minutes ago and re-reads them forever.
 import uuid
 
 import pytest
+from django.utils import timezone
 from django.contrib.auth.models import User
 from django.db import transaction
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import invalidation, page_state
 from apps.canopy_sessions.models import Session
-from apps.harness.models import Item
+from apps.agents.models import AgentTask
 from apps.harness.signals import ITEM_RESOURCE
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 #: `transaction=True` because `on_commit` is the subject — see the same note in
 #: `test_page_invalidation`.
@@ -48,8 +59,7 @@ def _showing(session, uri=ITEM_RESOURCE):
 
 
 def _item(agent, title="review the deploy", **kw):
-    return Item.objects.create(
-        agent=agent, title=title, origin="manual", idempotency_key=str(uuid.uuid4()), **kw
+    return AgentTask.objects.create(agent=agent, ext_id=_ext(), title=title, origin="manual", idempotency_key=str(uuid.uuid4()), **kw
     )
 
 
@@ -70,8 +80,8 @@ def test_deciding_an_item_notifies_even_though_it_leaves_the_open_set(sent):
     _showing(session)
     sent.clear()
 
-    item.state = Item.DECIDED
-    item.save(update_fields=["state"])
+    item.decided_at = timezone.now()
+    item.save(update_fields=["decided_at"])
 
     assert [m["uri"] for _g, m in sent] == [ITEM_RESOURCE]
 

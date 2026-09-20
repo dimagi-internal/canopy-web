@@ -12,9 +12,20 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.harness import services as hsvc
-from apps.harness.models import Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import Turn
 from apps.push.models import AgentWaitingSnapshot, PushSubscription
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 # transaction=True is load-bearing, not decorative: mark_dirty() relies on
 # transaction.on_commit() to coalesce a batch into one push per agent. Under the
@@ -72,9 +83,8 @@ def sub(user):
     )
 
 
-def _item(agent, key, *, kind=Item.REVIEW):
-    return Item.objects.create(
-        agent=agent, kind=kind, title=f"item {key}", origin=Turn.ORIGIN_API,
+def _item(agent, key, *, ask_kind=AgentTask.ASK_REVIEW):
+    return AgentTask.objects.create(agent=agent, ext_id=_ext(), ask_kind=ask_kind, title=f"item {key}", origin=Turn.ORIGIN_API,
         idempotency_key=key,
     )
 

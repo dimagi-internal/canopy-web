@@ -5,8 +5,19 @@ import pytest
 
 from apps.agents.models import Agent
 from apps.harness.dispatch import TurnSpec, dispatch
-from apps.harness.models import Item, Turn
+from apps.agents.models import AgentTask
+from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
+
+
+_EXT = iter(range(1, 10_000))
+
+
+def _ext() -> str:
+    """A unique `ext_id` per task these tests create. Tasks are board cards and
+    carry one; an ask raised through the service gets it for free."""
+    return f"T{next(_EXT)}"
+
 
 pytestmark = pytest.mark.django_db
 
@@ -28,10 +39,10 @@ def hal(ws):
 
 def _item(agent, **kw):
     kw.setdefault("idempotency_key", f"k-{agent.slug}-{kw.get('title', 'x')}")
-    kw.setdefault("kind", Item.REVIEW)
+    kw.setdefault("ask_kind", AgentTask.ASK_REVIEW)
     kw.setdefault("title", "x")
     kw.setdefault("origin", Turn.ORIGIN_API)
-    return Item.objects.create(agent=agent, **kw)
+    return AgentTask.objects.create(agent=agent, ext_id=_ext(), **kw)
 
 
 def test_empty_target_agent_dispatches_to_the_items_own_agent(ada):
@@ -43,7 +54,7 @@ def test_empty_target_agent_dispatches_to_the_items_own_agent(ada):
     # Stamped now (the brief came off an agent's card), so the prompt carries a provenance
     # footer. The ASK is still first and still verbatim — that is the part callers depend on.
     assert turns[0].prompt.startswith("/ada:conduct")
-    assert turns[0].raised_from == item
+    assert turns[0].raised_from_task == item
 
 
 def test_named_target_agent_dispatches_to_that_agent(ada, hal):

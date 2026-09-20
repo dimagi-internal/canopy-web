@@ -747,7 +747,18 @@ class AgentSchedule(models.Model):
 
 
 class Item(models.Model):
-    """A thing that needs addressing — the dual of Turn.
+    """DEPRECATED 2026-09-19 — an item is a TASK with an ask now.
+
+    Nothing reads this model: `agents.AgentTask` carries `ask_kind` / `ask_body`
+    / `decision` / `dispatch`, `agents/migrations/0030_items_become_tasks` moved
+    every row across (keeping each item's id as the task's `uuid`, so old links
+    still resolve), and the `/api/items/` routes serve tasks. The table stays for
+    one release as the rollback path — the same courtesy every other compat shim
+    here gets — and is dropped after the fleet has run on tasks.
+
+    Kept below, unchanged, for that window:
+
+    A thing that needs addressing — the dual of Turn.
 
     Turn is work an agent does; Item is work YOU do. They form a cycle: a turn
     raises items, you decide them, and an approved item's `dispatch` enqueues

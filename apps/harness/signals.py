@@ -57,7 +57,7 @@ from django.dispatch import receiver  # noqa: E402
 
 from apps.canopy_sessions.invalidation import mark_dirty  # noqa: E402
 
-from .models import Item  # noqa: E402
+from apps.agents.models import AgentTask  # noqa: E402
 
 #: The resource URI the open-item collection belongs to.
 #:
@@ -68,9 +68,9 @@ from .models import Item  # noqa: E402
 ITEM_RESOURCE = "item://"
 
 
-@receiver([post_save, post_delete], sender=Item)
-def _item_changed(sender, instance: Item, **kwargs) -> None:
-    """Mark the item collection dirty when any item row moves.
+@receiver([post_save, post_delete], sender=AgentTask)
+def _item_changed(sender, instance: AgentTask, **kwargs) -> None:
+    """Mark the item collection dirty when any task row moves.
 
     Deliberately NOT filtered to `state=OPEN`. A decision moves a row OUT of the
     open set, which is precisely the change a page showing that set must hear

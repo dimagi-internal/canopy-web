@@ -30,7 +30,6 @@ from apps.workspaces import services as wsvc
 from .models import (
     HEARTBEAT_ONLINE_WINDOW,  # noqa: F401
     AgentSchedule,
-    Item,
     Runner,
     RunnerAssignment,
     RunnerDrill,
@@ -2290,141 +2289,45 @@ def list_visible_sessions(user) -> list[SessionView]:
 # ---------------------------------------------------------------------------
 
 
-class AlreadyDecidedError(Exception):
-    """An item can be decided once. A second decision is a conflict (409), not a
-    second dispatch."""
+# ONE class, not two: a caller catching `harness.services.AlreadyDecidedError`
+# must catch what the task verbs actually raise, or a double-decide would sail
+# past its guard as an unhandled 500 instead of the 409 it is. Imported lazily
+# inside a function-level alias would be worse — the name has to exist at import
+# time for `except services.AlreadyDecidedError` to resolve.
+from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-export; see above)
 
 
-def create_items(*, agent, payloads: list[dict]) -> list[Item]:
-    """Create items for an agent, idempotent per idempotency_key. A producer that
-    re-posts its batch (a retried audit) gets the same rows back, not duplicates.
-
-    The whole batch commits in ONE outer transaction so its post_save signals
-    coalesce into a single push per agent (a fleet audit raising N items buzzes you
-    once, not N times). Each item keeps its own SAVEPOINT so a single duplicate key
-    replays without rolling back the batch — the idempotency guarantee is unchanged.
-    """
-    out: list[Item] = []
-    with transaction.atomic():
-        for p in payloads:
-            key = p["idempotency_key"]
-            existing = Item.objects.filter(idempotency_key=key).first()
-            if existing is not None:
-                out.append(existing)
-                continue
-            try:
-                with transaction.atomic():  # savepoint — one dup doesn't sink the batch
-                    out.append(Item.objects.create(
-                        agent=agent,
-                        kind=p.get("kind") or Item.REVIEW,
-                        title=p["title"],
-                        body=p.get("body") or "",
-                        origin=p.get("origin") or Turn.ORIGIN_API,
-                        origin_ref=p.get("origin_ref") or {},
-                        dispatch=p.get("dispatch") or [],
-                        batch_key=p.get("batch_key") or "",
-                        idempotency_key=key,
-                        raised_by_id=p.get("raised_by") or None,
-                    ))
-            except IntegrityError:
-                replay = Item.objects.filter(idempotency_key=key).first()
-                if replay is None:
-                    raise
-                out.append(replay)
-    return out
+# The three Item verbs now live on tasks (`apps.agents.services.raise_asks` /
+# `decide_ask` / `dismiss_ask`), because an Item IS a task with an ask. These
+# names stay as thin forwarders for one release: the schedule nag, the items
+# routes and Ada's plugin all called them, and a rename is not worth a fleet
+# outage. `AlreadyDecidedError` is re-exported for the same reason.
 
 
-def decide_item(
-    item: Item, *, decision: str, comment: str, by: str, actor_workspace_slugs: set[str],
-    decided_by_user=None,
-) -> tuple[Item, list[Turn]]:
-    """Resolve an open item, dispatching its work the moment the human commits.
+def create_items(*, agent, payloads: list[dict]) -> list:
+    from apps.agents import services as agent_services
 
-    A review needs a decision from the closed set and dispatches on IMPLEMENT; a
-    question needs a non-empty answer (its `decision` stays blank) and dispatches on
-    ANY answer, because on a question the answer IS the go-ahead — there is no verb
-    to click. Answering used to be inert: the item left the open queue carrying the
-    human's instruction, and nothing enqueued it, so the work waited on an agent
-    happening to re-read decided rows (2026-07-30: three answered cards, zero turns).
-    A question with no `dispatch[]` still just records the answer — there is nothing
-    to route. Deciding twice raises AlreadyDecidedError — the guard that stops a
-    double-click becoming a second dispatch.
-
-    The reply itself rides into every dispatched prompt (`dispatch._with_reply`), so
-    an answer that redirects or declines reaches the agent rather than being dropped
-    on the floor while its superseded brief runs.
-
-    `actor_workspace_slugs` is the set of workspaces the DECIDING human belongs to;
-    it's the authorization for a cross-agent dispatch — you may only dispatch a
-    turn onto an agent in a workspace you're a member of (the hard tenant boundary).
-    """
-    from .dispatch import dispatch as dispatch_item  # local: dispatch imports services
-
-    if item.state != Item.OPEN:
-        raise AlreadyDecidedError(f"item {item.id} is already {item.state}")
-
-    if item.kind == Item.QUESTION:
-        if not (comment or "").strip():
-            raise ValueError("a question is resolved by its answer — comment must not be empty")
-        decision = ""
-    elif decision not in (Item.IMPLEMENT, Item.SKIP, Item.DEFER):
-        raise ValueError(
-            f"decision must be one of implement|skip|defer, got {decision!r}"
-        )
-
-    # ATOMIC, and this is the whole ballgame. dispatch() raises on a bad spec
-    # (unknown target_agent). Committing the decision first would leave the item
-    # DECIDED but undispatched — and since deciding twice is a 409, permanently
-    # unfixable: the work silently never happens while the UI says you approved it.
-    # Rolling back instead means a bad spec is a 422 on an item that is still OPEN,
-    # retryable the moment the producer fixes it.
-    with transaction.atomic():
-        item.state = Item.DECIDED
-        item.decision = decision
-        item.comment = comment or ""
-        item.decided_by = by
-        item.decided_by_user = decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
-        item.decided_at = timezone.now()
-
-        turns: list[Turn] = []
-        answered = item.kind == Item.QUESTION and bool(item.dispatch)
-        if decision == Item.IMPLEMENT or answered:
-            turns = dispatch_item(item, actor_workspace_slugs=actor_workspace_slugs)
-            item.dispatched_at = timezone.now()
-
-        item.save(update_fields=[
-            "state", "decision", "comment", "decided_by", "decided_by_user",
-            "decided_at", "dispatched_at",
-        ])
-    return item, turns
+    mapped = []
+    for p in payloads:
+        p = dict(p)
+        p.setdefault("ask_kind", p.pop("kind", "review") or "review")
+        p.setdefault("ask_body", p.pop("body", "") or "")
+        mapped.append(p)
+    return agent_services.raise_asks(agent=agent, payloads=mapped)
 
 
-def dismiss_item(item: Item, *, by: str, decided_by_user=None, comment: str = "") -> Item:
-    """Retire an OPEN item without acting — a producer that raised it in error, or
-    a subject that changed under it. `comment` records WHY (e.g. an agent retracting
-    a finding it verified was already shipped), so a dismissed row isn't a mystery.
+def decide_item(item, **kwargs):
+    from apps.agents import services as agent_services
 
-    Only an OPEN item may be dismissed. Dismissing an already-DECIDED item would
-    overwrite `decided_by`/`decided_at` — erasing who approved it — while the turns
-    that decision already dispatched keep running: the queue would read "dismissed"
-    for work that is executing, with the approver's identity gone. So dismiss guards
-    on state exactly like decide does; a re-dismiss is likewise a 409, not a
-    silent second write."""
-    if item.state != Item.OPEN:
-        raise AlreadyDecidedError(f"item {item.id} is already {item.state}")
-    item.state = Item.DISMISSED
-    item.decided_by = by
-    item.decided_by_user = decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
-    item.decided_at = timezone.now()
-    fields = ["state", "decided_by", "decided_by_user", "decided_at"]
-    if comment:
-        item.comment = comment
-        fields.append("comment")
-    item.save(update_fields=fields)
-    return item
+    return agent_services.decide_ask(item, **kwargs)
 
 
-# ---- Runner credentials (per-runner secret bundle, encrypted at rest) ----
+def dismiss_item(item, **kwargs):
+    from apps.agents import services as agent_services
+
+    return agent_services.dismiss_ask(item, **kwargs)
+
+
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
                           claude_api_key=None, github_token=None,
                           op_sa_token=None, updated_by=None):
@@ -2694,10 +2597,12 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
     """
     if "inbox" not in (schedule.notify or []):
         return
-    create_items(agent=schedule.agent, payloads=[{
-        "kind": Item.REVIEW,
+    from apps.agents import services as agent_services
+
+    agent_services.raise_asks(agent=schedule.agent, payloads=[{
+        "ask_kind": "review",
         "title": f"Scheduled turn unattended: {schedule.name}",
-        "body": (
+        "ask_body": (
             f"“{schedule.name}” fired but was left unattended past "
             f"{schedule.grace_minutes}m. Implement to run it now, or skip."
         ),
@@ -2719,9 +2624,16 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
 def resolve_schedule_nags(schedule_id: int) -> int:
     """Dismiss every open nag for a schedule — a later occurrence finished, so the
     owed attention is discharged. Called from finish_turn on a DONE occurrence."""
+    from apps.agents import services as agent_services
+    from apps.agents.models import AgentTask
+
     count = 0
-    for item in Item.objects.filter(state=Item.OPEN, origin_ref__schedule_id=schedule_id):
-        dismiss_item(item, by="system:schedule")
+    open_nags = (
+        AgentTask.objects.filter(decided_at__isnull=True, origin_ref__schedule_id=schedule_id)
+        .exclude(ask_kind="")
+    )
+    for task in open_nags:
+        agent_services.dismiss_ask(task, by="system:schedule")
         count += 1
     return count
 

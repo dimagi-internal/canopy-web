@@ -17,10 +17,10 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentTask
 from apps.harness import initiator as who
 from apps.harness import services
-from apps.harness.models import AgentSchedule, Item, Turn
+from apps.harness.models import AgentSchedule, Turn
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -230,7 +230,7 @@ def test_a_schedule_is_system_with_its_creator_accountable(ctx):
 
 def test_dispatched_work_is_the_person_who_approved_it(ctx):
     owner, _ws, agent = ctx
-    item = Item(agent=agent, title="t", kind=Item.REVIEW, origin="api",
+    item = AgentTask(agent=agent, ext_id="T1", title="t", ask_kind=AgentTask.ASK_REVIEW, origin="api",
                 idempotency_key="i1", decided_by_user=owner)
     item.save()
     assert who.for_user(owner, via="x", assurance=who.APPROVAL).kind == who.USER
