@@ -210,3 +210,32 @@ def test_reading_needs_membership_and_writing_needs_more(agent):
     assert vc.get("/api/agents/eva/projects/").status_code == 200
     assert vc.post("/api/agents/eva/projects/", {"name": "nope"},
                    content_type="application/json").status_code == 403
+
+
+def test_sync_files_a_task_into_a_project(client, agent):
+    """`canopy agent add` upserts through tasks/sync, so a project named there
+    has to stick or the CLI could never file anything."""
+    _create(client)
+
+    client.post("/api/agents/eva/tasks/sync",
+                {"tasks": [{"ext_id": "T1", "title": "Book the room", "project": "P1"}]},
+                content_type="application/json")
+
+    assert AgentTask.objects.get(ext_id="T1").project.ext_id == "P1"
+
+
+def test_a_sync_that_names_no_project_leaves_the_filing_alone(client, agent):
+    """The trap: a wholesale sync defaulting `project` to "" would unfile every
+    task it touches — so editing a title from the CLI would quietly empty the
+    project it belongs to."""
+    _create(client)
+    client.post("/api/agents/eva/tasks/sync",
+                {"tasks": [{"ext_id": "T1", "title": "Book the room", "project": "P1"}]},
+                content_type="application/json")
+
+    client.post("/api/agents/eva/tasks/sync",
+                {"tasks": [{"ext_id": "T1", "title": "Book the big room"}]},
+                content_type="application/json")
+
+    task = AgentTask.objects.get(ext_id="T1")
+    assert (task.title, task.project.ext_id) == ("Book the big room", "P1")
