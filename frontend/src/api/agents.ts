@@ -191,6 +191,14 @@ export async function listAgentTasks(slug: string): Promise<AgentTaskOut[]> {
   return items.map((t) => ({ ...t, links: t.links ? Array.from(t.links) : undefined }))
 }
 
+export async function listWaitingTasks(slug: string): Promise<AgentTaskOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/tasks/waiting/', {
+    params: { path: { slug } },
+  })
+  const items = Array.from(unwrap(res, 'listWaitingTasks'))
+  return items.map((t) => ({ ...t, links: t.links ? Array.from(t.links) : [] }) as AgentTaskOut)
+}
+
 export async function listAgentProjects(
   slug: string,
   status = '',

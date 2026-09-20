@@ -105,12 +105,13 @@ def refresh_agent_waiting(agent: Agent) -> int:
     subscribed — otherwise the first push after subscribing would fire for items
     that were already sitting there.
     """
-    # Open asks on the agent's tasks. This read items until 2026-09-19, which
-    # is why the fleet's ~24 tasks waiting on a person notified nobody: they
-    # were never items.
-    count = AgentTask.objects.filter(
-        agent=agent, decided_at__isnull=True
-    ).exclude(ask_kind="").count()
+    # Everything on this agent that needs a human — `agents.services.waiting_q`,
+    # the one definition (open asks + live tasks parked on a person). This read
+    # items until 2026-09-19, which is why the fleet's ~24 tasks waiting on
+    # somebody notified nobody: they were never items.
+    from apps.agents.services import waiting_q
+
+    count = AgentTask.objects.filter(waiting_q(), agent=agent).count()
     snap, created = AgentWaitingSnapshot.objects.get_or_create(agent=agent)
     previous = 0 if created else snap.waiting_count
     if count != previous:

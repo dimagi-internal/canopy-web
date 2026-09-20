@@ -33,10 +33,12 @@ def supervisor_snapshot(user) -> dict:
     # the same allow-on-NULL leg the REST surfaces were fixed for. Unrepresentable
     # since agents/0013 made Agent.workspace NOT NULL.
     agents = [a for a in agent_services.list_agents() if a.workspace_id in slugs]
-    # Waiting = open ASKS on the agent's tasks (an Item is a task now).
+    # Waiting = whatever needs a human on that agent, through the one predicate
+    # (`agents.services.waiting_q`): open asks, plus live tasks parked on a person.
+    from apps.agents.services import waiting_q
+
     waiting = {
-        a.slug: AgentTask.objects.filter(agent=a, decided_at__isnull=True)
-                                 .exclude(ask_kind="").count() for a in agents
+        a.slug: AgentTask.objects.filter(waiting_q(), agent=a).count() for a in agents
     }
 
     runners = Runner.objects.exclude(status=Runner.RETIRED).filter(
