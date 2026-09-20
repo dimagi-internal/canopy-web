@@ -11,6 +11,7 @@ from apps.harness.models import Turn
 
 from .models import (
     Agent,
+    AgentProject,
     AgentSkill,
     AgentSync,
     AgentTask,
@@ -322,6 +323,101 @@ def list_skills(agent: Agent) -> list[AgentSkill]:
     return list(agent.skills.select_related("agent"))
 
 
+# ---- projects ----
+#
+# A project is the work an agent's `Projects/<name>` Drive folder holds. canopy
+# keeps the state (status, owner, what is waiting); Drive keeps the files. See
+# `AgentProject`.
+
+
+def list_projects(agent: Agent, status: str = "") -> list:
+    qs = agent.projects.select_related("owner_user")
+    if status:
+        qs = qs.filter(status=status)
+    return list(qs)
+
+
+def get_project(agent: Agent, ref: str):
+    """By `ext_id` ("P3") or by numeric id — the CLI and the board name projects
+    differently, and a caller should not have to know which it holds."""
+    ref = str(ref)
+    qs = agent.projects.select_related("owner_user")
+    project = qs.filter(ext_id__iexact=ref).first()
+    if project is None and ref.isdigit():
+        project = qs.filter(pk=int(ref)).first()
+    return project
+
+
+def next_project_ext_id(agent: Agent) -> str:
+    """P1, P2, … — from a counter that only ever goes up.
+
+    Not from the highest existing project: deleting P2 would hand "P2" out
+    again, and an old link — a task's Links, a Drive folder, an email — would
+    then point at different work. The increment is a single UPDATE so two turns
+    numbering at once cannot collide.
+    """
+    from django.db.models import F
+
+    Agent.objects.filter(pk=agent.pk).update(project_seq=F("project_seq") + 1)
+    agent.refresh_from_db(fields=["project_seq"])
+    return f"P{agent.project_seq}"
+
+
+_PROJECT_FIELDS = ("name", "outcome", "status", "owner_note", "drive_folder_id",
+                   "drive_folder_url", "repo_slug", "notes")
+_PROJECT_STATUS = {AgentProject.ACTIVE, AgentProject.DONE, AgentProject.ARCHIVED}
+
+
+def _norm_project_status(value: str) -> str:
+    return value if value in _PROJECT_STATUS else AgentProject.ACTIVE
+
+
+def create_project(agent: Agent, data) -> AgentProject:
+    payload = {f: getattr(data, f) for f in _PROJECT_FIELDS if getattr(data, f, None) is not None}
+    payload["status"] = _norm_project_status(payload.get("status", AgentProject.ACTIVE))
+    if getattr(data, "links", None):
+        payload["links"] = [link.model_dump() for link in data.links]
+    ext_id = (getattr(data, "ext_id", "") or "").strip() or next_project_ext_id(agent)
+    return AgentProject.objects.create(agent=agent, ext_id=ext_id, **payload)
+
+
+def patch_project(project: AgentProject, data: dict) -> AgentProject:
+    for f in _PROJECT_FIELDS:
+        if f in data:
+            value = data[f]
+            setattr(project, f, _norm_project_status(value) if f == "status" else value)
+    if "links" in data:
+        project.links = data["links"]
+    project.save()
+    return project
+
+
+def project_task_counts(agent: Agent) -> dict:
+    """`{project_id: (tasks, still open)}` in ONE query.
+
+    The board shows a count per project, and resolving it per row would be a
+    query per project on a page that lists them all.
+    """
+    from django.db.models import Case, Count, IntegerField, When
+
+    rows = (
+        AgentTask.objects.filter(agent=agent, project__isnull=False)
+        .values("project_id")
+        .annotate(
+            total=Count("id"),
+            open=Count(Case(When(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS], then=1),
+                            output_field=IntegerField())),
+        )
+    )
+    return {r["project_id"]: (r["total"], r["open"]) for r in rows}
+
+
+def set_task_project(task, project) -> None:
+    """Put a task in a project (or take it out with None)."""
+    task.project = project
+    task.save(update_fields=["project", "updated_at"])
+
+
 # ---- tasks ----
 def _norm_status(s: str) -> str:
     return s if s in _VALID_TASK_STATUS else AgentTask.SUGGESTED
@@ -365,7 +461,13 @@ def create_task(agent: Agent, data) -> AgentTask:
     payload["status"] = _norm_status(payload.get("status", AgentTask.SUGGESTED))
     if getattr(data, "links", None):
         payload["links"] = [l.model_dump() for l in data.links]
-    return AgentTask.objects.create(agent=agent, ext_id=data.ext_id, **payload)
+    # An unknown project reference files the task nowhere rather than 404ing the
+    # create: the task is the thing worth keeping, and a typo in "P7" must not
+    # cost the agent the work it just recorded. The response carries
+    # `project_ext_id: null`, so the miss is visible.
+    ref = (getattr(data, "project", "") or "").strip()
+    project = get_project(agent, ref) if ref else None
+    return AgentTask.objects.create(agent=agent, ext_id=data.ext_id, project=project, **payload)
 
 
 def patch_task(task: AgentTask, data) -> AgentTask:
@@ -375,6 +477,11 @@ def patch_task(task: AgentTask, data) -> AgentTask:
             setattr(task, f, _norm_status(data[f]) if f == "status" else data[f])
     if "links" in data:
         task.links = data["links"]
+    if "project" in data:
+        # Present-and-empty means "take it out of its project"; absent means
+        # "leave it where it is" (the schema keeps the two apart).
+        ref = (data["project"] or "").strip()
+        task.project = get_project(task.agent, ref) if ref else None
     task.save()
     return task
 

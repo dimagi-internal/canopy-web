@@ -2045,6 +2045,42 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/projects/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List the agent's projects */
+        readonly get: operations["apps_agents_api_list_projects"];
+        readonly put?: never;
+        /** Create a project */
+        readonly post: operations["apps_agents_api_create_project"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get one project */
+        readonly get: operations["apps_agents_api_get_project"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /** Update a project */
+        readonly patch: operations["apps_agents_api_patch_project"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/tasks/": {
         readonly parameters: {
             readonly query?: never;
@@ -8551,12 +8587,132 @@ export interface components {
             /** Revisions */
             readonly revisions: readonly (readonly number[])[];
         };
+        /** AgentProjectOut */
+        readonly AgentProjectOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Name */
+            readonly name: string;
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "active" | "done" | "archived";
+            /** Owner Note */
+            readonly owner_note: string;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /** Drive Folder Id */
+            readonly drive_folder_id: string;
+            /** Drive Folder Url */
+            readonly drive_folder_url: string;
+            /** Repo Slug */
+            readonly repo_slug: string;
+            /** Notes */
+            readonly notes: string;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /**
+             * Task Count
+             * @default 0
+             */
+            readonly task_count: number;
+            /**
+             * Open Task Count
+             * @default 0
+             */
+            readonly open_task_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
         /** AgentTaskLink */
         readonly AgentTaskLink: {
             /** Label */
             readonly label: string;
             /** Url */
             readonly url: string;
+        };
+        /** AgentProjectIn */
+        readonly AgentProjectIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Ext Id
+             * @default
+             */
+            readonly ext_id: string;
+            /**
+             * Outcome
+             * @default
+             */
+            readonly outcome: string;
+            /**
+             * Status
+             * @default active
+             */
+            readonly status: string;
+            /**
+             * Owner Note
+             * @default
+             */
+            readonly owner_note: string;
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
+            /**
+             * Repo Slug
+             * @default
+             */
+            readonly repo_slug: string;
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+        };
+        /** AgentProjectPatch */
+        readonly AgentProjectPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Outcome */
+            readonly outcome?: string | null;
+            /** Status */
+            readonly status?: string | null;
+            /** Owner Note */
+            readonly owner_note?: string | null;
+            /** Drive Folder Id */
+            readonly drive_folder_id?: string | null;
+            /** Drive Folder Url */
+            readonly drive_folder_url?: string | null;
+            /** Repo Slug */
+            readonly repo_slug?: string | null;
+            /** Notes */
+            readonly notes?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
         };
         /** AgentTaskOut */
         readonly AgentTaskOut: {
@@ -8566,6 +8722,10 @@ export interface components {
             readonly agent_slug: string;
             /** Ext Id */
             readonly ext_id: string;
+            /** Project Ext Id */
+            readonly project_ext_id?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
             /** Title */
             readonly title: string;
             /** Next Action */
@@ -8609,6 +8769,11 @@ export interface components {
         readonly AgentTaskIn: {
             /** Ext Id */
             readonly ext_id: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
             /** Title */
             readonly title: string;
             /**
@@ -8694,6 +8859,8 @@ export interface components {
          * @description Partial update — only the fields sent are written.
          */
         readonly AgentTaskPatch: {
+            /** Project */
+            readonly project?: string | null;
             /** Title */
             readonly title?: string | null;
             /** Next Action */
@@ -15065,6 +15232,106 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SkillHistoryOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_projects: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentProjectOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_create_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentProjectIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_get_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_patch_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentProjectPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
         };

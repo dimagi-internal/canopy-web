@@ -37,6 +37,9 @@ from .schemas import (
     AgentTaskCommandIn,
     AgentTaskCommandOut,
     AgentTaskIn,
+    AgentProjectIn,
+    AgentProjectOut,
+    AgentProjectPatch,
     AgentTaskOut,
     AgentTaskPatch,
     AgentTaskSyncIn,
@@ -714,6 +717,51 @@ def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 
 
 # ---- tasks (board) ----
+# ---- projects (the work a `Projects/<name>` Drive folder holds) ----
+
+
+def _get_project_or_404(agent, ref: str):
+    project = services.get_project(agent, ref)
+    if project is None:
+        raise HttpError(404, f"project {ref} not found")
+    return project
+
+
+@router.get("/{slug}/projects/", response=list[AgentProjectOut],
+            summary="List the agent's projects",)
+def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[AgentProjectOut]:
+    agent = _get_agent_or_404(request, slug)
+    projects = services.list_projects(agent, status=status)
+    counts = services.project_task_counts(agent)
+    for project in projects:
+        project._task_count, project._open_task_count = counts.get(project.pk, (0, 0))
+    return [AgentProjectOut.model_validate(p) for p in projects]
+
+
+@router.post("/{slug}/projects/", response={201: AgentProjectOut}, summary="Create a project",)
+def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> Status:
+    agent = _agent_for_write(request, slug)
+    return Status(201, AgentProjectOut.model_validate(services.create_project(agent, payload)))
+
+
+@router.get("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Get one project",)
+def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectOut:
+    agent = _get_agent_or_404(request, slug)
+    return AgentProjectOut.model_validate(_get_project_or_404(agent, ref))
+
+
+@router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
+def patch_project(request: HttpRequest, slug: str, ref: str,
+                  payload: AgentProjectPatch) -> AgentProjectOut:
+    agent = _agent_for_write(request, slug)
+    project = _get_project_or_404(agent, ref)
+    data = payload.model_dump(exclude_unset=True)
+    if "links" in data and data["links"] is not None:
+        data["links"] = [link if isinstance(link, dict) else link.model_dump()
+                         for link in data["links"]]
+    return AgentProjectOut.model_validate(services.patch_project(project, data))
+
+
 @router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks (board)",)
 def list_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
     agent = _get_agent_or_404(request, slug)
