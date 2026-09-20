@@ -239,7 +239,13 @@ def notify_session_question(session, menu: dict) -> int:
 # already know.
 
 FINISH_BODY_MAX = 140
-FINISH_PUSH_BATCH = 50
+# How many due pushes one heartbeat may send. Deliberately small: the drain runs
+# INSIDE a runner's heartbeat request and every send is a network call with a
+# 10s timeout (`_send_one`), so this number times that timeout is how long a
+# sick push service can stall a heartbeat. Draining a backlog over several beats
+# costs seconds on a notification that already waited minutes; a stalled
+# heartbeat costs the runner its lease.
+FINISH_PUSH_BATCH = 5
 _PUSHABLE = (Turn.DONE, Turn.FAILED)
 _OPEN = (Turn.QUEUED, Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
 

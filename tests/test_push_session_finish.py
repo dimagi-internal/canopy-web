@@ -166,6 +166,20 @@ def test_the_runner_heartbeat_drains_due_pushes(session, user, workspace):
     assert _due(session) is None
 
 
+def test_one_drain_is_bounded_so_a_slow_push_cannot_stall_a_heartbeat(workspace, user):
+    # The drain runs inside a runner's heartbeat and each send can hang for its
+    # 10s timeout, so a backlog is spread over beats rather than sent at once.
+    overdue = timezone.now() - dt.timedelta(minutes=1)
+    for i in range(push.FINISH_PUSH_BATCH + 3):
+        s = chat.create_session(workspace=workspace, created_by=user, project="p", title=f"chat {i}")
+        _finish(s, user)
+        Session.objects.filter(pk=s.pk).update(finish_push_due_at=overdue)
+    with patch("apps.push.services._send_one") as send:
+        assert push.send_due_session_pushes(timezone.now()) == push.FINISH_PUSH_BATCH
+        assert send.call_count == push.FINISH_PUSH_BATCH
+        assert push.send_due_session_pushes(timezone.now()) == 3  # the rest, next beat
+
+
 def test_preferences_api_defaults_to_five_and_round_trips(user):
     c = Client()
     c.force_login(user)
