@@ -4,6 +4,7 @@ import type { AgentOut } from '@/api/agents'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
+import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -192,6 +193,16 @@ export function RunnerDetail({
           back in, because someone else had run the pairing command. */}
       {runner.can_administer && runner.kind === 'cloud' && (
         <RunnerCredentials runnerId={runner.id} />
+      )}
+      {/* Who else may fix this box. Rendered for an administrator (who may read
+          the list) as well as the pairer (who may edit it) — the panel itself
+          hides the form when there is nothing the viewer may change. */}
+      {(runner.can_administer || runner.can_manage) && (
+        <RunnerAdmins
+          runnerId={runner.id}
+          canManage={runner.can_manage}
+          pairedByEmail={runner.paired_by_email}
+        />
       )}
       {runner.can_manage && <RunnerDrills runnerId={runner.id} />}
       {!runner.can_manage && (
