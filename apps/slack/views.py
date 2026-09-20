@@ -22,10 +22,11 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from apps.canopy_sessions.models import Session
 from apps.events import services as events_services
 from apps.events.models import Event
 
-from . import client, services
+from . import client, relay, services
 from .verify import SignatureError, verify_slack_signature
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,8 @@ def events(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"challenge": body.get("challenge", "")})
     if body.get("type") != "event_callback":
         return JsonResponse({"ok": True})
+    if str((body.get("event") or {}).get("type") or "") == "agent_session_stopped":
+        return _stop_from_slack(body)
     inbound = _inbound_from_event(body)
     if inbound is None or not inbound.slack_user_id:
         return JsonResponse({"ok": True})
@@ -296,3 +299,41 @@ def interactions(request: HttpRequest) -> HttpResponse:
     elif outcome.status in (services.STALE, services.MOVED):
         _tell(installation, inbound, outcome.message)
     return HttpResponse(status=200)
+
+
+def _stop_from_slack(body: dict) -> HttpResponse:
+    """Slack's own Stop button, beside the "Working…" indicator it draws.
+
+    The button exists only because the app subscribes to this event, and it is
+    the one control the native indicator carries. Stop the same way canopy's own
+    stop does — cancel the turns, then interrupt the terminal, since an agent
+    turn is fire-and-continue and a turn-shaped cancel alone would find nothing
+    (see canopy_sessions.services.interrupt_session).
+    """
+    from apps.canopy_sessions import services as session_services
+
+    from . import status
+
+    event = body.get("event") or {}
+    installation = services.installation_for(str(body.get("team_id") or event.get("team") or ""))
+    if installation is None:
+        return JsonResponse({"ok": True})
+    channel = str(event.get("channel_id") or event.get("channel") or "")
+    thread_ts = str(event.get("thread_ts") or "")
+    key = services.thread_key(installation.team_id, channel,
+                              thread_ts or services.DM_ANCHOR)
+    session = (Session.objects.select_related("agent")
+               .filter(workspace=installation.workspace,
+                       **{f"metadata__{services.SLACK_THREAD_KEY}": key})
+               .order_by("-created_at").first())
+    if session is None:
+        return JsonResponse({"ok": True})
+    try:
+        session_services.cancel_session_turns(session)
+        session_services.interrupt_session(session)
+    except Exception:  # noqa: BLE001 — a stop that half-lands must still settle the indicator
+        logger.exception("slack stop failed")
+    dest = relay.session_destination(session)
+    if dest is not None:
+        status.sync_session(session, dest)
+    return JsonResponse({"ok": True})

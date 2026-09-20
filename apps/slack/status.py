@@ -151,6 +151,77 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     ]
 
 
+def slack_status_for(turn: Turn) -> str:
+    """This turn, as one of Slack's four agent-session states.
+
+    Deliberately derived from the SAME turn the text line is rendered from, in
+    the same call, so the native indicator and the words can never disagree —
+    a spinner still turning under a line that says "could not finish" would be
+    worse than no spinner at all.
+
+    * PROCESSING — picked up and working; Slack draws "Working…" and a Stop.
+    * SUSPENDED — it needs a person: blocked on a question, or stuck behind a
+      runner that is offline (which only a human can resolve, by moving it or
+      by opening the laptop).
+    * ACTIVE — nothing in flight; ready for the next message.
+    """
+    from apps.canopy_sessions.serializers import pending_menu
+    from apps.harness import services as harness
+
+    if turn.status == Turn.NEEDS_HUMAN or runner_gone(turn):
+        return client.SUSPENDED
+    # BEFORE the running check, not after: an agent blocked on a question is
+    # RUNNING as far as the turn is concerned, and a spinner over a dialog
+    # nobody has answered is the exact lie this indicator exists to stop.
+    if turn.chat_session_id and pending_menu(turn.chat_session) is not None:
+        return client.SUSPENDED
+    if turn.status in (Turn.CLAIMED, Turn.RUNNING):
+        return client.PROCESSING
+    if turn.status == Turn.QUEUED:
+        live = harness.turn_reach(turn).kind == harness.LIVE
+        return client.PROCESSING if live else client.SUSPENDED
+    return client.ACTIVE
+
+
+def sync_indicator(turn: Turn, dest) -> bool:
+    """Tell Slack what its own indicator should show for this turn's thread.
+
+    Best-effort by construction: `set_session_status` answers False wherever the
+    app is not declared an agent, and a raised error is swallowed here, because
+    the status LINE is the load-bearing half and must post either way.
+    """
+    installation, channel, thread_ts = dest
+    try:
+        return client.set_session_status(installation.bot_token, channel=channel,
+                                         thread_ts=thread_ts, status=slack_status_for(turn))
+    except Exception:  # noqa: BLE001 — the indicator is the garnish, the line is the meal
+        logger.exception("could not set the Slack agent-session status")
+        return False
+
+
+def sync_session(session, dest) -> bool:
+    """The indicator for a SESSION, where no turn is the subject.
+
+    The case that needs it: a runner reports its agent blocked on a question,
+    which on an emdash session is not a Turn at all. Falls through to the
+    session's latest turn when there is one, so this never contradicts the line.
+    """
+    from apps.canopy_sessions.serializers import pending_menu
+
+    latest = (Turn.objects.select_related("chat_session", "claimed_by")
+              .filter(chat_session=session).order_by("-created_at").first())
+    if latest is not None:
+        return sync_indicator(latest, dest)
+    installation, channel, thread_ts = dest
+    want = client.SUSPENDED if pending_menu(session) is not None else client.ACTIVE
+    try:
+        return client.set_session_status(installation.bot_token, channel=channel,
+                                         thread_ts=thread_ts, status=want)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not set the Slack agent-session status")
+        return False
+
+
 def _load(turn: Turn) -> Turn:
     return (Turn.objects.select_related("chat_session", "chat_session__agent", "claimed_by",
                                         "pinned_runner", "initiator_user", "enqueued_by")
@@ -214,6 +285,7 @@ def post(turn: Turn) -> SlackTurnPost | None:
         with transaction.atomic():
             record = SlackTurnPost.objects.create(turn=turn, channel_id=channel)
     except IntegrityError:
+        sync_indicator(turn, dest)      # someone else owns the line; the state still moved
         return None
     reach, cloud = _reach_and_cloud(turn)
     text, blocks = render(turn, reach=reach, cloud=cloud)
@@ -227,7 +299,9 @@ def post(turn: Turn) -> SlackTurnPost | None:
         _log_failure(installation, turn, channel, str(e))
         return record
     # The runner may have claimed it while we were posting; the claim's own
-    # signal found no ts yet and edited nothing, so catch up here.
+    # signal found no ts yet and edited nothing, so catch up here. This also
+    # sets the native indicator for the first time — hence no separate call
+    # above, which would spend two API calls to say one thing.
     refresh(turn)
     return record
 
@@ -244,6 +318,7 @@ def refresh(turn: Turn) -> bool:
     if dest is None:
         return False
     installation, _channel, thread_ts = dest
+    sync_indicator(turn, dest)
     _sync_offline_notice(installation, thread_ts, turn, record)
     reach, cloud = _reach_and_cloud(turn)
     text, blocks = render(turn, reach=reach, cloud=cloud)
