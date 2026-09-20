@@ -8726,6 +8726,18 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Ask State
+             * @default
+             */
+            readonly ask_state: string;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
             /** Title */
             readonly title: string;
             /** Next Action */

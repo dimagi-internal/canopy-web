@@ -503,6 +503,11 @@ class AgentTaskOut(StrictModel):
     ext_id: str
     project_ext_id: str | None = None
     project_name: str | None = None
+    # The ask, where the task carries one (what an `Item` used to be). Blank
+    # `ask_kind` means the task asks nothing and is simply work in flight.
+    ask_kind: str = ""
+    ask_state: str = ""
+    waiting_on_email: str | None = None
     title: str
     next_action: str
     status: Literal["suggested", "in_progress", "done", "declined"]

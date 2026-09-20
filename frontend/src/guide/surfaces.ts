@@ -245,6 +245,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Send a quick prompt to the agent', 'Transfer ownership', 'Toggle turn mode or Slack access', 'Reorder or edit runner assignments', 'Set or clear a credential', 'Mint a Google credential'],
   },
   {
+    path: '/w/:workspace/agents/:slug/projects',
+    title: 'Agent projects',
+    audience: 'The person(s) who own this agent',
+    what: "This agent's projects — the work each of its Drive `Projects/<name>` folders holds. canopy keeps what a folder cannot: how much is open, how much is parked on a person, and where the folder is. Tasks are filed into a project; one-offs legitimately have none.",
+    actions: ['Add a project', 'Mark a project done', 'Open its Drive folder'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/tasks',
     title: 'Agent tasks',
     audience: 'The person(s) who own this agent',
