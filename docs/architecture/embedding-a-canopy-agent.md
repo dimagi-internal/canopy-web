@@ -54,7 +54,7 @@ happens" almost always means one of them is missing rather than something being
 broken.
 
 Go to **Connected sites** in your workspace —
-**`/w/<workspace>/connected-apps`** — as a workspace owner:
+**`/w/<workspace>/settings/connected-apps`** — as a workspace owner:
 
 | Field | What it is | If you get it wrong |
 | --- | --- | --- |

@@ -10,15 +10,21 @@ const authed = { isAuthed: true, active: 'connect' }
 
 describe('NAV_GROUPS', () => {
   it('keeps every destination the flat nav carried', () => {
-    // The row this replaced held 15 links (Storyboards, Guide and Slack are the three added since).
-    // Grouping is meant to reorganize the header, never to quietly drop a
-    // surface out of it.
+    // The row this replaced held 15 links (Storyboards and Guide were added
+    // since). Grouping is meant to reorganize the header, never to quietly
+    // drop a surface out of it.
+    //
+    // `Settings` is the one deliberate collapse: Members, Inbound and Slack
+    // were three entries for three pages, and those pages are now sections of
+    // /w/:workspace/settings. Nothing was dropped — the destinations moved
+    // behind one entry, and Connected sites (which was in no menu) came with
+    // them. Everything else still earns its own line.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Inbound', 'Insights', 'Members',
-        'Projects', 'Schedule', 'Sessions', 'Shareouts', 'Storyboards', 'Supervisor',
-        'Slack', 'System', 'Timeline', 'Walkthroughs',
+        'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Insights',
+        'Projects', 'Schedule', 'Sessions', 'Settings', 'Shareouts', 'Storyboards',
+        'Supervisor', 'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
   })
@@ -118,7 +124,7 @@ describe('isNavGroupActive', () => {
       '/w/connect', '/w/connect/chat', '/insights', '/supervisor',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
-      '/sessions', '/w/connect/members', '/w/connect/inbound', '/w/connect/slack', '/system',
+      '/sessions', '/w/connect/settings', '/w/connect/settings/slack', '/system',
     ]) {
       const hits = groups.filter((g) => isNavGroupActive(g, pathname)).map((g) => g.label)
       expect(hits, pathname).toHaveLength(1)

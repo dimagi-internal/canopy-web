@@ -92,10 +92,11 @@ export const USER_ROLES: UserRole[] = [
     title: 'Administrator — you own the workspace',
     who: 'Whoever decides who else gets in, and holds the keys.',
     enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
-    startHere: 'Open Members to invite someone, or an agent\'s Credentials tab to hold its keys.',
-    surfaces: ['/w/:workspace/members', '/w/:workspace/connected-apps', '/w/:workspace/inbound'],
+    startHere: 'Open Settings to invite someone, or an agent\'s Credentials tab to hold its keys.',
+    surfaces: ['/w/:workspace/settings', '/w/:workspace/settings/members'],
     note:
-      'Members and invites, agent credentials, the shared vault, inbound configuration. ' +
+      'Members and invites, Slack, inbound email, connected sites — one settings page for '
+      + 'the workspace. Agent credentials and the shared vault sit on the agent itself. ' +
       'Credentials are owner-only because they are the keys a runner resolves everything ' +
       'else from.',
   },

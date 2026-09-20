@@ -211,7 +211,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
   if (!slug) return null
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-4xl space-y-6">
       <WorkbenchSubHeader title="Connected sites" count={apps?.length} />
       <p className="-mt-4 text-sm text-muted-foreground">
         Websites allowed to host one of this workspace's agents.

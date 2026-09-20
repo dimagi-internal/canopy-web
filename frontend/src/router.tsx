@@ -20,6 +20,7 @@ import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
+import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { DddPage } from './pages/DddPage'
@@ -145,6 +146,17 @@ export function RootRedirect() {
   return <Navigate to={`/w/${active}`} replace />
 }
 
+// A page that became a SECTION of /w/:workspace/settings. The workspace is
+// already in the URL, so this needs no workspace list — unlike TenantRedirect
+// above, which is resolving which workspace you meant. Query and hash are
+// carried over: /w/x/inbound is where the gcloud runbook sends people, and an
+// inbound link can arrive with one.
+export function SettingsRedirect({ to }: { to: string }) {
+  const { workspace } = useParams()
+  const { search, hash } = useLocation()
+  return <Navigate to={`/w/${workspace}/settings/${to}${search}${hash}`} replace />
+}
+
 // /w/:workspace index. Disambiguates a legacy /w/<uuid> walkthrough link
 // (redirect to the new viewer) from a real workspace slug (render the workbench).
 function WorkspaceIndex() {
@@ -218,10 +230,26 @@ export const routeTable: RouteObject[] = [
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },
-      { path: '/w/:workspace/members', element: <WorkspaceMembersPage /> },
-      { path: '/w/:workspace/connected-apps', element: <ConnectedAppsPage /> },
-      { path: '/w/:workspace/inbound', element: <InboundPushPage /> },
-      { path: '/w/:workspace/slack', element: <SlackSettingsPage /> },
+      // Workspace settings — ONE surface, four sections. Each section keeps its
+      // own URL so a deep link still names a place ("the Slack settings"), and
+      // still loads only its own data.
+      {
+        path: '/w/:workspace/settings',
+        element: <WorkspaceSettingsPage />,
+        children: [
+          { index: true, element: <Navigate to="members" replace /> },
+          { path: 'members', element: <WorkspaceMembersPage /> },
+          { path: 'slack', element: <SlackSettingsPage /> },
+          { path: 'inbound', element: <InboundPushPage /> },
+          { path: 'connected-apps', element: <ConnectedAppsPage /> },
+        ],
+      },
+      // The four pages these sections used to be. Live links were handed to
+      // people, so they redirect rather than 404.
+      { path: '/w/:workspace/members', element: <SettingsRedirect to="members" /> },
+      { path: '/w/:workspace/connected-apps', element: <SettingsRedirect to="connected-apps" /> },
+      { path: '/w/:workspace/inbound', element: <SettingsRedirect to="inbound" /> },
+      { path: '/w/:workspace/slack', element: <SettingsRedirect to="slack" /> },
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },

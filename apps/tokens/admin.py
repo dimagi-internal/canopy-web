@@ -47,7 +47,7 @@ class AppCredentialAdmin(admin.ModelAdmin):
     fail-closed and silent, so a form with no explanation beside it produces a
     widget that never appears and no way to find out why.
 
-    The surface is `/w/{workspace}/connected-apps`
+    The surface is `/w/{workspace}/settings/connected-apps`
     (`apps/tokens/connected_apps_api.py`), owned by workspace owners like every
     other tenant-admin page. This stays registered because inspecting a row is
     genuinely useful when something is not working — and stays READ-ONLY so it

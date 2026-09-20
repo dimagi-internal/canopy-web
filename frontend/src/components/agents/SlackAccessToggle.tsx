@@ -68,7 +68,7 @@ export function SlackAccessToggle({
       {command && (
         <p className={`mt-1 text-[11px] ${command.ok ? 'text-success' : 'text-warning'}`} data-testid="slack-command-note">
           {command.text}{' '}
-          {!command.ok && <Link to={`/w/${workspace}/slack`} className="underline">Slack settings</Link>}
+          {!command.ok && <Link to={`/w/${workspace}/settings/slack`} className="underline">Slack settings</Link>}
         </p>
       )}
     </div>

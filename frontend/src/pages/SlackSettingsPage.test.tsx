@@ -27,8 +27,8 @@ afterEach(() => cleanup())
 
 function renderPage() {
   render(
-    <MemoryRouter initialEntries={['/w/connect/slack']}>
-      <Routes><Route path="/w/:workspace/slack" element={<SlackSettingsPage />} /></Routes>
+    <MemoryRouter initialEntries={['/w/connect/settings/slack']}>
+      <Routes><Route path="/w/:workspace/settings/slack" element={<SlackSettingsPage />} /></Routes>
     </MemoryRouter>,
   )
 }
@@ -64,8 +64,8 @@ describe('SlackSettingsPage — working indicator', () => {
   const renderManaged = () => {
     vi.mocked(slack.getSlackConfig).mockResolvedValue(managed)
     return render(
-      <MemoryRouter initialEntries={['/w/connect/slack']}>
-        <Routes><Route path="/w/:workspace/slack" element={<SlackSettingsPage />} /></Routes>
+      <MemoryRouter initialEntries={['/w/connect/settings/slack']}>
+        <Routes><Route path="/w/:workspace/settings/slack" element={<SlackSettingsPage />} /></Routes>
       </MemoryRouter>,
     )
   }

@@ -163,7 +163,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   if (!slug) return null
 
   return (
-    <div className="max-w-4xl px-6 py-8">
+    <div className="max-w-4xl">
       {loadError && <div className="mb-4 text-sm text-destructive">{loadError}</div>}
       {rowError && <div className="mb-4 text-sm text-destructive">{rowError}</div>}
 
