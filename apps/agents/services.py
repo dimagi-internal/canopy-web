@@ -430,10 +430,17 @@ def sync_tasks(agent: Agent, items: list) -> dict:
     DB-only tasks are preserved; the sheet just sets the columns it carries."""
     created = updated = 0
     for t in items:
+        # A project is set only when the payload NAMES one. A wholesale sync
+        # that defaulted it to "" would unfile every task it touches, and the
+        # CLI's `agent add` goes through this path — so filing a task once and
+        # editing its title later would quietly take it out of its project.
+        ref = (getattr(t, "project", "") or "").strip()
+        filing = {"project": get_project(agent, ref)} if ref else {}
         _, was_created = AgentTask.objects.update_or_create(
             agent=agent,
             ext_id=t.ext_id,
             defaults=dict(
+                **filing,
                 title=t.title,
                 next_action=t.next_action,
                 status=_norm_status(t.status),
