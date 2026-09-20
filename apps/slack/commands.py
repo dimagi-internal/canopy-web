@@ -172,3 +172,63 @@ def sync_quietly(installation: SlackInstallation | None) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.exception("slack command sync failed")
         return {"status": "error", "detail": str(e)[:300]}
+
+
+# --- declaring the app an agent (Slack's native "Working…" indicator) ---------
+#
+# The indicator, its Stop button and the "needs you" state are Agent Sessions
+# (`client.set_session_status`), which Slack draws only for an app that declares
+# itself an agent. That is three edits to the SAME manifest this module already
+# owns — so it is done here, through the same configuration token, rather than
+# by hand in a UI nobody can diff.
+#
+# NOT done on a deploy or a switch flip, unlike `reconcile`. It changes how the
+# app presents itself (agent conversations render in the app's Messages tab) and
+# `agent_view` cannot be swapped back to the older `assistant_view` once set, so
+# it is an explicit act: `manage.py slack_declare_agent`.
+
+AGENT_SCOPE = "assistant:write"
+AGENT_EVENTS = ["agent_session_stopped", "agent_session_title_changed", "app_context_changed"]
+AGENT_DESCRIPTION = "Talk to your canopy agents — they answer in the thread."
+
+
+def declare_agent(installation: SlackInstallation, *, description: str = "") -> dict:
+    """Add `features.agent_view`, the agent scope and the agent events.
+
+    Returns what it changed, and what remains for a human: adding a SCOPE takes
+    effect only on re-install, so the caller is told to re-authorise rather than
+    left believing a silent no-op worked. Idempotent — a second run changes
+    nothing and says so.
+    """
+    token = _access_token(installation)
+    manifest = client.call("apps.manifest.export", token=token,
+                           data={"app_id": installation.app_id})["manifest"]
+    changed = []
+
+    features = manifest.setdefault("features", {})
+    if "assistant_view" in features:
+        # Slack's own note: the swap is one-way, and this tool is not the place
+        # to make an irreversible choice on someone's behalf.
+        raise ValueError("this app declares the older assistant_view; migrate it in Slack's UI first")
+    if "agent_view" not in features:
+        features["agent_view"] = {"agent_description": (description or AGENT_DESCRIPTION)[:300]}
+        changed.append("features.agent_view")
+
+    scopes = manifest.setdefault("oauth_config", {}).setdefault("scopes", {})
+    bot = list(scopes.get("bot") or [])
+    if AGENT_SCOPE not in bot:
+        scopes["bot"] = sorted({*bot, AGENT_SCOPE})
+        changed.append(f"scope {AGENT_SCOPE}")
+
+    subs = manifest.setdefault("settings", {}).setdefault("event_subscriptions", {})
+    events = list(subs.get("bot_events") or [])
+    missing = [e for e in AGENT_EVENTS if e not in events]
+    if missing:
+        subs["bot_events"] = events + missing
+        changed.append("events " + ", ".join(missing))
+
+    if changed:
+        client.call("apps.manifest.update", token=token,
+                    data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
+    return {"changed": changed,
+            "reinstall_required": any(c.startswith("scope") for c in changed)}

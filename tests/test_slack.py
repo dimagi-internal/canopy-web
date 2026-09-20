@@ -81,6 +81,8 @@ class FakeSlack:
             body = {"ok": False, "error": self.fail[method]}
         elif method == "users.info":
             body = {"ok": True, "user": self.users.get(payload["user"], {"profile": {}})}
+        elif method == "agents.sessions.setStatus":
+            body = {"ok": True}
         elif method == "chat.postMessage":
             body = {"ok": True, "ts": "1700000999.000100"}
         elif method == "oauth.v2.access":
@@ -1447,3 +1449,82 @@ def test_install_records_the_app_id(slack, ws):
     state = parse_qs(urlparse(start["Location"]).query)["state"][0]
     c.get("/auth/slack/callback/", {"code": "abc", "state": state})
     assert SlackInstallation.objects.get(team_id=TEAM).app_id == "A_CANOPY"
+
+
+# ---- Slack's OWN working indicator (agent sessions) ------------------------------
+#
+# The native affordance for "I am doing something": a spinner Slack draws in the
+# thread, with a Stop button, driven by agents.sessions.setStatus rather than by
+# editing message text. It only renders for an app declared an agent, so every
+# call has to degrade to nothing on a deployment where that has not been done.
+
+def _statuses(slack):
+    return [p["status"] for p in slack.said("agents.sessions.setStatus")]
+
+
+def test_the_indicator_follows_the_turn(slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal summarise")
+    assert _statuses(slack) == ["processing"]          # queued, a live runner has it
+    call = slack.said("agents.sessions.setStatus")[-1]
+    assert call["channel_id"] == "C1" and call["thread_ts"] == "1700000000.000100"
+
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = harness_services.claim_next_turn(runner)
+    assert _statuses(slack)[-1] == "processing"
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.finish_turn(turn, status=Turn.DONE)
+    assert _statuses(slack)[-1] == "active"            # the spinner stops when the work does
+
+
+def test_an_offline_runner_suspends_rather_than_spins(slack, linked, hal, alice):
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    mention("hal summarise")
+    assert _statuses(slack)[-1] == "suspended"
+
+
+def test_a_runner_dying_mid_turn_stops_the_spinner(slack, linked, hal, alice,
+                                                   django_capture_on_commit_callbacks):
+    runner, _turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    assert _statuses(slack)[-1] == "processing"
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    assert _statuses(slack)[-1] == "suspended"         # it needs a person, and says so
+    _revive(runner)
+    slack_status.sweep(force=True)
+    assert _statuses(slack)[-1] == "processing"
+
+
+def test_a_question_suspends_the_session(bound, slack, django_capture_on_commit_callbacks):
+    session, runner, pairer = bound
+    # Mid-turn, so "suspended" can only be the QUESTION talking.
+    Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING, claimed_by=runner)
+    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    assert _statuses(slack)[-1] == "suspended"
+    _report(runner, pairer, None, django_capture_on_commit_callbacks)
+    assert _statuses(slack)[-1] == "processing"        # answered at the keyboard; back to work
+
+
+def test_an_app_that_is_not_an_agent_yet_still_works(slack, linked, hal, alice):
+    """Until the app is declared an agent every call is refused. The thread must
+    be exactly as good as it was before — the text line is the load-bearing half."""
+    slack.fail["agents.sessions.setStatus"] = "feature_disabled"
+    _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal summarise")
+    assert Turn.objects.count() == 1
+    assert "is picking this up on *jj-mbp*" in _line(slack)["text"]
+
+
+def test_a_slack_stop_press_cancels_the_turn(slack, linked, hal, alice,
+                                             django_capture_on_commit_callbacks):
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    resp = event({"type": "agent_session_stopped", "channel_id": "C1",
+                  "thread_ts": "1700000000.000100", "user": ALICE})
+    assert resp.status_code == 200
+    turn.refresh_from_db()
+    assert turn.events.filter(kind="cancel_requested").exists() or turn.status == Turn.CANCELLED
+
+
+def test_a_stop_for_a_thread_we_do_not_know_is_harmless(slack, linked, hal, alice):
+    assert event({"type": "agent_session_stopped", "channel_id": "CZZZ",
+                  "thread_ts": "1700009999.000100", "user": ALICE}).status_code == 200

@@ -187,6 +187,9 @@ def relay_menu(session_id, menu) -> bool:
     if dest is None:
         return False
     installation, channel, thread_ts = dest
+    from . import status as status_mod
+
+    status_mod.sync_session(session, dest)
     if not menu:
         _close_question_posts(installation, session, ":white_check_mark: Answered.")
         SlackMenuPost.objects.filter(session=session).delete()

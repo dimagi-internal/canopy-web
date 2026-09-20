@@ -32,6 +32,45 @@ def call(method: str, *, token: str = "", data: dict | None = None, json: dict |
     return body
 
 
+#: `agents.sessions.setStatus` values. PROCESSING draws Slack's own "Working…"
+#: indicator (with a Stop button, since we subscribe to `agent_session_stopped`);
+#: SUSPENDED is "it needs a person"; ACTIVE is "ready for your next message".
+PROCESSING, ACTIVE, SUSPENDED, CLOSED = "processing", "active", "suspended", "closed"
+
+#: Every way this call can mean "this app/workspace does not do agent sessions".
+#: All are configuration facts, not failures of the thing being reported, so the
+#: caller degrades to the text line it already posts.
+_NO_AGENT_SESSIONS = frozenset({
+    "feature_disabled", "missing_scope", "not_allowed_token_type", "invalid_arguments",
+    "unknown_method", "method_not_supported_for_channel_type", "invalid_channel_type",
+    "agent_not_enabled", "not_an_agent",
+})
+
+
+def set_session_status(token: str, *, channel: str, status: str, thread_ts: str = "") -> bool:
+    """Drive Slack's NATIVE working indicator for this thread. True if it took.
+
+    The one thing a posted message cannot do: an edit to text is silent and
+    static, while this is the spinner Slack draws under the composer in the
+    thread itself, and it is what carries the Stop button. It needs the app to
+    be declared an agent (`features.agent_view` + `assistant:write` — see
+    `commands.declare_agent`), so on any deployment where that has not been done
+    every call answers one of `_NO_AGENT_SESSIONS`. That is not an error worth
+    raising: the status line says the same thing in words, so this returns False
+    and the thread is no worse off than before.
+    """
+    payload = {"channel_id": channel, "status": status}
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    try:
+        call("agents.sessions.setStatus", token=token, json=payload)
+        return True
+    except SlackApiError as e:
+        if e.error in _NO_AGENT_SESSIONS:
+            return False
+        raise
+
+
 def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
                  blocks: list | None = None, persona: dict | None = None) -> str:
     """Post, optionally AS an agent (`persona` = {"username", "icon_url"}).

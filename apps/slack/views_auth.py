@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # (spec § "Feeding it context") will need, so the one human install step does
 # not have to be repeated for it. `im:history` is DMs *with the bot* only.
 BOT_SCOPES = [
-    "app_mentions:read", "chat:write", "chat:write.customize", "commands",
+    "app_mentions:read", "assistant:write", "chat:write", "chat:write.customize", "commands",
     "im:history", "im:read", "im:write",
     "users:read", "users:read.email",
     "channels:history", "groups:history",
