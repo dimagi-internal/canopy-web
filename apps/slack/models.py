@@ -56,6 +56,11 @@ class SlackInstallation(models.Model):
     )
     commands_synced_at = models.DateTimeField(null=True, blank=True)
     commands_sync_error = models.CharField(max_length=300, blank=True, default="")
+    #: When this app was declared an agent (`commands.declare_agent`), which is
+    #: what lets Slack draw its own working indicator. A local note about a fact
+    #: that lives in Slack's manifest: it answers "has anyone done this yet?"
+    #: without an API round trip on every settings page load.
+    agent_declared_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.team_name or self.team_id} -> {self.workspace_id}"
