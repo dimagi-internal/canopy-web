@@ -7,6 +7,8 @@ because an agent's sync spans both code/skill improvement AND work products and
 is richer than a feed card. canopy-web stores the metadata, summary, and
 self-grades for the feed; the body lives in the doc.
 """
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -33,6 +35,9 @@ class Agent(models.Model):
     #: after P2 was deleted, and an old link (a task's Links, a Drive folder
     #: name, an email) would then point at different work.
     project_seq = models.PositiveIntegerField(default=0)
+    #: The same counter for tasks, so an ask raised by machinery can be numbered
+    #: without the caller first listing every task to work out the next T<N>.
+    task_seq = models.PositiveIntegerField(default=0)
     #: The agent's OWN canopy login — not `owner`, which is the human operating
     #: it. An agent authenticates to canopy's own MCP with its own PAT
     #: (`secret_refs: canopy-pat`), so the caller behind a tool call is this
@@ -527,6 +532,72 @@ class AgentTask(models.Model):
     due = models.DateField(null=True, blank=True)
     links = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True, default="")
+    # ---- the ask: what this task needs from a HUMAN -------------------------
+    #
+    # An `Item` used to be its own model — "work YOU do", the dual of a Turn.
+    # In practice the two stopped being different things: across the fleet, 118
+    # tasks carried the work while a single agent had ever raised an item, and
+    # the ~24 tasks genuinely waiting on somebody reached no inbox at all,
+    # because the inbox read items only. So the ask moves onto the task.
+    #
+    # Field names are Item's, deliberately: `dispatch()` reads `.dispatch`,
+    # `.comment`, `.decided_by`, `.title` and `.agent` off whatever it is given,
+    # so one implementation serves both while items are migrated away.
+
+    #: Addressable like an item was. Migrated items keep THEIR uuid, so every
+    #: link, Ada-stored id and `/api/items/{id}/` path still resolves.
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    #: Who the next step waits on, as a real person canopy can notify. The free
+    #: text `assigned` stays beside it — half the fleet's boards say things like
+    #: "Beth + Neal" or "operator (restart, then the build runs)", which no FK
+    #: can hold and which is still the truest description of the wait.
+    waiting_on_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="tasks_waiting_on",
+    )
+
+    #: `review` (approve/skip/defer) or `question` (answer in words); blank means
+    #: the task asks nothing and is simply work in flight.
+    ASK_NONE, ASK_REVIEW, ASK_QUESTION = "", "review", "question"
+    ASK_CHOICES = [(ASK_NONE, "None"), (ASK_REVIEW, "Review"), (ASK_QUESTION, "Question")]
+    ask_kind = models.CharField(max_length=10, choices=ASK_CHOICES, blank=True, default=ASK_NONE)
+    #: The ask's own words, frozen when it was raised — an utterance, like an
+    #: email, not a view of something that may since have changed.
+    ask_body = models.TextField(blank=True, default="")
+
+    IMPLEMENT, SKIP, DEFER = "implement", "skip", "defer"
+    DECISION_CHOICES = [(IMPLEMENT, "Implement"), (SKIP, "Skip"), (DEFER, "Defer")]
+    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, blank=True, default="")
+    comment = models.TextField(blank=True, default="")
+    decided_by = models.CharField(max_length=200, blank=True, default="")
+    decided_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="tasks_decided",
+    )
+    #: The presence of this — not any status — is what closes an ask. A
+    #: question's answer sets it while `decision` stays blank, because a
+    #: question has no verb to click.
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    dispatch = models.JSONField(default=list, blank=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    #: One sitting (a fleet audit), so a batch can be rendered together.
+    batch_key = models.CharField(max_length=64, blank=True, default="")
+    #: Unique where set, so a producer re-posting a batch replays rather than
+    #: duplicating. Null (not "") for a task nobody keyed, because unique
+    #: columns treat NULLs as distinct and empty strings as equal.
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
+
+    #: Where the ask came from, when it was raised by machinery rather than
+    #: typed by a person.
+    origin = models.CharField(max_length=32, blank=True, default="")
+    origin_ref = models.JSONField(default=dict, blank=True)
+    raised_by = models.ForeignKey(
+        "harness.Turn", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="raised_tasks",
+    )
+
     position = models.IntegerField(default=0, help_text="Order within a status column.")
     source = models.CharField(max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -541,6 +612,13 @@ class AgentTask(models.Model):
 
     def __str__(self):
         return f"task:{self.agent.slug}:{self.ext_id}:{self.status}"
+
+    @property
+    def ask_is_open(self) -> bool:
+        """Does this task still need a human? Keyed on `decided_at`, not on
+        `decision`: a question is closed by its ANSWER and never carries a verb,
+        so reading `decision` would leave every answered question open forever."""
+        return bool(self.ask_kind) and self.decided_at is None
 
     @property
     def project_ext_id(self) -> str | None:
