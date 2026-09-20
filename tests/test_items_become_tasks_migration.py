@@ -146,3 +146,52 @@ def test_reversing_removes_the_tasks_and_leaves_the_items(agent):
 
     assert AgentTask.objects.count() == 0
     assert Item.objects.count() == 1
+
+
+# --- the shape production actually had --------------------------------------
+
+
+def test_it_numbers_past_a_board_whose_counter_was_never_set(agent):
+    """The bug that failed the deploy.
+
+    `Agent.task_seq` is a NEW column, so it reads 0 on every agent that has been
+    running for months — while their boards hold T1…T40 and `(agent, ext_id)` is
+    UNIQUE. Trusting the counter numbered the first migrated ask T1 and the
+    migration died on the duplicate. Every earlier test seeded the counter,
+    which is the one thing the real database does not do.
+    """
+    for i in (1, 2, 3):
+        AgentTask.objects.create(agent=agent, ext_id=f"T{i}", title=f"existing {i}")
+    assert agent.task_seq == 0          # exactly as prod had it
+    _item(agent, title="first"), _item(agent, title="second")
+
+    _run()
+
+    migrated = AgentTask.objects.exclude(title__startswith="existing").order_by("ext_id")
+    assert [t.ext_id for t in migrated] == ["T4", "T5"]
+
+
+def test_it_steps_over_ids_that_are_not_numbers_at_all(agent):
+    """A board may hold ids an agent invented ("sheet-7"), so stepping past the
+    highest NUMBER is necessary and not sufficient."""
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="existing")
+    AgentTask.objects.create(agent=agent, ext_id="sheet-7", title="odd one")
+    _item(agent, title="first")
+
+    _run()
+
+    assert AgentTask.objects.get(title="first").ext_id == "T2"
+
+
+def test_two_agents_number_independently(agent):
+    """`ext_id` is unique per AGENT, so one busy board must not push another's
+    numbering along."""
+    other = Agent.objects.create(slug="hal", name="Hal", workspace_id=agent.workspace_id)
+    for i in (1, 2, 3, 4):
+        AgentTask.objects.create(agent=agent, ext_id=f"T{i}", title="existing")
+    _item(agent, title="ada's"), _item(other, title="hal's")
+
+    _run()
+
+    assert AgentTask.objects.get(title="ada's").ext_id == "T5"
+    assert AgentTask.objects.get(title="hal's").ext_id == "T1"
