@@ -464,8 +464,25 @@ def skills_in_group(agent: Agent, group: str) -> list[str]:
     return []
 
 
+#: How many revisions a caller gets when it does not say. A READING budget, not
+#: a storage one: ACE's commit bodies average ~1.8 KB, so the old default of 300
+#: returned ~640 KB — past what a tool result may carry, and the caller is an
+#: assistant with a context window. Measured 2026-09-20: 80 revisions of
+#: `idea-to-pdd` came back as 166 KB and were refused outright.
+DEFAULT_REVISIONS = 25
+#: Hard ceiling a caller can ask for.
+MAX_REVISIONS = 300
+#: Bodies are summarised at this length in a LIST. The full body is one call
+#: away — ask for that one `commit` — so the list stays readable rather than
+#: making every question cost every word ever written about the skill.
+BODY_PREVIEW = 700
+#: A single commit is a deliberate read of that commit: nothing is elided.
+BODY_FULL = 4000
+
+
 def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
-                    since: dt.date | None, until: dt.date | None, limit: int = 300,
+                    since: dt.date | None, until: dt.date | None,
+                    limit: int | None = None,
                     commit: str | None = None) -> dict:
     """Revisions newest first, with bodies — the read the assistant reasons over.
 
@@ -487,7 +504,9 @@ def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
     if until:
         qs = qs.filter(commit__committed_at__date__lte=until)
     qs = qs.order_by("-commit__committed_at", "-commit_id")
-    limit = max(1, min(limit, 300))
+    limit = max(1, min(limit if limit is not None else DEFAULT_REVISIONS, MAX_REVISIONS))
+    # A one-commit read is deliberate; a list is a survey. Only the survey elides.
+    body_cap = BODY_FULL if commit else BODY_PREVIEW
     rows = list(qs[: limit + 1])
     checks = row.checks if row else {}
     return {
@@ -504,7 +523,8 @@ def skill_revisions(agent: Agent, *, skill: str | None, group: str | None,
                 "date": r.commit.committed_at.date().isoformat(),
                 "skill": r.skill,
                 "subject": r.commit.subject,
-                "body": r.commit.body[:4000],
+                "body": r.commit.body[:body_cap],
+                "body_truncated": len(r.commit.body) > body_cap,
                 "lines_after": r.lines_after,
                 "line_change": r.added - r.deleted,
             }

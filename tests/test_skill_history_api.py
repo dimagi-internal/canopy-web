@@ -202,3 +202,48 @@ def test_an_unexpected_sync_failure_still_serves_the_stored_history(client, ws_a
     row = SkillHistorySync.objects.get(agent=agent)
     assert row.sync_started_at is None  # the claim did not outlive the attempt
     assert row.last_attempt_at is not None  # and the attempt is debounced
+
+
+def test_a_list_is_capped_and_summarised_so_a_tool_result_stays_readable(agent):
+    """The default read is a survey, not the whole archive.
+
+    Measured 2026-09-20 on labs: at the old default of 300 revisions with 4 KB
+    bodies, `skill_history` for ACE returned ~640 KB and 80 revisions of
+    idea-to-pdd were refused outright as too large — so the assistant could not
+    answer the question the page exists to invite.
+    """
+    long_body = "x" * 3000
+    c = SkillHistoryCommit.objects.create(
+        agent=agent, sha="c" * 40, subject="feat: long", body=long_body,
+        committed_at=timezone.datetime(2026, 4, 9, tzinfo=dt.timezone.utc),
+    )
+    SkillRevision.objects.create(commit=c, skill="alpha", lines_after=20, added=8, deleted=0)
+
+    out = skill_history.skill_revisions(agent, skill="alpha", group=None, since=None, until=None)
+
+    assert len(out["revisions"]) <= skill_history.DEFAULT_REVISIONS
+    newest = out["revisions"][0]
+    assert len(newest["body"]) == skill_history.BODY_PREVIEW
+    assert newest["body_truncated"] is True
+
+
+def test_asking_for_one_commit_returns_its_body_whole(agent):
+    """The summary is a list affordance; a single commit is a deliberate read."""
+    body = "y" * 3000
+    c = SkillHistoryCommit.objects.create(
+        agent=agent, sha="d" * 40, subject="feat: whole", body=body,
+        committed_at=timezone.datetime(2026, 4, 9, tzinfo=dt.timezone.utc),
+    )
+    SkillRevision.objects.create(commit=c, skill="alpha", lines_after=20, added=8, deleted=0)
+
+    out = skill_history.skill_revisions(agent, skill=None, group=None, since=None, until=None,
+                                        commit="d" * 8)
+
+    assert out["revisions"][0]["body"] == body
+    assert out["revisions"][0]["body_truncated"] is False
+
+
+def test_a_caller_can_still_ask_for_more_up_to_the_ceiling(agent):
+    out = skill_history.skill_revisions(agent, skill=None, group=None, since=None, until=None,
+                                        limit=10_000)
+    assert len(out["revisions"]) <= skill_history.MAX_REVISIONS
