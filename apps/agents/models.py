@@ -618,6 +618,10 @@ class AgentTask(models.Model):
         return f"task:{self.agent.slug}:{self.ext_id}:{self.status}"
 
     @property
+    def waiting_on_email(self) -> str | None:
+        return self.waiting_on_user.email if self.waiting_on_user_id else None
+
+    @property
     def ask_state(self) -> str:
         """`open` · `decided` · `dismissed` — the three words the queue speaks."""
         if self.ask_is_open:

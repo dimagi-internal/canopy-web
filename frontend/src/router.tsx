@@ -58,6 +58,11 @@ const InboxSection = lazySection(() =>
 const AgentOverviewSection = lazySection(() =>
   import('./pages/agents/AgentOverviewSection').then((m) => ({ default: m.AgentOverviewSection })),
 )
+const AgentProjectsSection = lazySection(() =>
+  import('./pages/agents/AgentProjectsSection').then((m) => ({
+    default: m.AgentProjectsSection,
+  })),
+)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -250,6 +255,7 @@ export const routeTable: RouteObject[] = [
           // Legacy path from before the rename; keep the old link working.
           { path: 'needs-you', element: <Navigate to="../inbox" replace /> },
           { path: 'overview', element: <LazySection><AgentOverviewSection /></LazySection> },
+          { path: 'projects', element: <LazySection><AgentProjectsSection /></LazySection> },
           { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'items', element: <LazySection><ItemsSection /></LazySection> },

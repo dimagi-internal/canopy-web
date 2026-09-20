@@ -14,6 +14,7 @@ export type AgentSyncOut = Schemas['AgentSyncOut']
 export type AgentWorkProductOut = Schemas['AgentWorkProductOut']
 export type AgentSkillOut = Schemas['AgentSkillOut']
 export type AgentTaskOut = Schemas['AgentTaskOut']
+export type AgentProjectOut = Schemas['AgentProjectOut']
 export type AgentTaskLink = Schemas['AgentTaskLink']
 export type AgentCommandOut = Schemas['AgentTaskCommandOut']
 export type PostCommandResult = Schemas['CommandResultOut']
@@ -188,6 +189,57 @@ export async function listAgentTasks(slug: string): Promise<AgentTaskOut[]> {
   const items = Array.from(unwrap(res, 'listAgentTasks'))
   // links degrades the same way (see toPage's comment); rebuild it.
   return items.map((t) => ({ ...t, links: t.links ? Array.from(t.links) : undefined }))
+}
+
+export async function listAgentProjects(
+  slug: string,
+  status = '',
+): Promise<AgentProjectOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/projects/', {
+    params: { path: { slug }, query: status ? { status } : {} },
+  })
+  const items = Array.from(unwrap(res, 'listAgentProjects'))
+  // `links` degrades to a readonly tuple through the generated types, the same
+  // way tasks do (see `toPage`); rebuild it so callers can treat it as an array.
+  return items.map(
+    (p) => ({ ...p, links: p.links ? Array.from(p.links) : [] }) as AgentProjectOut,
+  )
+}
+
+export async function createAgentProject(
+  slug: string,
+  body: { name: string; outcome?: string; drive_folder_url?: string; repo_slug?: string },
+): Promise<AgentProjectOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/projects/', {
+    params: { path: { slug } },
+    // The generated request type spells out every field; the server defaults
+    // them all but the schema does not mark them optional, so they are filled
+    // here rather than each caller repeating them.
+    body: {
+      ext_id: '',
+      outcome: '',
+      status: 'active',
+      owner_note: '',
+      drive_folder_id: '',
+      drive_folder_url: '',
+      repo_slug: '',
+      notes: '',
+      ...body,
+    },
+  })
+  return unwrap(res, 'createAgentProject') as AgentProjectOut
+}
+
+export async function patchAgentProject(
+  slug: string,
+  ref: string,
+  body: Partial<{ name: string; outcome: string; status: string; drive_folder_url: string }>,
+): Promise<AgentProjectOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/projects/{ref}/', {
+    params: { path: { slug, ref } },
+    body,
+  })
+  return unwrap(res, 'patchAgentProject') as AgentProjectOut
 }
 
 export async function postTaskCommand(

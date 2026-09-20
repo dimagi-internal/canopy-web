@@ -39,6 +39,9 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     // decided/dismissed + batch sittings (?batch=) — browse/history, no badge.
     { to: 'inbox', label: 'Inbox', count: waiting },
     { to: 'overview', label: 'Overview' },
+    // Projects before Tasks: a task belongs to a project, and the question
+    // "what is this agent working on" is answered a level up.
+    { to: 'projects', label: 'Projects' },
     { to: 'tasks', label: 'Tasks' },
     { to: 'items', label: 'Items' },
     { to: 'turns', label: 'Turns' },
