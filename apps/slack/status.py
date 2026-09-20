@@ -271,9 +271,25 @@ def _reach_and_cloud(turn: Turn):
     return reach, cloud
 
 
-def post(turn: Turn) -> SlackTurnPost | None:
+def _with_prefix(record: SlackTurnPost, text: str, blocks: list | None) -> tuple[str, list | None]:
+    """The rendered line, under the words the adopted message already carried."""
+    if not record.prefix:
+        return text, blocks
+    text = f"{record.prefix}\n{text}"
+    if blocks:
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": record.prefix[:3000]}}, *blocks]
+    return text, blocks
+
+
+def post(turn: Turn, *, adopt_ts: str = "", prefix: str = "") -> SlackTurnPost | None:
     """Post this turn's status line into its thread, once. None if the session
-    is not Slack-born, or the line was already posted."""
+    is not Slack-born, or the line was already posted.
+
+    `adopt_ts` makes an EXISTING message the status line instead of posting a
+    new one — the slash command's anchor, which would otherwise be followed
+    immediately by a second message about the same ask. `prefix` is that
+    message's own words, kept above the status on every later edit.
+    """
     from .relay import _log_failure, session_destination
 
     turn = _load(turn)
@@ -283,10 +299,15 @@ def post(turn: Turn) -> SlackTurnPost | None:
     installation, channel, thread_ts = dest
     try:
         with transaction.atomic():
-            record = SlackTurnPost.objects.create(turn=turn, channel_id=channel)
+            record = SlackTurnPost.objects.create(turn=turn, channel_id=channel,
+                                                  slack_ts=adopt_ts, prefix=prefix[:300])
     except IntegrityError:
         sync_indicator(turn, dest)      # someone else owns the line; the state still moved
         return None
+    if adopt_ts:
+        # Already in the thread: edit it into the status line rather than post.
+        refresh(turn)
+        return record
     reach, cloud = _reach_and_cloud(turn)
     text, blocks = render(turn, reach=reach, cloud=cloud)
     try:
@@ -321,7 +342,7 @@ def refresh(turn: Turn) -> bool:
     sync_indicator(turn, dest)
     _sync_offline_notice(installation, thread_ts, turn, record)
     reach, cloud = _reach_and_cloud(turn)
-    text, blocks = render(turn, reach=reach, cloud=cloud)
+    text, blocks = _with_prefix(record, *render(turn, reach=reach, cloud=cloud))
     if text == record.rendered:
         return False
     try:

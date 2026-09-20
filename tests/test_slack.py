@@ -392,12 +392,35 @@ def test_only_enabled_agent_is_the_default(slack, linked, hal):
 def test_slash_command_anchors_a_thread_and_queues(slack, linked, hal):
     resp = command("hal draft the update")
     assert resp.status_code == 200 and resp.json()["response_type"] == "ephemeral"
-    anchor, line = slack.said("chat.postMessage")          # the anchor, then the status line under it
-    assert anchor["channel"] == "C1" and "hal" in anchor["text"]
-    assert line["thread_ts"] == "1700000999.000100"
+    # ONE message: the anchor IS the status line, edited in place. Two would say
+    # half the story each ("you asked hal…" / "picking this up on…").
+    (anchor,) = slack.said("chat.postMessage")
+    assert anchor["channel"] == "C1" and "asked *hal*: draft the update" in anchor["text"]
+    (edit,) = slack.said("chat.update")
+    assert edit["ts"] == "1700000999.000100"
+    # One message, both halves: what was asked, and what is happening to it.
+    assert "asked *hal*: draft the update" in edit["text"] and "Queued" in edit["text"]
     turn = Turn.objects.get()
     assert turn.origin == Turn.ORIGIN_SLACK and turn.prompt == "draft the update"
     assert turn.chat_session.metadata["slack_thread_ts"] == "1700000999.000100"
+
+
+def test_a_slash_command_line_keeps_the_ask_on_every_later_edit(slack, linked, hal, alice):
+    """The turn moves on; the message must not lose what was asked."""
+    from django.utils import timezone as _tz
+
+    from apps.harness.models import Runner as _Runner
+    from apps.slack import status
+
+    command("hal draft the update")
+    turn = Turn.objects.get()
+    turn.claimed_by = _Runner.objects.create(name="jj-mbp", kind=_Runner.EMDASH, host="jj-mac",
+                                             paired_by=alice, workspace=hal.workspace,
+                                             status=_Runner.ONLINE, last_heartbeat_at=_tz.now())
+    turn.status = Turn.RUNNING
+    turn.save(update_fields=["status", "claimed_by"])
+    status.refresh(turn)
+    assert "asked *hal*: draft the update" in slack.said("chat.update")[-1]["text"]
 
 
 def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
