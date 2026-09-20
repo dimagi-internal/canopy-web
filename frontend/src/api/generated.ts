@@ -878,6 +878,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/slack-config/{workspace}/declare-agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Declare the Slack app an agent (owner)
+         * @description Turn on Slack's own working indicator for this workspace's Slack app.
+         *
+         *     Three manifest edits through the configuration token canopy already holds —
+         *     `features.agent_view`, the `assistant:write` scope, the agent events — after
+         *     which Slack draws a "Working…" indicator and a Stop button in the thread
+         *     instead of only the status line canopy posts.
+         *
+         *     Owner-only, and a deliberate act rather than a deploy step: it changes how
+         *     the app presents itself to everyone in the Slack workspace, and Slack does
+         *     not allow `agent_view` to be swapped back to the older `assistant_view`.
+         *     The new scope lands only on a re-install, so the response says so and
+         *     carries the URL.
+         */
+        readonly post: operations["apps_slack_api_declare_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/": {
         readonly parameters: {
             readonly query?: never;
@@ -6249,6 +6280,13 @@ export interface components {
              */
             readonly error: string;
         };
+        /** SlackAgentOut */
+        readonly SlackAgentOut: {
+            /** Declared */
+            readonly declared: boolean;
+            /** Declared At */
+            readonly declared_at: string;
+        };
         /** SlackCommandsOut */
         readonly SlackCommandsOut: {
             /** Managed */
@@ -6277,6 +6315,7 @@ export interface components {
             /** Install Url */
             readonly install_url: string;
             readonly commands: components["schemas"]["SlackCommandsOut"];
+            readonly agent: components["schemas"]["SlackAgentOut"];
         };
         /** SlackSyncOut */
         readonly SlackSyncOut: {
@@ -6307,6 +6346,31 @@ export interface components {
         readonly SlackConfigTokenIn: {
             /** Refresh Token */
             readonly refresh_token: string;
+        };
+        /** SlackDeclareAgentOut */
+        readonly SlackDeclareAgentOut: {
+            /** Status */
+            readonly status: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Changed
+             * @default []
+             */
+            readonly changed: readonly string[];
+            /**
+             * Reinstall Required
+             * @default false
+             */
+            readonly reinstall_required: boolean;
+            /**
+             * Install Url
+             * @default
+             */
+            readonly install_url: string;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -13518,6 +13582,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackSyncOut"];
+                };
+            };
+        };
+    };
+    readonly apps_slack_api_declare_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackDeclareAgentOut"];
                 };
             };
         };

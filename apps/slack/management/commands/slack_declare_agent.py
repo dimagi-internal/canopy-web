@@ -1,8 +1,13 @@
 """Declare the Slack app an agent, so Slack draws its own working indicator.
 
-A management command rather than a deploy step or a button: it is one-way in
-part (`agent_view` cannot be swapped back to `assistant_view`) and it changes
-how the app presents itself, so it should be a thing somebody decided to do.
+**The normal way to do this is the button** on the workspace's Slack settings
+page (Working indicator -> Declare as agent), which calls the same
+`commands.declare_agent`. This command is the local/dev equivalent, and exists
+because a deployment where nobody can reach that page still has a shell.
+
+Not a deploy step either way: it is one-way in part (`agent_view` cannot be
+swapped back to `assistant_view`) and it changes how the app presents itself,
+so it should be a thing somebody decided to do.
 
     python manage.py slack_declare_agent --team T0123          # or --workspace
     python manage.py slack_declare_agent --team T0123 --dry-run

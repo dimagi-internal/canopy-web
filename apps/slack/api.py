@@ -17,7 +17,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 from . import commands, services
 from .models import SlackInstallation
-from .schemas import SlackConfigOut, SlackConfigTokenIn, SlackSyncOut
+from .schemas import SlackConfigOut, SlackConfigTokenIn, SlackDeclareAgentOut, SlackSyncOut
 
 router = Router(auth=session_auth, tags=["slack"])
 
@@ -60,6 +60,10 @@ def _out(ws: Workspace) -> dict:
             "synced_at": iso(inst.commands_synced_at) if inst else "",
             "error": inst.commands_sync_error if inst else "",
         },
+        "agent": {
+            "declared": bool(inst and inst.agent_declared_at),
+            "declared_at": iso(inst.agent_declared_at) if inst else "",
+        },
     }
 
 
@@ -94,3 +98,44 @@ def clear_config_token(request: HttpRequest, workspace: str) -> dict:
 def sync(request: HttpRequest, workspace: str) -> dict:
     ws = _owner_workspace_or_404(request.user, workspace)
     return commands.sync_quietly(_installation_or_409(ws))
+
+
+@router.post("/{workspace}/declare-agent", response=SlackDeclareAgentOut,
+             summary="Declare the Slack app an agent (owner)")
+def declare_agent(request: HttpRequest, workspace: str) -> dict:
+    """Turn on Slack's own working indicator for this workspace's Slack app.
+
+    Three manifest edits through the configuration token canopy already holds —
+    `features.agent_view`, the `assistant:write` scope, the agent events — after
+    which Slack draws a "Working…" indicator and a Stop button in the thread
+    instead of only the status line canopy posts.
+
+    Owner-only, and a deliberate act rather than a deploy step: it changes how
+    the app presents itself to everyone in the Slack workspace, and Slack does
+    not allow `agent_view` to be swapped back to the older `assistant_view`.
+    The new scope lands only on a re-install, so the response says so and
+    carries the URL.
+    """
+    from django.utils import timezone
+
+    ws = _owner_workspace_or_404(request.user, workspace)
+    inst = _installation_or_409(ws)
+    try:
+        result = commands.declare_agent(inst)
+    except commands.NotConfigured:
+        raise HttpError(409, "canopy can't edit this Slack app yet — connect a configuration token first")
+    except ValueError as e:
+        raise HttpError(422, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HttpError(502, f"Slack refused that change: {e}") from e
+    SlackInstallation.objects.filter(pk=inst.pk).update(agent_declared_at=timezone.now())
+    changed = result["changed"]
+    return {
+        "status": "declared" if changed else "already_declared",
+        "detail": ("Slack will draw its own working indicator once the app is re-installed."
+                   if result["reinstall_required"] else
+                   ("Declared." if changed else "Already declared an agent — nothing to change.")),
+        "changed": changed,
+        "reinstall_required": result["reinstall_required"],
+        "install_url": services.public_url(f"/auth/slack/install/?workspace={ws.slug}"),
+    }

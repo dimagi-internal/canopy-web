@@ -1551,3 +1551,57 @@ def test_a_slack_stop_press_cancels_the_turn(slack, linked, hal, alice,
 def test_a_stop_for_a_thread_we_do_not_know_is_harmless(slack, linked, hal, alice):
     assert event({"type": "agent_session_stopped", "channel_id": "CZZZ",
                   "thread_ts": "1700009999.000100", "user": ALICE}).status_code == 200
+
+
+# ---- declaring the app an agent (the owner-only button) --------------------------
+#
+# The manifest edits that make Slack draw its own indicator. Driven through the
+# API the settings page calls, because the management command beside it cannot be
+# run on a deployment with no shell — which is this one.
+
+
+def _declare(owner_client, ws):
+    return owner_client.post(f"/api/slack-config/{ws.slug}/declare-agent")
+
+
+def test_declaring_makes_the_three_manifest_edits(slack, ws, installation, managed, owner_client):
+    body = _declare(owner_client, ws).json()
+    assert body["status"] == "declared" and body["reinstall_required"] is True
+    assert "/auth/slack/install/" in body["install_url"]
+
+    assert slack.manifest["features"]["agent_view"]["agent_description"]
+    assert "assistant:write" in slack.manifest["oauth_config"]["scopes"]["bot"]
+    events = slack.manifest["settings"]["event_subscriptions"]["bot_events"]
+    assert {"agent_session_stopped", "agent_session_title_changed", "app_context_changed"} <= set(events)
+    assert "app_mention" in events and "message.im" in events    # what was there is kept
+    assert "/standup" in {c["command"] for c in slack.manifest["features"]["slash_commands"]}
+
+    installation.refresh_from_db()
+    assert installation.agent_declared_at is not None
+    assert owner_client.get(f"/api/slack-config/{ws.slug}").json()["agent"]["declared"] is True
+
+
+def test_declaring_twice_writes_nothing_the_second_time(slack, ws, installation, managed, owner_client):
+    _declare(owner_client, ws)
+    writes = len(slack.said("apps.manifest.update"))
+    body = _declare(owner_client, ws).json()
+    assert body["status"] == "already_declared" and body["changed"] == []
+    assert len(slack.said("apps.manifest.update")) == writes     # idempotent
+
+
+def test_an_app_on_the_older_assistant_view_is_refused(slack, ws, installation, managed, owner_client):
+    slack.manifest["features"]["assistant_view"] = {"assistant_description": "old"}
+    writes = len(slack.said("apps.manifest.update"))
+    assert _declare(owner_client, ws).status_code == 422          # one-way switch: a human decides
+    assert len(slack.said("apps.manifest.update")) == writes
+
+
+def test_only_an_owner_may_declare(slack, ws, installation, managed, alice):
+    member = _link_client(alice)                                  # a member, not an owner
+    writes = len(slack.said("apps.manifest.update"))
+    assert member.post(f"/api/slack-config/{ws.slug}/declare-agent").status_code == 403
+    assert len(slack.said("apps.manifest.update")) == writes
+
+
+def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner_client):
+    assert _declare(owner_client, ws).status_code == 409           # nothing to edit the app with

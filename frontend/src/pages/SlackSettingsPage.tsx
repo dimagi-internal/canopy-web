@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 import {
   clearSlackConfigToken,
+  declareSlackAgent,
   getSlackConfig,
   setSlackConfigToken,
   syncSlackCommands,
@@ -167,6 +168,58 @@ export function SlackSettingsPage(): JSX.Element {
               <p className="mt-2 text-[11px] text-muted-foreground">Workspace owners only.</p>
             </form>
           )}
+        </section>
+      )}
+
+      {config.connected && (
+        <section className="mt-8">
+          <h2 className="text-[15px] font-semibold text-foreground">Working indicator</h2>
+          <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
+            Declaring the app an agent lets Slack draw its own <b>Working…</b> indicator and a{' '}
+            <b>Stop</b> button in the thread, instead of only the status line canopy posts. Two things
+            to know first: agent conversations in DMs move to the app&apos;s Messages tab, and Slack does
+            not allow this to be swapped back to the older assistant experience.
+          </p>
+          <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
+            {config.agent?.declared ? (
+              <p className="text-foreground">
+                Declared an agent{config.agent?.declared_at ? <> {relativeAge(config.agent.declared_at)}</> : null}. If
+                you have not re-installed since,{' '}
+                <a href={config.install_url} className="text-primary hover:underline">do that once</a> — the
+                permission it needs only lands on a fresh install.
+              </p>
+            ) : (
+              <>
+                <p className="text-foreground-secondary">
+                  Not declared, so Slack shows no indicator of its own. canopy&apos;s status line works either way.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy || !cmds.managed}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Declare this Slack app an agent? DM conversations move to the app\'s Messages tab, and Slack cannot switch this back to the older assistant experience.',
+                      )
+                    ) {
+                      void act(async () => {
+                        const r = await declareSlackAgent(workspace)
+                        return r.changed.length ? `${r.detail} Changed: ${r.changed.join('; ')}.` : r.detail
+                      })
+                    }
+                  }}
+                  className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+                >
+                  Declare as agent
+                </button>
+                {!cmds.managed && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Needs the app configuration token above — canopy edits the app&apos;s manifest to do this.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </section>
       )}
 
