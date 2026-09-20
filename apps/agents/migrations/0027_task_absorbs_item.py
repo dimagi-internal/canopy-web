@@ -4,6 +4,14 @@ Hand-written rather than generated for one reason: `uuid` is UNIQUE, and
 `makemigrations` would ask for a single one-off default to give every existing
 row, which is exactly the collision uniqueness forbids. So it is added nullable,
 filled per row, and only then made unique.
+
+Nullable is not the same as NULL, which is the trap this migration fell into on
+its first deploy. `AddField` with a callable default evaluates that callable
+ONCE and stamps the single value across every existing row, so nothing is left
+null — a backfill guarded on `uuid__isnull=True` then matches nothing and the
+`AlterField` to unique dies on the duplicates. Every row is therefore rewritten
+unconditionally below. A fresh database (no tasks, or one) cannot show this, so
+the whole suite stayed green while prod's `Run database migrations` failed.
 """
 
 import uuid
@@ -14,8 +22,10 @@ from django.db import migrations, models
 
 
 def fill_uuids(apps, schema_editor):
+    # EVERY row, not just the null ones — see the module docstring: AddField has
+    # already given them all the same uuid.
     AgentTask = apps.get_model("agents", "AgentTask")
-    for pk in AgentTask.objects.filter(uuid__isnull=True).values_list("pk", flat=True).iterator():
+    for pk in AgentTask.objects.values_list("pk", flat=True).iterator():
         AgentTask.objects.filter(pk=pk).update(uuid=uuid.uuid4())
 
 
