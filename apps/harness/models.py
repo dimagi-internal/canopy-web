@@ -395,6 +395,14 @@ class Turn(models.Model):
         "Item", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="dispatched_turns",
     )
+    #: The same edge for a TASK's ask, now that a task can carry one (an Item is
+    #: on its way out). Separate column rather than a generic reference: two
+    #: nullable FKs are legible to a query planner and to a reader, and exactly
+    #: one of them is ever set.
+    raised_from_task = models.ForeignKey(
+        "agents.AgentTask", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="dispatched_turns",
+    )
     origin = models.CharField(max_length=32, choices=ORIGIN_CHOICES)
     origin_ref = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True, default="")

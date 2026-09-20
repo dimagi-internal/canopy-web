@@ -77,14 +77,26 @@ def _dispatch_initiator(item):
     person did — they are the one who authorised it, whatever agent drafted the
     card. With no human decision behind it, it is the agent that raised it."""
     from . import initiator as who
-    via = f"item:{item.id}"
+    via = f"task:{item.uuid}" if _is_task(item) else f"item:{item.id}"
     if getattr(item, "decided_by_user", None) is not None:
         return who.for_user(item.decided_by_user, via=via, assurance=who.APPROVAL)
     return who.for_agent(item.agent.slug, via=via)
 
 
-def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
-    """Enqueue an approved Item's work. Idempotent per (item, index).
+def _is_task(obj) -> bool:
+    """A task carries an ask; an Item is an ask. Duck-typed on the one field
+    only a task has, so this module does not have to import the agents app to
+    ask a question about the object it was handed."""
+    return hasattr(obj, "ask_kind")
+
+
+def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
+    """Enqueue an approved ask's work — an `Item`, or a task carrying an ask.
+    Idempotent per (ask, index).
+
+    One implementation for both because the fields it reads are named the same
+    on each (`dispatch`, `title`, `comment`, `decided_by`, `agent`), which is
+    why the task's columns took Item's names.
 
     `actor_workspace_slugs` is the deciding human's workspace memberships. A
     cross-agent dispatch (`target_agent` set) is authorized ONLY if the target's
@@ -142,13 +154,21 @@ def dispatch(item: Item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
         turn, _created = services.enqueue_turn(
             agent=target,
             origin=spec.origin,
-            idempotency_key=f"item-{item.id}-{i}",
+            # `task-` vs `item-`: a task's integer pk and an Item's uuid could
+            # never collide, but a migrated item becomes a task and both keys
+            # must stay addressable. The uuid is the one id that survives that.
+            idempotency_key=(f"task-{item.uuid}-{i}" if _is_task(item)
+                             else f"item-{item.id}-{i}"),
             prompt=_with_reply(brief, item),
             origin_ref=origin_ref,
             routing=spec.routing,
             initiator=_dispatch_initiator(item),
         )
-        if turn.raised_from_id is None:
+        if _is_task(item):
+            if turn.raised_from_task_id is None:
+                turn.raised_from_task = item
+                turn.save(update_fields=["raised_from_task"])
+        elif turn.raised_from_id is None:
             turn.raised_from = item
             turn.save(update_fields=["raised_from"])
         turns.append(turn)

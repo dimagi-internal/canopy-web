@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.harness.models import Turn
@@ -492,6 +492,171 @@ def get_task(agent: Agent, task_id: int) -> AgentTask | None:
 
 def list_tasks(agent: Agent) -> list[AgentTask]:
     return list(agent.tasks.select_related("agent"))
+
+
+# ---- asks: what a task needs from a human -------------------------------
+#
+# An `Item` was its own model — "work YOU do", the dual of a Turn. The two
+# stopped being different things in practice: the fleet's work lives in tasks,
+# one agent had ever raised an item, and the tasks actually waiting on somebody
+# reached no inbox at all. So an ask is a property of a task, and these are
+# Item's three verbs with the same guarantees.
+
+
+class AlreadyDecidedError(Exception):
+    """The ask is closed. Deciding twice would dispatch its work twice."""
+
+
+@transaction.atomic
+def raise_asks(*, agent: Agent, payloads: list[dict]) -> list:
+    """Raise asks on an agent, idempotent per `idempotency_key`.
+
+    The whole batch commits in ONE outer transaction so a fleet audit raising N
+    of them notifies once rather than N times; each row keeps its own SAVEPOINT
+    so a single duplicate key replays without rolling the batch back.
+    """
+    out = []
+    for p in payloads:
+        key = p.get("idempotency_key") or ""
+        existing = AgentTask.objects.filter(idempotency_key=key).first() if key else None
+        if existing is not None:
+            out.append(existing)
+            continue
+        project = get_project(agent, str(p.get("project") or "")) if p.get("project") else None
+        try:
+            with transaction.atomic():  # savepoint
+                out.append(AgentTask.objects.create(
+                    agent=agent,
+                    project=project,
+                    ext_id=p.get("ext_id") or next_task_ext_id(agent),
+                    title=p["title"],
+                    # Suggested is the board's word for "the agent proposed it,
+                    # a human validates" — which is what an ask is.
+                    status=AgentTask.SUGGESTED,
+                    ask_kind=p.get("ask_kind") or AgentTask.ASK_REVIEW,
+                    ask_body=p.get("ask_body") or "",
+                    origin=p.get("origin") or "",
+                    origin_ref=p.get("origin_ref") or {},
+                    dispatch=p.get("dispatch") or [],
+                    batch_key=p.get("batch_key") or "",
+                    idempotency_key=key or None,
+                    raised_by_id=p.get("raised_by") or None,
+                    waiting_on_user=p.get("waiting_on_user"),
+                    assigned=p.get("assigned") or "",
+                ))
+        except IntegrityError:
+            replay = AgentTask.objects.filter(idempotency_key=key).first() if key else None
+            if replay is None:
+                raise
+            out.append(replay)
+    return out
+
+
+def decide_ask(task: AgentTask, *, decision: str, comment: str, by: str,
+               actor_workspace_slugs: set[str], decided_by_user=None):
+    """Answer a task's ask, dispatching its work the moment the human commits.
+
+    A **review** takes a verb from the closed set and dispatches on `implement`.
+    A **question** is resolved by its ANSWER — `decision` stays blank, and any
+    answer dispatches, because there is no verb to click. Answering used to be
+    inert, and three answered cards produced zero turns (2026-07-30).
+
+    Atomic, and that is the whole ballgame: `dispatch()` raises on a bad spec,
+    and committing the decision first would leave the ask closed and
+    undispatched — permanently, since deciding twice is refused. Rolling back
+    instead leaves it open and retryable.
+    """
+    from apps.harness.dispatch import dispatch as dispatch_ask
+
+    if not task.ask_is_open:
+        raise AlreadyDecidedError(f"task {task.uuid} has no open ask")
+
+    if task.ask_kind == AgentTask.ASK_QUESTION:
+        if not (comment or "").strip():
+            raise ValueError("a question is resolved by its answer — comment must not be empty")
+        decision = ""
+    elif decision not in (AgentTask.IMPLEMENT, AgentTask.SKIP, AgentTask.DEFER):
+        raise ValueError(f"decision must be one of implement|skip|defer, got {decision!r}")
+
+    with transaction.atomic():
+        task.decision = decision
+        task.comment = comment or ""
+        task.decided_by = by
+        task.decided_by_user = (
+            decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
+        )
+        task.decided_at = timezone.now()
+        # Answered: nobody is waiting on a person any more.
+        task.waiting_on_user = None
+
+        turns = []
+        answered = task.ask_kind == AgentTask.ASK_QUESTION and bool(task.dispatch)
+        if decision == AgentTask.IMPLEMENT or answered:
+            turns = dispatch_ask(task, actor_workspace_slugs=actor_workspace_slugs)
+            task.dispatched_at = timezone.now()
+            # The agent has the ball now.
+            task.status = AgentTask.IN_PROGRESS
+        elif decision == AgentTask.SKIP:
+            task.status = AgentTask.DECLINED
+        # `defer` leaves the task suggested: not now is not never, and the card
+        # stays on the board while the ask stops asking.
+
+        task.save(update_fields=[
+            "decision", "comment", "decided_by", "decided_by_user", "decided_at",
+            "dispatched_at", "status", "waiting_on_user", "updated_at",
+        ])
+    return task, turns
+
+
+def dismiss_ask(task: AgentTask, *, by: str, decided_by_user=None, comment: str = "") -> AgentTask:
+    """Retire an open ask without acting — raised in error, or overtaken.
+
+    Guards on the same state decide does: dismissing a decided ask would
+    overwrite who approved it while the turns that decision dispatched keep
+    running.
+    """
+    if not task.ask_is_open:
+        raise AlreadyDecidedError(f"task {task.uuid} has no open ask")
+    task.decided_by = by
+    task.decided_by_user = (
+        decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
+    )
+    task.decided_at = timezone.now()
+    task.waiting_on_user = None
+    task.status = AgentTask.DECLINED
+    fields = ["decided_by", "decided_by_user", "decided_at", "status",
+              "waiting_on_user", "updated_at"]
+    if comment:
+        task.comment = comment
+        fields.append("comment")
+    task.save(update_fields=fields)
+    return task
+
+
+def next_task_ext_id(agent: Agent) -> str:
+    """T1, T2, … from a counter that only goes up — the same rule projects use,
+    and for the same reason: a reused id makes an old link point at new work."""
+    from django.db.models import F
+
+    Agent.objects.filter(pk=agent.pk).update(task_seq=F("task_seq") + 1)
+    agent.refresh_from_db(fields=["task_seq"])
+    return f"T{agent.task_seq}"
+
+
+def tasks_waiting_on(user, *, agent: Agent | None = None):
+    """The inbox: tasks whose ask is open and which wait on THIS person.
+
+    `waiting_on_user`, not the free-text `assigned`: canopy cannot notify a
+    string, and the fleet's boards spell one human three ways
+    ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
+    """
+    qs = (
+        AgentTask.objects.filter(waiting_on_user=user, decided_at__isnull=True)
+        .exclude(ask_kind="")
+        .select_related("agent", "project")
+        .order_by("-updated_at")
+    )
+    return qs.filter(agent=agent) if agent is not None else qs
 
 
 # ---- task commands (the board's action queue) ----
