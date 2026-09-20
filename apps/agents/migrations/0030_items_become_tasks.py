@@ -43,18 +43,47 @@ def items_to_tasks(apps, schema_editor):
     Agent = apps.get_model("agents", "Agent")
     Turn = apps.get_model("harness", "Turn")
 
-    seq = {}  # agent_id -> the T<N> counter, read once and advanced in memory
+    seq = {}   # agent_id -> the T<N> counter, advanced in memory
+    taken = {}  # agent_id -> ext_ids already on that board
+
+    def start_for(agent_id: int) -> int:
+        """Where this agent's numbering has actually reached.
+
+        NOT `Agent.task_seq` alone: that column is new, so it reads 0 on every
+        agent that has been running for months, while their boards are full of
+        T1…T40 — and `(agent, ext_id)` is UNIQUE. Taking the counter at face
+        value numbered the first migrated ask T1 and the migration died on the
+        duplicate. (Prod, twice: the tests seeded the counter, which is the one
+        thing the real database does not do.)
+        """
+        agent = Agent.objects.filter(pk=agent_id).first()
+        highest = agent.task_seq if agent else 0
+        for value in AgentTask.objects.filter(agent_id=agent_id).values_list("ext_id", flat=True):
+            if value and value[:1].upper() == "T" and value[1:].isdigit():
+                highest = max(highest, int(value[1:]))
+        return highest
+
     for item in Item.objects.all().order_by("created_at").iterator():
         if AgentTask.objects.filter(uuid=item.id).exists():
             continue  # re-run safe
         if item.agent_id not in seq:
-            agent = Agent.objects.filter(pk=item.agent_id).first()
-            seq[item.agent_id] = (agent.task_seq if agent else 0)
+            seq[item.agent_id] = start_for(item.agent_id)
+            taken[item.agent_id] = set(
+                AgentTask.objects.filter(agent_id=item.agent_id)
+                .values_list("ext_id", flat=True)
+            )
+        # A board can hold ids that are not T<N> at all (an agent may name them
+        # anything), so stepping past the highest number is necessary and not
+        # sufficient — skip anything already on this board.
         seq[item.agent_id] += 1
+        while f"T{seq[item.agent_id]}" in taken[item.agent_id]:
+            seq[item.agent_id] += 1
+        ext_id = f"T{seq[item.agent_id]}"
+        taken[item.agent_id].add(ext_id)
 
         task = AgentTask.objects.create(
             agent_id=item.agent_id,
-            ext_id=f"T{seq[item.agent_id]}",
+            ext_id=ext_id,
             uuid=item.id,
             title=item.title,
             status=_status(item, AgentTask),
