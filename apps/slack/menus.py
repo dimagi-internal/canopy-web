@@ -177,8 +177,8 @@ def to_blocks(agent_slug: str, menu: dict, session_id) -> list[dict]:
         submit = {"type": "button", "action_id": SUBMIT, "style": "primary",
                   "text": {"type": "plain_text", "text": "Submit"}, "value": button_value(session_id, menu)}
         blocks.append({"type": "actions", "block_id": "menu_answer", "elements": [submit, dismiss]})
-    blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
-                   "text": "Or reply in this thread with the number" + ("s" if len(qs) > 1 else "") + ", or `cancel`."}]})
+    how = "Or reply in this thread with the number" + ("s" if len(qs) > 1 else "") + ", or `cancel`."
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": how}]})
     return blocks
 
 
