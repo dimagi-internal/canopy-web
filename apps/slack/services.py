@@ -112,6 +112,10 @@ class Inbound:
     is_dm: bool = False
     #: A plain reply (no mention) inside a thread canopy is already in.
     follow: bool = False
+    #: A message canopy already posted for this ask (the slash command's
+    #: anchor), which the status line adopts instead of posting a second one.
+    adopt_ts: str = ""
+    adopt_prefix: str = ""
 
     @property
     def anchor(self) -> str:
@@ -375,7 +379,7 @@ def handle_message(inbound: Inbound) -> Outcome:
     # "is anything happening?" is a per-message question.
     from . import status
 
-    status.post(turn)
+    status.post(turn, adopt_ts=inbound.adopt_ts, prefix=inbound.adopt_prefix)
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
         note = f"Sent to `{agent.slug}` — the reply will come back here."

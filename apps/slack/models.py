@@ -137,6 +137,12 @@ class SlackTurnPost(models.Model):
     slack_ts = models.CharField(max_length=32, blank=True, default="")
     #: The text last rendered, so an event that changes nothing is not an edit.
     rendered = models.TextField(blank=True, default="")
+    #: Words this line carries above the status, for a line that ADOPTED a
+    #: message already in the thread. A slash command has no message of its own
+    #: to reply under, so canopy posts one ("@you asked *hal*: …") — and that
+    #: post then becomes the status line rather than being followed by a second
+    #: message saying the same thing twice.
+    prefix = models.CharField(max_length=300, blank=True, default="")
     #: The thread reply saying this turn's runner went offline mid-turn. An edit
     #: to the line notifies nobody, and "your runner died" is the one change
     #: somebody must hear about. Cleared when the episode ends, so a second

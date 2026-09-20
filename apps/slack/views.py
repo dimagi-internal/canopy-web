@@ -227,16 +227,19 @@ def commands(request: HttpRequest) -> HttpResponse:
     if not ask:
         usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
         return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>`")
+    anchor = f"<@{slack_user_id}> asked *{agent.slug}*: {ask}"
     try:
-        root_ts = client.post_message(installation.bot_token, channel=channel_id,
-                                      text=f"<@{slack_user_id}> asked *{agent.slug}*: {ask}")
+        root_ts = client.post_message(installation.bot_token, channel=channel_id, text=anchor)
     except client.SlackApiError as e:
         if e.error in ("not_in_channel", "channel_not_found"):
             return _ephemeral("I'm not in this channel. Invite me with `/invite @canopy`, then try again.")
         logger.exception("slack slash command could not post its anchor")
         return _ephemeral(f"Slack refused the post ({e.error}).")
+    # The anchor BECOMES the status line: one message that says what was asked
+    # and what is happening to it, rather than two saying half each.
     inbound = services.Inbound(team_id=team_id, channel_id=channel_id, slack_user_id=slack_user_id,
-                               text=f"{agent.slug} {ask}", ts=root_ts, thread_ts=root_ts)
+                               text=f"{agent.slug} {ask}", ts=root_ts, thread_ts=root_ts,
+                               adopt_ts=root_ts, adopt_prefix=anchor)
     outcome = services.handle_message(inbound)
     return _ephemeral(outcome.message)
 
