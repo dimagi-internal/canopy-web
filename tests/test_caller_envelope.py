@@ -20,7 +20,7 @@ from apps.contacts import services as contacts
 from apps.contacts.models import Contact
 from apps.harness import caller_context, services
 from apps.harness import initiator as who
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import RunnerAssignment, Turn
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
