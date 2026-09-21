@@ -461,6 +461,12 @@ GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
 # install URL); the client + signing secrets are Secrets Manager entries. Any of
 # the three empty (or the CFN "PLACEHOLDER") means Slack is off: the webhooks
 # answer 503 and nothing else changes.
+# Whose `Authentication-Results` verdict an inbound email is graded on
+# (`apps/contacts/email_auth.py`). canopy decides this, never the poster of the
+# turn: the header is ordinary text anyone can write, and only the one added by
+# OUR receiver is evidence. Every agent mailbox is Gmail today.
+INBOUND_EMAIL_AUTHSERV_ID = env("INBOUND_EMAIL_AUTHSERV_ID", default="mx.google.com")
+
 SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default="")
 SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default="")
 SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")

@@ -670,3 +670,55 @@ def test_sender_of_injection_opts_out_of_body_facts():
                             runner=_runner(threads), sender_of=lambda tid: SNS.lower())
     assert res["new"] == ["thr-created"]
     assert res["ok_without_alarm"] == []
+
+
+# --- sender assurance: ship the evidence, attribute it to the right person ----------
+
+AR = ("mx.google.com; dkim=pass header.i=@llo-foo.org; spf=pass "
+      "smtp.mailfrom=llo-foo.org; dmarc=pass header.from=llo-foo.org")
+
+
+def test_thread_facts_collects_every_authentication_results_header_in_order():
+    """Verbatim and unjudged: a forged header the sender wrote travels too, because
+    picking out OUR receiver's is canopy's job (it names the authserv-id)."""
+    payload = json.dumps({"messages": [{"payload": {"headers": [
+        {"name": "Authentication-Results", "value": AR},
+        {"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
+        {"name": "Authentication-Results", "value": "evil.example; dmarc=pass"},
+    ]}}]})
+
+    def run(cmd, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+    f = inbox.thread_facts("ace@dimagi-ai.com", "canopy", "thr-1", runner=run)
+    assert f.auth_results == (AR, "evil.example; dmarc=pass")
+    assert f.newest_from == "fatima <fatima@llo-foo.org>"
+    assert f.newest_from_header == "Fatima <fatima@llo-foo.org>"
+
+
+def test_enqueue_ships_the_headers_and_names_the_newest_sender():
+    """The search payload's `from` is the thread ORIGINATOR. When someone else
+    replied, the turn is for the replier — and the headers describe the replier's
+    message, so attributing them to the originator would credit the wrong person."""
+    client = FakeClient()
+    r = _runner([{"id": "thr-5", "from": "Alice <alice@llo-foo.org>",
+                  "subject": "follow-up", "messageCount": 2}])
+    facts = inbox.ThreadFacts(newest_from="bob <bob@llo-foo.org>",
+                              newest_from_header="Bob <bob@llo-foo.org>",
+                              auth_results=(AR,))
+    inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                      runner=r, facts_of=lambda tid: facts)
+    ref = client.enqueued[0]["origin_ref"]
+    assert ref["from"] == "Bob <bob@llo-foo.org>"
+    assert ref["headers"] == [{"name": "Authentication-Results", "value": AR}]
+    assert ref["subject"] == "follow-up"
+    assert "authserv_id" not in ref           # the receiver is canopy's to name
+
+
+def test_no_headers_means_no_headers_key_and_the_originator_as_before():
+    client = FakeClient()
+    r = _runner([{"id": "thr-6", "from": "x@y.com", "subject": "hi", "messageCount": 1}])
+    inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                      runner=r, sender_of=lambda tid: None)
+    ref = client.enqueued[0]["origin_ref"]
+    assert ref["from"] == "x@y.com"
+    assert "headers" not in ref
