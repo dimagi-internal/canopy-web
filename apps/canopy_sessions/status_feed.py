@@ -26,6 +26,16 @@ from apps.realtime.groups import publish, session_group
 
 logger = logging.getLogger(__name__)
 
+#: At most one fleet-wide sweep this often, across every web worker (a cache
+#: lock, not a per-process one). Matches `slack.status.SWEEP_EVERY_SECONDS`,
+#: and for the same reason: the sweep rides `sessions_reported`, which every
+#: runner fires every ~10s, so an unthrottled sweep runs N times per 10s and
+#: each run costs a `turn_reach` fleet query PER unfinished session. The thing
+#: it is watching for — a laptop that closed — does not need answering faster
+#: than this.
+SWEEP_EVERY_SECONDS = 15
+SWEEP_LOCK = "canopy_sessions:turn_status_sweep"
+
 
 def status_for_session(session) -> dict | None:
     """The status of the ask this session is currently waiting on, or None.
@@ -78,7 +88,7 @@ def publish_for_session(session_id) -> None:
         publish_for_turn(turn)
 
 
-def sweep() -> int:
+def sweep(*, force: bool = False) -> int:
     """Re-push the status of every session holding an unfinished turn.
 
     The clock for the one change that produces no event at all: a runner whose
@@ -87,8 +97,17 @@ def sweep() -> int:
     report — exactly as Slack's own sweep does, and for the same reason.
 
     Scoped to non-terminal turns: a settled status cannot go stale.
+
+    Throttled to one run per `SWEEP_EVERY_SECONDS` across the whole fleet —
+    see that constant. `force` is for tests, which must not depend on whether
+    a previous test happened to take the lock.
     """
+    from django.core.cache import cache
+
     from apps.harness.models import Turn
+
+    if not force and not cache.add(SWEEP_LOCK, 1, timeout=SWEEP_EVERY_SECONDS):
+        return 0
 
     session_ids = (Turn.objects.filter(chat_session__isnull=False,
                                        status__in=list(Turn.NON_TERMINAL))

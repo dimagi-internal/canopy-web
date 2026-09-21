@@ -200,3 +200,60 @@ def test_the_frame_reaches_an_ag_ui_client():
     [event] = events
     assert event.name == "canopy.session.turn_status"
     assert event.value["status"]["state"] == "waiting_runner"
+
+
+# -- the sweep, and what it must not cost -------------------------------------
+
+def test_the_sweep_is_throttled_across_the_fleet(monkeypatch):
+    """It rides `sessions_reported`, which EVERY runner fires every ~10s, and
+    each run costs a `turn_reach` fleet query per unfinished session. Without
+    a shared lock that is N scans per 10s for a signal — a laptop closing —
+    that nobody needs answered faster than this."""
+    from django.core.cache import cache
+
+    from apps.canopy_sessions import status_feed
+
+    cache.delete(status_feed.SWEEP_LOCK)
+    user, ws, agent, session = _ctx()
+    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    harness.enqueue_turn(session=session, origin=Turn.ORIGIN_API,
+                         idempotency_key="k1", prompt="hi")
+
+    sent = _capture(monkeypatch)
+    assert status_feed.sweep() == 1          # takes the lock
+    assert status_feed.sweep() == 0          # second caller inside the window
+    assert status_feed.sweep() == 0
+    # Exactly one session's worth of frames, not three.
+    assert len(_statuses(sent, session)) == 1
+
+
+def test_force_bypasses_the_throttle_so_a_test_does_not_depend_on_lock_state():
+    from django.core.cache import cache
+
+    from apps.canopy_sessions import status_feed
+
+    user, ws, agent, session = _ctx()
+    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    harness.enqueue_turn(session=session, origin=Turn.ORIGIN_API,
+                         idempotency_key="k1", prompt="hi")
+    cache.add(status_feed.SWEEP_LOCK, 1, timeout=60)   # somebody else holds it
+    assert status_feed.sweep(force=True) == 1
+
+
+def test_a_settled_turn_is_not_swept(monkeypatch):
+    """A finished status cannot go stale, so sweeping it is pure cost."""
+    from django.core.cache import cache
+
+    from apps.canopy_sessions import status_feed
+
+    cache.delete(status_feed.SWEEP_LOCK)
+    user, ws, agent, session = _ctx()
+    runner = _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=True)
+    turn, _ = harness.enqueue_turn(session=session, origin=Turn.ORIGIN_API,
+                                   idempotency_key="k1", prompt="hi")
+    turn.status, turn.claimed_by = Turn.DONE, runner
+    turn.save(update_fields=["status", "claimed_by"])
+
+    sent = _capture(monkeypatch)
+    assert status_feed.sweep(force=True) == 0
+    assert _statuses(sent, session) == []
