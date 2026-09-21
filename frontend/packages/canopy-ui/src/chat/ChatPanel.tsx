@@ -7,6 +7,7 @@ import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import { isDraftIdle, msUntilDraftIdle, type DraftStorage } from "./drafts";
+import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
 
 export interface ChatPanelProps {
@@ -119,19 +120,31 @@ export function ChatPanel({
   // the real runner path, and the only signal was a 12px chip in the header,
   // which on a phone is the far corner of the screen from your thumb.
   //
-  // Two sources, deliberately: `awaitingReply` is client-side and answers
-  // INSTANTLY with no round trip (nothing server-side can — the turn has to be
-  // enqueued, claimed and driven into the agent before anything could report),
-  // and `activity === "working"` keeps it up for the rest of the turn, across
-  // the gaps between the assistant's separate text blocks. `blocked` withdraws
-  // it: an agent waiting on YOU must never render as an agent working.
-  const agentHasFloor =
-    state.activity !== "blocked" &&
-    (awaitingReply || state.activity === "working");
+  // Three sources now, in `turnStatus.ts` — see `agentHasFloor` there for the
+  // order of authority. The server's `turn_status` wins when present because
+  // it is the only one that can say a turn is queued behind an offline box or
+  // routed nowhere at all; `awaitingReply` still covers the instant between
+  // pressing send and the first frame, which nothing server-side can.
+  const status = state.turn_status ?? null;
+  const agentHasFloor = computeAgentHasFloor({
+    status,
+    activity: state.activity,
+    awaitingReply,
+  });
   const showPendingReply = inFlightMessage == null && agentHasFloor;
-  // "Queued" until something reports the agent actually started — the useful
-  // distinction is where the delay is, not that there is one.
-  const pendingLabel = state.activity === "working" ? "Thinking…" : "Queued…";
+  const pendingLabel = computePendingLabel({ status, activity: state.activity });
+  // The sentence for an ask that is going NOWHERE. Rendered instead of the
+  // bubble, never beside it: a spinner over a turn nothing will pick up is the
+  // precise lie this projection exists to remove.
+  //
+  // Suppressed entirely when the host supplies its own `banner`. A host banner
+  // IS this host's richer answer for the same situation — canopy's chat page
+  // raises <PlacementBanner> for an offline runner, with buttons to wait or
+  // continue elsewhere, and <MenuPrompt> for a dialog. Rendering our sentence
+  // underneath would state the same fact twice and put a dead-end restatement
+  // directly below the thing you can actually press. The fallback is for hosts
+  // with no banner of their own, which is exactly the embedded widget.
+  const notice = banner ? null : turnNotice(status);
 
   // Sticky-bottom scroll: dep changes on (a) new message arrival and (b)
   // streaming text growth on the last message. length-only (cheap) instead
@@ -188,7 +201,23 @@ export function ChatPanel({
         onStop={onStop}
         stopState={state.stopState}
         onTakeOver={onTakeOver}
-        banner={banner}
+        banner={
+          notice ? (
+            <p
+              role="status"
+              className={
+                notice.tone === "error"
+                  ? "text-[12px] text-destructive"
+                  : "text-[12px] text-warning"
+              }
+            >
+              {notice.text}
+              {notice.offer ? ` A runner admin can send it to ${notice.offer.name}.` : ""}
+            </p>
+          ) : (
+            banner
+          )
+        }
         disabledReason={disabledReason}
         attachments={attachments}
         onAttach={onAttach}

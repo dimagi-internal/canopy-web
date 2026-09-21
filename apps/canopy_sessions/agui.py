@@ -479,6 +479,17 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     if event == "session.stop":
         return [_custom(event, data)]
 
+    # Where the ask stands: queued behind an offline runner, unroutable, paused
+    # on a box that died. AG-UI has `RUN_STARTED`/`RUN_FINISHED`, which say a run
+    # began or ended — they cannot say a run has NOT begun and why, which is the
+    # entire content of this frame. So it rides CUSTOM.
+    #
+    # Dropping it here would be silent, and would disable the status on BOTH
+    # surfaces at once: canopy's chat page and the embedded widget are both on
+    # ag-ui. That is how page actions were lost until 2026-09-18.
+    if event == "session.turn_status":
+        return [_custom(event, data)]
+
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent
     # is the protocol's model, so a co-edited draft, a presence roster and which
     # box a session is bound to have no native spelling. They are not dropped —

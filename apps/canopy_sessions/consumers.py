@@ -413,6 +413,17 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "data": {"uri": message.get("uri", "")},
         })
 
+    async def session_turn_status(self, message):
+        """Where the ask this session is waiting on currently stands.
+
+        The whole status, not a delta — see `status_feed`. Sent on every
+        transition AND carried in the connect snapshot, because a client goes
+        and looks precisely BECAUSE something stopped, which is the case a
+        live-only frame always misses (the same lesson `session.menu` learned).
+        """
+        await self.send_json({"event": "session.turn_status",
+                              "data": {"status": message.get("status")}})
+
     async def session_page_action(self, message):
         """The agent is asking the attached page to do something.
 

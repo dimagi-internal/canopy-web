@@ -214,6 +214,21 @@ def enqueue_turn(
         from apps.push import services as push_services
 
         push_services.cancel_session_finish_push(session.pk)
+
+    # Tell whoever is watching that this ask now exists and where it stands.
+    # Post-commit for the same reason `turn_events_appended` is: a subscriber
+    # re-reads the turn, and inside the transaction it would read a row nobody
+    # else can see yet. Never raises — telling someone about a turn must not be
+    # able to undo enqueueing it.
+    def _fire_status():
+        from .signals import turn_status_changed
+
+        try:
+            turn_status_changed.send(sender=Turn, turn=turn)
+        except Exception:  # noqa: BLE001 — a status is never worth a failed send
+            logger.exception("turn_status_changed receiver failed for %s", turn.pk)
+
+    transaction.on_commit(_fire_status)
     return turn, True
 
 

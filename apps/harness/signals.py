@@ -38,6 +38,23 @@ session_menu_changed = Signal()
 # Post-commit.
 transcript_rows_streamed = Signal()
 
+# Sent with: sender=Turn, turn=<Turn> the moment an ask is ENQUEUED and has a
+# status worth telling somebody about. Post-commit.
+#
+# The other status transitions (claimed, running, done, failed) already append
+# a `status` TurnEvent and so ride `turn_events_appended`; enqueue writes no
+# event, and it is the single most important moment to report — it is the one
+# where a person has just pressed send and is looking straight at the screen.
+# Without it, "queued behind an offline runner" is indistinguishable from
+# "working on it" for as long as nobody touches the turn, which on a closed
+# laptop is forever.
+#
+# A signal rather than a call into each channel because there are five send
+# paths (the chat socket, REST, a contact, Slack, email) and "remember to tell
+# the channels" at each of them is five sites that rot — the same argument the
+# page-invalidation receiver below makes.
+turn_status_changed = Signal()
+
 
 # --- page invalidation -------------------------------------------------------
 #

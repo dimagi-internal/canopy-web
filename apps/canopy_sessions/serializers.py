@@ -89,4 +89,23 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         # blocked — which is exactly the case that fails: you go to the phone
         # BECAUSE the session stopped, so you were never watching.
         "menu": pending_menu(session),
+        # Where the ask this session is waiting on currently stands. In the
+        # snapshot for the same reason `menu` is: you open the page BECAUSE it
+        # went quiet, so the one client that most needs the status is the one
+        # that was not connected when it changed.
+        "turn_status": _turn_status(session),
     }
+
+
+def _turn_status(session) -> dict | None:
+    """Never raises: a snapshot that cannot say where the turn is must still
+    deliver the conversation."""
+    try:
+        from .status_feed import status_for_session
+
+        return status_for_session(session)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("could not resolve turn status")
+        return None
