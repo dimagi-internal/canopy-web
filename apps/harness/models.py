@@ -446,6 +446,11 @@ class Turn(models.Model):
     # and the who-is-asking spec. Distinct from `enqueued_by`, which records the
     # CALLER of the enqueue: for an email that is the runner that posted it, not
     # the person who wrote in. Record-only today; the access phases read these.
+    # WHICH PROFILE this turn runs in: "" is the agent's full profile; anything
+    # else names a capability from its declared interface, and the runner and
+    # the agent's guard confine the session to it. Decided once, at enqueue,
+    # from the initiator — see `apps/agents/interface.py::capability_for`.
+    capability = models.CharField(max_length=48, blank=True, default="")
     initiator_kind = models.CharField(max_length=16, blank=True, default="")
     initiator_via = models.CharField(max_length=64, blank=True, default="")
     initiator_assurance = models.CharField(max_length=32, blank=True, default="")

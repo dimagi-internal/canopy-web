@@ -16,6 +16,7 @@ vi.mock('@/api/agents', async (orig) => ({
 vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>runners-control</div> }))
 vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () => <div>owner-control</div> }))
 vi.mock('@/components/agents/AgentAdminsControl', () => ({ AgentAdminsControl: () => <div>admins-control</div> }))
+vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),

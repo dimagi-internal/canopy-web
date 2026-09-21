@@ -16,6 +16,8 @@ from apps.workspaces import services as wsvc
 from . import services, skill_history
 from .models import AgentTaskCommand
 from .schemas import (
+    AgentInterfaceIn,
+    AgentInterfaceOut,
     AgentAdminOut,
     AgentCommandApplyIn,
     AgentCredentialsIn,
@@ -326,6 +328,52 @@ def _admin_rows(agent) -> list[dict]:
                      "granted_by_email": g.granted_by.email if g.granted_by else None,
                      "granted_at": g.granted_at})
     return rows
+
+
+def _interface_out(agent) -> dict:
+    by = agent.interface_published_by
+    return {"interface": agent.interface or {}, "published_at": agent.interface_published_at,
+            "published_by_email": by.email if by is not None else None}
+
+
+@router.get("/{slug}/interface", response=AgentInterfaceOut,
+            summary="What this agent offers callers — its declared interface")
+def get_interface(request: HttpRequest, slug: str):
+    return _interface_out(_get_agent_or_404(request, slug))
+
+
+# Owner-or-admin, not the editor tier the skill catalog uses: the interface is
+# a SECURITY POLICY — it decides what people outside the agent's admins can make
+# it do — so loosening it is the same kind of act as handing over its keys.
+@router.put("/{slug}/interface", response=AgentInterfaceOut,
+            summary="Publish the agent's declared interface (its config/interface.yaml)")
+def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
+    from django.utils import timezone
+
+    from .interface import InterfaceError, parse
+
+    agent = _agent_for_admin(request, slug)
+    try:
+        agent.interface = parse(payload.interface)
+    except InterfaceError as exc:
+        raise HttpError(422, str(exc)) from exc
+    agent.interface_published_at = timezone.now()
+    agent.interface_published_by = request.user
+    agent.save(update_fields=["interface", "interface_published_at",
+                              "interface_published_by", "updated_at"])
+    return _interface_out(agent)
+
+
+@router.delete("/{slug}/interface", response=AgentInterfaceOut,
+               summary="Unpublish the declared interface: every turn runs in the full profile again")
+def unpublish_interface(request: HttpRequest, slug: str):
+    agent = _agent_for_admin(request, slug)
+    agent.interface = {}
+    agent.interface_published_at = None
+    agent.interface_published_by = None
+    agent.save(update_fields=["interface", "interface_published_at",
+                              "interface_published_by", "updated_at"])
+    return _interface_out(agent)
 
 
 @router.get("/{slug}/admins", response=list[AgentAdminOut],

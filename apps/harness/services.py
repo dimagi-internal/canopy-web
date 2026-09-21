@@ -114,6 +114,37 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
     return turn, True
 
 
+def _apply_capability(turn: Turn) -> None:
+    """Decide which profile a new turn runs in, inside the transaction that
+    creates it — so no runner can claim it before the decision is recorded.
+
+    FULL for an agent with no published interface, and for its owner, admins
+    and canopy's own turns. A caller gets the capability their class is
+    offered. A caller offered nothing is refused: the turn is written already
+    CANCELLED with the reason, for the same reasons a blocked sender's is (the
+    idempotency key holds, an old runner sees a 201, and the refusal is
+    visible in the turn log).
+    """
+    from apps.agents import interface
+
+    agent = turn.agent if turn.agent_id else (
+        turn.chat_session.agent if turn.chat_session_id and turn.chat_session.agent_id else None)
+    if agent is None:
+        return
+    cap = interface.capability_for(turn, agent)
+    if cap == interface.FULL:
+        return
+    if cap is None:
+        turn.status = Turn.CANCELLED
+        turn.finished_at = timezone.now()
+        turn.result_note = (f"not run: {agent.slug} offers nothing to this caller "
+                            "(see its declared interface)")
+        turn.save(update_fields=["status", "finished_at", "result_note"])
+        return
+    turn.capability = cap
+    turn.save(update_fields=["capability"])
+
+
 def enqueue_turn(
     *,
     agent=None,
@@ -253,6 +284,7 @@ def enqueue_turn(
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
                 pinned_runner=pinned_runner,
             )
+            _apply_capability(turn)
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
         replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
@@ -286,9 +318,14 @@ def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
-    projects: list[str] | None = None,
+    projects: list[str] | None = None, profiles: int = 0,
 ) -> Runner:
-    """`projects` is the runner REPORTING which repos it can drive (spec
+    """`profiles` is the profile-enforcement version the runner REPORTS it can
+    honour (see `profile_q`). Written on every beat, and 0 from a runner that
+    does not send it — so a downgrade takes effect on the next beat, and nothing
+    but the runner itself can claim the capability for it.
+
+    `projects` is the runner REPORTING which repos it can drive (spec
     2026-07-28) — the answer emdash already had, replacing a list a human typed
     once at pairing and nothing kept true.
 
@@ -324,6 +361,10 @@ def heartbeat(
         cleaned = [p.strip() for p in projects if p and p.strip()]
         if cleaned != runner.capabilities.get("projects"):
             runner.capabilities = {**runner.capabilities, "projects": cleaned}
+            fields.append("capabilities")
+    if int(runner.capabilities.get("profiles") or 0) != int(profiles or 0):
+        runner.capabilities = {**runner.capabilities, "profiles": int(profiles or 0)}
+        if "capabilities" not in fields:
             fields.append("capabilities")
     runner.save(update_fields=fields)
     # The update nudge: this is the one moment both shas are in hand — the
@@ -664,6 +705,27 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> boo
     return any(rr.id == r.id for _rank, rr in rows)
 
 
+#: The profile-enforcement version a runner must REPORT to be given a restricted
+#: turn. 1 = the runner opens a caller's turn in its own `cx-` session with its
+#: profile written first, AND the installed canopy guard confines that session.
+PROFILES_VERSION = 1
+
+
+def profile_q(runner) -> Q:
+    """Restricted turns only for a runner that can confine them.
+
+    A caller's turn (`Turn.capability` set) claimed by a runner that cannot
+    enforce the capability's profile would run in the agent's FULL profile —
+    the exact outcome the declared interface exists to prevent, and silently.
+    So a runner that has not reported `profiles` (an older laptop runner, the
+    cloud runner today) never sees one. Deliberately NOT bypassable by a pin:
+    a pin is a placement, never a way past a security property.
+    """
+    if int(runner.capabilities.get("profiles") or 0) >= PROFILES_VERSION:
+        return Q()
+    return Q(capability="")
+
+
 def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
@@ -680,6 +742,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
             # A turn pinned ELSEWHERE is invisible to this runner in the claim
             # path; the coarse predicate above does not say so on its own.
             .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=r))
+            .filter(profile_q(r))
             .select_related("agent", "chat_session", "chat_session__runner_binding")
         ):
             # Then the per-source refinement. A runner assigned the agent but
@@ -805,7 +868,12 @@ def unclaimable_queued_turns(user) -> list[dict]:
             target, what = f"agent {t.agent.slug}", f"is assigned the agent '{t.agent.slug}'"
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
-        if t.pk in claimable_ever:
+        if t.capability and t.pk not in claimable_ever:
+            kind = "config"
+            reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "
+                      "that can confine one serves it — update the runner and the canopy "
+                      "plugin on a box assigned to it")
+        elif t.pk in claimable_ever:
             kind = "offline"
             reason = f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)"
         else:
@@ -927,6 +995,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         Turn.objects.filter(status=Turn.QUEUED)
         .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
         .filter(match_q)
+        .filter(profile_q(runner))
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
         .filter(tenant_q)

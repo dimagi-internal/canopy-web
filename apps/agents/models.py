@@ -30,6 +30,17 @@ class Agent(models.Model):
         related_name="agents",
         help_text="The human who operates the agent.",
     )
+    #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
+    #: may ask this agent for. Published from the agent repo's
+    #: `config/interface.yaml`; validated by `apps.agents.interface.parse`.
+    #: Empty means "not published", and every turn runs in the full profile,
+    #: exactly as before interfaces existed. See `apps/agents/interface.py`.
+    interface = models.JSONField(default=dict, blank=True)
+    interface_published_at = models.DateTimeField(null=True, blank=True)
+    interface_published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
     #: How many projects this agent has ever been given, so `P<N>` is never
     #: reused. Deriving the next id from what EXISTS would hand "P2" back out
     #: after P2 was deleted, and an old link (a task's Links, a Drive folder

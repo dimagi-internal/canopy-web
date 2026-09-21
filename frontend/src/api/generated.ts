@@ -1798,6 +1798,25 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/interface": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** What this agent offers callers — its declared interface */
+        readonly get: operations["apps_agents_api_get_interface"];
+        /** Publish the agent's declared interface (its config/interface.yaml) */
+        readonly put: operations["apps_agents_api_publish_interface"];
+        readonly post?: never;
+        /** Unpublish the declared interface: every turn runs in the full profile again */
+        readonly delete: operations["apps_agents_api_unpublish_interface"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/admins": {
         readonly parameters: {
             readonly query?: never;
@@ -8125,6 +8144,24 @@ export interface components {
             /** User Id */
             readonly user_id: number | null;
         };
+        /** AgentInterfaceOut */
+        readonly AgentInterfaceOut: {
+            /** Interface */
+            readonly interface: {
+                readonly [key: string]: unknown;
+            };
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Published By Email */
+            readonly published_by_email?: string | null;
+        };
+        /** AgentInterfaceIn */
+        readonly AgentInterfaceIn: {
+            /** Interface */
+            readonly interface: {
+                readonly [key: string]: unknown;
+            };
+        };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
             /** User Id */
@@ -10852,6 +10889,11 @@ export interface components {
              * @default 0
              */
             readonly code_committed_at: number;
+            /**
+             * Profiles
+             * @default 0
+             */
+            readonly profiles: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
         };
@@ -15064,6 +15106,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_get_interface: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentInterfaceOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_publish_interface: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentInterfaceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentInterfaceOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_unpublish_interface: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentInterfaceOut"];
                 };
             };
         };

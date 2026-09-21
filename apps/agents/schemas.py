@@ -300,6 +300,18 @@ class AgentAdminOut(StrictModel):
     granted_at: dt.datetime | None = None
 
 
+class AgentInterfaceIn(StrictModel):
+    # The parsed `config/interface.yaml` — see apps/agents/interface.py.
+    interface: dict
+
+
+class AgentInterfaceOut(StrictModel):
+    # Empty when nothing is published: every turn runs in the full profile.
+    interface: dict
+    published_at: dt.datetime | None = None
+    published_by_email: str | None = None
+
+
 class AgentOwnerIn(StrictModel):
     # None clears the owner (workspace owners only).
     user_id: int | None

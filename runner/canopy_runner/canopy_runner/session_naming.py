@@ -44,6 +44,9 @@ import re
 
 # The marker. Mirrored in canopy's orchestrator.agent_client — see module docstring.
 CANOPY_PREFIX = "c-"
+#: A CALLER's session — confined to a capability by canopy's `profile_guard`,
+#: which recognises it by exactly this prefix. Never shared with an admin's work.
+RESTRICTED_PREFIX = "cx-"
 
 # Long enough for a real sentence fragment, short enough to read in a narrow
 # sidebar. The old budget was 28 INCLUDING the agent slug; this one is the subject
@@ -107,7 +110,21 @@ def _thread_key(turn: dict, target: str) -> str:
     """
     ref = turn.get("origin_ref") or {}
     explicit = ref.get("thread_key") or ref.get("thread_id")
-    return explicit or f"{target}:{turn.get('id') or ''}"
+    return restricted_key(turn, explicit or f"{target}:{turn.get('id') or ''}")
+
+
+def restricted_key(turn: dict, key: str) -> str:
+    """A caller's turn continues a DIFFERENT session from an admin's on the same
+    thread: `<key>#<capability>`. Shared by both `_thread_key`s so they agree."""
+    env = turn.get("caller_context") or {}
+    if env.get("profile") != "restricted":
+        return key
+    cap = (env.get("capability") or {}).get("name") or "none"
+    return f"{key}#{cap}"
+
+
+def is_restricted(turn: dict) -> bool:
+    return (turn.get("caller_context") or {}).get("profile") == "restricted"
 
 
 def _from_slash_command(prompt: str, target: str) -> str:
@@ -190,7 +207,8 @@ def build_task_name(target: str, turn: dict) -> str:
     in the name; it is read to decide whether a slash command's namespace is
     redundant, and it keys the thread fallback.
     """
-    bits = [b for b in (CANOPY_PREFIX.rstrip("-"), subject_for(turn, target),
+    prefix = RESTRICTED_PREFIX if is_restricted(turn) else CANOPY_PREFIX
+    bits = [b for b in (prefix.rstrip("-"), subject_for(turn, target),
                         _disc(turn, target)) if b]
     return "-".join(bits)
 
@@ -204,7 +222,15 @@ def is_canopy_task(name: str) -> bool:
     """
     n = (name or "").strip().lower()
     n = n[len("emdash-"):] if n.startswith("emdash-") else n
-    return n.startswith(CANOPY_PREFIX) or bool(re.search(r"-\d{4}-\d{4}$", n))
+    return (n.startswith((CANOPY_PREFIX, RESTRICTED_PREFIX))
+            or bool(re.search(r"-\d{4}-\d{4}$", n)))
+
+
+def is_restricted_task(name: str) -> bool:
+    """True for a caller's session name — the one `profile_guard` confines."""
+    n = (name or "").strip().lower()
+    n = n[len("emdash-"):] if n.startswith("emdash-") else n
+    return n.startswith(RESTRICTED_PREFIX)
 
 
 def parse_task_name(name: str) -> dict | None:
@@ -216,8 +242,9 @@ def parse_task_name(name: str) -> dict | None:
     """
     n = (name or "").strip().lower()
     n = n[len("emdash-"):] if n.startswith("emdash-") else n
-    if not n.startswith(CANOPY_PREFIX):
+    prefix = next((p for p in (RESTRICTED_PREFIX, CANOPY_PREFIX) if n.startswith(p)), None)
+    if prefix is None:
         return None
-    rest = n[len(CANOPY_PREFIX):]
+    rest = n[len(prefix):]
     subject, _, disc = rest.rpartition("-")
     return {"subject": subject, "disc": disc}

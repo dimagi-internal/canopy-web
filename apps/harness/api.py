@@ -389,7 +389,11 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     runner = Runner.objects.create(
         name=payload.name,
         kind=payload.kind,
-        capabilities=payload.capabilities,
+        # `profiles` is REPORTED on heartbeat, never declared: a box that says at
+        # pairing it can confine a caller's session would be believed until its
+        # first beat. Dropped here rather than refused, so an old pairing script
+        # that copies a whole capabilities dict still pairs.
+        capabilities={k: v for k, v in payload.capabilities.items() if k != "profiles"},
         host=payload.host,
         paired_by=request.user,
         workspace_id=ws_slug,
@@ -637,10 +641,16 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    reported = runner.capabilities.get("projects")
+    if "profiles" in payload.capabilities:
+        # Reported, like `projects` — and here it is a SECURITY property: a hand
+        # edit claiming a runner can confine a caller's session would route
+        # restricted turns to a box that runs them in the full profile.
+        raise HttpError(422, "`profiles` is reported by the runner on every heartbeat, "
+                             "not set by hand.")
     caps = dict(payload.capabilities)
-    if reported is not None:
-        caps["projects"] = reported
+    for key in ("projects", "profiles"):
+        if runner.capabilities.get(key) is not None:
+            caps[key] = runner.capabilities[key]
     runner.capabilities = caps
     runner.save(update_fields=["capabilities"])
     return runner
@@ -781,6 +791,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         code_sha=payload.code_sha,
         code_committed_at=payload.code_committed_at,
         projects=payload.projects,
+        profiles=payload.profiles,
     )
 
 
