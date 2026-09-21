@@ -11,4 +11,5 @@ from . import (
     schedules,  # noqa: F401
     sessions,  # noqa: F401
     skill_history,  # noqa: F401
+    slack,  # noqa: F401
 )

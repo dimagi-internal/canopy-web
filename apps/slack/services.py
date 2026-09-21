@@ -134,6 +134,8 @@ SENT, NOT_INSTALLED, BLOCKED, NO_AGENT, EMPTY = (
 # A reply to a question the agent is blocked on, and the ways that can go.
 ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "answer_undeliverable"
 STALE = "stale"
+#: A contact replying in a thread a repo session was shared into.
+MEMBERS_ONLY = "members_only"
 # Sending waiting work to a cloud runner, and the ways that can go.
 MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
     "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
@@ -274,13 +276,19 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str) -> tu
     return Principal(contact=contact), None
 
 
+def named_agent(installation: SlackInstallation, text: str) -> tuple[Agent | None, str]:
+    """(the enabled agent the first word names, the rest) — or (None, text)."""
+    first, _, rest = text.partition(" ")
+    named = enabled_agents(installation).filter(slug__iexact=first.rstrip(":,")).first() if first else None
+    return (named, rest.strip()) if named is not None else (None, text)
+
+
 def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple[Agent | None, str]:
     """(agent, the prompt with the agent's name removed)."""
     agents = {a.slug.lower(): a for a in enabled_agents(installation)}
-    first, _, rest = text.partition(" ")
-    named = agents.get(first.lower().rstrip(":,"))
+    named, rest = named_agent(installation, text)
     if named is not None:
-        return named, rest.strip()
+        return named, rest
     existing = (Session.objects.filter(workspace=installation.workspace,
                                        agent__slack_enabled=True,
                                        **{f"metadata__{SLACK_THREAD_KEY}": key})
@@ -350,6 +358,13 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not inbound.follow and text.lower().rstrip(".!") == CLOUD_WORD:
         return route_mine_to_cloud(installation, inbound.slack_user_id)
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
+    # A thread a repo session was SHARED into (apps/slack/share.py) has no agent
+    # to find it by. Naming an agent still asks that agent, as in any thread.
+    from .share import bound_repo_session
+
+    shared = bound_repo_session(installation, key)
+    if shared is not None and named_agent(installation, text)[0] is None:
+        return _continue_shared(shared, principal, text, inbound)
     agent, prompt = resolve_agent(installation, text, key)
     if agent is None:
         return Outcome(NO_AGENT, agent_list(installation))
@@ -357,6 +372,29 @@ def handle_message(inbound: Inbound) -> Outcome:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=prompt)
+    return _send(session, created, agent, principal, prompt, inbound)
+
+
+def _continue_shared(session: Session, principal: Principal, text: str, inbound: Inbound) -> Outcome:
+    """A reply in a thread a repo session was bound to by a share.
+
+    Members only. A Slack-born thread always has an agent whose owner opted in
+    to answering whoever writes there; a repo session is somebody's own Claude
+    Code session, usually running with permissions bypassed, and a Slack guest
+    must not be able to type into it.
+    """
+    if principal.user is None:
+        return Outcome(MEMBERS_ONLY, "Only members of this canopy workspace can reply into this session.",
+                       session=session)
+    if not text:
+        return Outcome(EMPTY, "What would you like this session to do?", session=session)
+    if session.created_by_id != principal.user.pk:
+        ensure_participant(session, principal.user, SessionParticipant.EDITOR)
+    return _send(session, False, None, principal, text, inbound)
+
+
+def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
+          inbound: Inbound) -> Outcome:
     if not created:
         answered = _answer_if_waiting(session, agent, prompt)
         if answered is not None:
@@ -380,11 +418,12 @@ def handle_message(inbound: Inbound) -> Outcome:
     from . import status
 
     status.post(turn, adopt_ts=inbound.adopt_ts, prefix=inbound.adopt_prefix)
+    name = f"`{agent.slug}`" if agent is not None else "the session"
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
-        note = f"Sent to `{agent.slug}` — the reply will come back here."
+        note = f"Sent to {name} — the reply will come back here."
     else:
-        note = f"Sent to `{agent.slug}` — the reply will come back here. Also on canopy: {session_url(session)}"
+        note = f"Sent to {name} — the reply will come back here. Also on canopy: {session_url(session)}"
     return Outcome(SENT, note, session=session, turn=turn, agent=agent,
                    extra={"new_session": created})
 
@@ -545,7 +584,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
     return Outcome(MOVED if ok else results[0][1].status, "\n".join(lines))
 
 
-def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | None:
+def _answer_if_waiting(session: Session, agent: Agent | None, reply: str) -> Outcome | None:
     """If the agent is blocked on a question, treat the reply as the answer.
 
     Returns None when there is no answerable question, and the message is then
@@ -563,8 +602,9 @@ def _answer_if_waiting(session: Session, agent: Agent, reply: str) -> Outcome | 
         return None
     choice = menus.parse_answer(reply, menu)
     if choice is None:
+        who = f"`{agent.slug}`" if agent is not None else "This session"
         return Outcome(NOT_AN_ANSWER, (
-            f"`{agent.slug}` is waiting on its question above — reply with the option number, "
+            f"{who} is waiting on its question above — reply with the option number, "
             "or `cancel`."), session=session, agent=agent)
     if choice == menus.CANCEL:
         result = session_services.answer_menu(session=session, option=None)

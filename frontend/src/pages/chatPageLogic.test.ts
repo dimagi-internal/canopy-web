@@ -8,6 +8,7 @@ import {
   type PendingAnswer,
   restToKitMessage,
   sendBlockReason,
+  shareToSlackCommand,
   shouldShowLoadFull,
 } from "./chatPageLogic";
 import type { ChatSessionDetail } from "@/api/chat";
@@ -238,5 +239,20 @@ describe("answerHidesMenu", () => {
 
   it("does nothing without a pending answer", () => {
     expect(answerHidesMenu(menu, null, 1_000)).toBe(false);
+  });
+});
+
+describe("shareToSlackCommand", () => {
+  it("names the channel and the mode for the skill", () => {
+    expect(shareToSlackCommand("#connect-dev", "broadcast")).toBe("/canopy:share-to-slack #connect-dev");
+    expect(shareToSlackCommand("connect-dev", "bind")).toBe("/canopy:share-to-slack #connect-dev bind");
+    expect(shareToSlackCommand("C0123ABCD", "bind")).toBe("/canopy:share-to-slack C0123ABCD bind");
+  });
+
+  it("refuses what Slack could not name, rather than sending prose to the agent", () => {
+    expect(shareToSlackCommand("", "broadcast")).toBeNull();
+    expect(shareToSlackCommand("#", "broadcast")).toBeNull();
+    expect(shareToSlackCommand("dev; rm -rf", "broadcast")).toBeNull();
+    expect(shareToSlackCommand("Dev Team", "broadcast")).toBeNull();
   });
 });
