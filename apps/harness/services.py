@@ -56,10 +56,13 @@ def _record_email_contact(agent, origin_ref):
     contact off the caller would file every correspondent under the runner
     owner. The sender is in `origin_ref["from"]`, written by the inbox watcher.
 
-    `authserv_id` and the header list are optional and usually absent today —
-    the runner does not ship them yet. Absent means the contact is recorded at
-    the `none` grade, which is honest rather than degraded: we genuinely cannot
-    vouch for the address.
+    The grade comes from `origin_ref["headers"]` — the newest message's
+    `Authentication-Results` headers, shipped by the runner — read against
+    `settings.INBOUND_EMAIL_AUTHSERV_ID`. WHICH receiver is trusted is canopy's
+    decision, never the poster's: an `authserv_id` or a pre-digested
+    `authentication_results` string in the payload is ignored, because either
+    would let whoever posts the turn write the verdict on their own mail. A turn
+    with no headers (a runner older than this) is graded `none`, honestly.
     """
     from apps.contacts import services as contacts
 
@@ -67,16 +70,48 @@ def _record_email_contact(agent, origin_ref):
     sender = str(ref.get("from") or "")
     if not sender:
         return None
+    headers = ref.get("headers")
     # Returned so the turn can name its initiator (`apps/harness/initiator.py`):
     # the person who wrote in, not the runner that posted the turn.
     return contacts.record_inbound_sender(
         workspace=agent.workspace,
         address=sender,
         display_name=str(ref.get("from_name") or ""),
-        headers=ref.get("headers"),
-        authserv_id=str(ref.get("authserv_id") or ""),
-        auth_results=str(ref.get("authentication_results") or ""),
+        headers=headers if isinstance(headers, list) else None,
+        authserv_id=settings.INBOUND_EMAIL_AUTHSERV_ID,
     )
+
+
+def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
+                        origin_ref, routing) -> tuple[Turn, bool]:
+    """Write an email turn from a BLOCKED contact as already cancelled."""
+    from . import initiator as who
+
+    existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
+    if existing is not None:
+        return existing, False
+    reason = contact.blocked_reason or "no reason given"
+    try:
+        with transaction.atomic():
+            turn = Turn.objects.create(
+                **who.for_contact(contact, via="email").fields(),
+                agent=agent,
+                origin=origin,
+                idempotency_key=idempotency_key,
+                prompt=prompt,
+                origin_ref=origin_ref or {},
+                routing=routing,
+                status=Turn.CANCELLED,
+                finished_at=timezone.now(),
+                result_note=f"not run: the sender is blocked ({reason})",
+            )
+    except IntegrityError:
+        replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
+        if replay is not None:
+            return replay, False
+        raise
+    logger.info("email turn %s refused: contact %s is blocked", turn.pk, contact.pk)
+    return turn, True
 
 
 def enqueue_turn(
@@ -147,6 +182,21 @@ def enqueue_turn(
         except Exception:  # noqa: BLE001
             email_contact = None
             logger.exception("could not record the sender of an email turn")
+        if email_contact is not None and email_contact.is_blocked:
+            # Refused at the door, and SAID so: the turn is written already
+            # CANCELLED rather than not written. Three reasons. It keeps the
+            # idempotency key, so the runner's next poll of the same unread
+            # thread is a no-op instead of a fresh refusal. It needs no protocol
+            # change — a runner older than this sees an ordinary 201, where a
+            # 4xx would abort its whole mailbox poll and stall everyone else's
+            # mail behind one blocked sender. And the refusal is visible in the
+            # turn log, where "why did the agent never answer X" gets asked.
+            # No session: a blocked person's thread is not a conversation.
+            return _refused_email_turn(
+                agent, email_contact, origin=origin,
+                idempotency_key=idempotency_key, prompt=prompt,
+                origin_ref=origin_ref, routing=routing,
+            )
         if initiator is None:
             # The one channel whose asker enqueue_turn can know on its own. NOT
             # `enqueued_by`: on an email turn that is the runner's account, and

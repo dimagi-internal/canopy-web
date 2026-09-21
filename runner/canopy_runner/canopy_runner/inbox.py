@@ -142,6 +142,13 @@ class ThreadFacts(NamedTuple):
     #: prior state we could read — the fail-open value (see `_OK_PRIOR_STATE`).
     #: Never a guess.
     recovers_from_alarm: bool | None = None
+    #: The newest message's `From`, as written (case kept, for display).
+    newest_from_header: str | None = None
+    #: The newest message's `Authentication-Results` headers, verbatim and in
+    #: order. Shipped UNJUDGED: which receiver's verdict counts is canopy's call
+    #: (`apps/contacts/email_auth.py`), so the runner forwards evidence and
+    #: never a grade.
+    auth_results: tuple[str, ...] = ()
 
 
 def _decoded_body(msg: dict) -> str:
@@ -197,13 +204,18 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
         return ThreadFacts()
     newest = msgs[-1]
     sender = None
+    auth: list[str] = []
     for h in (newest.get("payload") or {}).get("headers") or []:
-        if h.get("name", "").lower() == "from":
-            sender = (h.get("value") or "").lower()
-            break
+        name = h.get("name", "").lower()
+        if name == "from" and sender is None:
+            sender = h.get("value") or ""
+        elif name == "authentication-results":
+            auth.append(h.get("value") or "")
     m = _OK_PRIOR_STATE.search(_decoded_body(newest))
-    return ThreadFacts(newest_from=sender,
-                       recovers_from_alarm=(m.group(1).upper() == "ALARM") if m else None)
+    return ThreadFacts(newest_from=sender.lower() if sender is not None else None,
+                       recovers_from_alarm=(m.group(1).upper() == "ALARM") if m else None,
+                       newest_from_header=sender,
+                       auth_results=tuple(auth))
 
 
 def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
@@ -461,7 +473,17 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # `thread get` on every poll for the next fourteen days.
             _seen_state[(box, tid)] = count
             continue
-        frm, subj = t.get("from", ""), t.get("subject", "")
+        subj = t.get("subject", "")
+        # The turn is FOR whoever wrote the newest message — that is who the agent
+        # is about to answer — and the headers below describe that same message.
+        # Grading one message's verdict against another message's sender would
+        # attribute a pass to the wrong person, so the two must come as a pair.
+        frm = facts.newest_from_header or t.get("from", "")
+        origin_ref = {"thread_id": tid, "from": frm, "subject": subj,
+                      "discovered_by": discovered_by}
+        if facts.auth_results:
+            origin_ref["headers"] = [{"name": "Authentication-Results", "value": v}
+                                     for v in facts.auth_results]
         # Clean command only — the agent's namespaced /<slug>:turn command does everything (reads the
         # thread, triages under guardrails, marks it read). The runner hands the exact
         # thread it already resolved so the agent doesn't re-scan the inbox.
@@ -471,8 +493,7 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # path: the server compares it against the mailbox's Gmail watch, and
             # a `poll`-discovered message on a mailbox with a live watch means
             # push is registered but not delivering.
-            origin_ref={"thread_id": tid, "from": frm, "subject": subj,
-                        "discovered_by": discovered_by},
+            origin_ref=origin_ref,
             prompt=f"/{agent}:turn --thread {tid}",
         )
         _seen_state[(box, tid)] = count
