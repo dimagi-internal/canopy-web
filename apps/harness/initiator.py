@@ -86,7 +86,13 @@ def for_contact(contact, *, via: str) -> Initiator:
     # The contact's OWN grade — what its mail server or its host could prove —
     # rather than a flat "contact". An spf-only emailer and a host-signed widget
     # visitor are both contacts and are not the same claim.
-    grade = getattr(contact, "auth_result", "") or "none"
+    #
+    # THIS arrival's grade (`last_auth_result`), never the high-water mark
+    # (`auth_result`). The turn is one message, and the question is whether THAT
+    # message was forged: an address that passed DMARC last month says nothing
+    # about a spoof of it today. Reading the best-ever grade here stamped a
+    # forged message `dmarc` whenever its victim had once been verified.
+    grade = getattr(contact, "last_auth_result", "") or "none"
     return Initiator(CONTACT, via, grade, contact=contact)
 
 
