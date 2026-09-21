@@ -186,3 +186,20 @@ export function answerHidesMenu(
   if (menuIdentity(menu) !== pending.key) return false;
   return now - pending.at < ANSWER_GRACE_MS;
 }
+
+export type ShareMode = "broadcast" | "bind";
+
+/**
+ * The line the chat page sends to have the SESSION summarize itself into
+ * Slack. It is the canopy plugin's own skill invocation — the session writes
+ * the summary because it has the context; canopy-web only carries the ask.
+ * Returns null when the channel is not something Slack could name.
+ */
+export function shareToSlackCommand(channel: string, mode: ShareMode): string | null {
+  const raw = channel.trim().replace(/^#/, "");
+  // Slack channel names: lowercase letters, digits, - and _, up to 80; ids are
+  // C…/G… uppercase alphanumerics. Anything else would reach the skill as prose.
+  if (!/^[a-z0-9_-]{1,80}$/.test(raw) && !/^[CG][A-Z0-9]{6,}$/.test(raw)) return null;
+  const target = /^[CG][A-Z0-9]{6,}$/.test(raw) ? raw : `#${raw}`;
+  return `/canopy:share-to-slack ${target}${mode === "bind" ? " bind" : ""}`;
+}

@@ -18,6 +18,7 @@ import {
   requestBackfill,
   resetSession,
   closeSession,
+  sendMessage,
   setSessionNotify,
   placeTurn,
   answerMenu,
@@ -33,6 +34,7 @@ import {
   closeIntent,
   closeResultMessage,
 } from '@/components/chat/closeAction'
+import { ShareToSlack } from '@/components/chat/ShareToSlack'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -743,6 +745,17 @@ export function ChatPage() {
             >
               {meta.notify_every_completion ? '🔔 Every reply' : '🔕 Every reply'}
             </button>
+          )}
+          {id && (
+            <ShareToSlack
+              disabledReason={disabledReason}
+              onShare={async (command) => {
+                // Sent over REST like any message; `noteLocalSend` is what shows
+                // the line and the working state until the transcript echoes it.
+                await sendMessage(id, command, `share-${Date.now()}`)
+                socket.noteLocalSend(command)
+              }}
+            />
           )}
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           <button

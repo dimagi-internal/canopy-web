@@ -70,6 +70,8 @@ class FakeSlack:
             "settings": {"event_subscriptions": {"bot_events": ["app_mention", "message.im"]}},
         }
         self.rotations = 0
+        # email -> Slack user id, for users.lookupByEmail.
+        self.lookup: dict[str, str] = {}
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -84,7 +86,10 @@ class FakeSlack:
         elif method == "agents.sessions.setStatus":
             body = {"ok": True}
         elif method == "chat.postMessage":
-            body = {"ok": True, "ts": "1700000999.000100"}
+            body = {"ok": True, "ts": "1700000999.000100", "channel": payload.get("channel")}
+        elif method == "users.lookupByEmail":
+            uid = self.lookup.get(payload.get("email", ""))
+            body = {"ok": True, "user": {"id": uid}} if uid else {"ok": False, "error": "users_not_found"}
         elif method == "oauth.v2.access":
             body = {"ok": True, "access_token": "xoxb-new", "bot_user_id": BOT, "app_id": "A_CANOPY",
                     "team": {"id": TEAM, "name": "Dimagi"}, "authed_user": {"id": self.installer}}

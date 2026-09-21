@@ -73,7 +73,15 @@ def set_session_status(token: str, *, channel: str, status: str, thread_ts: str 
 
 def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
                  blocks: list | None = None, persona: dict | None = None) -> str:
-    """Post, optionally AS an agent (`persona` = {"username", "icon_url"}).
+    """Post, optionally AS an agent (`persona` = {"username", "icon_url"}). Returns the ts."""
+    return post_message_body(token, channel=channel, text=text, thread_ts=thread_ts,
+                             blocks=blocks, persona=persona)["ts"]
+
+
+def post_message_body(token: str, *, channel: str, text: str, thread_ts: str = "",
+                      blocks: list | None = None, persona: dict | None = None) -> dict:
+    """`post_message`, returning Slack's whole answer — including the channel ID,
+    which is what a caller that posted to a `#name` needs to store.
 
     A persona needs the `chat:write.customize` scope. An install from before it
     was added answers `missing_scope`; the post is retried as the plain bot, so
@@ -88,11 +96,11 @@ def post_message(token: str, *, channel: str, text: str, thread_ts: str = "",
         payload["blocks"] = blocks
     if persona:
         try:
-            return call("chat.postMessage", token=token, json={**payload, **persona})["ts"]
+            return call("chat.postMessage", token=token, json={**payload, **persona})
         except SlackApiError as e:
             if e.error != "missing_scope":
                 raise
-    return call("chat.postMessage", token=token, json=payload)["ts"]
+    return call("chat.postMessage", token=token, json=payload)
 
 
 def update_message(token: str, *, channel: str, ts: str, text: str, blocks: list | None = None) -> None:
@@ -109,6 +117,23 @@ def post_ephemeral(token: str, *, channel: str, user: str, text: str, thread_ts:
 
 def user_info(token: str, slack_user_id: str) -> dict:
     return call("users.info", token=token, data={"user": slack_user_id}).get("user") or {}
+
+
+def lookup_user_id(token: str, email: str) -> str:
+    """The Slack user with this email, or "" (needs `users:read.email`)."""
+    try:
+        return str((call("users.lookupByEmail", token=token, data={"email": email}).get("user") or {})
+                   .get("id") or "")
+    except SlackApiError:
+        return ""
+
+
+def permalink(token: str, *, channel: str, ts: str) -> str:
+    try:
+        return str(call("chat.getPermalink", token=token,
+                        data={"channel": channel, "message_ts": ts}).get("permalink") or "")
+    except SlackApiError:
+        return ""
 
 
 def user_email(token: str, slack_user_id: str) -> str:
