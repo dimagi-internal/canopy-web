@@ -23,7 +23,7 @@ import pathlib
 import time
 from pathlib import Path
 
-from . import cdp_control, chat_bridge, dialog, emdash, hooks, readiness, session_naming, transcript
+from . import caller, cdp_control, chat_bridge, dialog, emdash, hooks, readiness, session_naming, transcript
 from .client import ClientError
 from .tail import TailReader
 
@@ -389,6 +389,9 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     thread_key = _thread_key(turn)
     prompt = turn.get("prompt") or ""
     prompt = prompt_with_attachments(prompt, fetch_attachments(client, turn))
+    # The envelope lands on disk for `who_is_asking` and the agent's skills; the
+    # prompt itself is the person's words and stays exactly as they wrote it.
+    caller.write_caller_file(turn)
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace
@@ -503,6 +506,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # Default (board turns with no prompt): a full turn. drain-turn is retired.
     # A repo turn always carries an explicit prompt (the composer requires it).
     work_prompt = turn.get("prompt") or f"/{agent}:turn"
+    # Who asked, as data beside the turn — never in the prompt body (see caller.py).
+    work_prompt = caller.with_caller_flag(work_prompt, caller.write_caller_file(turn))
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace

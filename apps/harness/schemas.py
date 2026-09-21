@@ -451,6 +451,30 @@ class TurnOut(Schema):
         return describe(obj)
 
 
+class CallerContextOut(Schema):
+    """Who asked for a turn and what canopy knows about them — the caller
+    envelope (`apps/harness/caller_context.py`). Loosely typed on purpose: it is
+    a versioned document the runner writes to disk for the agent, not a surface
+    a client binds to field by field."""
+
+    envelope: dict
+
+
+class ClaimedTurnOut(TurnOut):
+    """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
+    the caller envelope, so the runner can hand it to the agent without a second
+    round trip. Only the claim returns it — it carries what canopy knows about a
+    person, which a turn LISTING has no reason to spread."""
+
+    caller_context: dict
+
+    @staticmethod
+    def resolve_caller_context(obj) -> dict:
+        from .caller_context import build
+
+        return build(obj)
+
+
 class TurnEventIn(Schema):
     kind: str
     payload: dict = {}

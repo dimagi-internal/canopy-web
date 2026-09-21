@@ -3977,6 +3977,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/caller-context": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who asked for this turn, and what canopy knows about them
+         * @description The caller envelope for one turn: the asker, how sure canopy is (for THIS
+         *     message), their relationship to the agent, and the contact profile canopy
+         *     holds. The same document the claiming runner receives.
+         */
+        readonly get: operations["apps_harness_api_get_turn_caller_context"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/events": {
         readonly parameters: {
             readonly query?: never;
@@ -10771,32 +10793,13 @@ export interface components {
             readonly projects?: readonly string[] | null;
         };
         /**
-         * InitiatorOut
-         * @description Who asked for this turn, and how that was established.
+         * ClaimedTurnOut
+         * @description A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
+         *     the caller envelope, so the runner can hand it to the agent without a second
+         *     round trip. Only the claim returns it — it carries what canopy knows about a
+         *     person, which a turn LISTING has no reason to spread.
          */
-        readonly InitiatorOut: {
-            /** Kind */
-            readonly kind: string;
-            /** Via */
-            readonly via: string;
-            /** Assurance */
-            readonly assurance: string;
-            readonly user?: components["schemas"]["InitiatorPersonOut"] | null;
-            readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
-            /** Agent */
-            readonly agent?: string | null;
-        };
-        /** InitiatorPersonOut */
-        readonly InitiatorPersonOut: {
-            /** Id */
-            readonly id: number;
-            /** Email */
-            readonly email: string;
-            /** Name */
-            readonly name: string;
-        };
-        /** TurnOut */
-        readonly TurnOut: {
+        readonly ClaimedTurnOut: {
             /**
              * Id
              * Format: uuid
@@ -10844,6 +10847,35 @@ export interface components {
             readonly finished_at: string | null;
             /** Lease Expires At */
             readonly lease_expires_at: string | null;
+            /** Caller Context */
+            readonly caller_context: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * InitiatorOut
+         * @description Who asked for this turn, and how that was established.
+         */
+        readonly InitiatorOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Via */
+            readonly via: string;
+            /** Assurance */
+            readonly assurance: string;
+            readonly user?: components["schemas"]["InitiatorPersonOut"] | null;
+            readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
+            /** Agent */
+            readonly agent?: string | null;
+        };
+        /** InitiatorPersonOut */
+        readonly InitiatorPersonOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
         };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {
@@ -11198,6 +11230,56 @@ export interface components {
              */
             readonly kind: string;
         };
+        /** TurnOut */
+        readonly TurnOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string | null;
+            /** Project */
+            readonly project: string;
+            /** Target */
+            readonly target: string;
+            /** Workspace Slug */
+            readonly workspace_slug: string | null;
+            /** Origin */
+            readonly origin: string;
+            /** Status */
+            readonly status: string;
+            /** Routing */
+            readonly routing: string;
+            /** Prompt */
+            readonly prompt: string;
+            /** Origin Ref */
+            readonly origin_ref: {
+                readonly [key: string]: unknown;
+            };
+            /** Claimed By Name */
+            readonly claimed_by_name: string | null;
+            /** Enqueued By Email */
+            readonly enqueued_by_email: string | null;
+            readonly initiator: components["schemas"]["InitiatorOut"];
+            /** Session Id */
+            readonly session_id: string;
+            /** Result Note */
+            readonly result_note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Claimed At */
+            readonly claimed_at: string | null;
+            /** Started At */
+            readonly started_at: string | null;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /** Lease Expires At */
+            readonly lease_expires_at: string | null;
+        };
         /** TurnIn */
         readonly TurnIn: {
             /**
@@ -11261,6 +11343,19 @@ export interface components {
             readonly workspace: string;
             /** Runner Name */
             readonly runner_name: string;
+        };
+        /**
+         * CallerContextOut
+         * @description Who asked for a turn and what canopy knows about them — the caller
+         *     envelope (`apps/harness/caller_context.py`). Loosely typed on purpose: it is
+         *     a versioned document the runner writes to disk for the agent, not a surface
+         *     a client binds to field by field.
+         */
+        readonly CallerContextOut: {
+            /** Envelope */
+            readonly envelope: {
+                readonly [key: string]: unknown;
+            };
         };
         /** TurnEventCountOut */
         readonly TurnEventCountOut: {
@@ -17478,7 +17573,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["TurnOut"];
+                    readonly "application/json": components["schemas"]["ClaimedTurnOut"];
                 };
             };
             /** @description No Content */
@@ -17849,6 +17944,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_get_turn_caller_context: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CallerContextOut"];
                 };
             };
         };

@@ -24,6 +24,8 @@ from . import services
 from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn
 from .schedule_services import serialize_schedule
 from .schemas import (
+    CallerContextOut,
+    ClaimedTurnOut,
     BackfillSyncOut,
     BackfillWriteOut,
     CloseSyncOut,
@@ -782,7 +784,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
     )
 
 
-@router.post("/runners/{runner_id}/claim", response={200: TurnOut, 204: None})
+@router.post("/runners/{runner_id}/claim", response={200: ClaimedTurnOut, 204: None})
 def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     """Claim the next eligible turn. `paused` is an optional comma-separated list of
     agent slugs the caller has locally paused (per-agent pause) — the server skips
@@ -1349,6 +1351,19 @@ def list_sessions(request: HttpRequest):
 @router.get("/turns/{turn_id}", response=TurnOut)
 def get_turn(request: HttpRequest, turn_id: uuid.UUID):
     return _turn_or_404(request, turn_id)
+
+
+@router.get("/turns/{turn_id}/caller-context", response=CallerContextOut,
+            summary="Who asked for this turn, and what canopy knows about them")
+def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
+    """The caller envelope for one turn: the asker, how sure canopy is (for THIS
+    message), their relationship to the agent, and the contact profile canopy
+    holds. The same document the claiming runner receives."""
+    # Same gate as every turn route. The contact profile is no wider than
+    # /api/contacts/, which any member of the tenant can already read.
+    from .caller_context import build
+
+    return {"envelope": build(_turn_or_404(request, turn_id))}
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)

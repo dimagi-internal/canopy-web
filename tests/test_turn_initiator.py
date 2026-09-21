@@ -177,7 +177,10 @@ def test_a_widget_contact_is_the_contact_with_its_own_grade(ctx):
                                                    created_by=owner)
     contact = Contact.objects.create(workspace=workspace, app=app, external_id="42",
                                      email="visitor@partner.org",
-                                     auth_result=Contact.AUTH_APP_SIGNED)
+                                     auth_result=Contact.AUTH_APP_SIGNED,
+                                     # Both, as `record_embed_visitor` writes them:
+                                     # the turn reads THIS arrival's grade.
+                                     last_auth_result=Contact.AUTH_APP_SIGNED)
     request = SimpleNamespace(contact=contact, delegated_app=app, user=None,
                               auth_method="contact")
 
