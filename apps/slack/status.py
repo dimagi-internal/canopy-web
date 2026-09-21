@@ -261,18 +261,41 @@ def _with_prefix(record: SlackTurnPost, text: str, blocks: list | None) -> tuple
     return text, blocks
 
 
-def post(turn: Turn, *, adopt_ts: str = "", prefix: str = "") -> SlackTurnPost | None:
-    """Post this turn's status line into its thread, once. None if the session
-    is not Slack-born, or the line was already posted.
+#: Where a turn carries what its Slack status line must remember from the
+#: request that asked it: `{"adopt_ts": ..., "prefix": ...}`. Written by
+#: `services._send` via `send_message(origin_ref=...)`.
+ORIGIN_REF_KEY = "slack"
+
+
+def adoption(turn: Turn) -> tuple[str, str]:
+    """(adopt_ts, prefix) for this turn's line.
 
     `adopt_ts` makes an EXISTING message the status line instead of posting a
     new one — the slash command's anchor, which would otherwise be followed
     immediately by a second message about the same ask. `prefix` is that
     message's own words, kept above the status on every later edit.
+
+    Read off the TURN, not passed in, because the line is posted from a signal
+    that holds nothing but the turn. It used to be passed in by the one caller
+    that had the request in hand, which was also why only that caller could
+    post first: any other path that won the race claimed the row without the
+    anchor and posted a second message beside it.
+    """
+    ref = (turn.origin_ref or {}).get(ORIGIN_REF_KEY) or {}
+    return str(ref.get("adopt_ts") or ""), str(ref.get("prefix") or "")
+
+
+def post(turn: Turn) -> SlackTurnPost | None:
+    """Post this turn's status line into its thread, once. None if the session
+    is not Slack-born, or the line was already posted.
+
+    Adopts the slash command's anchor when the turn carries one — see
+    `adoption`.
     """
     from .relay import _log_failure, session_destination
 
     turn = _load(turn)
+    adopt_ts, prefix = adoption(turn)
     dest = session_destination(turn.chat_session)
     if dest is None:
         return None
@@ -411,9 +434,24 @@ def sweep(*, force: bool = False) -> int:
 
 
 def on_status(turn: Turn) -> None:
-    """A status row landed on a turn of some session. Edit its line, or — for a
-    turn that did not come from Slack — post one, so the thread knows."""
+    """A turn on some session was enqueued, or moved. Edit its line, or post one.
+
+    Driven by the same two harness signals as the chat feed
+    (`canopy_sessions.status_feed`): `turn_status_changed` at enqueue and a
+    `status` row after that — so a Slack thread and a chat page learn about an
+    ask at the same moment, from the same event.
+
+    Origin-agnostic on purpose. It used to post only for turns that did NOT come
+    from Slack, because a Slack turn was posted by an explicit call in
+    `services._send` that alone knew the anchor to adopt — and posting here first
+    would have lost it. That left the case this now covers: somebody continues a
+    Slack-born conversation from canopy-web or a phone while its runner is
+    OFFLINE. Nothing ever claims the turn, so no `status` row lands, so the
+    thread heard nothing at all — the exact silence this module exists to end.
+    Now the anchor rides on the turn (`adoption`), any path may post first, and
+    the row's unique constraint makes the rest no-ops.
+    """
     if SlackTurnPost.objects.filter(turn_id=turn.pk).exists():
         refresh(turn)
-    elif turn.origin != Turn.ORIGIN_SLACK:
+    else:
         post(turn)

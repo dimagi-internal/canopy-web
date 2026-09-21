@@ -150,12 +150,24 @@ def hal(ws):
 
 
 def _post(path: str, body: bytes, content_type: str, *, secret: str = SECRET, req_ts: str | None = None):
+    """One Slack request, as production runs it — INCLUDING its commit.
+
+    The status line is posted by the `turn_status_changed` receiver, which
+    fires post-commit. This file runs each test inside a transaction that never
+    commits, so without executing the callbacks here every status-line
+    assertion would pass or fail on something production never does.
+    Production has no ATOMIC_REQUESTS, so there the callback runs inside the
+    request that enqueued the turn — which is what this reproduces.
+    """
+    from django.test import TestCase
+
     ts = req_ts or str(int(time.time()))
-    return Client().post(
-        path, data=body, content_type=content_type,
-        HTTP_X_SLACK_REQUEST_TIMESTAMP=ts,
-        HTTP_X_SLACK_SIGNATURE=sign(secret=secret, body=body, timestamp=ts),
-    )
+    with TestCase.captureOnCommitCallbacks(execute=True):
+        return Client().post(
+            path, data=body, content_type=content_type,
+            HTTP_X_SLACK_REQUEST_TIMESTAMP=ts,
+            HTTP_X_SLACK_SIGNATURE=sign(secret=secret, body=body, timestamp=ts),
+        )
 
 
 def event(evt: dict, **kw):
@@ -1015,6 +1027,59 @@ def test_an_offline_runner_says_it_is_blocked(slack, linked, hal, alice):
     mention("hal summarise")
     assert "*jj-mbp* is offline" in _line(slack)["text"]
     assert not _line(slack).get("blocks")          # no cloud runner, so no button
+
+
+def test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thread(
+        slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    """The gap this closes (2026-09-21). A Slack-born conversation continued from
+    canopy-web or a phone got its line only when a runner CLAIMED the turn —
+    and an offline runner never claims. So the thread heard nothing: not the
+    question, not that it was stuck. Meanwhile the chat page, driven by the
+    enqueue signal, said "queued, runner offline". Now both hear it from the
+    same event."""
+    from apps.canopy_sessions import services as session_services
+
+    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    mention("hal summarise")
+    session = Turn.objects.get(origin=Turn.ORIGIN_SLACK).chat_session
+    before = len(slack.said("chat.postMessage"))
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _msg, turn = session_services.send_message(
+            session=session, text="and the bit about budgets?", user=alice,
+            origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+
+    assert turn.status == Turn.QUEUED           # nothing will claim it
+    posted = slack.said("chat.postMessage")[before:]
+    assert len(posted) == 1, "the thread heard nothing about an ask made elsewhere"
+    text = posted[0]["text"]
+    assert "continued this in canopy" in text   # who asked, and where
+    assert "the bit about budgets" in text      # and WHAT — or the reply answers nothing visible
+    assert "*jj-mbp* is offline" in text        # and that it is stuck
+
+
+def test_the_slash_command_anchor_travels_on_the_turn(slack, linked, hal):
+    """The line is posted from a signal that holds only the turn, so the anchor
+    to adopt has to be ON it. Without that, whichever path posted first would
+    claim the row, post a fresh message beside the anchor, and leave the
+    command's own message orphaned — two messages for one ask."""
+    command("hal what changed?")
+    turn = Turn.objects.get(origin=Turn.ORIGIN_SLACK)
+    adopt_ts, prefix = slack_status.adoption(turn)
+    assert adopt_ts, "the slash command's anchor was not written onto the turn"
+    assert SlackTurnPost.objects.get(turn=turn).slack_ts == adopt_ts
+    # Adopted, not posted: the command's anchor is the only message about it.
+    assert not slack.said("chat.postMessage")[1:], "a second message was posted beside the anchor"
+
+
+def test_a_redelivered_event_does_not_post_a_second_line(slack, linked, hal, alice):
+    """Slack redelivers events it thinks we missed. The turn collapses onto the
+    first one, so no enqueue happens and no second line may appear."""
+    _runner("jj-mbp", pairer=alice, agent=hal)
+    mention("hal summarise")
+    mention("hal summarise")
+    assert SlackTurnPost.objects.count() == 1
+    assert len(slack.said("chat.postMessage")) == 1
 
 
 def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_capture_on_commit_callbacks):

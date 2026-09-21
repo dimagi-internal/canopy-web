@@ -15,6 +15,7 @@ from apps.harness.signals import (
     sessions_reported,
     transcript_rows_streamed,
     turn_events_appended,
+    turn_status_changed,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,24 @@ def _relay_replies(sender, turn, rows, **kwargs):
             on_status(turn)
         except Exception:  # noqa: BLE001
             logger.exception("slack status line failed")
+
+
+@receiver(turn_status_changed, dispatch_uid="slack_status_on_enqueue")
+def _status_on_enqueue(sender, turn, **kwargs):
+    """An ask now exists: give it its line in the thread.
+
+    The same signal the chat feed rides, so Slack and the chat page hear about
+    an ask at the same moment. `post` is a no-op for a session that was not
+    born in Slack.
+    """
+    if not turn.chat_session_id:
+        return
+    from .status import on_status
+
+    try:
+        on_status(turn)
+    except Exception:  # noqa: BLE001 — never break an enqueue over Slack
+        logger.exception("slack status line failed on enqueue")
 
 
 @receiver(transcript_rows_streamed, dispatch_uid="slack_transcript_rows")
