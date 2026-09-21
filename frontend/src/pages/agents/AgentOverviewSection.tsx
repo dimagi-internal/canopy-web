@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
 import { AgentAdminsControl } from '@/components/agents/AgentAdminsControl'
+import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
@@ -258,6 +259,13 @@ export function AgentOverviewSection() {
               workspace={agent.workspace ?? ''}
               canManage={agent.can_manage_admins ?? false}
             />
+          </Setting>
+          <Setting
+            title="Callers"
+            who="Published from the agent's repo by its owner or an admin"
+            description={`What people who are not ${agent.name}'s admins — an emailer, a widget visitor, a workspace member — may ask it for. Each runs confined to what is listed.`}
+          >
+            <AgentInterfaceView agentSlug={agent.slug} />
           </Setting>
           <Setting
             title="Turn mode"

@@ -69,7 +69,8 @@ def _thread_key(turn: dict) -> str:
     is fresh-per-turn."""
     ref = turn.get("origin_ref") or {}
     explicit = ref.get("thread_key") or ref.get("thread_id")
-    return explicit or f"{_target(turn)}:{turn.get('id') or ''}"
+    # A caller's turn never shares a session with an admin's (see caller.py).
+    return session_naming.restricted_key(turn, explicit or f"{_target(turn)}:{turn.get('id') or ''}")
 
 
 def _preview(line: str, n: int = 120) -> str:
@@ -88,6 +89,25 @@ def _task_name(agent: str, turn: dict) -> str:
     definition and the naming module's copy of it are held together.
     """
     return session_naming.build_task_name(agent, turn)
+
+
+def _confine(client, turn: dict, task: str) -> bool:
+    """For a caller's turn, write `task`'s profile BEFORE anything is sent to it.
+
+    Returns False — and fails the turn, saying why — when it cannot be confined:
+    a caller's turn must never run in the full profile because a file or a name
+    was not what it should be. A full-profile turn is untouched (True).
+    """
+    if caller.capability(turn) is None:
+        return True
+    try:
+        caller.write_profile(task, turn)
+        return True
+    except caller.ProfileError as exc:
+        logger.error("caller turn=%s NOT run — cannot confine session %r: %s",
+                     turn.get("id"), task, exc)
+        client.fail_turn(turn["id"], f"a caller's turn was not run: {exc}")
+        return False
 
 
 def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt):
@@ -412,6 +432,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                       status="cancelled", emdash_task_id=task or "")
         return f"cancelled:{turn_id}"
 
+    if task and not _confine(client, turn, task):
+        return f"failed:{turn_id}"
     if task:
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
@@ -447,15 +469,20 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                 return f"deferred:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
+        name = _task_name(target, turn)
+        if not _confine(client, turn, name):
+            return f"failed:{turn_id}"
         try:
             res = cdp_control.create_task(
-                target, prompt, task_name=_task_name(target, turn), port=cfg.cdp_port
+                target, prompt, task_name=name, port=cfg.cdp_port
             )
         except cdp_control.CDPError as exc:
             logger.error("chat create failed turn=%s agent=%s: %s", turn_id, target, exc)
             client.fail_turn(turn_id, f"chat create failed: {str(exc)[:200]}")
             return f"failed:{turn_id}"
         task = res.get("task") or ""
+        if task and task != name and not _confine(client, turn, task):
+            return f"failed:{turn_id}"
         client.record_session(
             runner_id, agent_slug, thread_key, project=project, workspace=workspace,
             emdash_task_id=task, summary=None,
@@ -506,13 +533,19 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # Default (board turns with no prompt): a full turn. drain-turn is retired.
     # A repo turn always carries an explicit prompt (the composer requires it).
     work_prompt = turn.get("prompt") or f"/{agent}:turn"
-    # Who asked, as data beside the turn — never in the prompt body (see caller.py).
-    work_prompt = caller.with_caller_flag(work_prompt, caller.write_caller_file(turn))
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace
     )
     client.start(turn_id)
+    # A caller's session starts with its capability's entry, not the admin's turn.
+    try:
+        work_prompt = caller.entry_prompt(turn, work_prompt)
+    except caller.ProfileError as exc:
+        client.fail_turn(turn_id, f"a caller's turn was not run: {exc}")
+        return f"failed:{turn_id}"
+    # Who asked, as data beside the turn — never in the prompt body (see caller.py).
+    work_prompt = caller.with_caller_flag(work_prompt, caller.write_caller_file(turn))
     # Log the plan: "why did it create a new session?" must be answerable from the log
     # alone. Without this the reuse decision was invisible and every diagnosis started
     # by guessing (see the 2026-07-15 eva org-research investigation).
@@ -537,6 +570,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
             # Try to deliver into the live session (handles the reuse-glitch and the
             # human-was-typing collision). A terminal outcome ends the turn here; None
             # means "route to a fresh session" and falls through to create below.
+            if not _confine(client, turn, task):
+                return f"failed:{turn_id}"
             outcome = _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
             if outcome is not None:
                 return outcome
@@ -552,8 +587,11 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         # failing reuse means a NEW session per turn (cost). Investigate the task.
         logger.warning("REUSE FELL BACK to CREATE for thread=%s (agent=%s) — the linked "
                        "emdash session was unreachable; check for a stuck/gone task", thread_key, agent)
+    name = _task_name(agent, turn)
+    if not _confine(client, turn, name):
+        return f"failed:{turn_id}"
     try:
-        res = cdp_control.create_task(agent, prompt, task_name=_task_name(agent, turn), port=cfg.cdp_port)
+        res = cdp_control.create_task(agent, prompt, task_name=name, port=cfg.cdp_port)
     except cdp_control.CDPError as exc:
         logger.error("CREATE failed turn=%s agent=%s: %s", turn_id, agent, exc)
         _note = f"emdash create failed: {exc}"
@@ -562,6 +600,11 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         return f"failed:{turn_id}"
 
     task = res.get("task") or ""
+    # emdash may name the task differently from what was asked; the guard keys on
+    # the REAL name. Until this lands, a renamed caller session's tool calls find
+    # no profile and are refused — closed, never open.
+    if task and task != name and not _confine(client, turn, task):
+        return f"failed:{turn_id}"
     logger.info("CREATE turn=%s agent=%s thread=%s -> new session '%s' rehydrated=%s "
                 "(NEW claude session = tokens)", turn_id, agent, thread_key, task, bool(summary))
     _post_events_best_effort(client, turn_id, [{"kind": "status",

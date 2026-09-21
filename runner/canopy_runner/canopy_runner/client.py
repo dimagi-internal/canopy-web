@@ -135,7 +135,7 @@ class Client:
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
                   code_branch: str | None = None, code_version: str | None = None,
                   code_sha: str | None = None, code_committed_at: int | None = None,
-                  projects: list[str] | None = None) -> dict:
+                  projects: list[str] | None = None, profiles: int | None = None) -> dict:
         """Report liveness. Code provenance is stamped HERE, not by callers.
 
         `services.heartbeat` assigns these unconditionally, so any heartbeat that
@@ -164,6 +164,11 @@ class Client:
                                       if code_committed_at is None else code_committed_at)}
         if projects is not None:
             body["projects"] = projects
+        # Sent on EVERY beat, from every call site: the server writes whatever it
+        # gets (absent = 0), so one caller that left it out would flap this runner
+        # between "may be given a caller's turn" and "may not" beat to beat.
+        from . import caller
+        body["profiles"] = caller.profiles_supported() if profiles is None else profiles
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 

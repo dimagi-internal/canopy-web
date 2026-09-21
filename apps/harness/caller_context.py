@@ -112,7 +112,18 @@ def build(turn) -> dict:
             "thread_id": str(ref.get("thread_id") or "") or None,
             "subject": str(ref.get("subject") or "") or None,
         },
-        # What the caller invoked and the scope it grants. Filled by the declared
-        # interface (§4); null means "the agent's own judgement, as today".
-        "capability": None,
+        # What the caller invoked and the scope it grants (§4). null means the
+        # agent's FULL profile: its owner, an admin, canopy itself, or an agent
+        # that has published no interface. Otherwise the runner and the agent's
+        # guard confine the session to exactly this.
+        "profile": "restricted" if turn.capability else "full",
+        "capability": _profile(agent, turn.capability),
     }
+
+
+def _profile(agent, capability: str):
+    if agent is None or not capability:
+        return None
+    from apps.agents.interface import profile
+
+    return profile(agent, capability)

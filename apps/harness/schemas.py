@@ -222,6 +222,10 @@ class HeartbeatIn(Schema):
     # Committer epoch of that same commit. 0 = unknown; see Runner.code_committed_at
     # for why an ORDER is needed on top of the identity a sha gives.
     code_committed_at: int = 0
+    # The profile-enforcement version this runner can honour — whether it may be
+    # given a CALLER's turn, confined to a capability (services.profile_q).
+    # Absent (an older runner) means 0: never.
+    profiles: int = 0
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot
