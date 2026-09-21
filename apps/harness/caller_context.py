@@ -29,8 +29,10 @@ from . import initiator as who
 VERSION = 1
 
 #: User assurances that establish the person, not just a claim about them.
+#: `dmarc` is a member resolved from a DMARC-aligned email (harness
+#: `_member_behind_email`), which is only ever done on THIS message's grade.
 _VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED,
-                            who.APPROVAL})
+                            who.APPROVAL, Contact.AUTH_DMARC})
 
 #: Relationships, strongest first. `admin` arrives with `Agent.admins` (§3).
 OWNER, ADMIN, MEMBER, CALLER, SYSTEM = "owner", "admin", "member", "caller", "system"

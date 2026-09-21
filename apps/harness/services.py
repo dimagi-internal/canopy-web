@@ -82,6 +82,48 @@ def _record_email_contact(agent, origin_ref):
     )
 
 
+def _member_behind_email(agent, contact):
+    """The canopy user who sent this email, when that can be PROVEN — else None.
+
+    Why: an email sender is otherwise always a contact, so once an agent
+    publishes a declared interface, its own staff writing in ("resume the run")
+    would be confined as callers. The who-is-asking arrival rule (§2, D1) —
+    existing accounts only, never created — applied to mail. All of:
+
+      * THIS message is DMARC-aligned on our own receiver's verdict. SPF or DKIM
+        alone do not tie the signature to the visible From; the best-ever grade
+        says nothing about a spoof today.
+      * exactly one canopy user holds that address as a VERIFIED allauth email.
+      * that user is a member of the agent's workspace. A canopy account with
+        no business in this tenant stays a contact.
+      * the contact is not already linked to someone else.
+
+    On success the contact is linked (`promote_to_user`), which grants nothing.
+    """
+    from apps.contacts import services as contacts
+    from apps.contacts.models import Contact
+
+    if contact is None or contact.last_auth_result != Contact.AUTH_DMARC or not contact.email:
+        return None
+    from allauth.account.models import EmailAddress
+
+    users = list(EmailAddress.objects.filter(email__iexact=contact.email, verified=True)
+                 .values_list("user_id", flat=True).distinct()[:2])
+    if len(users) != 1:
+        return None
+    if contact.user_id is not None and contact.user_id != users[0]:
+        return None
+    from django.contrib.auth import get_user_model
+
+    user = get_user_model().objects.filter(pk=users[0], is_active=True).first()
+    # A question about the SENDER's membership, asked through the one authorizer.
+    if user is None or not wsvc.is_member(user, agent.workspace_id):
+        return None
+    if contact.user_id is None:
+        contacts.promote_to_user(contact, user)
+    return user
+
+
 def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
                         origin_ref, routing) -> tuple[Turn, bool]:
     """Write an email turn from a BLOCKED contact as already cancelled."""
@@ -234,8 +276,16 @@ def enqueue_turn(
             # recording it as the initiator is exactly the confusion this field
             # exists to end. No recordable sender -> unknown, honestly.
             from . import initiator as who
-            initiator = (who.for_contact(email_contact, via="email") if email_contact
-                         else who.unknown(via="email"))
+            member = _member_behind_email(agent, email_contact)
+            if member is not None:
+                # A MEMBER of the agent's workspace, proven by THIS message's DMARC
+                # alignment. The contact rides along so its profile still reaches
+                # the agent; the person is who the turn acts for.
+                initiator = who.Initiator(who.USER, "email", email_contact.last_auth_result,
+                                          user=member, contact=email_contact)
+            else:
+                initiator = (who.for_contact(email_contact, via="email") if email_contact
+                             else who.unknown(via="email"))
 
     if session is None and agent is not None and origin == Turn.ORIGIN_EMAIL:
         thread_id = str((origin_ref or {}).get("thread_id") or "")
