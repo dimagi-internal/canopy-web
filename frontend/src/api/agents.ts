@@ -449,3 +449,28 @@ export async function putAgentRunnerRules(
   })
   return Array.from(unwrap(res, 'putAgentRunnerRules'))
 }
+
+export type AgentAdminOut = Schemas['AgentAdminOut']
+
+// Who holds this agent's keys: its owner and the admins granted by name.
+// Workspace owners are admins implicitly and are not listed.
+export async function listAgentAdmins(slug: string): Promise<AgentAdminOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/admins', { params: { path: { slug } } })
+  return unwrap(res, 'listAgentAdmins') as unknown as AgentAdminOut[]
+}
+
+// Browser-only on the server, like ownership transfer: granting admin hands over
+// the agent's credentials, so no token can do it. Both return the refreshed list.
+export async function grantAgentAdmin(slug: string, userId: number): Promise<AgentAdminOut[]> {
+  const res = await apiV2.PUT('/api/agents/{slug}/admins/{user_id}', {
+    params: { path: { slug, user_id: userId } },
+  })
+  return unwrap(res, 'grantAgentAdmin') as unknown as AgentAdminOut[]
+}
+
+export async function revokeAgentAdmin(slug: string, userId: number): Promise<AgentAdminOut[]> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/admins/{user_id}', {
+    params: { path: { slug, user_id: userId } },
+  })
+  return unwrap(res, 'revokeAgentAdmin') as unknown as AgentAdminOut[]
+}

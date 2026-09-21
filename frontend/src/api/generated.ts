@@ -1798,6 +1798,41 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/admins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Who holds this agent's keys: its owner and admins */
+        readonly get: operations["apps_agents_api_list_admins"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/admins/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Make a workspace member an admin of this agent (canopy UI only) */
+        readonly put: operations["apps_agents_api_grant_admin"];
+        readonly post?: never;
+        /** Revoke an admin of this agent (canopy UI only) */
+        readonly delete: operations["apps_agents_api_revoke_admin"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runner-preference": {
         readonly parameters: {
             readonly query?: never;
@@ -8037,6 +8072,16 @@ export interface components {
              */
             readonly can_transfer_owner: boolean;
             /**
+             * Is Admin
+             * @default false
+             */
+            readonly is_admin: boolean;
+            /**
+             * Can Manage Admins
+             * @default false
+             */
+            readonly can_manage_admins: boolean;
+            /**
              * Sync Count
              * @default 0
              */
@@ -8079,6 +8124,24 @@ export interface components {
         readonly AgentOwnerIn: {
             /** User Id */
             readonly user_id: number | null;
+        };
+        /** AgentAdminOut */
+        readonly AgentAdminOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Is Owner
+             * @default false
+             */
+            readonly is_owner: boolean;
+            /** Granted By Email */
+            readonly granted_by_email?: string | null;
+            /** Granted At */
+            readonly granted_at?: string | null;
         };
         /**
          * RunnerPreferenceIn
@@ -15001,6 +15064,74 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_list_admins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentAdminOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_grant_admin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentAdminOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_revoke_admin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentAdminOut"][];
                 };
             };
         };

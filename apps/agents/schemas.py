@@ -275,6 +275,11 @@ class AgentDetailOut(AgentOut):
     # Whether the CALLER may transfer ownership (a workspace owner, or the
     # agent's current owner). Drives whether the UI offers the control.
     can_transfer_owner: bool = False
+    # Whether the CALLER is an admin of this agent (owner or explicit grant),
+    # and whether they may grant/revoke admins (the agent's owner or a
+    # workspace owner — granting admin hands over the agent's credentials).
+    is_admin: bool = False
+    can_manage_admins: bool = False
     sync_count: int = 0
     work_product_count: int = 0
     skill_count: int = 0
@@ -282,6 +287,17 @@ class AgentDetailOut(AgentOut):
     turn_count: int = 0
     latest_sync_at: dt.datetime | None = None
     latest_turn_at: dt.datetime | None = None
+
+
+class AgentAdminOut(StrictModel):
+    user_id: int
+    email: str
+    name: str
+    # The agent's owner is always an admin and has no grant row; shown so the
+    # list answers "who holds this agent's keys" completely.
+    is_owner: bool = False
+    granted_by_email: str | None = None
+    granted_at: dt.datetime | None = None
 
 
 class AgentOwnerIn(StrictModel):

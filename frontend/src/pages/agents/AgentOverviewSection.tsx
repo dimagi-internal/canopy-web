@@ -8,6 +8,7 @@ import {
   type AgentTaskStatus,
 } from '@/api/agents'
 import { enqueueTurn } from '@/api/harness'
+import { AgentAdminsControl } from '@/components/agents/AgentAdminsControl'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
@@ -248,6 +249,17 @@ export function AgentOverviewSection() {
             />
           </Setting>
           <Setting
+            title="Admins"
+            who="The agent's owner and workspace owners"
+            description={`People trusted with all of ${agent.name}: they can set its credentials. Everyone else in the workspace can use it but not hold its keys.`}
+          >
+            <AgentAdminsControl
+              agentSlug={agent.slug}
+              workspace={agent.workspace ?? ''}
+              canManage={agent.can_manage_admins ?? false}
+            />
+          </Setting>
+          <Setting
             title="Turn mode"
             who="Workspace editors and owners"
             description={`How ${agent.name}'s turns handle outbound actions. Read at the start of every turn.`}
@@ -274,7 +286,7 @@ export function AgentOverviewSection() {
       <Section
         id="credentials"
         title="Credentials"
-        description={`The secrets ${agent.name} needs to run, and whether each is set. Anyone here can see the status; only workspace owners can change a value.`}
+        description={`The secrets ${agent.name} needs to run, and whether each is set. Anyone here can see the status; only the agent's owner and admins can change a value.`}
       >
         <AgentCredentialsPanel agent={agent} />
       </Section>
