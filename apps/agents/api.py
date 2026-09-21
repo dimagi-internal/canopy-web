@@ -16,6 +16,7 @@ from apps.workspaces import services as wsvc
 from . import services, skill_history
 from .models import AgentTaskCommand
 from .schemas import (
+    AgentAdminOut,
     AgentCommandApplyIn,
     AgentCredentialsIn,
     AgentCredentialsResolveOut,
@@ -143,23 +144,23 @@ def _agent_for_write(request: HttpRequest, slug: str):
 
 
 def _agent_for_admin(request: HttpRequest, slug: str):
-    """An agent whose SECRETS or existence the caller may change. Owner only.
+    """An agent whose SECRETS the caller may change: its owner or an admin.
 
     Credentials and the vault pointer are the keys a runner resolves
     everything else from, so writing them is equivalent to controlling the
-    agent end to end. Note self-join grants `EDITOR`
-    (`workspaces/services.py::join_workspace`), not `viewer` — so `editor` is
-    not a deliberate grant here, it is the default anyone who has clicked
-    "join" on an allowlisted-domain workspace already has the moment they
-    touch an agent endpoint. Owner is the only role left that still means
-    something was deliberately granted, not just walked in the door.
+    agent end to end. Decided in the who-is-asking spec (D7): the agent's own
+    owner or any of its admins — an explicit, per-agent grant (`AgentAdmin`).
+    This used to mean "WORKSPACE owner" alone, because self-join hands out
+    `editor` and owner was the only role that meant something had been
+    granted. Workspace owners remain admins (`Agent.is_admin`), so nobody who
+    held this gate lost it; the agent's owner and explicit admins gained it.
 
     `_get_agent_or_404` runs FIRST, same ordering as `_agent_for_write`: a
     non-member gets `404`, never `403`.
     """
     agent = _get_agent_or_404(request, slug)
-    if _caller_role(request, agent.workspace_id) != wsvc.WorkspaceMembership.OWNER:
-        raise HttpError(403, "this action requires the owner role")
+    if not agent.is_admin(request.user):
+        raise HttpError(403, "this action requires the agent's owner or an admin")
     return agent
 
 
@@ -252,10 +253,19 @@ def _may_transfer_owner(request: HttpRequest, agent) -> bool:
     return _caller_role(request, agent.workspace_id) == wsvc.WorkspaceMembership.OWNER
 
 
+def _may_manage_admins(request: HttpRequest, agent) -> bool:
+    """Granting admin hands over the agent's credentials (D7), so it is held
+    to the same bar as transferring the agent: its owner or a workspace owner."""
+    return _may_transfer_owner(request, agent)
+
+
 def _detail(request: HttpRequest, agent) -> AgentDetailOut:
-    return AgentDetailOut.model_validate(
-        {**services.agent_detail(agent), "can_transfer_owner": _may_transfer_owner(request, agent)}
-    )
+    return AgentDetailOut.model_validate({
+        **services.agent_detail(agent),
+        "can_transfer_owner": _may_transfer_owner(request, agent),
+        "is_admin": agent.is_admin(request.user),
+        "can_manage_admins": _may_manage_admins(request, agent),
+    })
 
 
 @router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
@@ -292,6 +302,77 @@ def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> Ag
         agent.owner = target
     agent.save(update_fields=["owner", "updated_at"])
     return _detail(request, agent)
+
+
+def _admin_rows(agent) -> list[dict]:
+    from .models import AgentAdmin
+
+    rows = []
+    # Workspace owners are admins implicitly (`Agent.is_admin`); they are not
+    # listed here, which is "who was granted this agent", and the members page
+    # already answers "who owns the workspace".
+    if agent.owner is not None:
+        rows.append({"user_id": agent.owner.pk, "email": agent.owner.email,
+                     "name": agent.owner.get_full_name() or agent.owner.email,
+                     "is_owner": True})
+    for g in (AgentAdmin.objects.filter(agent=agent).exclude(user_id=agent.owner_id)
+              .select_related("user", "granted_by")):
+        # An inert grant (holder left the workspace) is not listed: it grants
+        # nothing, and showing it would say otherwise.
+        if not wsvc.is_member(g.user, agent.workspace_id):  # authz-exempt: a question about the TARGET
+            continue
+        rows.append({"user_id": g.user.pk, "email": g.user.email,
+                     "name": g.user.get_full_name() or g.user.email,
+                     "granted_by_email": g.granted_by.email if g.granted_by else None,
+                     "granted_at": g.granted_at})
+    return rows
+
+
+@router.get("/{slug}/admins", response=list[AgentAdminOut],
+            summary="Who holds this agent's keys: its owner and admins")
+def list_admins(request: HttpRequest, slug: str):
+    return _admin_rows(_get_agent_or_404(request, slug))
+
+
+# Browser-only, like ownership transfer: granting admin hands over the agent's
+# credentials, so it is a decision a PERSON makes in the canopy UI, never a
+# token. Resolve first so a non-member gets 404, never 403.
+def _admin_change_gate(request: HttpRequest, slug: str):
+    agent = _get_agent_or_404(request, slug)
+    if request.META.get("HTTP_AUTHORIZATION"):
+        raise HttpError(403, "admins can only be changed from the canopy web app")
+    if not _may_manage_admins(request, agent):
+        raise HttpError(403, "only the agent's owner or a workspace owner can change its admins")
+    return agent
+
+
+@router.put("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
+            summary="Make a workspace member an admin of this agent (canopy UI only)")
+def grant_admin(request: HttpRequest, slug: str, user_id: int):
+    from django.contrib.auth import get_user_model
+
+    from .models import AgentAdmin
+
+    agent = _admin_change_gate(request, slug)
+    target = get_user_model().objects.filter(pk=user_id).first()
+    # A question about the TARGET, asked through the one authorizer.
+    if target is None or not wsvc.is_member(target, agent.workspace_id):
+        raise HttpError(422, "an admin must be a member of this agent's workspace")
+    AgentAdmin.objects.get_or_create(agent=agent, user=target,
+                                     defaults={"granted_by": request.user})
+    return _admin_rows(agent)
+
+
+@router.delete("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
+               summary="Revoke an admin of this agent (canopy UI only)")
+def revoke_admin(request: HttpRequest, slug: str, user_id: int):
+    from .models import AgentAdmin
+
+    agent = _admin_change_gate(request, slug)
+    if agent.owner_id == user_id:
+        raise HttpError(422, "the owner is always an admin; transfer ownership instead")
+    AgentAdmin.objects.filter(agent=agent, user_id=user_id).delete()
+    return _admin_rows(agent)
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",)

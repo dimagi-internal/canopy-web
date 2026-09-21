@@ -148,11 +148,68 @@ class Agent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def is_admin(self, user) -> bool:
+        """The agent's owner, a WORKSPACE owner, or an explicit admin who is
+        still a member of the workspace.
+
+        Workspace owners are admins implicitly, not by a seeded row: one can
+        already make themselves any agent's owner (`transfer_owner`), so
+        excluding them would be theatre, and a row seeded once would miss every
+        owner added later. The explicit grant is for everyone else — above all
+        instead of `editor`, which self-join hands to anyone who clicks "join".
+
+        Fails closed: an anonymous user, an agent with no workspace, or a grant
+        whose holder has left the workspace is not an admin.
+        """
+        if not getattr(user, "is_authenticated", False) or not self.workspace_id:
+            return False
+        if self.owner_id is not None and self.owner_id == user.pk:
+            return True
+        from apps.workspaces import services as wsvc
+
+        role = wsvc.member_role(user, self.workspace_id)
+        if role == wsvc.WorkspaceMembership.OWNER:
+            return True
+        return role is not None and self.admin_grants.filter(user=user).exists()
+
     class Meta:
         ordering = ["name"]
 
     def __str__(self):
         return f"agent:{self.slug}"
+
+
+class AgentAdmin(models.Model):
+    """A person the agent's owner has trusted with the WHOLE agent.
+
+    Phase 3 of the who-is-asking spec (§3). An agent has two relationships: its
+    owner and admins reach its full working session and may reshape it and hold
+    its keys; everyone else is a caller. Before this, "may change this agent"
+    was a WORKSPACE role, and the one that mattered — `editor` — is handed to
+    anyone from an allowed domain who clicks "join". Being in a workspace and
+    being trusted with an agent's credentials are different things, so this is
+    an explicit, per-agent grant with a name on it.
+
+    The owner is always an admin (`Agent.is_admin`) without a row here. A grant
+    counts only while its holder is still a member of the agent's workspace: a
+    row that outlives the membership is inert, never a way back in.
+    """
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="admin_grants")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="agent_admin_grants")
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+",
+                                   help_text="Null for a grant seeded by migration.")
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["agent", "user"],
+                                               name="uniq_agent_admin")]
+        ordering = ["granted_at"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.user_id} admin of {self.agent_id}"
 
 
 class AgentBootstrapReport(models.Model):
