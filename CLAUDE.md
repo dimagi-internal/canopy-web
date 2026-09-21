@@ -232,7 +232,17 @@ filter — either alone would hang the queue), so it failed and PRs merged anywa
   could never be published, which quietly made layer 1 unusable by the very host
   it was extracted from. `canopy-ui` had already settled this — it is unscoped
   deliberately, after its own rename out of `@canopy/workbench`. Don't reintroduce
-  a scope. `canopy-client` publishes via `publish-canopy-client.yml`; its FIRST
+  a scope. **Touching `frontend/packages/{canopy-ui,canopy-client}/src` REQUIRES
+  a version bump in that package's `package.json`** — a step in the **`Frontend
+  build`** job (a required check) diffs the src against the PR base and fails
+  the build if the version did not move. Without it npm keeps serving the old
+  version and every consumer pinned to it silently misses the change, which is
+  the same class of failure as a stale `generated.ts`. It deliberately covers
+  every publishable workspace rather than canopy-ui alone; `canopy-widget` is
+  exempt because it is built and served at `/canopy/embed/widget.js` and never
+  installed. After merging, tag it: `git tag canopy-ui-v<version> && git push
+  origin canopy-ui-v<version>`.
+  `canopy-client` publishes via `publish-canopy-client.yml`; its FIRST
   publish needs a one-time Trusted Publisher setup on npmjs (see the header of
   that workflow). `canopy-widget` is not published at all.
 - **Cross-app viewer presence (`ws/presence/`)**: one socket per browser tab; the roster lives in Redis with a 60s field TTL (`PRESENCE_REDIS_URL`), so closing the tab IS the retirement path. Membership and the user's opt-out (`PresencePreference`, served by `GET|PATCH /api/me/presence-preference/`) are re-checked live on **every** `presence.enter`, never cached. The badge UI is the shared `canopy-ui/presence` export (`PresenceBadge` / `usePresence` / `pageKeyFor`) so ace-web mounts the identical component; canopy-web's route→page-key rules live in `frontend/src/presence/routes.ts` (its `~global` sentinel stays in lockstep with `apps/realtime/presence_keys.py::GLOBAL_SENTINEL`). **Presence is opt-in per page, and the bar is COLLISION, not company:** a route with no rule yields `pageKeyFor(...) === null`, which opens no socket (the effect's `[url, location === null]` deps re-open it the moment the flip goes the other way) and renders no badge. Only the co-editing surfaces have rules — a chat session, a DDD narrative/run, `/review/:id`. Every read surface was deliberately dropped: it had a rule for nearly every route, so the badge sat in the header of pages where nobody could collide with anyone, and "who else is on Timeline" is noise. Adding a rule for a new page is adding presence to it.
