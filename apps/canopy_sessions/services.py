@@ -1024,9 +1024,24 @@ def default_origin(session) -> str:
     return SOURCE_ORIGINS.get(source, Turn.ORIGIN_CANOPY_WEB_CHAT)
 
 
+def _merge_origin_ref(extra: dict | None, *, thread_key: str, session: Session) -> dict:
+    """The turn's `origin_ref`: what the CHANNEL needs to remember about the ask,
+    under what the harness needs to route it.
+
+    A channel reacts to a turn from a signal, holding nothing but the turn — so
+    anything it will need then has to be written onto the turn now. Slack is the
+    case in point: a slash command's status line adopts the message the command
+    already posted, and that message's ts existed only on the in-memory request.
+
+    The harness's keys are written LAST so a channel can never overwrite the
+    thread or session a turn routes by.
+    """
+    return {**(extra or {}), "thread_key": thread_key, "chat_session_id": str(session.id)}
+
+
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
-    origin: str | None = None, initiator=None,
+    origin: str | None = None, initiator=None, origin_ref: dict | None = None,
 ) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
@@ -1060,6 +1075,7 @@ def send_message(
         return _send_transcript_sourced_message(
             session=session, text=text, user=user, client_id=client_id,
             placement=placement, origin=origin, initiator=initiator,
+            origin_ref=origin_ref,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -1093,16 +1109,16 @@ def send_message(
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
-        origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+        ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
         attachments = claim_pending_attachments(session, message)
         if attachments:
-            origin_ref["attachments"] = attachments
+            ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=origin,
             idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
             prompt=text,
-            origin_ref=origin_ref,
+            origin_ref=ref,
             # WHO sent it. Not decoration: this is the actor half of the routing key
             # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
             # `canopy_web_chat` turn can get one — neither carries the
@@ -1223,7 +1239,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
 def _send_transcript_sourced_message(
     *, session: Session, text: str, user=None, client_id: str = "",
     placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
-    initiator=None,
+    initiator=None, origin_ref: dict | None = None,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -1252,18 +1268,18 @@ def _send_transcript_sourced_message(
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
-    origin_ref = {"thread_key": thread_key, "chat_session_id": str(session.id)}
+    ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
     # message=None: this path writes no durable user row, so the sent_at stamp is
     # the only thing stopping these attachments riding along on every later send.
     attachments = claim_pending_attachments(session, None)
     if attachments:
-        origin_ref["attachments"] = attachments
+        ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=origin,
         idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
         prompt=text,
-        origin_ref=origin_ref,
+        origin_ref=ref,
         # WHO sent it. Not decoration: this is the actor half of the routing key
         # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
         # `canopy_web_chat` turn can get one — neither carries the

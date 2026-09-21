@@ -393,6 +393,16 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
     return _send(session, False, None, principal, text, inbound)
 
 
+def _adoption_ref(inbound: Inbound) -> dict | None:
+    """The slash command's anchor, in the shape `status.adoption` reads."""
+    from . import status
+
+    if not inbound.adopt_ts:
+        return None
+    return {status.ORIGIN_REF_KEY: {"adopt_ts": inbound.adopt_ts,
+                                    "prefix": inbound.adopt_prefix[:300]}}
+
+
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
           inbound: Inbound) -> Outcome:
     if not created:
@@ -410,14 +420,18 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         client_id=f"slack:{inbound.channel_id}:{inbound.ts}",
         origin=Turn.ORIGIN_SLACK,
         initiator=principal.initiator(inbound.team_id),
+        # What the status line needs from THIS request, written onto the turn so
+        # the line can be posted from the enqueue signal like every other
+        # channel's — see `status.adoption`.
+        origin_ref=_adoption_ref(inbound),
     )
     # The public status line in the thread IS the acknowledgement: it says at
     # once whether a live runner is taking this or it is stuck, and carries the
     # canopy link for a member. Posted for every message, not just the first —
-    # "is anything happening?" is a per-message question.
-    from . import status
-
-    status.post(turn, adopt_ts=inbound.adopt_ts, prefix=inbound.adopt_prefix)
+    # "is anything happening?" is a per-message question. It is posted by the
+    # `turn_status_changed` receiver (signals.py), which fires post-commit inside
+    # `enqueue_turn` — not here, so a Slack ask and one continued from the web
+    # reach the thread by the same path.
     name = f"`{agent.slug}`" if agent is not None else "the session"
     if principal.user is None:
         # A contact cannot open canopy, so a link would be a dead end.
@@ -477,8 +491,9 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
         return Outcome(MOVE_FAILED, f"Couldn't move it to *{runner.name}*: {e}", session=session)
     for t in closed:
         status.refresh(t)
-    for t in asked:
-        status.post(t)          # a re-asked turn is new to the thread: give it its line
+    # A re-asked turn is new to the thread and needs its own line — which the
+    # enqueue signal already posted, since `_requeue_stranded` asks again
+    # through `send_message`.
     for t in moved:
         status.refresh(t)
     return Outcome(MOVED, f"Sent {len(moved)} waiting message(s) to *{runner.name}*.",

@@ -154,9 +154,9 @@ reducer matches on recent identical text and merges instead of double-rendering
   policy behind it is deliberate (spec 2026-07-24). Its by-name fleet match was
   already fixed to treat a loaded-but-missing runner as evidence rather than
   absence; it is not fail-open today.
-* **Slack still posts from `services.py` on enqueue** rather than subscribing to
-  `turn_status_changed`. It works, it is freshly shipped, and the duplication is
-  a trigger, not logic — the state machine is now shared, which was the point.
+* ~~**Slack still posts from `services.py` on enqueue** rather than subscribing
+  to `turn_status_changed`. It works, and the duplication is a trigger, not
+  logic.~~ **Wrong, and fixed 2026-09-21** — see "Addendum" below.
 * **Contacts get no `MenuPrompt`.** `/api/contact/` is their entire surface and
   `answer-menu` is not on it (`test_contact_surface_is_bounded`), so a dialog
   they cannot answer is shown as words rather than as buttons that would 403.
@@ -173,3 +173,51 @@ reducer matches on recent identical text and merges instead of double-rendering
 * `EmbedApp.test.tsx` — the three widget feedback tests were **confirmed to fail**
   with the echo removed, then restored. A green test nobody has seen fail proves
   nothing.
+
+## Addendum (2026-09-21): the trigger was not harmless
+
+The original of this spec left Slack posting its first line from an explicit
+call in `services._send`, and called that duplication harmless: "a trigger,
+not logic". It hid a real gap.
+
+**The case.** Someone continues a Slack-born conversation from canopy-web or a
+phone, and the agent's runner is offline. Slack posted a line for a turn that
+did not come from Slack only in `on_status`, which fires when a `status` event
+lands — i.e. when a runner claims the turn. An offline runner never claims, so
+no event lands, and `sweep` only refreshes lines that already exist. The thread
+heard nothing: not the question, not that it was stuck. The chat page, driven
+by the enqueue signal, said "queued, runner offline". The two channels
+disagreed in precisely the case the status line exists for.
+
+**Why the explicit call existed.** A slash command posts an anchor message, and
+the status line ADOPTS it rather than posting a second one. The ts to adopt
+lived only on the in-memory `Inbound`, so only `_send` could post a Slack turn's
+line — and `on_status` had to skip Slack turns, or it would win the race, claim
+the `SlackTurnPost` row without the anchor, and post a duplicate.
+
+**The fix: make the anchor a fact about the turn.** `_send` writes it into
+`origin_ref["slack"]` via a new `send_message(origin_ref=...)` passthrough;
+`status.adoption(turn)` reads it back; `post(turn)` takes no anchor arguments.
+With the anchor on the turn, ANY path may post first, so:
+
+* Slack subscribes to `turn_status_changed`, exactly as the chat feed does;
+* `on_status` is origin-agnostic;
+* both explicit `status.post` calls are gone (`_send`, and the re-ask in
+  `route_to_cloud`, which enqueues through `send_message` and so fires the
+  signal itself).
+
+Slack and the chat page now learn about an ask from the same three events:
+enqueue (`turn_status_changed`), transition (a `status` row), and a runner
+dying (`sessions_reported` → the throttled sweep).
+
+`send_message` merges the caller's keys UNDER the harness's own
+(`thread_key`, `chat_session_id`), so a channel can never overwrite what a
+turn is routed by.
+
+**Test fidelity.** Every Slack request in `test_slack.py` goes through one
+helper, which now executes post-commit callbacks, matching production (no
+`ATOMIC_REQUESTS`, so the callback runs inside the request that enqueued).
+Disconnecting the receiver fails 18 existing tests; not writing the anchor
+fails the pre-existing "keeps the ask on every later edit" test. The gap itself
+is `test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thread`,
+confirmed to fail on the old wiring.
