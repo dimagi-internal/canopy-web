@@ -120,6 +120,51 @@ export interface SessionMenu {
   observed_at?: number;
 }
 
+/**
+ * Where the ask this session is waiting on currently stands.
+ *
+ * Computed on the SERVER (`apps/harness/turn_status.py`) and rendered
+ * identically by every channel — a Slack thread, this chat kit, the embedded
+ * widget. It exists because three of its states cannot be derived by a client
+ * at all: its runner is offline, nothing is routed that could run it, the box
+ * it was on died mid-turn. canopy's chat page used to guess at the first by
+ * fetching the whole fleet and matching the runner BY NAME, which failed open
+ * whenever a retired runner was omitted from that list; the widget never had
+ * any of it and simply showed an empty panel.
+ */
+export interface TurnStatus {
+  /** `picking_up` | `waiting_runner` | `unrouted` | `working` | `blocked`
+   *  | `paused` | `done` | `cancelled` | `missed` | `failed` | `lost`.
+   *
+   *  Deliberately a string rather than a union: an older client meeting a
+   *  state a newer server added should fall back to its generic wording, not
+   *  fail to type-check. `settled`/`stuck` are what code should branch on. */
+  state: string;
+  agent_slug: string | null;
+  /** The runners this state is ABOUT — the ones that would pick it up while it
+   *  is queued, or the one holding it. */
+  runners: string[];
+  claimed_by: string | null;
+  /** Directed at this runner rather than offered to the cascade. */
+  pinned: boolean;
+  /** A runner it could be moved to right now, when moving it would help. Only
+   *  ever an offer; acting on it re-checks everything server-side. */
+  cloud_runner: string | null;
+  cloud_runner_id: string | null;
+  /** When the holding runner was last heard from. Only meaningful for
+   *  `paused`, where it is what tells you whether to keep waiting. */
+  last_seen_at: string | null;
+  /** The agent is sitting on a dialog. A separate axis from `state`: a turn
+   *  blocked on a question is still RUNNING as far as the turn is concerned. */
+  menu_pending: boolean;
+  /** Nothing more will happen without someone asking for it. */
+  settled: boolean;
+  /** Nothing is moving and only a person can change that. The one question a
+   *  "waiting on you" surface actually asks — derived once on the server so
+   *  four clients cannot disagree about it. */
+  stuck: boolean;
+}
+
 export interface SessionState {
   messages: Message[];
   /** Live agent activity, from the runner's turn-boundary hooks. Undefined when
@@ -146,6 +191,12 @@ export interface SessionState {
    *  only if it was already connected when the agent blocked — which is exactly
    *  the case that fails, because you go and look BECAUSE it stopped. */
   menu?: SessionMenu;
+  /** Where the ask stands. In the CONNECT SNAPSHOT as well as in live frames,
+   *  for the same reason `menu` is: you open the page BECAUSE it went quiet, so
+   *  the client that most needs this is the one that was not connected when it
+   *  changed. Null/undefined when nothing has been asked on this session yet —
+   *  which is distinct from "finished", and must stay distinct. */
+  turn_status?: TurnStatus | null;
   active_draft: Draft | null;
   participants: Participant[];
   presence_user_ids: number[];
@@ -179,6 +230,13 @@ export type WsEvent =
   // to carry a menu would report an agent as idle or blocked on the wrong one.
   // `menu: null` is the retraction — somebody answered at the keyboard.
   | { event: "session.menu"; data: { menu: SessionMenu | null } }
+  // Where the ask stands, re-derived server-side on every transition. Its own
+  // frame rather than a field on `session.activity`: activity is the runner's
+  // fast hook clock reporting whether the agent is PRODUCING, while this is the
+  // turn's placement in the fleet — they change on different clocks and for
+  // different reasons, and the states that matter most here (queued behind an
+  // offline box, unroutable) are ones activity has no way to spell.
+  | { event: "session.turn_status"; data: { status: TurnStatus | null } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload.
   | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }

@@ -33,6 +33,7 @@ import logging
 
 from django.db import IntegrityError, transaction
 
+from apps.harness import turn_status as _ts
 from apps.harness.models import Turn
 
 from . import client
@@ -44,9 +45,11 @@ ROUTE_CLOUD = "route_cloud"
 PROMPT_PREVIEW = 200
 
 
-def _runner_names(runners) -> str:
-    names = [f"*{r.name}*" for r in runners[:3]]
-    return ", ".join(names) + (" …" if len(runners) > 3 else "")
+def _runner_names(names) -> str:
+    """Bold, at most three, then an ellipsis. Takes NAMES — the shared status
+    carries strings rather than model rows so the same value can ride a socket."""
+    shown = [f"*{n}*" for n in names[:3]]
+    return ", ".join(shown) + (" …" if len(names) > 3 else "")
 
 
 def _header(turn: Turn) -> str:
@@ -77,60 +80,65 @@ def _header(turn: Turn) -> str:
 
 
 def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
-    """(text, blocks) for this turn's status line. `reach` is only consulted
-    while the turn is QUEUED; `cloud` is the runner a button would move it to."""
-    from apps.harness import services as harness
+    """(text, blocks) for this turn's status line — Slack's VOICE for the shared
+    state in `harness.turn_status`. `reach` is only consulted while the turn is
+    QUEUED; `cloud` is the runner a button would move it to.
+
+    Slack asks for the state rather than deriving it so its words and the chat
+    kit's cannot drift apart: the same eleven states reach a thread, a canopy
+    chat page and an embedded widget, and only the wording is ours.
+    """
+    from apps.harness import turn_status as ts
 
     from .services import session_url
 
+    st = ts.derive(turn, reach=reach, cloud=cloud)
     session = turn.chat_session
-    agent = f"`{session.agent.slug}`" if session is not None and session.agent_id else "the agent"
-    runner = f"*{turn.claimed_by.name}*" if turn.claimed_by_id else "a runner"
+    agent = f"`{st.agent_slug}`" if st.agent_slug else "the agent"
+    runner = f"*{st.claimed_by}*" if st.claimed_by else "a runner"
     button = None
-    status = turn.status
-    if status == Turn.QUEUED:
-        if turn.pinned_runner_id and reach is not None and reach.kind == harness.LIVE:
-            line = f":hourglass_flowing_sand: Sent to *{turn.pinned_runner.name}* — {agent} will pick this up there."
-        elif reach is not None and reach.kind == harness.LIVE:
-            line = f":hourglass_flowing_sand: {agent} is picking this up on {_runner_names(reach.runners)}."
-        elif reach is not None and reach.kind == harness.OFFLINE:
-            line = (f":double_vertical_bar: Queued — {agent}'s runner {_runner_names(reach.runners)} "
-                    "is offline, so nothing is working on this yet. It runs when the runner is back.")
-        else:
-            line = (f":warning: Queued, but no runner is set up to run {agent} — nothing will pick "
-                    "this up until its routing is fixed.")
-        if cloud is not None and (reach is None or reach.kind != harness.LIVE):
-            line += f" A runner admin can send it to *{cloud.name}* now."
-            button = cloud
-    elif runner_gone(turn):
-        # Claimed, and then its box stopped heartbeating — a closed laptop. The
-        # turn still reads RUNNING (a dead runner cannot say otherwise, and the
-        # lease takes up to 15 minutes to run out), so this is the one state the
-        # status alone gets wrong.
-        seen = _when(turn.claimed_by.last_heartbeat_at)
+    if st.state == ts.PICKING_UP and st.pinned:
+        line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
+    elif st.state == ts.PICKING_UP:
+        line = f":hourglass_flowing_sand: {agent} is picking this up on {_runner_names(st.runners)}."
+    elif st.state == ts.WAITING_RUNNER:
+        line = (f":double_vertical_bar: Queued — {agent}'s runner {_runner_names(st.runners)} "
+                "is offline, so nothing is working on this yet. It runs when the runner is back.")
+    elif st.state == ts.UNROUTED:
+        line = (f":warning: Queued, but no runner is set up to run {agent} — nothing will pick "
+                "this up until its routing is fixed.")
+    elif st.state == ts.PAUSED:
+        seen = _when(st.last_seen_at)
         line = (f":double_vertical_bar: Paused — {runner} went offline while {agent} was working "
                 f"on this (last seen {seen}). It carries on if the runner comes back.")
         if cloud is not None:
             line += (f" A runner admin can move it to *{cloud.name}* now — a fresh session there, "
                      f"so anything {runner} had not pushed stays behind.")
             button = cloud
-    elif status == Turn.CLAIMED or status == Turn.RUNNING:
+    elif st.state == ts.WORKING:
         line = f":gear: {agent} is working on this on {runner}."
-    elif status == Turn.NEEDS_HUMAN:
+    elif st.state == ts.BLOCKED:
         line = f":raised_hand: {agent} is waiting on a person, on {runner}."
-    elif status == Turn.DONE:
+    elif st.state == ts.DONE:
         line = f":white_check_mark: {agent} finished this on {runner}."
-    elif status == Turn.CANCELLED:
+    elif st.state == ts.CANCELLED:
         line = ":heavy_minus_sign: Cancelled."
-    elif status == Turn.MISSED:
+    elif st.state == ts.MISSED:
         line = ":heavy_minus_sign: Missed — nothing picked it up in time."
-    elif status == Turn.LOST and turn.claimed_by_id:
+    elif st.state == ts.LOST and st.claimed_by:
         line = f":x: {agent} could not finish this — {runner} went away before it was done."
         if cloud is not None:
             line += f" A runner admin can run it again on *{cloud.name}*."
             button = cloud
     else:  # FAILED / LOST — the relay posts the reason as its own message
-        line = f":x: {agent} could not finish this" + (f" on {runner}." if turn.claimed_by_id else ".")
+        line = f":x: {agent} could not finish this" + (f" on {runner}." if st.claimed_by else ".")
+
+    # The queued rescue offer, appended after the line it qualifies. Only the
+    # two queued states nothing is going to resolve on its own — an ask a live
+    # runner is already picking up needs no rescue.
+    if st.state in (ts.WAITING_RUNNER, ts.UNROUTED) and cloud is not None:
+        line += f" A runner admin can send it to *{cloud.name}* now."
+        button = cloud
 
     lines = [] if turn.origin == Turn.ORIGIN_SLACK else [_header(turn)]
     lines.append(line)
@@ -165,21 +173,15 @@ def slack_status_for(turn: Turn) -> str:
       by opening the laptop).
     * ACTIVE — nothing in flight; ready for the next message.
     """
-    from apps.canopy_sessions.serializers import pending_menu
-    from apps.harness import services as harness
-
-    if turn.status == Turn.NEEDS_HUMAN or runner_gone(turn):
+    st = _ts.resolve(turn)
+    # `stuck` is the shared projection's own name for "nothing is moving and
+    # only a person can change that" — which is precisely what SUSPENDED means
+    # to Slack. It already folds in the blocked-on-a-dialog case, so a spinner
+    # can never sit over an unanswered question.
+    if st.stuck:
         return client.SUSPENDED
-    # BEFORE the running check, not after: an agent blocked on a question is
-    # RUNNING as far as the turn is concerned, and a spinner over a dialog
-    # nobody has answered is the exact lie this indicator exists to stop.
-    if turn.chat_session_id and pending_menu(turn.chat_session) is not None:
-        return client.SUSPENDED
-    if turn.status in (Turn.CLAIMED, Turn.RUNNING):
+    if st.pending:
         return client.PROCESSING
-    if turn.status == Turn.QUEUED:
-        live = harness.turn_reach(turn).kind == harness.LIVE
-        return client.PROCESSING if live else client.SUSPENDED
     return client.ACTIVE
 
 
@@ -228,22 +230,12 @@ def _load(turn: Turn) -> Turn:
             .get(pk=turn.pk))
 
 
-def runner_gone(turn: Turn) -> bool:
-    """Claimed and not finished, on a runner that has stopped heartbeating.
-
-    `is_reachable`, not `is_available`: a paused or degraded box still has its
-    daemon up and will finish what it holds, so neither is "gone".
-    """
-    return (turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
-            and turn.claimed_by_id is not None and not turn.claimed_by.is_reachable)
-
-
-def movable_lost(turn: Turn) -> bool:
-    """A lost turn is worth re-running only while it is the conversation's last
-    word — once anything newer exists, the thread has moved on without it."""
-    return (turn.status == Turn.LOST and turn.chat_session_id is not None
-            and not Turn.objects.filter(chat_session_id=turn.chat_session_id,
-                                        created_at__gt=turn.created_at).exists())
+#: Both moved to `harness.turn_status` when the state machine did — they are
+#: facts about a turn, not about Slack. Re-exported because `slack/services.py`
+#: reaches for them through this module, and because a reader looking for the
+#: Slack status logic should still find them from here.
+runner_gone = _ts.runner_gone
+movable_lost = _ts.movable_lost
 
 
 def _when(ts) -> str:
@@ -253,22 +245,10 @@ def _when(ts) -> str:
     return f"<!date^{int(ts.timestamp())}^{{time}}|{ts.isoformat(timespec='minutes')}>"
 
 
-def _reach_and_cloud(turn: Turn):
-    """(reach, cloud runner): reach only for a QUEUED turn; a cloud runner
-    wherever a button could rescue it — queued with no live runner, stranded
-    on a runner that went offline mid-turn, or lost."""
-    from apps.canopy_sessions import services as session_services
-    from apps.harness import services as harness
-
-    if turn.status != Turn.QUEUED:
-        if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
-            return None, session_services.available_cloud_runner(turn.chat_session)
-        return None, None
-    reach = harness.turn_reach(turn)
-    cloud = None
-    if reach.kind != harness.LIVE and turn.chat_session_id:
-        cloud = session_services.available_cloud_runner(turn.chat_session)
-    return reach, cloud
+#: The same gather every channel needs before it can render. Lives with the
+#: state machine now; kept under its old name here so the call sites below read
+#: as they always did.
+_reach_and_cloud = _ts.reach_and_cloud
 
 
 def _with_prefix(record: SlackTurnPost, text: str, blocks: list | None) -> tuple[str, list | None]:

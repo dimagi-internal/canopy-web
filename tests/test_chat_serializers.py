@@ -60,9 +60,16 @@ def test_session_state_dto_keys():
     # a client only if it was already connected when the agent asked — and you
     # go and look precisely BECAUSE the session stopped. Always present, null
     # when nothing is pending, so a client needs no second code path.
+    # `turn_status` joined it for the same reason (2026-09-20): where the ask
+    # stands is a fact only the server holds — its runner is offline, nothing is
+    # routed to run it, the box it was on died — and a live-only frame reaches
+    # nobody who opened the page after it went quiet. Null when the session has
+    # never been asked anything.
     assert set(state) == {"messages", "active_draft", "participants",
-                          "presence_user_ids", "current_user_id", "menu"}
+                          "presence_user_ids", "current_user_id", "menu",
+                          "turn_status"}
     assert state["menu"] is None
+    assert state["turn_status"] is None
     assert state["current_user_id"] == u.pk
     assert state["presence_user_ids"] == [u.pk]
     assert state["participants"][0]["email"] == u.email

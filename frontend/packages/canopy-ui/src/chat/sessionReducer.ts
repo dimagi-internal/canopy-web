@@ -105,6 +105,18 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // retraction, and has to be honoured — somebody answered at the keyboard.
       return { ...prev, menu: frame.data.menu ?? undefined };
 
+    case "session.turn_status":
+      // Wholesale, never merged. The server re-derives the whole status from
+      // the turn on every transition, so a partial update could only ever
+      // describe a state the server does not believe in — and a client that
+      // just connected has no correct prior to merge INTO. Same argument as
+      // the ACP rule in reverse: `tool_call_update` is a patch because it is
+      // specified as one; this is not.
+      //
+      // A null status is a real answer ("nothing has been asked here"), not a
+      // gap to preserve, so it is stored as such.
+      return { ...prev, turn_status: frame.data.status ?? null };
+
     case "chat.user_message": {
       // Someone typed into emdash, OR into this page. Both reach here, and that
       // is why matching on turn_index alone is not enough: a web send writes its

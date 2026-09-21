@@ -1,6 +1,9 @@
-import { ChatPanel, useSessionSocket } from 'canopy-ui/chat'
+import { ChatPanel, MenuPrompt, useSessionSocket } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import { Markdown } from '@/components/Markdown'
+import { menuBlocksComposer } from '@/pages/chatPageLogic'
 
 import { buildPageContextBlock } from './pageContextBlock'
 import { currentFrameBaseUrl } from './frameBase'
@@ -27,7 +30,11 @@ type Phase =
    *  not when the panel is opened — so anything created here would be created
    *  for people who never even opened the panel. */
   | { kind: 'ready'; agent: EmbedAgent }
-  | { kind: 'chatting'; sessionId: string }
+  /** `firstMessage` is echoed into the transcript on mount. The opening message
+   *  is sent over HTTP before this component exists, so nothing on the socket
+   *  ever announced it: you typed, pressed send, and watched your own question
+   *  disappear into an empty panel. */
+  | { kind: 'chatting'; sessionId: string; firstMessage: string }
 
 interface EmbedAgent {
   slug: string
@@ -40,6 +47,17 @@ interface EmbedAgent {
 interface Props {
   link: HostLink
   app: string
+}
+
+/** The same renderer canopy's own chat page injects, for the same reason.
+ *
+ *  `ChatPanel` defaults to `plainText` when this seam is left unwired, which is
+ *  what the widget did — so an agent's reply arrived with its markdown as
+ *  literal source: `**bold**`, `- ` before every bullet, unrendered fences
+ *  around code. Same agent, same words, visibly worse than canopy-web, which
+ *  is precisely the complaint. */
+function renderMarkdown(text: string) {
+  return <Markdown className="text-sm leading-relaxed">{text}</Markdown>
 }
 
 /** Tell canopy what this page can do and what it is showing.
@@ -259,7 +277,9 @@ export function EmbedApp({ link, app }: Props) {
         body: JSON.stringify({ text: body }),
       })
 
-      setPhase({ kind: 'chatting', sessionId: created.id })
+      // `text`, not `body`: the page-context block is for the agent to read,
+      // not for the person who just typed the question to be shown back.
+      setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text })
     },
     [client, link],
   )
@@ -310,6 +330,7 @@ export function EmbedApp({ link, app }: Props) {
   return (
     <EmbedChat
       sessionId={phase.sessionId}
+      firstMessage={phase.firstMessage}
       client={client}
       link={link}
       contextPreamble={pendingContext}
@@ -434,12 +455,15 @@ function contactDraft(body: string) {
 
 function EmbedChat({
   sessionId,
+  firstMessage,
   client,
   link,
   contextPreamble,
   readOnlySocket = false,
 }: {
   sessionId: string
+  /** The opening message, already sent over HTTP. Echoed once on mount. */
+  firstMessage: string
   client: CanopyClient
   link: HostLink
   contextPreamble: React.MutableRefObject<string | null>
@@ -499,6 +523,7 @@ function EmbedChat({
   // (Page actions were silently dropped by the AG-UI projection until
   // 2026-09-18 — flipping this before that fix would have disabled every one.)
   const socket = useSessionSocket({ sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui' })
+  const menu = socket.state.menu ?? null
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -525,6 +550,53 @@ function EmbedChat({
     return link.onPageStateChanged(() => void declarePage(client, link, sessionId))
   }, [client, link, sessionId])
 
+  // The opening message, into the transcript. It was sent over HTTP before this
+  // component existed, so no frame announces it and it is not a server row
+  // until the agent's transcript ships it back — which is seconds at best and
+  // never if the runner is offline. `noteLocalSend` also raises the pending
+  // bubble, so the panel says something is happening from the first paint.
+  //
+  // Once per session id: the reducer dedupes a repeat against recent identical
+  // text, but re-running this on every render would still reset `awaitingReply`
+  // after the reply had arrived.
+  const echoed = useRef<string | null>(null)
+  useEffect(() => {
+    if (!firstMessage || echoed.current === sessionId) return
+    echoed.current = sessionId
+    socket.noteLocalSend(firstMessage)
+  }, [firstMessage, sessionId, socket])
+
+  // Answering the agent's dialog. Posted with the frame's own bearer token
+  // rather than through `@/api/chat`, which authenticates with the app's
+  // session cookie — the frame has none for this origin.
+  const [answering, setAnswering] = useState(false)
+  const [answerError, setAnswerError] = useState<string | null>(null)
+  const onAnswerMenu = useCallback(
+    (option: number | null, selections?: number[][] | null, texts?: (string | null)[] | null) => {
+      setAnswering(true)
+      setAnswerError(null)
+      void client.rest
+        .json<{ ok: boolean; reason: string }>(
+          `/api/canopy-sessions/${encodeURIComponent(sessionId)}/answer-menu`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ option, selections, texts }),
+          },
+        )
+        .then((r) => {
+          // `ok:true` only means the tap was RELAYED. The runner's refusal
+          // arrives later, on the menu itself (`answer_error`), which is why
+          // this does not clear the dialog.
+          if (!r.ok) setAnswerError(r.reason || 'the runner refused that answer')
+        })
+        .catch((e: unknown) =>
+          setAnswerError(e instanceof Error ? e.message : 'could not send that answer'),
+        )
+        .finally(() => setAnswering(false))
+    },
+    [client, sessionId],
+  )
+
   // Tell the runner a viewer is here (and stop when the panel closes), the same
   // attach/detach pair canopy's own chat page uses. Best-effort: never block
   // rendering on it.
@@ -539,8 +611,15 @@ function EmbedChat({
     const context = contextPreamble.current
     const body = context ? `${localDraft}\n\n${context}` : localDraft
     if (!body.trim() || sending) return
+    const typed = localDraft
     contextPreamble.current = null
     setSending(true)
+    // Show the line and start waiting BEFORE the round trip. A contact sends
+    // over HTTP, so nothing on the socket would otherwise announce it — and
+    // the old `awaitingReply={sending}` tracked the REQUEST, not the turn, so
+    // the indicator vanished the moment the POST returned and left the whole
+    // real wait silent.
+    socket.noteLocalSend(typed)
     void client.rest
       .json(`/api/contact/sessions/${encodeURIComponent(sessionId)}/send`, {
         method: 'POST',
@@ -548,7 +627,7 @@ function EmbedChat({
       })
       .then(() => setLocalDraft(''))
       .finally(() => setSending(false))
-  }, [client, sessionId, localDraft, sending, contextPreamble])
+  }, [client, sessionId, localDraft, sending, contextPreamble, socket])
 
   const onSend = useCallback(() => {
     // The page snapshot rides the FIRST message rather than an opening turn of
@@ -594,11 +673,56 @@ function EmbedChat({
           currentUserId={socket.state.current_user_id}
           onSend={readOnlySocket ? onSendAsContact : onSend}
           onStop={readOnlySocket ? () => undefined : socket.stopChat}
-          awaitingReply={readOnlySocket ? sending : socket.awaitingReply}
+          // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
+          // for a contact, which tracked the HTTP request and so cleared the
+          // instant the POST returned — an indicator for ~200ms, then silence
+          // for the actual wait. `noteLocalSend` raises it and only a stream
+          // frame (or the server's settled status) lowers it.
+          awaitingReply={socket.awaitingReply}
           onUpdateDraft={readOnlySocket ? setLocalDraft : socket.updateDraft}
           onTakeOver={readOnlySocket ? () => undefined : socket.takeOverDraft}
           onDiscard={readOnlySocket ? () => setLocalDraft('') : socket.discardDraft}
           draftPersistKey={sessionId}
+          // A parsed dialog is drawn WHERE the composer would be, so a send
+          // bounces as COMPOSER_NOT_VISIBLE. Same rule and same helper as
+          // canopy's chat page — and deliberately only for a dialog with
+          // options: an option-less marker is a guess, and a lock with no way
+          // out is worse than a send that bounces loudly.
+          disabledReason={
+            menuBlocksComposer(menu) ? 'answer the question above to continue' : undefined
+          }
+          // The seams canopy's own chat page wires and this one did not. The
+          // widget mounts the SAME panel, so the difference people saw was
+          // never the component — it was six props.
+          renderMarkdown={renderMarkdown}
+          banner={
+            // The agent stopped to ask something. Without this the widget went
+            // silent and dead at exactly that moment: `activity` flips to
+            // `blocked`, the panel correctly withdraws the "working" bubble,
+            // and nothing took its place — so the one state with a button to
+            // press rendered as an idle, finished conversation.
+            //
+            // Contacts are excluded: `/api/contact/` is their whole surface
+            // and answer-menu is not on it, so a dialog they cannot answer is
+            // shown as words rather than as buttons that would 403.
+            menu && !readOnlySocket ? (
+              <MenuPrompt
+                menu={menu}
+                busy={answering}
+                error={answerError ?? undefined}
+                onAnswer={onAnswerMenu}
+              />
+            ) : menu ? (
+              <p className="text-[12px] text-warning">
+                The agent is waiting on an answer from whoever is running it.
+              </p>
+            ) : undefined
+          }
+          emptyState={
+            <p className="px-4 text-center text-[12px] text-muted-foreground">
+              Nothing here yet.
+            </p>
+          }
         />
       </div>
     </div>

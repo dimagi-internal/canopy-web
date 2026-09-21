@@ -154,6 +154,13 @@ class SessionDetailOut(SessionOut):
     # half found it (transcript or screen read), so a client never grows two
     # readers — see canopy_transcript.questions.
     menu: dict | None = None
+    # Where the ask this session is waiting on currently stands — the same
+    # projection Slack renders as a thread line and the chat kit as a status
+    # (apps/harness/turn_status.py). Carried here as well as on the socket for
+    # the same reason `menu` is: a client that reconnects, or one that only
+    # reads over REST, still has to be able to tell "queued behind an offline
+    # runner" from "working on it". Null when nothing has been asked yet.
+    turn_status: dict | None = None
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.

@@ -13,6 +13,7 @@ export type {
   Participant,
   SessionMenu,
   SessionState,
+  TurnStatus,
   WsAction,
   WsEvent,
 } from "./protocol";
@@ -32,6 +33,17 @@ export {
   type UseSessionSocketResult,
 } from "./useSessionSocket";
 export { useStickyBottom } from "./useStickyBottom";
+
+// Where the ask stands — the kit's voice for the server-side turn status that
+// Slack, this panel and the embedded widget all render from. Exported because
+// a host may want the same wording outside the panel (a session list, a
+// placement banner) rather than inventing a second vocabulary for it.
+export {
+  agentHasFloor,
+  pendingLabel,
+  turnNotice,
+  type TurnNotice,
+} from "./turnStatus";
 
 // Draft idle helpers
 export { IDLE_THRESHOLD_MS, isDraftIdle, msUntilDraftIdle } from "./drafts";

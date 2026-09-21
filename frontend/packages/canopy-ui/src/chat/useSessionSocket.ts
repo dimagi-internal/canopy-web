@@ -93,6 +93,21 @@ export interface UseSessionSocketResult {
   takeOverDraft: () => void;
   discardDraft: () => void;
   prependMessages: (older: Message[]) => void;
+  /** A message was sent for this session over HTTP rather than through this
+   *  socket — show it, and start waiting for a reply.
+   *
+   *  Two callers need it and both are REST sends: the embedded widget's FIRST
+   *  message (the session does not exist until it is sent, so there is no
+   *  socket to send it on) and every message from a CONTACT (whose socket
+   *  listens only — presence and the co-edited draft are keyed on a user id
+   *  they do not have).
+   *
+   *  Without it those sends changed nothing on screen: `awaitingReply` is set
+   *  by `sendChat` alone, and the user's own line is not a server row until
+   *  the agent's transcript ships it back. So you typed, pressed send, and got
+   *  an empty panel — for as long as the reply took, and forever if its runner
+   *  was offline. */
+  noteLocalSend: (text: string) => void;
   lastError: string | null;
 }
 
@@ -427,6 +442,29 @@ export function useSessionSocket({
     });
   }, []);
 
+  const noteLocalSend = useCallback((text: string) => {
+    setAwaitingReply(true);
+    const body = text.trim();
+    if (!body) return;
+    // Routed through the ordinary `chat.user_message` case rather than a new
+    // one, so the optimistic row goes in with the SAME dedupe the transcript
+    // echo already relies on: when the agent reads the message and the runner
+    // ships it back at its durable composite ordinal, the reducer matches on
+    // recent identical text and merges instead of rendering it twice.
+    setState((prev) =>
+      sessionReducer(prev, {
+        event: "chat.user_message",
+        data: {
+          // Local, and replaced by the server's id the moment the real row
+          // arrives. Namespaced so it can never collide with one.
+          message_id: `local:${Date.now()}`,
+          turn_index: prev.messages.reduce((acc, m) => Math.max(acc, m.turn_index), 0) + 1,
+          plaintext: body,
+        },
+      }),
+    );
+  }, []);
+
   return {
     state,
     connected,
@@ -437,6 +475,7 @@ export function useSessionSocket({
     takeOverDraft,
     discardDraft,
     prependMessages,
+    noteLocalSend,
     lastError,
   };
 }

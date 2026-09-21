@@ -380,3 +380,51 @@ describe('the page is declared BEFORE the turn is queued', () => {
     expect(calls.some((c) => c.url.includes('page-state'))).toBe(false)
   })
 })
+
+/**
+ * What the panel SAYS while it works.
+ *
+ * The complaint these exist for: the widget mounts the same `ChatPanel` as
+ * canopy's chat page and looked visibly worse, because the host wired none of
+ * the panel's feedback seams. The first message was the worst of it — sent
+ * over HTTP before the chat component exists, so nothing on the socket ever
+ * announced it and the person who typed it watched their own question vanish
+ * into an empty box.
+ */
+describe('feedback while the agent works', () => {
+  async function startChatting() {
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+    await say('what changed in this skill?')
+    await waitFor(() => expect(created()).toBeDefined())
+  }
+
+  it('shows the question you just asked, instead of an empty panel', async () => {
+    await startChatting()
+    // It is not a server row yet — it becomes one only when the agent's
+    // transcript ships it back, which is seconds away at best and never if
+    // the runner is offline.
+    await waitFor(() =>
+      expect(screen.getByText('what changed in this skill?')).toBeTruthy(),
+    )
+  })
+
+  it('says something is happening from the first paint', async () => {
+    await startChatting()
+    // No socket frame has arrived; this is the client-side half, which is the
+    // only thing that can answer before the turn is even enqueued.
+    await waitFor(() => expect(screen.getByTestId('pending-reply')).toBeTruthy())
+  })
+
+  it('does not echo the page-context block back at the person who typed', async () => {
+    // The context rides the first message so the agent can read it. Showing
+    // it in the transcript would bury a one-line question under a JSON blob.
+    await startChatting()
+    await waitFor(() => expect(screen.getByTestId('pending-reply')).toBeTruthy())
+    expect(screen.queryByText(/insights/)).toBeNull()
+  })
+})

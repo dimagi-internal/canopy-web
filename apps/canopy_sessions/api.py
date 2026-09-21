@@ -23,7 +23,15 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
-from . import access, attachment_storage, page_actions, page_state, serializers, services
+from . import (
+    access,
+    attachment_storage,
+    page_actions,
+    page_state,
+    serializers,
+    services,
+    status_feed,
+)
 from .models import Attachment, Session
 from .schemas import (
     AttachmentOut,
@@ -362,6 +370,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     # Same reader as the WS snapshot, so opening a session over REST and over
     # the socket can never disagree about whether an agent is waiting.
     data["menu"] = serializers.pending_menu(session)
+    data["turn_status"] = status_feed.status_for_session(session)
     return data
 
 

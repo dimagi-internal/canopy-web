@@ -7793,6 +7793,10 @@ export interface components {
             readonly menu?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Turn Status */
+            readonly turn_status?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Has More Before
              * @default false

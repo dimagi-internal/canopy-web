@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { ChatPanel } from "./ChatPanel";
-import type { Message, SessionState } from "./protocol";
+import type { Message, SessionState, TurnStatus } from "./protocol";
 
 afterEach(cleanup);
 
@@ -132,5 +132,83 @@ describe("the pending-reply row", () => {
     });
     expect(screen.getByTestId("pending-reply")).not.toBeNull();
     expect(screen.queryByText("no messages yet")).toBeNull();
+  });
+});
+
+function status(over: Partial<TurnStatus> = {}): TurnStatus {
+  return {
+    state: "working",
+    agent_slug: "hal",
+    runners: ["jj-mbp"],
+    claimed_by: "jj-mbp",
+    pinned: false,
+    cloud_runner: null,
+    cloud_runner_id: null,
+    last_seen_at: null,
+    menu_pending: false,
+    settled: false,
+    stuck: false,
+    ...over,
+  };
+}
+
+describe("the server's turn status", () => {
+  it("replaces the spinner with a reason when nothing will pick the turn up", () => {
+    // The regression the whole projection exists for. A client cannot know
+    // this: it pressed send, and from here an offline runner and a slow one
+    // are identical.
+    panel({
+      state: state({
+        turn_status: status({ state: "waiting_runner", stuck: true, claimed_by: null }),
+      }),
+      awaitingReply: true,
+    });
+    expect(screen.queryByTestId("pending-reply")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("jj-mbp is offline");
+  });
+
+  it("reads differently when waiting cannot possibly help", () => {
+    panel({
+      state: state({
+        turn_status: status({ state: "unrouted", stuck: true, runners: [], claimed_by: null }),
+      }),
+      awaitingReply: true,
+    });
+    expect(screen.getByRole("status").textContent).toContain("no runner is set up to run hal");
+  });
+
+  it("names the box in the spinner once a runner really has it", () => {
+    panel({ state: state({ turn_status: status({ state: "working" }) }) });
+    expect(screen.getByText("Thinking on jj-mbp…")).not.toBeNull();
+  });
+
+  it("clears a stuck spinner even if the stream frame that ends it never arrived", () => {
+    // `awaitingReply` only clears on a stream frame; a dropped socket used to
+    // leave it spinning forever. The server's settled flag is the backstop.
+    panel({
+      state: state({ turn_status: status({ state: "done", settled: true }) }),
+      awaitingReply: true,
+    });
+    expect(screen.queryByTestId("pending-reply")).toBeNull();
+  });
+
+  it("stays silent when the host has its own, richer banner for the same fact", () => {
+    // canopy's chat page raises <PlacementBanner> here, with buttons to wait
+    // or continue elsewhere. Our sentence underneath would restate it as a
+    // dead end directly below the thing you can actually press.
+    panel({
+      state: state({
+        turn_status: status({ state: "waiting_runner", stuck: true, claimed_by: null }),
+      }),
+      banner: <div>continue on another runner?</div>,
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("continue on another runner?")).not.toBeNull();
+  });
+
+  it("leaves a blocked agent entirely to the menu", () => {
+    panel({ state: state({ turn_status: status({ state: "blocked", stuck: true }) }) });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByTestId("pending-reply")).toBeNull();
   });
 });
