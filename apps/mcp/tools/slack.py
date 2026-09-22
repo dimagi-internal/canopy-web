@@ -49,8 +49,8 @@ def _share_sync(user_id, channel, summary, mode, session_id, claude_session_id,
 
 @mcp.tool
 async def share_session_to_slack(
-    channel: str,
     summary: str,
+    channel: str = "",
     mode: str = "broadcast",
     claude_session_id: str = "",
     emdash_task: str = "",
@@ -69,6 +69,11 @@ async def share_session_to_slack(
         now on, exactly as if the session had been started from Slack: the
         session's replies appear in the thread and teammates' replies in the
         thread reach the session.
+
+    Sharing a session that is ALREADY bound posts `summary` as an update in its
+    thread instead (mode and channel are then ignored) — the way to keep a
+    bound thread current, since work done in the session itself does not reach
+    the thread on its own. `channel` is required otherwise.
 
     Identify the session with `claude_session_id` ($CLAUDE_CODE_SESSION_ID),
     else `emdash_task` + `emdash_project` ($EMDASH_TASK_NAME and the basename of

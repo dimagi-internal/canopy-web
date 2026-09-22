@@ -71,8 +71,28 @@ def split(text: str, limit: int = MAX_POST_CHARS) -> list[str]:
     return chunks
 
 
+#: When a SHARE bound this session to its thread (`apps/slack/share.py`), as epoch seconds.
+BOUND_AT = "slack_bound_at"
+
+
+def predates_bind(turn) -> bool:
+    """Whether `turn` was asked before its session was bound to a Slack thread.
+
+    A share from the chat page is itself a turn ("/canopy:share-to-slack …"),
+    and it finishes AFTER the bind it performs — so without this its closing
+    "Shared to <link>" and its done status line would open the new thread.
+    Nothing asked before the bind is the thread's business.
+    """
+    session = getattr(turn, "chat_session", None)
+    bound_at = ((getattr(session, "metadata", None) or {}) if session is not None else {}).get(BOUND_AT)
+    created = getattr(turn, "created_at", None)
+    return bool(bound_at and created and created.timestamp() < float(bound_at))
+
+
 def _destination(turn):
     """(installation, channel, thread_ts) for a Slack-born session's turn, else None."""
+    if predates_bind(turn):
+        return None
     return session_destination(getattr(turn, "chat_session", None))
 
 
@@ -341,7 +361,7 @@ def relay_after_turn(session, replies) -> int:
     if turns.filter(status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED})).exists():
         return 0
     last = turns.order_by("-created_at").first()
-    if last is None:
+    if last is None or predates_bind(last):
         return 0
     asks = {_norm(p) for p in turns.order_by("-created_at").values_list("prompt", flat=True)[:20]}
     latest_human = next(

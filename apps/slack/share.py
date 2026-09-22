@@ -40,9 +40,11 @@ BROADCAST, BIND = "broadcast", "bind"
 MODES = (BROADCAST, BIND)
 
 SHARED = "shared"
-NOT_INSTALLED, NOT_LINKED, NO_SESSION, ALREADY_BOUND, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
+#: A bound session shared again: the summary went into its thread as a reply.
+UPDATED = "updated"
+NOT_INSTALLED, NOT_LINKED, NO_SESSION, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
     AMBIGUOUS_WORKSPACE, POST_FAILED, BAD_REQUEST = (
-        "not_installed", "not_linked", "no_session", "already_bound", "agent_not_on_slack",
+        "not_installed", "not_linked", "no_session", "agent_not_on_slack",
         "not_in_channel", "ambiguous_workspace", "post_failed", "bad_request")
 
 #: Slack's answers that mean "the bot cannot post there", as opposed to a fault.
@@ -64,7 +66,7 @@ class ShareResult:
 
     @property
     def ok(self) -> bool:
-        return self.status == SHARED
+        return self.status in (SHARED, UPDATED)
 
 
 def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
@@ -134,6 +136,10 @@ def _slack_user(installation: SlackInstallation, user) -> str:
     return slack_id if link.user_id == user.pk else ""
 
 
+def _update_text(slack_user: str, summary: str) -> str:
+    return f"*Update* from <@{slack_user}>:\n\n{relay.to_mrkdwn(summary.strip())}"
+
+
 def _text(slack_user: str, summary: str, session: Session | None, mode: str) -> str:
     head = f"<@{slack_user}> shared what they're working on"
     if session is not None:
@@ -172,6 +178,12 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     `session` is re-checked against what the caller can see — a caller that got
     it some other way than `resolve_session` gains nothing. None means "no
     session" and is fine for a broadcast.
+
+    A session that is ALREADY bound posts an update into its own thread instead,
+    whatever the mode and channel: once bound, what you do at the terminal never
+    reaches the thread on its own (the thread hears only what it asked), so
+    sharing again is the way to keep the people watching it current. A session
+    holds one thread, so there is no second post to make elsewhere.
     """
     if session is not None and resolve_session(user, session_id=str(session.pk)) is None:
         session = None
@@ -180,8 +192,12 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     channel = (channel or "").strip()
     if mode not in MODES:
         return ShareResult(BAD_REQUEST, f"Mode must be one of {', '.join(MODES)}.")
-    if not channel or not (summary or "").strip():
-        return ShareResult(BAD_REQUEST, "A channel and a summary are both required.")
+    if not (summary or "").strip():
+        return ShareResult(BAD_REQUEST, "A summary is required.")
+    if session is not None and relay.session_destination(session) is not None:
+        return _post_update(user, session, summary)
+    if not channel:
+        return ShareResult(BAD_REQUEST, "Name a channel to share to.")
     if mode == BIND and session is None:
         return ShareResult(NO_SESSION, (
             "Couldn't find this session in canopy, so there's nothing for the thread's replies "
@@ -199,11 +215,6 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
         return ShareResult(status, message, session=session)
 
     if mode == BIND:
-        meta = session.metadata or {}
-        if meta.get(services.SLACK_THREAD_KEY):
-            return refuse(ALREADY_BOUND, (
-                f"This session is already bound to a thread in <#{meta.get('slack_channel', '')}>. "
-                "Post there, or share a broadcast."))
         if session.agent_id and not session.agent.slack_enabled:
             return refuse(AGENT_NOT_ON_SLACK, (
                 f"`{session.agent.slug}` isn't turned on for Slack, so a thread can't talk to it. "
@@ -230,6 +241,7 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     channel_id, ts = str(body.get("channel") or channel), str(body.get("ts") or "")
 
     if mode == BIND:
+        now = time.time()
         with transaction.atomic():
             locked = Session.objects.select_for_update().get(pk=session.pk)
             meta = dict(locked.metadata or {})
@@ -242,7 +254,8 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
                 # The share was typed into the session itself, and that line
                 # reaches the transcript AFTER this bind — which would otherwise
                 # open the new thread with "this is carrying on outside Slack".
-                relay.ELSEWHERE_AT: time.time(),
+                relay.ELSEWHERE_AT: now,
+                relay.BOUND_AT: now,
             })
             locked.metadata = meta
             locked.save(update_fields=["metadata", "updated_at"])
@@ -255,6 +268,40 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     _record(installation, user, SHARED, message, {"channel": channel_id, "ts": ts, "mode": mode,
             "session": str(session.pk) if session else ""}, ok=True)
     return ShareResult(SHARED, message, session=session, channel_id=channel_id, ts=ts, permalink=link)
+
+
+def _post_update(user, session: Session, summary: str) -> ShareResult:
+    """A new summary, as a reply in the thread this session is already bound to."""
+    installation, channel_id, thread_ts = relay.session_destination(session)
+
+    def refuse(status: str, message: str) -> ShareResult:
+        _record(installation, user, status, message, {"channel": channel_id, "mode": "update",
+                "session": str(session.pk)}, ok=False)
+        return ShareResult(status, message, session=session)
+
+    slack_user = _slack_user(installation, user)
+    if not slack_user:
+        return refuse(NOT_LINKED, (
+            "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
+            "to link it, then share again."))
+    agent = session.agent if session.agent_id else None
+    try:
+        ts = ""
+        for chunk in relay.split(_update_text(slack_user, summary)):
+            ts = client.post_message(installation.bot_token, channel=channel_id, text=chunk,
+                                     thread_ts=thread_ts, persona=relay.persona(agent))
+    except client.SlackApiError as e:
+        if e.error in _CANNOT_POST_THERE:
+            return refuse(NOT_IN_CHANNEL, (
+                f"canopy can't post in <#{channel_id}> any more ({e.error}). Invite the canopy app back "
+                "to the channel and share again."))
+        logger.exception("slack share update failed")
+        return refuse(POST_FAILED, f"Slack refused the post: {e.error}.")
+    link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
+    message = f"Posted an update to this session's thread: {link or f'<#{channel_id}>'}."
+    _record(installation, user, UPDATED, message, {"channel": channel_id, "ts": ts, "mode": "update",
+            "session": str(session.pk)}, ok=True)
+    return ShareResult(UPDATED, message, session=session, channel_id=channel_id, ts=ts, permalink=link)
 
 
 def bound_repo_session(installation: SlackInstallation, key: str) -> Session | None:

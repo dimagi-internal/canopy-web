@@ -292,11 +292,11 @@ def post(turn: Turn) -> SlackTurnPost | None:
     Adopts the slash command's anchor when the turn carries one — see
     `adoption`.
     """
-    from .relay import _log_failure, session_destination
+    from .relay import _destination, _log_failure
 
     turn = _load(turn)
     adopt_ts, prefix = adoption(turn)
-    dest = session_destination(turn.chat_session)
+    dest = _destination(turn)
     if dest is None:
         return None
     installation, channel, thread_ts = dest
@@ -332,13 +332,13 @@ def post(turn: Turn) -> SlackTurnPost | None:
 
 def refresh(turn: Turn) -> bool:
     """Re-render this turn's status line if it changed. Returns whether it edited."""
-    from .relay import session_destination
+    from .relay import _destination
 
     record = SlackTurnPost.objects.filter(turn_id=turn.pk).exclude(slack_ts="").first()
     if record is None:
         return False
     turn = _load(turn)
-    dest = session_destination(turn.chat_session)
+    dest = _destination(turn)
     if dest is None:
         return False
     installation, _channel, thread_ts = dest
