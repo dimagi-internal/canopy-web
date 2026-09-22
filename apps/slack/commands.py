@@ -94,7 +94,7 @@ def command_name(slug: str) -> str | None:
 
 
 def desired_commands(installation: SlackInstallation) -> tuple[dict[str, dict], list[str]]:
-    """({name: command}, [slugs that cannot be a command]) for this workspace."""
+    """({name: command}, [slugs that cannot be a command]) for every tenant this Slack serves."""
     from .services import enabled_agents
 
     url = _commands_url()
@@ -122,7 +122,10 @@ def reconcile(installation: SlackInstallation) -> dict:
                                data={"app_id": installation.app_id})["manifest"]
         url = _commands_url()
         want, unfit = desired_commands(installation)
-        ours = {f"/{s.lower()}" for s in Agent.objects.filter(workspace=installation.workspace)
+        # Every tenant this Slack serves, not one: the app and its commands are
+        # shared, and a sync run for tenant B that only knew B's agents would
+        # delete tenant A's `/hal` as "not wanted".
+        ours = {f"/{s.lower()}" for s in Agent.objects.filter(workspace_id__in=installation.workspace_ids())
                 .values_list("slug", flat=True)} | {BASE_COMMAND}
         features = manifest.setdefault("features", {})
         current = list(features.get("slash_commands") or [])

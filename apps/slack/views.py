@@ -22,9 +22,9 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from apps.canopy_sessions.models import Session
 from apps.events import services as events_services
 from apps.events.models import Event
+from apps.workspaces.models import Workspace
 
 from . import client, relay, services
 from .verify import SignatureError, verify_slack_signature
@@ -70,7 +70,7 @@ def _tell(installation, inbound: services.Inbound, text: str) -> None:
 
 
 def _record(installation, inbound: services.Inbound, status: str, summary: str,
-            level: str = "") -> None:
+            level: str = "", outcome: services.Outcome | None = None) -> None:
     """Every message canopy did NOT turn into a turn leaves a row in the fleet log.
 
     The access log only says `POST /api/slack/events 200` whatever happened, so
@@ -79,6 +79,11 @@ def _record(installation, inbound: services.Inbound, status: str, summary: str,
     bumps one row's count instead of writing one per attempt.
     """
     if installation is None:
+        return
+    # The tenant the message was about, else the Slack's home tenant: a Slack
+    # can serve several, and a refusal that resolved to none still needs a row.
+    workspace_id = services.log_workspace(installation, outcome)
+    if workspace_id is None:
         return
     try:
         events_services.record([{
@@ -89,7 +94,7 @@ def _record(installation, inbound: services.Inbound, status: str, summary: str,
             "summary": summary[:500],
             "payload": {"team": inbound.team_id, "channel": inbound.channel_id,
                         "user": inbound.slack_user_id, "ts": inbound.ts},
-        }], workspace=installation.workspace)
+        }], workspace=Workspace.objects.get(pk=workspace_id))
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the event
         logger.exception("could not record a Slack event")
 
@@ -166,7 +171,7 @@ def events(request: HttpRequest) -> HttpResponse:
         _tell(installation, inbound, "Something went wrong handing that to canopy. It has been logged.")
         return JsonResponse({"ok": True})
     if outcome.status not in services.OK_STATUSES:
-        _record(installation, inbound, outcome.status, outcome.message)
+        _record(installation, inbound, outcome.status, outcome.message, outcome=outcome)
         _tell(installation, inbound, outcome.message)
     elif outcome.status in (services.ANSWERED, services.MOVED, services.NOTHING_QUEUED):
         _tell(installation, inbound, outcome.message)
@@ -216,13 +221,15 @@ def commands(request: HttpRequest) -> HttpResponse:
     if word == services.CLOUD_WORD:
         return _ephemeral(services.route_mine_to_cloud(installation, slack_user_id).message)
 
-    _principal, refusal = services.resolve_principal(installation, slack_user_id)
-    if refusal is not None:
-        return _ephemeral(refusal.message)
     agents = {a.slug.lower(): a for a in services.enabled_agents(installation)}
     agent = agents.get(word.rstrip(":,"))
     if agent is None:
         return _ephemeral(services.agent_list(installation))
+    # Checked before the anchor is posted, against the AGENT's tenant: a
+    # blocked sender must not get a public "asked hal" line for nothing.
+    _principal, refusal = services.resolve_principal(installation, slack_user_id, agent.workspace_id)
+    if refusal is not None:
+        return _ephemeral(refusal.message)
     ask = text.split(" ", 1)[1].strip() if " " in text else ""
     if not ask:
         usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
@@ -297,7 +304,7 @@ def interactions(request: HttpRequest) -> HttpResponse:
         _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
         return HttpResponse(status=200)
     if outcome.status not in services.OK_STATUSES:
-        _record(installation, inbound, outcome.status, outcome.message)
+        _record(installation, inbound, outcome.status, outcome.message, outcome=outcome)
         _tell(installation, inbound, outcome.message)
     elif outcome.status in (services.STALE, services.MOVED):
         _tell(installation, inbound, outcome.message)
@@ -325,9 +332,8 @@ def _stop_from_slack(body: dict) -> HttpResponse:
     thread_ts = str(event.get("thread_ts") or "")
     key = services.thread_key(installation.team_id, channel,
                               thread_ts or services.DM_ANCHOR)
-    session = (Session.objects.select_related("agent")
-               .filter(workspace=installation.workspace,
-                       **{f"metadata__{services.SLACK_THREAD_KEY}": key})
+    session = (services.tenant_sessions(installation).select_related("agent")
+               .filter(**{f"metadata__{services.SLACK_THREAD_KEY}": key})
                .order_by("-created_at").first())
     if session is None:
         return JsonResponse({"ok": True})

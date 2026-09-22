@@ -26,11 +26,10 @@ class SlackInstallation(models.Model):
     team_name = models.CharField(max_length=255, blank=True, default="")
     bot_user_id = models.CharField(max_length=32)
     bot_token_enc = models.TextField()
-    # NOT NULL, like every other tenant FK here: a nullable one is how six
-    # predicates grew a "no tenant => allow" leg (see agents/0013).
-    workspace = models.ForeignKey(
-        "workspaces.Workspace", on_delete=models.CASCADE, related_name="slack_installations",
-    )
+    # No tenant here: one Slack can serve several canopy workspaces, each
+    # through a `SlackWorkspaceLink`. The tenant of any message is decided by
+    # what it is about (its thread's session, or the agent it names) — see
+    # docs/superpowers/specs/2026-09-22-slack-multi-tenant-design.md.
     installed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
@@ -63,7 +62,18 @@ class SlackInstallation(models.Model):
     agent_declared_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.team_name or self.team_id} -> {self.workspace_id}"
+        return self.team_name or self.team_id
+
+    def workspace_ids(self) -> list[str]:
+        """The canopy workspaces this Slack serves, earliest link first."""
+        return list(self.links.order_by("linked_at", "pk").values_list("workspace_id", flat=True))
+
+    @property
+    def home_workspace_id(self) -> str | None:
+        """The earliest-linked tenant: where a message that resolved to no
+        tenant is logged. Never used to decide access."""
+        ids = self.workspace_ids()
+        return ids[0] if ids else None
 
     @property
     def manages_commands(self) -> bool:
@@ -76,6 +86,29 @@ class SlackInstallation(models.Model):
     @bot_token.setter
     def bot_token(self, plaintext: str) -> None:
         self.bot_token_enc = encrypt_secret(plaintext)
+
+
+class SlackWorkspaceLink(models.Model):
+    """One canopy workspace served by one Slack. Many per Slack, one per tenant.
+
+    Created by an owner of the workspace completing Slack's install (the OAuth
+    callback), with no sign-off from tenants already linked: a link adds a
+    tenant beside them and grants it nothing of theirs.
+    """
+
+    installation = models.ForeignKey(SlackInstallation, on_delete=models.CASCADE, related_name="links")
+    # NOT NULL, like every other tenant FK here: a nullable one is how six
+    # predicates grew a "no tenant => allow" leg (see agents/0013).
+    workspace = models.OneToOneField(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="slack_link",
+    )
+    linked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.installation} -> {self.workspace_id}"
 
 
 class SlackUserLink(models.Model):

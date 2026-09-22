@@ -109,7 +109,10 @@ def _installation(user, session: Session | None, workspace: str) -> tuple[SlackI
         slugs = {workspace} & wsvc.user_workspace_slugs(user)
     else:
         slugs = wsvc.user_workspace_slugs(user)
-    installs = list(SlackInstallation.objects.select_related("workspace").filter(workspace_id__in=slugs)[:2])
+    # A session posts only through ITS tenant's Slack: a bound thread's replies
+    # route back by tenant, so a Slack that does not serve the session's
+    # workspace could never deliver them.
+    installs = list(SlackInstallation.objects.filter(links__workspace_id__in=slugs).distinct()[:2])
     if not installs:
         return None, NOT_INSTALLED
     if len(installs) > 1:
@@ -157,6 +160,12 @@ def _text(slack_user: str, summary: str, session: Session | None, mode: str) -> 
 def _record(installation, user, status: str, summary: str, payload: dict, *, ok: bool) -> None:
     from apps.events import services as events_services
     from apps.events.models import Event
+    from apps.workspaces.models import Workspace
+
+    session = Session.objects.filter(pk=payload.get("session") or None).first() if payload.get("session") else None
+    workspace_id = session.workspace_id if session is not None else installation.home_workspace_id
+    if workspace_id is None:
+        return
 
     try:
         events_services.record([{
@@ -166,7 +175,7 @@ def _record(installation, user, status: str, summary: str, payload: dict, *, ok:
             "key": f"share:{status}:{user.pk}:{payload.get('channel', '')}:{payload.get('ts', '')}",
             "summary": summary[:500],
             "payload": payload,
-        }], workspace=installation.workspace)
+        }], workspace=Workspace.objects.get(pk=workspace_id))
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the share
         logger.exception("could not record a Slack share event")
 
@@ -310,6 +319,6 @@ def bound_repo_session(installation: SlackInstallation, key: str) -> Session | N
     The front door finds a thread's session through its agent; a repo session
     has none, so it needs this second lookup.
     """
-    return (Session.objects.filter(Q(agent__isnull=True), workspace=installation.workspace,
-                                   **{f"metadata__{services.SLACK_THREAD_KEY}": key})
+    return (services.tenant_sessions(installation).filter(Q(agent__isnull=True),
+                                                          **{f"metadata__{services.SLACK_THREAD_KEY}": key})
             .order_by("created_at").first())

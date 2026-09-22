@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required
 from django.core import signing
+from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.urls import reverse
 from django.views.decorators.http import require_GET
@@ -28,7 +29,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 
 from . import client, services
-from .models import SlackInstallation, SlackUserLink
+from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
 
 logger = logging.getLogger(__name__)
 
@@ -99,21 +100,28 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
         return _page("Install failed", f"Slack refused the exchange ({escape(e.error)}).", 400)
     team = data.get("team") or {}
     team_id = str(team.get("id") or "")
-    existing = SlackInstallation.objects.filter(team_id=team_id).first()
-    if existing is not None and existing.workspace_id != slug and \
-            wsvc.member_role(request.user, existing.workspace_id) != WorkspaceMembership.OWNER:
-        # Re-pointing a Slack team at a different workspace moves everyone's
-        # messages there. Only someone who owns BOTH ends may do that.
-        return _page("Already connected",
-                     "This Slack workspace is connected to a different canopy workspace you don't own.", 409)
-    inst = existing or SlackInstallation(team_id=team_id)
-    inst.team_name = str(team.get("name") or "")
-    inst.bot_user_id = str(data.get("bot_user_id") or "")
-    inst.app_id = str(data.get("app_id") or "") or inst.app_id
-    inst.bot_token = str(data.get("access_token") or "")
-    inst.workspace_id = slug
-    inst.installed_by = request.user
-    inst.save()
+    # One Slack serves many canopy workspaces. Connecting another one ADDS a
+    # link beside the ones already there — it moves nobody's messages and
+    # grants this workspace nothing of theirs — so it takes only this
+    # workspace's owner plus Slack's own install consent (decided 2026-09-22;
+    # spec 2026-09-22-slack-multi-tenant-design.md). It used to refuse unless
+    # the caller owned the workspace the Slack was already connected to.
+    with transaction.atomic():
+        inst = SlackInstallation.objects.select_for_update().filter(team_id=team_id).first() \
+            or SlackInstallation(team_id=team_id)
+        # The bot token is the one Slack install, shared by every linked tenant;
+        # a re-install refreshes it for all of them.
+        inst.team_name = str(team.get("name") or "")
+        inst.bot_user_id = str(data.get("bot_user_id") or "")
+        inst.app_id = str(data.get("app_id") or "") or inst.app_id
+        inst.bot_token = str(data.get("access_token") or "")
+        if inst.pk is None:
+            inst.installed_by = request.user
+        inst.save()
+        # One Slack per canopy workspace: connecting this workspace to a
+        # different Slack re-points it, and its owner is the one asking.
+        SlackWorkspaceLink.objects.update_or_create(
+            workspace_id=slug, defaults={"installation": inst, "linked_by": request.user})
     # The installer just proved both identities in one browser trip — Slack
     # authenticated them as `authed_user`, canopy as `request.user` — so link
     # them now rather than making the first message a refusal.

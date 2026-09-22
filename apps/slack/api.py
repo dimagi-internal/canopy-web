@@ -16,7 +16,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 from . import commands, services
-from .models import SlackInstallation
+from .models import SlackInstallation, SlackWorkspaceLink
 from .schemas import SlackConfigOut, SlackConfigTokenIn, SlackDeclareAgentOut, SlackSyncOut
 
 router = Router(auth=session_auth, tags=["slack"])
@@ -37,21 +37,25 @@ def _owner_workspace_or_404(user, slug: str) -> Workspace:
 
 
 def _installation_or_409(ws: Workspace) -> SlackInstallation:
-    inst = SlackInstallation.objects.filter(workspace=ws).first()
+    inst = services.installation_for_workspace(ws.slug)
     if inst is None:
         raise HttpError(409, "Slack is not connected to this workspace")
     return inst
 
 
 def _out(ws: Workspace) -> dict:
-    inst = SlackInstallation.objects.filter(workspace=ws).select_related("installed_by", "config_set_by").first()
+    link = (SlackWorkspaceLink.objects.filter(workspace=ws)
+            .select_related("installation", "installation__config_set_by", "linked_by").first())
+    inst = link.installation if link is not None else None
     iso = lambda d: d.isoformat() if d else ""  # noqa: E731
     return {
         "workspace": ws.slug,
         "connected": inst is not None,
         "team_name": inst.team_name if inst else "",
-        "installed_by_email": getattr(getattr(inst, "installed_by", None), "email", "") or "",
-        "installed_at": iso(inst.installed_at) if inst else "",
+        # Who connected THIS workspace, and when — the Slack itself may have
+        # been installed earlier, for another tenant.
+        "installed_by_email": getattr(getattr(link, "linked_by", None), "email", "") or "",
+        "installed_at": iso(link.linked_at) if link else "",
         "install_url": services.public_url(f"/auth/slack/install/?workspace={ws.slug}"),
         "commands": {
             "managed": bool(inst and inst.manages_commands),
