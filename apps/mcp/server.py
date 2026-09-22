@@ -46,6 +46,12 @@ from .page_tools import PageActionProvider  # noqa: E402
 # name even if the `page_` prefix were dropped.
 mcp.add_provider(PageActionProvider())
 
+# Dynamic tools: each agent's declared interface (`ace__ask`, …), for whoever
+# is asking. See `apps/mcp/agent_tools.py`.
+from .agent_tools import AgentInterfaceProvider  # noqa: E402
+
+mcp.add_provider(AgentInterfaceProvider())
+
 
 def build_http_app():
     """Build the Streamable-HTTP ASGI app for mounting at /api/mcp/.

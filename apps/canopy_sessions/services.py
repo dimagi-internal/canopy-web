@@ -1042,6 +1042,7 @@ def _merge_origin_ref(extra: dict | None, *, thread_key: str, session: Session) 
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
     origin: str | None = None, initiator=None, origin_ref: dict | None = None,
+    capability: str | None = None,
 ) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
@@ -1075,7 +1076,7 @@ def send_message(
         return _send_transcript_sourced_message(
             session=session, text=text, user=user, client_id=client_id,
             placement=placement, origin=origin, initiator=initiator,
-            origin_ref=origin_ref,
+            origin_ref=origin_ref, capability=capability,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -1128,6 +1129,7 @@ def send_message(
             enqueued_by=user,
             pinned_runner=pinned,
             initiator=_initiator(initiator, user, origin),
+            capability=capability,
         )
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
     # the human's message is an interjection. Push it down to the runner executing
@@ -1239,7 +1241,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
 def _send_transcript_sourced_message(
     *, session: Session, text: str, user=None, client_id: str = "",
     placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
-    initiator=None, origin_ref: dict | None = None,
+    initiator=None, origin_ref: dict | None = None, capability: str | None = None,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -1289,6 +1291,7 @@ def _send_transcript_sourced_message(
         enqueued_by=user,
         pinned_runner=pinned,
         initiator=_initiator(initiator, user, origin),
+        capability=capability,
     )
     _maybe_interject(session, message)
     return message, turn

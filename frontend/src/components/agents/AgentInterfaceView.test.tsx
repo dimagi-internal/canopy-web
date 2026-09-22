@@ -26,7 +26,7 @@ describe('AgentInterfaceView', () => {
     getAgentInterface.mockResolvedValue({
       interface: { capabilities: { ask: {
         description: 'Ask ACE.', callers: ['contact:verified', 'member'],
-        tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'],
+        tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'], input: { opportunity_id: 'integer' },
       } } },
       published_at: '2026-09-21T12:00:00Z', published_by_email: 'op@dimagi.com',
     })
@@ -35,6 +35,7 @@ describe('AgentInterfaceView', () => {
     expect(row.textContent).toContain('ask')
     expect(row.textContent).toContain('contact:verified, member')
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
+    expect(row.textContent).toContain('MCP: ace__ask (opportunity_id: integer)')
     expect(screen.getByText(/Everything not listed is refused/)).toBeTruthy()
   })
 })

@@ -156,7 +156,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
     return turn, True
 
 
-def _apply_capability(turn: Turn) -> None:
+def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
@@ -173,13 +173,14 @@ def _apply_capability(turn: Turn) -> None:
         turn.chat_session.agent if turn.chat_session_id and turn.chat_session.agent_id else None)
     if agent is None:
         return
-    cap = interface.capability_for(turn, agent)
+    cap = interface.capability_for(turn, agent, requested)
     if cap == interface.FULL:
         return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        turn.result_note = (f"not run: {agent.slug} offers nothing to this caller "
+        what = f"'{requested}'" if requested else "nothing"
+        turn.result_note = (f"not run: {agent.slug} offers {what} to this caller "
                             "(see its declared interface)")
         turn.save(update_fields=["status", "finished_at", "result_note"])
         return
@@ -201,6 +202,7 @@ def enqueue_turn(
     enqueued_by=None,
     pinned_runner=None,
     initiator=None,
+    capability: str | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -334,7 +336,7 @@ def enqueue_turn(
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
                 pinned_runner=pinned_runner,
             )
-            _apply_capability(turn)
+            _apply_capability(turn, capability)
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
         replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
