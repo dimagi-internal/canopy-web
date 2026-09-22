@@ -21,6 +21,13 @@ import subprocess
 
 import pytest
 
+from test_readiness_is_observed import BASH
+
+pytestmark = pytest.mark.skipif(
+    BASH is None,
+    reason="no bash with associative arrays (macOS ships 3.2; `brew install bash`)",
+)
+
 SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "bootstrap_agents.sh"
 
 _HAS_ASSOC = subprocess.run(
@@ -64,9 +71,12 @@ gog_config_dir() {{ printf '%s\\n' "{tmp}/gogcli"; }}
 op() {{ printf '%s\\n' "$2" >>"{tmp}/refs"; return 1; }}
 command() {{ return 0; }}   # pretend `op` is installed
 {_fn("ensure_client_creds")}
-ensure_client_creds "{client}" "{agent_vault}" someslug
+{_fn("mark")}
+{_fn("detail_join")}
+declare -A CLIENT_CREDS_OK BOOTSTRAP_DETAIL
+ensure_client_creds "{client}" "{agent_vault}" someslug "Canopy-Shared" "SHARED-KEY" "AGENT-KEY"
 """
-    subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
     refs = (tmp / "refs")
     return refs.read_text().strip() if refs.exists() else ""
 
@@ -100,9 +110,12 @@ ok() {{ :; }}; warn() {{ :; }}
 gog_config_dir() {{ printf '%s\\n' "{tmp_path}/gogcli"; }}
 op() {{ printf '%s' '{{"client_id":"x","client_secret":"y"}}'; }}
 {_fn("ensure_client_creds")}
-ensure_client_creds "{client}" Agent-Echo someslug
+{_fn("mark")}
+{_fn("detail_join")}
+declare -A CLIENT_CREDS_OK BOOTSTRAP_DETAIL
+ensure_client_creds "{client}" Agent-Echo someslug "Canopy-Shared" "SHARED-KEY" "AGENT-KEY"
 """
-        subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+        subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
     names = {p.name for p in (tmp_path / "gogcli").glob("credentials-*.json")}
     assert names == {
         "credentials-canopy.json", "credentials-canopy-web.json", "credentials-echo.json"
@@ -119,9 +132,12 @@ ok() {{ :; }}; warn() {{ :; }}
 gog_config_dir() {{ printf '%s\\n' "{tmp_path}/gogcli"; }}
 op() {{ return 1; }}
 {_fn("ensure_client_creds")}
-ensure_client_creds canopy-web Agent-Ace someslug
+{_fn("mark")}
+{_fn("detail_join")}
+declare -A CLIENT_CREDS_OK BOOTSTRAP_DETAIL
+ensure_client_creds canopy-web Agent-Ace someslug "Canopy-Shared" "SHARED-KEY" "AGENT-KEY"
 """
-    subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
     assert not (tmp_path / "gogcli" / "credentials-canopy-web.json").exists()
 
 

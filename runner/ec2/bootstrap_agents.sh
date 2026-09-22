@@ -397,11 +397,11 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   # key, a throttle, or an outage. Five diagnostic round trips to a cloud box
   # recovered one line op had already written and this function threw away.
   # A shared vault needs the SHARED key. The caller has already exported this
-  # Always an explicit key, scoped to this one command: every op read in this
-  # file names the credential it is made with, and nothing downstream inherits a
-  # broader one.
+  # Always an explicit key, as an assignment PREFIX so it scopes to this one
+  # command and nothing downstream inherits a broader credential. Every op call
+  # in this file names the key it is made with.
   local readerr
-  if readerr="$(env "OP_SERVICE_ACCOUNT_TOKEN=$client_token" op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
+  if readerr="$(OP_SERVICE_ACCOUNT_TOKEN="$client_token" op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
      && [[ -s "$client_file" ]]; then
     chmod 0600 "$client_file"
     mark CLIENT_CREDS_OK "$slug" 1
@@ -834,7 +834,7 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
     # Only with this agent's own key. No key means the vault half simply has
     # nothing to offer, and canopy-web's copy below is then the only source.
     if [[ -n "$vault" && -n "$agent_token" ]]; then
-      env "OP_SERVICE_ACCOUNT_TOKEN=$agent_token" op read "op://${vault}/gog-token/credential" \
+      OP_SERVICE_ACCOUNT_TOKEN="$agent_token" op read "op://${vault}/gog-token/credential" \
         >"$vaultfile" 2>/dev/null || : >"$vaultfile"
     else
       : >"$vaultfile"
@@ -1011,7 +1011,7 @@ inject_agent_env() {  # <slug> <agent-clone> <agent-vault> <agent-key>
   # reference it could not resolve, never a resolved value, so it is safe to log
   # and to report. --account isn't needed with a service-account token.
   local inject_err
-  if inject_err="$(env "OP_SERVICE_ACCOUNT_TOKEN=$token" op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
+  if inject_err="$(OP_SERVICE_ACCOUNT_TOKEN="$token" op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
     chmod 0600 "$env_out"
     mark ENV_OK "$slug" 1
     ok "$slug: op inject .env.tpl -> $env_out"
