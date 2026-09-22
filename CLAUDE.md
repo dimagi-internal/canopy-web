@@ -240,8 +240,13 @@ filter — either alone would hang the queue), so it failed and PRs merged anywa
   the same class of failure as a stale `generated.ts`. It deliberately covers
   every publishable workspace rather than canopy-ui alone; `canopy-widget` is
   exempt because it is built and served at `/canopy/embed/widget.js` and never
-  installed. After merging, tag it: `git tag canopy-ui-v<version> && git push
-  origin canopy-ui-v<version>`.
+  installed. **Merging the bump IS the release**: `publish-canopy-{ui,client}.yml` run
+  on a version change reaching main, publish if npm does not already have that
+  version, and write the `<pkg>-v<version>` tag as the record. It used to be a
+  manual tag push after merging, which was skipped — canopy-ui 0.10.0 sat merged
+  and unpublished while ace-web, which is meant to track the newest, stayed on
+  0.9.0. ace-web's side is Dependabot (daily, canopy packages only) plus an
+  auto-merge gated on its frontend build.
   `canopy-client` publishes via `publish-canopy-client.yml`; its FIRST
   publish needs a one-time Trusted Publisher setup on npmjs (see the header of
   that workflow). `canopy-widget` is not published at all.

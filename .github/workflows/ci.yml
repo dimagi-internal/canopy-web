@@ -255,8 +255,8 @@ jobs:
             if [ "$before" = "$after" ]; then
               echo "::error file=$dir/package.json::$pkg/src changed but the version is still $after."
               echo "  npm would keep serving the OLD $after, and every consumer pinned to it"
-              echo "  silently misses this change. Bump the version here, then after merging:"
-              echo "      git tag $pkg-v<new-version> && git push origin $pkg-v<new-version>"
+              echo "  silently misses this change. Bump the version here; merging it"
+              echo "  publishes it (publish-$pkg.yml runs on a version change to main)."
               failed=1
             else
               echo "$pkg: src changed and the version moved $before -> $after."
