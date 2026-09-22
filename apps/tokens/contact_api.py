@@ -20,6 +20,7 @@ from django.http import HttpRequest
 from ninja import Router, Schema
 
 from apps.canopy_sessions.schemas import MessagePageOut
+from apps.harness.schemas import TurnOut
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
@@ -264,6 +265,11 @@ class ContactSessionCreateIn(Schema):
 class ContactSendIn(Schema):
     text: str
     client_id: str = ""
+    #: The routing SOURCE, as a user's send may declare it — so a host's work for a
+    #: contact (ace-web's runs: `ace_web`) routes like the same host's work for a
+    #: user. Only sources a caller may name; `email` and `slack` are channels
+    #: canopy attests itself.
+    origin: str = ""
 
 
 def _session_or_404(request: HttpRequest, session_id):
@@ -384,9 +390,13 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         # which is correct: nobody with an account sent this. A routing rule
         # that wants to know reads `turn.session.contact`, which is the
         # authoritative answer rather than a copy.
+        from apps.harness.models import Turn
+
+        if payload.origin and payload.origin not in (Turn.ORIGIN_API, Turn.ORIGIN_ACE_WEB):
+            raise HttpError(422, f"origin {payload.origin!r} is not one a caller may name")
         message, turn = session_services.send_message(
             session=session, text=payload.text, user=request.user,
-            client_id=payload.client_id,
+            client_id=payload.client_id, origin=payload.origin or None,
             initiator=who.for_request(request, via=who.channel(request, "contact")),
         )
     except ValueError as exc:
@@ -431,3 +441,65 @@ def detach(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import services as session_services
 
     return {"streaming": session_services.detach_session(_session_or_404(request, session_id))}
+
+
+# --- a host's work FOR a contact (ace-web's runs) ------------------------------------
+# The same four things a host does for a USER while executing their command —
+# stop, read a turn, read its transcript, ask whether any runner can take it —
+# over the contact's OWN conversations only.
+
+def _turn_or_404(request: HttpRequest, turn_id: str):
+    import uuid as _uuid
+
+    from apps.canopy_sessions.access import contact_session_q
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn
+
+    try:
+        pk = _uuid.UUID(str(turn_id))
+    except ValueError:
+        raise HttpError(404, "turn not found") from None
+    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    turn = (Turn.objects.select_related("chat_session", "initiator_user", "initiator_contact",
+                                        "claimed_by")
+            .filter(pk=pk, chat_session__in=mine).first())
+    if turn is None:
+        raise HttpError(404, "turn not found")
+    return turn
+
+
+@contact_router.post("/sessions/{session_id}/stop", response=dict,
+                     summary="Cancel every unfinished turn in my conversation")
+def stop(request: HttpRequest, session_id: str) -> dict:
+    from apps.canopy_sessions import services as session_services
+
+    return {"cancelled": session_services.cancel_session_turns(_session_or_404(request, session_id))}
+
+
+@contact_router.get("/turns/unclaimable", response=list[dict],
+                    summary="My queued turns no online runner can take")
+def my_unclaimable(request: HttpRequest) -> list[dict]:
+    from django.db.models import Q
+
+    from apps.canopy_sessions.access import contact_session_q
+    from apps.canopy_sessions.models import Session
+    from apps.harness import services as harness_services
+
+    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    return harness_services.unclaimable_queued_turns(
+        ws_slugs={request.contact.workspace_id}, turn_q=Q(chat_session__in=mine))
+
+
+@contact_router.get("/turns/{turn_id}", response=TurnOut, summary="One turn of my conversation")
+def my_turn(request: HttpRequest, turn_id: str):
+    return _turn_or_404(request, turn_id)
+
+
+@contact_router.get("/turns/{turn_id}/transcript", summary="That turn's raw transcript")
+def my_turn_transcript(request: HttpRequest, turn_id: str):
+    from django.http import StreamingHttpResponse
+
+    from apps.harness import services as harness_services
+
+    return StreamingHttpResponse(harness_services.iter_transcript(_turn_or_404(request, turn_id)),
+                                 content_type="application/x-ndjson")

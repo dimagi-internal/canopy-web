@@ -1308,6 +1308,74 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/sessions/{session_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Cancel every unfinished turn in my conversation */
+        readonly post: operations["apps_tokens_contact_api_stop"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/turns/unclaimable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** My queued turns no online runner can take */
+        readonly get: operations["apps_tokens_contact_api_my_unclaimable"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/turns/{turn_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One turn of my conversation */
+        readonly get: operations["apps_tokens_contact_api_my_turn"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/turns/{turn_id}/transcript": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** That turn's raw transcript */
+        readonly get: operations["apps_tokens_contact_api_my_turn_transcript"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/auth/contact-token": {
         readonly parameters: {
             readonly query?: never;
@@ -6941,6 +7009,11 @@ export interface components {
              * @default
              */
             readonly client_id: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
         };
         /** MessageOut */
         readonly MessageOut: {
@@ -6969,6 +7042,81 @@ export interface components {
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Has More Before */
             readonly has_more_before: boolean;
+        };
+        /**
+         * InitiatorOut
+         * @description Who asked for this turn, and how that was established.
+         */
+        readonly InitiatorOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Via */
+            readonly via: string;
+            /** Assurance */
+            readonly assurance: string;
+            readonly user?: components["schemas"]["InitiatorPersonOut"] | null;
+            readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
+            /** Agent */
+            readonly agent?: string | null;
+        };
+        /** InitiatorPersonOut */
+        readonly InitiatorPersonOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** TurnOut */
+        readonly TurnOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string | null;
+            /** Project */
+            readonly project: string;
+            /** Target */
+            readonly target: string;
+            /** Workspace Slug */
+            readonly workspace_slug: string | null;
+            /** Origin */
+            readonly origin: string;
+            /** Status */
+            readonly status: string;
+            /** Routing */
+            readonly routing: string;
+            /** Prompt */
+            readonly prompt: string;
+            /** Origin Ref */
+            readonly origin_ref: {
+                readonly [key: string]: unknown;
+            };
+            /** Claimed By Name */
+            readonly claimed_by_name: string | null;
+            /** Enqueued By Email */
+            readonly enqueued_by_email: string | null;
+            readonly initiator: components["schemas"]["InitiatorOut"];
+            /** Session Id */
+            readonly session_id: string;
+            /** Result Note */
+            readonly result_note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Claimed At */
+            readonly claimed_at: string | null;
+            /** Started At */
+            readonly started_at: string | null;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /** Lease Expires At */
+            readonly lease_expires_at: string | null;
         };
         /** ContactTokenOut */
         readonly ContactTokenOut: {
@@ -11149,31 +11297,6 @@ export interface components {
             /** Mcp Token */
             readonly mcp_token?: string | null;
         };
-        /**
-         * InitiatorOut
-         * @description Who asked for this turn, and how that was established.
-         */
-        readonly InitiatorOut: {
-            /** Kind */
-            readonly kind: string;
-            /** Via */
-            readonly via: string;
-            /** Assurance */
-            readonly assurance: string;
-            readonly user?: components["schemas"]["InitiatorPersonOut"] | null;
-            readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
-            /** Agent */
-            readonly agent?: string | null;
-        };
-        /** InitiatorPersonOut */
-        readonly InitiatorPersonOut: {
-            /** Id */
-            readonly id: number;
-            /** Email */
-            readonly email: string;
-            /** Name */
-            readonly name: string;
-        };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {
             /** Reuse */
@@ -11531,56 +11654,6 @@ export interface components {
              * @default config
              */
             readonly kind: string;
-        };
-        /** TurnOut */
-        readonly TurnOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Agent Slug */
-            readonly agent_slug: string | null;
-            /** Project */
-            readonly project: string;
-            /** Target */
-            readonly target: string;
-            /** Workspace Slug */
-            readonly workspace_slug: string | null;
-            /** Origin */
-            readonly origin: string;
-            /** Status */
-            readonly status: string;
-            /** Routing */
-            readonly routing: string;
-            /** Prompt */
-            readonly prompt: string;
-            /** Origin Ref */
-            readonly origin_ref: {
-                readonly [key: string]: unknown;
-            };
-            /** Claimed By Name */
-            readonly claimed_by_name: string | null;
-            /** Enqueued By Email */
-            readonly enqueued_by_email: string | null;
-            readonly initiator: components["schemas"]["InitiatorOut"];
-            /** Session Id */
-            readonly session_id: string;
-            /** Result Note */
-            readonly result_note: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Claimed At */
-            readonly claimed_at: string | null;
-            /** Started At */
-            readonly started_at: string | null;
-            /** Finished At */
-            readonly finished_at: string | null;
-            /** Lease Expires At */
-            readonly lease_expires_at: string | null;
         };
         /** TurnIn */
         readonly TurnIn: {
@@ -14465,6 +14538,94 @@ export interface operations {
                         readonly [key: string]: unknown;
                     };
                 };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_stop: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_my_unclaimable: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_my_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_my_turn_transcript: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

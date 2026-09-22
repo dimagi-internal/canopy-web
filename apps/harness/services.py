@@ -860,7 +860,7 @@ def turn_reach(turn: Turn) -> Reach:
     return Reach(UNROUTED, [])
 
 
-def unclaimable_queued_turns(user) -> list[dict]:
+def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[dict]:
     """Queued turns that look genuinely stuck — otherwise a silent stall.
 
     enqueue_turn accepts a turn addressed to an agent/repo nothing declares, and it
@@ -874,7 +874,10 @@ def unclaimable_queued_turns(user) -> list[dict]:
                     Usually transient (network blip, deploy, laptop asleep).
     Returns [{turn_id, target, prompt, created_at, reason, kind}].
     """
-    ws_slugs = wsvc.user_workspace_slugs(user)
+    # A user's view: every tenant they belong to. A CONTACT's: their one
+    # workspace, narrowed by `turn_q` to their own conversations.
+    if ws_slugs is None:
+        ws_slugs = wsvc.user_workspace_slugs(user)
     if not ws_slugs:
         return []
     cutoff = timezone.now() - UNCLAIMABLE_GRACE
@@ -888,6 +891,7 @@ def unclaimable_queued_turns(user) -> list[dict]:
         # chat_session + its binding are read per turn by the per-source
         # refinement below (once per turn PER RUNNER), so preload them.
         .select_related("agent", "chat_session", "chat_session__runner_binding")
+        .filter(turn_q if turn_q is not None else Q())
         .order_by("created_at")
     )
     if not queued:
