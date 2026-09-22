@@ -75,6 +75,20 @@ def _serialize_turn(turn: Turn) -> dict:
     }
 
 
+
+def _valid_health(raw):
+    """The heartbeat's `health` block, validated the way the REST route validates
+    it, or None. Like provenance, health is decoration on a liveness call: a
+    malformed block costs the report, never the beat."""
+    if raw is None:
+        return None
+    from apps.harness.schemas import RunnerHealthIn
+
+    try:
+        return RunnerHealthIn.model_validate(raw).model_dump()
+    except Exception:  # noqa: BLE001
+        return None
+
 class TurnConsumer(AsyncJsonWebsocketConsumer):
     REPLAY_PAGE = 500
 
@@ -339,8 +353,11 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             turn = await self._claim()
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
-            await self._heartbeat(content.get("active_turn_ids") or [], content)
-            await self.send_json({"type": "heartbeat.ack"})
+            refresh = await self._heartbeat(content.get("active_turn_ids") or [], content)
+            # The ack carries the durable refresh request back, the same thing the
+            # REST reply's RunnerOut.refresh_pending says — this is the cloud
+            # runner's primary beat, so it is the path that has to answer.
+            await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh)})
         elif action == "start":
             ok = await self._start(content.get("turn_id"), content.get("session_id") or "")
             await self.send_json({"type": "start.ack", "ok": ok})
@@ -413,15 +430,18 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # would take it offline and stop it claiming.
             committed_at = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
-        if runner is not None:
-            harness_services.heartbeat(
-                runner,
-                active_turn_ids=active_turn_ids,
-                code_branch=str(frame.get("code_branch") or ""),
-                code_version=str(frame.get("code_version") or ""),
-                code_sha=str(frame.get("code_sha") or ""),
-                code_committed_at=committed_at,
-            )
+        if runner is None:
+            return False
+        harness_services.heartbeat(
+            runner,
+            active_turn_ids=active_turn_ids,
+            code_branch=str(frame.get("code_branch") or ""),
+            code_version=str(frame.get("code_version") or ""),
+            code_sha=str(frame.get("code_sha") or ""),
+            code_committed_at=committed_at,
+            health=_valid_health(frame.get("health")),
+        )
+        return runner.refresh_pending()
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

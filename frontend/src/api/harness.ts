@@ -52,6 +52,17 @@ export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
   return unwrap(res, 'unpauseRunner')
 }
 
+// Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
+// Claude Code, agent provisioning) at its next idle moment. Durable: the box
+// reads `refresh_pending` off its own heartbeat, so this survives a dropped
+// socket, and it stays pending until the box reports a newer bootstrap.
+export async function refreshRunner(runnerId: string): Promise<RunnerOut> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/refresh', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'refreshRunner')
+}
+
 // Dispatch a turn from the phone composer — to an agent OR a repo.
 //
 // An AGENT turn routes through the flat mount: the server derives the agent's

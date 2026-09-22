@@ -71,6 +71,25 @@ class RunnerCapabilitiesIn(Schema):
     capabilities: dict
 
 
+class HealthCheck(Schema):
+    """One feature a runner checked on itself. `warn` is "works, but a person
+    should know" (one Claude credential, no fallback); `fail` is "this feature
+    is off" (a package that did not import, so no transcripts)."""
+
+    name: str = Field(max_length=64)
+    status: Literal["ok", "warn", "fail"]
+    detail: str = Field(default="", max_length=2000)
+
+
+class RunnerHealthIn(Schema):
+    checks: list[HealthCheck] = Field(default_factory=list, max_length=64)
+    # Runner-clock epochs. `bootstrapped_at` discharges a refresh request
+    # (Runner.refresh_pending), so it must be the time the LAST bootstrap
+    # finished — not when this check list was built.
+    checked_at: float = 0
+    bootstrapped_at: float = 0
+
+
 class DrillRollup(Schema):
     """Aggregated readiness-drill outcomes for one runner, across all its
     (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
@@ -143,6 +162,43 @@ class RunnerOut(Schema):
     # None when this runner has never been drilled (not "zero of zero pass") —
     # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
     drill_rollup: DrillRollup | None = None
+    # What the box reports about its own features (Runner.health), keyed by
+    # check name. A map rather than a list on purpose: openapi-fetch's Readable<T>
+    # degrades an array of OBJECTS inside a response into an ArrayLike the client
+    # cannot assign back to the generated type (see frontend/src/api/agents.ts
+    # toPage); a record of objects survives it. None = the box does not report —
+    # the laptops, an older cloud box — which is unknown, never "healthy".
+    health_checks: dict[str, HealthCheck] | None = None
+    # Server clock, stamped on receipt: a box that stops reporting keeps its last
+    # list, and this is how a reader tells a current answer from an old one.
+    health_received_at: dt.datetime | None = None
+    health_bootstrapped_at: float | None = None
+    refresh_requested_at: dt.datetime | None = None
+    # Asked to refresh and has not bootstrapped since. The runner reads this off
+    # its own heartbeat reply — the durable request, not a frame.
+    refresh_pending: bool | None = None
+
+    @staticmethod
+    def resolve_health_checks(obj) -> dict[str, HealthCheck] | None:
+        if not obj.health:
+            return None
+        return {c["name"]: HealthCheck(**c) for c in obj.health.get("checks") or []}
+
+    @staticmethod
+    def resolve_health_received_at(obj) -> dt.datetime | None:
+        raw = (obj.health or {}).get("received_at")
+        return dt.datetime.fromisoformat(raw) if raw else None
+
+    @staticmethod
+    def resolve_health_bootstrapped_at(obj) -> float | None:
+        try:
+            return float((obj.health or {}).get("bootstrapped_at") or 0) or None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def resolve_refresh_pending(obj) -> bool:
+        return obj.refresh_pending()
 
     @staticmethod
     def resolve_expected_code_sha(obj) -> str:
@@ -239,6 +295,11 @@ class HeartbeatIn(Schema):
     # drift, one notch worse. It also makes rollout free: a runner on old code
     # sends nothing and keeps its list.
     projects: list[str] | None = None
+    # The box's own feature checks (see Runner.health). None = not reported this
+    # beat, and leaves the stored value alone — the same absent-is-not-empty rule
+    # as `projects`, so a beat from a path that does not build the list (a lease
+    # renewer) cannot wipe it.
+    health: RunnerHealthIn | None = None
 
 
 class ResolveSessionIn(Schema):

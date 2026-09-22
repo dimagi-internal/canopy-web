@@ -481,3 +481,42 @@ def test_the_relay_forwards_every_published_field(monkeypatch):
 
 async def _noop_store(target, payload):
     target.update(payload)
+
+
+# --- health + the refresh request ride the WS beat ---------------------------
+# The WS beat is the cloud runner's primary heartbeat, so it is the path that has
+# to carry `health` in and `refresh_pending` back out (2026-09-22).
+async def test_ws_heartbeat_records_health_and_acks_refresh():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({
+        "action": "heartbeat", "active_turn_ids": [],
+        "health": {"checks": [{"name": "transcripts", "status": "fail",
+                               "detail": "No module named 'canopy_transcript'"}],
+                   "checked_at": 1790000000, "bootstrapped_at": 1789990000},
+    })
+    ack = await comm.receive_json_from(timeout=2)
+    assert ack == {"type": "heartbeat.ack", "refresh_pending": False}
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.health["checks"][0]["name"] == "transcripts"
+
+    await database_sync_to_async(services.request_refresh)(fresh)
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": []})
+    assert (await comm.receive_json_from(timeout=2))["refresh_pending"] is True
+    # A beat WITHOUT health leaves the last report alone.
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.health["checks"][0]["status"] == "fail"
+    await comm.disconnect()
+
+
+async def test_ws_heartbeat_survives_malformed_health():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [],
+                             "health": {"checks": [{"name": "x", "status": "maybe"}]}})
+    assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.status == Runner.ONLINE and fresh.health == {}
+    await comm.disconnect()

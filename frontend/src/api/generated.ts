@@ -3680,6 +3680,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/refresh": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Refresh Runner
+         * @description Ask this runner to refresh itself at its next idle moment: re-run its
+         *     bootstrap, which updates the canopy plugin and CLI, Claude Code, and each
+         *     agent's provisioning, then restart. `refresh_pending` stays true until the
+         *     runner reports a bootstrap newer than the request.
+         */
+        readonly post: operations["apps_harness_api_refresh_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/claim": {
         readonly parameters: {
             readonly query?: never;
@@ -9331,6 +9354,8 @@ export interface components {
             readonly turn_client: string;
             /** Turn Ready */
             readonly turn_ready?: boolean | null;
+            /** Env Ok */
+            readonly env_ok?: boolean | null;
             /**
              * Detail
              * @default
@@ -9372,6 +9397,8 @@ export interface components {
             readonly turn_client: string;
             /** Turn Ready */
             readonly turn_ready?: boolean | null;
+            /** Env Ok */
+            readonly env_ok?: boolean | null;
             /**
              * Detail
              * @default
@@ -10566,6 +10593,26 @@ export interface components {
             /** Last Finished At */
             readonly last_finished_at: string | null;
         };
+        /**
+         * HealthCheck
+         * @description One feature a runner checked on itself. `warn` is "works, but a person
+         *     should know" (one Claude credential, no fallback); `fail` is "this feature
+         *     is off" (a package that did not import, so no transcripts).
+         */
+        readonly HealthCheck: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "ok" | "warn" | "fail";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
         /** RunnerOut */
         readonly RunnerOut: {
             /**
@@ -10626,6 +10673,18 @@ export interface components {
              */
             readonly can_administer: boolean;
             readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
+            /** Health Checks */
+            readonly health_checks?: {
+                readonly [key: string]: components["schemas"]["HealthCheck"];
+            } | null;
+            /** Health Received At */
+            readonly health_received_at?: string | null;
+            /** Health Bootstrapped At */
+            readonly health_bootstrapped_at?: number | null;
+            /** Refresh Requested At */
+            readonly refresh_requested_at?: string | null;
+            /** Refresh Pending */
+            readonly refresh_pending?: boolean | null;
         };
         /** RunnerIn */
         readonly RunnerIn: {
@@ -10902,6 +10961,22 @@ export interface components {
             readonly profiles: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
+            readonly health?: components["schemas"]["RunnerHealthIn"] | null;
+        };
+        /** RunnerHealthIn */
+        readonly RunnerHealthIn: {
+            /** Checks */
+            readonly checks?: readonly components["schemas"]["HealthCheck"][];
+            /**
+             * Checked At
+             * @default 0
+             */
+            readonly checked_at: number;
+            /**
+             * Bootstrapped At
+             * @default 0
+             */
+            readonly bootstrapped_at: number;
         };
         /**
          * ClaimedTurnOut
@@ -17791,6 +17866,28 @@ export interface operations {
                 readonly "application/json": components["schemas"]["HeartbeatIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_refresh_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

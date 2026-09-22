@@ -297,9 +297,16 @@ esac
 #
 # Skipped while a turn is in flight, for the same reason an install is: this
 # touches the credential store the running turn is using.
+#
+# Run from the RUNNER'S own clone (cloud_runner.py's RUNNER_SRC_DIR, reset to
+# origin/main on every start), not the working tree of $REPO_DIR: agent turns
+# can reach that one, and on 2026-09-22 one had left it on a local branch. The
+# shared clone is only the fallback for a box that predates the runner's own.
+BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
+[ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ] || BOOT_DIR="$REPO_DIR"
 if [ "$V" = "busy" ]; then
   log "busy — skipping the credentials refresh too."
-elif [ -x "$REPO_DIR/runner/ec2/bootstrap_agents.sh" ]; then
+elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   log "refreshing credentials (config changes reach the box here, not via a deploy)"
   # Under the RUNNER'S environment, not this timer's. canopy-runner.service loads
   # runner.env; canopy-runner-update.service does not, so this pass used to run
@@ -310,7 +317,7 @@ elif [ -x "$REPO_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
   ( set +e
     if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-    "$REPO_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
+    "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
     || log "credentials refresh returned non-zero — the box is otherwise untouched."
 fi
 exit 0

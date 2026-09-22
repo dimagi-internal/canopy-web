@@ -1143,7 +1143,7 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
             runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
             mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
             turn_client=r.turn_client, turn_ready=r.turn_ready,
-            detail=r.detail, reported_at=r.reported_at,
+            env_ok=r.env_ok, detail=r.detail, reported_at=r.reported_at,
         )
         for r in services.bootstrap_reports(agent)
     ]
@@ -1173,10 +1173,11 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
         client_creds_ok=payload.client_creds_ok, mailbox_ok=payload.mailbox_ok,
         gog_client=payload.gog_client, detail=payload.detail,
         turn_client=payload.turn_client, turn_ready=payload.turn_ready,
+        env_ok=payload.env_ok,
     )
     return BootstrapReportOut(
         runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
         mailbox_ok=r.mailbox_ok, gog_client=r.gog_client,
         turn_client=r.turn_client, turn_ready=r.turn_ready,
-        detail=r.detail, reported_at=r.reported_at,
+        env_ok=r.env_ok, detail=r.detail, reported_at=r.reported_at,
     )

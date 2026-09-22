@@ -295,13 +295,14 @@ report_bootstrap() {  # <slug>
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
   [[ -n "$base" && -n "$tok" ]] || return 0
   local rn="${RUNNER_NAME:-$(hostname)}"
   SLUG="$slug" RN="$rn" \
   CC="${CLIENT_CREDS_OK[$slug]:-0}" MB="${MAILBOX_OK[$slug]:-0}" \
   GC="${GOG_CLIENT_USED[$slug]:-}" DT="${BOOTSTRAP_DETAIL[$slug]:-}" \
   TC="${TURN_CLIENT[$slug]:-}" TR="${TURN_READY[$slug]-unset}" \
+  EO="${ENV_OK[$slug]-unset}" \
   python3 -c '
 import json, os
 print(json.dumps({
@@ -314,6 +315,10 @@ print(json.dumps({
     # NOT the same as "checked and broken" and must not be reported as False.
     "turn_ready": (None if os.environ.get("TR") == "unset"
                    else os.environ.get("TR") == "1"),
+    # Same tri-state: "unset" = this pass did not try (credentials-only, or no
+    # .env.tpl), which must not read as a failed inject.
+    "env_ok": (None if os.environ.get("EO") == "unset"
+               else os.environ.get("EO") == "1"),
     "detail": os.environ.get("DT", ""),
 }))' > /tmp/.bootstrap-report.$$ 2>/dev/null || return 0
   curl -fsSL --max-time 20 -X POST \
@@ -330,7 +335,7 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
   # The tenant's shared vault and its OWN key, from canopy-web. Blank on a
   # deployment that has not configured one, which falls back to the historical
   # constant and today's (agent) key — i.e. exactly current behaviour.
@@ -808,7 +813,7 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
   if ! command -v gog >/dev/null 2>&1; then
     warn "$slug: gog unavailable — skipping gmail token import"
   elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
@@ -897,7 +902,7 @@ verify_mailbox() {  # <slug> <account> <fallback-client>
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
   # The mailbox verdict is a CALL, never an inference. Everything above can
   # succeed and still leave a mailbox that cannot authenticate — that is exactly
   # what happened on 2026-09-07, when a valid token imported cleanly and then had
@@ -929,7 +934,7 @@ verify_mailbox() {  # <slug> <account> <fallback-client>
 # Cheap when they agree — the common case short-circuits without a second call.
 verify_turn_client() {  # <slug> <account>
   local slug="$1" account="$2"
-  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY
+  declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
   command -v gog >/dev/null 2>&1 || return 0   # unset stays unset: "not checked"
   local tclient; tclient="$(turn_client_for "$slug")"
   [[ -n "$tclient" ]] || return 0
@@ -1009,11 +1014,20 @@ bootstrap_one_agent() {
     mkdir -p "$(dirname "$env_out")"
     # --account isn't needed with a service-account token (OP_SERVICE_ACCOUNT_TOKEN);
     # op inject writes the resolved file, or errors and writes nothing.
-    if op inject -i "$env_tpl" -o "$env_out" -f >/dev/null 2>&1; then
+    # stderr is KEPT (it was discarded, which is why four agents failed this
+    # for two weeks with no stated reason — cloud-ec2-1, 2026-09-22). op names
+    # the reference it could not resolve, never a resolved value, so it is safe
+    # to log and to report.
+    local inject_err
+    if inject_err="$(op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
       chmod 0600 "$env_out"
+      ENV_OK[$slug]=1
       ok "$slug: op inject .env.tpl -> $env_out"
     else
-      warn "$slug: op inject failed (unresolved op:// ref, or .env.tpl not migrated to a per-agent vault?) — agent may be partially ready"
+      ENV_OK[$slug]=0
+      inject_err="$(printf '%s' "$inject_err" | tr '\n' ' ' | cut -c1-300)"
+      BOOTSTRAP_DETAIL[$slug]="${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }op inject failed: ${inject_err}"
+      warn "$slug: op inject failed — keeping the existing $env_out, which may be stale: ${inject_err}"
     fi
   else
     warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
@@ -1076,8 +1090,32 @@ step3_agents() {
 }
 
 # ── Step 4: claude plugins ───────────────────────────────────────────────────────
+# Claude Code itself. cloud-init installs it ONCE (`npm i -g` as root, into
+# /usr), and nothing updated it afterwards: a box's Claude Code was whatever was
+# current the day the instance launched. Installed into $HOME/.local instead —
+# the service user cannot write /usr, and $HOME/.local/bin is first on the
+# runner unit's PATH, so this copy shadows the frozen one. Only on drift: an
+# `npm view` is one registry call, an install is ~30s.
+ensure_claude_current() {
+  command -v npm >/dev/null 2>&1 || { warn "npm not on PATH — cannot update Claude Code"; return 0; }
+  local latest have
+  latest="$(npm view @anthropic-ai/claude-code version 2>/dev/null || true)"
+  have="$(claude --version 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$latest" ]]; then
+    warn "could not read the latest Claude Code version (registry unreachable?) — keeping ${have:-none}"
+  elif [[ "$have" == "$latest" ]]; then
+    ok "Claude Code $have is current"
+  elif npm i -g --prefix "$HOME/.local" "@anthropic-ai/claude-code@$latest" >/dev/null 2>&1; then
+    hash -r
+    ok "Claude Code ${have:-none} -> $(claude --version 2>/dev/null | awk '{print $1}')"
+  else
+    warn "Claude Code update ${have:-none} -> $latest failed — keeping ${have:-none}"
+  fi
+}
+
 step4_claude_plugins() {
   log "step 4: claude plugin marketplace + install"
+  ensure_claude_current
   if ! command -v claude >/dev/null 2>&1; then
     warn "claude CLI not on PATH — skipping plugin setup"
     return
