@@ -8,21 +8,62 @@ name: Publish canopy-ui
 # One-time setup on npmjs: the canopy-ui package → Settings → Trusted Publisher →
 # GitHub Actions → repo `dimagi-internal/canopy-web`, workflow `publish-canopy-ui.yml`.
 #
-# Trigger by pushing a tag like `canopy-ui-v0.3.0`, or manually via the Actions
-# tab (workflow_dispatch). Bump the version in
-# frontend/packages/canopy-ui/package.json to match the tag before tagging.
+# **A release is a version bump reaching main** — not a step someone has to
+# remember afterwards. It used to be "merge, then push a `canopy-ui-v<version>`
+# tag", and that second step was skipped: canopy-ui 0.10.0 sat merged and
+# unpublished while its one consumer outside this repo (ace-web) kept 0.9.0,
+# with nothing anywhere reporting the gap. CI already refuses a src change that
+# does not move the version, so "the version moved on main" is exactly "there
+# is something to release".
+#
+# Idempotent: the check job asks npm whether this exact version exists and the
+# publish job runs only if it does not, so a package.json edit that is not a
+# bump (a dependency change) is a green no-op, never a failed re-publish. The
+# tag is written AFTER a successful publish, as the record of what shipped. It
+# is pushed with GITHUB_TOKEN, which by GitHub's design triggers no workflow —
+# so it cannot start a second run of this one.
+#
+# `workflow_dispatch` re-runs it by hand (a publish that failed on npm's side).
 on:
   push:
-    tags: ['canopy-ui-v*']
+    branches: [main]
+    paths: ['frontend/packages/canopy-ui/package.json']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # the release tag
   id-token: write   # required for OIDC Trusted Publishing
 
+# Two merges in quick succession must not race to publish.
+concurrency:
+  group: publish-canopy-ui
+  cancel-in-progress: false
+
 jobs:
+  check:
+    name: Is this version already on npm?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          v=$(node -p "require('./frontend/packages/canopy-ui/package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$(npm view "canopy-ui@$v" version 2>/dev/null)" = "$v" ]; then
+            echo "canopy-ui@$v is already on npm — nothing to release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "canopy-ui@$v is not on npm yet — releasing it."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
     name: Publish to npmjs
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -37,3 +78,13 @@ jobs:
       - name: Publish (OIDC, with provenance)
         run: npm publish --access public --provenance
         working-directory: frontend/packages/canopy-ui
+
+      - name: Tag the release
+        env:
+          TAG: canopy-ui-v${{ needs.check.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists — leaving it."
+          else
+            git tag "$TAG" && git push origin "$TAG"
+          fi

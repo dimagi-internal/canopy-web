@@ -36,22 +36,56 @@ name: Publish canopy-client
 # │ answered by this workflow's first run for 0.2.0.                       │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
-# Trigger by pushing a tag like `canopy-client-v0.1.0`, or manually via the
-# Actions tab. Bump the version in frontend/packages/canopy-client/package.json
-# to match the tag before tagging — CI enforces that a src change moves the
-# version, the same guard canopy-ui has.
+# **A release is a version bump reaching main**, exactly as for canopy-ui —
+# see the header of publish-canopy-ui.yml for why the old "merge, then push a
+# tag" step was removed (it was skipped, and canopy-ui 0.10.0 sat unpublished
+# while ace-web, which consumes BOTH packages, stayed behind). CI already
+# refuses a src change that does not move the version.
+#
+# Idempotent: the check job asks npm whether this version exists, and the
+# publish job runs only if it does not. The tag is written after a successful
+# publish, with GITHUB_TOKEN, which triggers no workflow. `workflow_dispatch`
+# re-runs it by hand.
 on:
   push:
-    tags: ['canopy-client-v*']
+    branches: [main]
+    paths: ['frontend/packages/canopy-client/package.json']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # the release tag
   id-token: write   # required for OIDC Trusted Publishing
 
+# Two merges in quick succession must not race to publish.
+concurrency:
+  group: publish-canopy-client
+  cancel-in-progress: false
+
 jobs:
+  check:
+    name: Is this version already on npm?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          v=$(node -p "require('./frontend/packages/canopy-client/package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$(npm view "canopy-client@$v" version 2>/dev/null)" = "$v" ]; then
+            echo "canopy-client@$v is already on npm — nothing to release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "canopy-client@$v is not on npm yet — releasing it."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
     name: Publish to npmjs
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -85,3 +119,13 @@ jobs:
       - name: Publish (OIDC, with provenance)
         run: npm publish ./dist --access public --provenance
         working-directory: frontend/packages/canopy-client
+
+      - name: Tag the release
+        env:
+          TAG: canopy-client-v${{ needs.check.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists — leaving it."
+          else
+            git tag "$TAG" && git push origin "$TAG"
+          fi
