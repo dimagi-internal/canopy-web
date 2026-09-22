@@ -137,6 +137,38 @@ def _no_domains_here(domains) -> list[str]:
     return []
 
 
+def _clean_resolvable(user, domains) -> list[str]:
+    """Domains this site may resolve to existing canopy users — bounded twice.
+
+    A site allowed to resolve a domain can assert any verified address in it,
+    so a compromised site key could speak for EXISTING canopy users there
+    (never create one). So the grant is narrow by construction: only a domain
+    the person setting it is in (their own verified login address), and only
+    one canopy itself admits at login. Anything else is refused with the reason.
+    """
+    from apps.common.auth_domains import allowed_email_domains
+
+    if not domains:
+        return []
+    admitted = {d.lower() for d in allowed_email_domains()}
+    own = (getattr(user, "email", "") or "").lower().rpartition("@")[2]
+    cleaned: list[str] = []
+    for raw in domains:
+        d = str(raw or "").strip().lower().lstrip("@")
+        if not d:
+            continue
+        if d not in admitted:
+            raise EmbedAppError("domain_not_admitted",
+                                f"{d} is not a domain canopy admits at login")
+        if d != own:
+            raise EmbedAppError("domain_not_yours",
+                                f"you can only let a site resolve your own domain ({own or 'none'}), "
+                                f"not {d}")
+        if d not in cleaned:
+            cleaned.append(d)
+    return cleaned
+
+
 def _clean_keys(keys) -> list[str]:
     """Accept only PEM PUBLIC keys, and say so when something else is pasted.
 
@@ -241,9 +273,18 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
 
 
 def update(*, user, app: AppCredential, origins=None, domains=None, agents=None,
-           public_keys=None) -> AppCredential:
+           public_keys=None, resolvable_domains=None) -> AppCredential:
     """Change what an already-registered app may do. Every field is optional."""
     fields: list[str] = []
+    if resolvable_domains is not None:
+        # Kept even when the list SHRINKS: removing a domain must never need the
+        # remover to be in it (an owner revoking a colleague's domain).
+        current = set(app.resolvable_domains or [])
+        wanted = [str(d or "").strip().lower().lstrip("@") for d in resolvable_domains]
+        added = [d for d in wanted if d and d not in current]
+        _clean_resolvable(user, added)
+        app.resolvable_domains = [d for d in dict.fromkeys(wanted) if d]
+        fields.append("resolvable_domains")
     if origins is not None:
         app.allowed_frame_origins = _clean_origins(origins)
         fields.append("allowed_frame_origins")

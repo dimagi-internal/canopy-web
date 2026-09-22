@@ -43,6 +43,8 @@ KINDS = (USER, CONTACT, SYSTEM, AGENT, UNKNOWN)
 SESSION = "session"            # signed in to canopy in this very request
 PAT = "pat"                    # a personal access token (a machine acting as its owner)
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
+HOST_SIGNED = "host_signed"    # a connected site signed for its visitor; canopy resolved
+                               # them to an existing account (a weaker claim — not "verified")
 SLACK_LINKED = "slack_linked"  # a Slack user linked by signing in to canopy
 SLACK_EMAIL = "slack_email"    # a Slack member matched to a canopy user by profile email
 APPROVAL = "approval"          # a person approved an item whose work this is

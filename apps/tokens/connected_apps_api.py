@@ -56,6 +56,9 @@ class ConnectedAppOut(Schema):
     name: str
     origins: list[str]
     delegation_domains: list[str]
+    #: Domains whose EXISTING canopy users this site's visitors arrive as
+    #: (who-is-asking §2). Empty: every visitor is a contact.
+    resolvable_domains: list[str] = []
     agents: list[ConnectedAgentOut]
     #: Registered PEM public keys. Returned in full — they are public by
     #: definition, and showing only a count would leave an operator unable to
@@ -96,6 +99,7 @@ class UpdateIn(Schema):
     agents: list[str] | None = None
     public_keys: list[str] | None = None
     show_on_canopy_pages: bool | None = None
+    resolvable_domains: list[str] | None = None
 
 
 def _out(app: AppCredential) -> ConnectedAppOut:
@@ -107,6 +111,7 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         # in force, which is the confusion `frame_origins()` exists to prevent.
         origins=app.frame_origins(),
         delegation_domains=list(app.allowed_delegation_domains or []),
+        resolvable_domains=list(app.resolvable_domains or []),
         public_keys=list(app.public_keys or []),
         signs_assertions=bool(app.public_keys),
         agents=[
@@ -187,7 +192,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
         embed_apps.update(
             user=request.user, app=app, origins=payload.origins,
             domains=payload.delegation_domains, agents=payload.agents,
-            public_keys=payload.public_keys,
+            public_keys=payload.public_keys, resolvable_domains=payload.resolvable_domains,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
@@ -202,6 +207,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
+                 f"resolvable={app.resolvable_domains} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
 

@@ -68,9 +68,12 @@ def _bearer_method(scope) -> str:
     """`pat` or `delegated` for the bearer token `_user_from_bearer` accepted."""
     raw = _header(scope, b"authorization")
     token_value = raw[7:].decode("latin1").strip() if raw else ""
-    from apps.tokens.models import PersonalToken
+    from apps.tokens.models import DelegatedToken, PersonalToken
 
-    return "pat" if PersonalToken.lookup(token_value) is not None else "delegated"
+    if PersonalToken.lookup(token_value) is not None:
+        return "pat"
+    delegated = DelegatedToken.lookup(token_value)
+    return (delegated.assurance or "delegated") if delegated is not None else "delegated"
 
 
 @database_sync_to_async
@@ -133,6 +136,19 @@ def _user_from_query_token(scope):
     return None
 
 
+@database_sync_to_async
+def _query_token_method(scope) -> str:
+    """How the `?token=` user was established: `delegated`, or `host_signed` for
+    a visitor a connected site resolved to their existing account."""
+    from urllib.parse import parse_qs
+
+    from apps.tokens.models import DelegatedToken
+
+    values = parse_qs((scope.get("query_string") or b"").decode("latin1")).get("token") or []
+    token = DelegatedToken.lookup(values[0]) if values else None
+    return (token.assurance or "delegated") if token is not None else "delegated"
+
+
 class RealtimeAuthMiddleware:
     def __init__(self, app):
         self.app = app
@@ -149,7 +165,7 @@ class RealtimeAuthMiddleware:
             method = await _bearer_method(scope) if user is not None else ""
         if user is None:
             user = await _user_from_query_token(scope)
-            method = "delegated" if user is not None else ""
+            method = await _query_token_method(scope) if user is not None else ""
         scope = dict(scope)
         scope["user"] = user or AnonymousUser()
         scope["auth_method"] = method

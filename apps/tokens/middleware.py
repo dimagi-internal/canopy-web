@@ -106,7 +106,7 @@ class BearerTokenAuthMiddleware:
         # answer, and it is the one every other view on this request already saw.
         if not already_signed_in:
             request.user = dtok.user
-            request.auth_method = "delegated"
+            request.auth_method = dtok.assurance or "delegated"
 
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its

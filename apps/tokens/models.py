@@ -236,6 +236,17 @@ class AppCredential(models.Model):
     #: XFO-exempt page with a permissive or malformed `frame-ancestors` is
     #: frameable by anyone.
     allowed_frame_origins = models.JSONField(default=list, blank=True)
+    #: Email domains whose EXISTING canopy users this site may bring in as
+    #: themselves (who-is-asking §2, "arrival"). A visitor the site signs an
+    #: assertion for, with `email_verified: true` at one of these domains, who
+    #: already has a canopy account with that verified address, arrives as that
+    #: user — their own ACL — instead of as a contact.
+    #:
+    #: Never creates an account (D1): no existing user, no resolution. Bounded
+    #: when set to a domain the setting owner is in AND canopy admits at login
+    #: (`embed_apps._clean_resolvable`), and used only on a SIGNED assertion.
+    #: Empty (the default) means every visitor is a contact.
+    resolvable_domains = models.JSONField(default=list, blank=True)
     #: PEM public keys this app signs its visitor assertions with.
     #:
     #: A LIST because rotation has to be possible without a flag day: publish
@@ -403,17 +414,25 @@ class DelegatedToken(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(db_index=True)
+    #: HOW the user was established, carried onto every turn they start
+    #: (`initiator_assurance`). `delegated`: canopy minted it for a user already
+    #: signed in to canopy (its own widget). `host_signed`: a connected SITE
+    #: signed an assertion about its visitor and canopy resolved them to an
+    #: existing account (who-is-asking §2) — a weaker claim, which an agent's
+    #: interface may treat as such.
+    ASSURANCE_DELEGATED, ASSURANCE_HOST_SIGNED = "delegated", "host_signed"
+    assurance = models.CharField(max_length=16, default=ASSURANCE_DELEGATED)
 
     class Meta:
         db_table = "delegated_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, user, ttl_seconds):
+    def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated"):
         from django.utils import timezone
         raw = secrets.token_urlsafe(32)
         token = cls.objects.create(
-            app=app, user=user,
+            app=app, user=user, assurance=assurance,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )

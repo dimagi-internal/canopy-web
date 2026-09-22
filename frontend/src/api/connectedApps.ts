@@ -57,6 +57,7 @@ export async function updateConnectedApp(
     agents?: string[]
     public_keys?: string[]
     show_on_canopy_pages?: boolean
+    resolvable_domains?: string[]
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.PATCH('/api/workspaces/{slug}/connected-apps/{app_id}', {
