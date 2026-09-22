@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import '../index.css'
 import { EmbedApp } from './EmbedApp'
 import { createHostLink, type EmbedBootstrap } from './hostLink'
+import { applyFrameTheme } from './theme'
 
 /**
  * Entry point for the widget's iframe.
@@ -37,5 +38,12 @@ if (!mount) {
   mount.textContent = 'This widget is not configured correctly.'
 } else {
   const link = createHostLink(bootstrap)
+  // The host's theme, applied to canopy's own document — the only way any host
+  // styling reaches the panel. Here rather than in EmbedApp because it is a
+  // property of the document, not of a conversation: it must hold on the
+  // picker and the error screen too. A host that sends nothing leaves the
+  // panel exactly as it always was.
+  link.waitForInit().then((init) => applyFrameTheme(init.theme)).catch(() => undefined)
+  link.onThemeChanged((theme) => applyFrameTheme(theme))
   createRoot(mount).render(<EmbedApp link={link} app={bootstrap.app} />)
 }

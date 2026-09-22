@@ -40,6 +40,7 @@
  */
 
 import { createChrome, type Chrome, type DisplayMode } from './chrome'
+import { normalizeTheme, type SafeTheme, type WidgetTheme } from './theme'
 import {
   SOURCE,
   isFrameMessage,
@@ -51,6 +52,7 @@ import {
 
 export type { DisplayMode } from './chrome'
 export type { ActionSpec } from './protocol'
+export type { ThemeMode, WidgetTheme } from './theme'
 
 /** `window.localStorage`, or null where reaching for it throws. */
 function safeLocalStorage(): Pick<Storage, 'getItem' | 'setItem'> | null {
@@ -116,6 +118,11 @@ export interface CanopyWidgetOptions {
   zIndex?: number
   /** Open immediately rather than waiting for the launcher. */
   open?: boolean
+  /** How the launcher and the panel are dressed. Every field is optional and
+   *  the default is the widget as it always looked; see `WidgetTheme`, and the
+   *  embedding guide for the CSS-variable and `::part()` alternatives that need
+   *  no JS. Invalid values are dropped with a console warning. */
+  theme?: WidgetTheme
 }
 
 export type ContextProvider = () => unknown | Promise<unknown>
@@ -142,6 +149,10 @@ export interface CanopyWidget {
    *  name replaces it, so a re-rendering host can call this freely. */
   registerAction(name: string, action: HostAction, options?: Omit<ActionSpec, 'name'>): void
   unregisterAction(name: string): void
+  /** Re-theme while the page is open — a host's own light/dark toggle, say.
+   *  Replaces the whole theme rather than merging, so a field you leave out
+   *  goes back to its default. */
+  setTheme(theme: WidgetTheme): void
   /** Remove the widget and stop listening. Idempotent. */
   destroy(): void
 }
@@ -158,7 +169,15 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   const canopyOrigin = originOf(options.baseUrl, pageOrigin)
 
   const base = options.baseUrl.replace(/\/$/, '')
-  const src = `${base}/embed/chat?app=${encodeURIComponent(options.app)}`
+  let theme: SafeTheme = normalizeTheme(options.theme)
+  // The MODE rides the URL rather than the handshake, so the server renders the
+  // shell in the right theme from its first byte. Over postMessage it would
+  // arrive only after the frame's JS had booted — a dark panel flashing before
+  // turning light, on every page view. Colours can wait for the handshake:
+  // nothing on the boot screen uses them.
+  const src =
+    `${base}/embed/chat?app=${encodeURIComponent(options.app)}` +
+    (theme.mode ? `&theme=${theme.mode}` : '')
 
   let provider: ContextProvider | null = null
   // Replayed on init: a frame that mounts after the page declared its view must
@@ -183,6 +202,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     title: options.title ?? 'Canopy assistant',
     width: options.width ?? 400,
     zIndex: options.zIndex ?? 2147483000,
+    theme,
     onToggle: (open) => post({ source: SOURCE, type: 'visibility', open }),
   })
 
@@ -253,6 +273,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             agent: options.agent,
             metadata: options.metadata,
             actions: actionSpecs(),
+            theme,
           })
           // After init, never inside it: `init` carries the token and is the
           // one message whose shape the frame validates strictly. The view is
@@ -345,6 +366,13 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     isOpen: () => chrome.isOpen(),
     dismiss: () => chrome.dismiss(),
     isDismissed: () => chrome.isDismissed(),
+    setTheme(next: WidgetTheme) {
+      theme = normalizeTheme(next)
+      chrome.setTheme(theme)
+      // Only once the frame is listening; before that, `init` carries the
+      // current value, so a theme set during boot is not lost.
+      if (frameReady) post({ source: SOURCE, type: 'theme', theme })
+    },
     provideContext(next) {
       provider = next
     },

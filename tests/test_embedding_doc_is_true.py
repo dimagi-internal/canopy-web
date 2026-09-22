@@ -371,3 +371,42 @@ def test_the_doc_states_the_host_boundary_on_history(doc):
     the doc has to say it, and say the supplied value is ignored."""
     assert "on your host, and only yours" in doc
     assert "An `embed_app` you pass is ignored" in doc
+
+
+def test_every_documented_theme_variable_and_part_is_real(doc):
+    """§4's theming section tells a host to set `--canopy-*` variables and style
+    `::part()`s. One the launcher does not read is a host's brand colour silently
+    doing nothing — the exact failure theming exists to end."""
+    import re
+
+    chrome = (REPO / "frontend/packages/canopy-widget/src/chrome.ts").read_text()
+    section = doc[doc.index("### Match it to your brand"):]
+    section = section[: section.index("**Pick a mode:**")]
+
+    documented_vars = set(re.findall(r"(--canopy-[a-z-]+)\s*:", section))
+    read_vars = set(re.findall(r"var\((--canopy-[a-z-]+)", chrome))
+    assert documented_vars, "the variable list moved; point this test at it"
+    assert documented_vars <= read_vars, (
+        f"documented but never read by the launcher: {sorted(documented_vars - read_vars)}"
+    )
+
+    documented_parts = set(re.findall(r"::part\((\w+)\)", section))
+    real_parts = set(re.findall(r"setAttribute\('part', '(\w+)'\)", chrome))
+    assert documented_parts == real_parts, (
+        f"documented parts {sorted(documented_parts)} vs real {sorted(real_parts)}"
+    )
+
+    theme = (REPO / "frontend/packages/canopy-widget/src/theme.ts").read_text()
+    iface = theme[theme.index("export interface WidgetTheme {"):]
+    iface = iface[: iface.index("\n}")]
+    real_fields = set(re.findall(r"^\s+(\w+)\?:", iface, re.M))
+    # The RAW file here: the `doc` fixture collapses whitespace, which removes
+    # the line starts this pattern anchors on.
+    raw = DOC.read_text()
+    raw = raw[raw.index("### Match it to your brand"):]
+    block = raw[raw.index("theme: {"):]
+    block = block[: block.index("},")]
+    documented_fields = set(re.findall(r"^\s+(?://\s*)?(\w+):", block, re.M))
+    assert documented_fields == real_fields, (
+        f"theme fields documented {sorted(documented_fields)} vs real {sorted(real_fields)}"
+    )

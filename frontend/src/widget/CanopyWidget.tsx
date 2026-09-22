@@ -6,6 +6,7 @@ import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
 import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
 import { resourceChanged } from './pageInvalidation'
+import { useTheme } from '@/theme/ThemeProvider'
 import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions'
 
 /**
@@ -48,6 +49,9 @@ interface WidgetHandle {
     options?: ActionOptions,
   ): void
   unregisterAction(name: string): void
+  /** Optional in the type because the loader is fetched as a script: a stale
+   *  cached copy from before theming existed must degrade, not throw. */
+  setTheme?(theme: { mode?: 'light' | 'dark' | 'auto' }): void
 }
 
 interface CanopyGlobal {
@@ -95,6 +99,13 @@ export function CanopyWidget() {
   const searchRef = useRef(location.search)
   searchRef.current = location.search
   const handleRef = useRef<WidgetHandle | null>(null)
+  // canopy is a host like any other, and its pages have a light/dark toggle.
+  // The panel used to be dark regardless, so switching canopy to light left a
+  // dark assistant floating on it. Read through a ref inside the mount effect,
+  // which deliberately runs once; the effect below follows later toggles.
+  const { theme } = useTheme()
+  const themeRef = useRef(theme)
+  themeRef.current = theme
   /** Names currently mirrored into the widget, so a withdrawn action is
    *  actually withdrawn rather than left callable. */
   const declared = useRef<Set<string>>(new Set())
@@ -127,6 +138,10 @@ export function CanopyWidget() {
         mode: 'overlay',
         // The HOST names its own launcher; canopy is a host like any other.
         launcherLabel: 'Canopy AI',
+        // Mode only: canopy's accent IS the widget's default accent, so there
+        // is nothing to override — and passing it would pin today's orange in
+        // two places.
+        theme: { mode: themeRef.current },
         // canopy says a resource moved; the page decides what re-reading means.
         // Registered at init rather than as a later call because a notification
         // that arrives before the handler exists is simply lost — and the
@@ -215,6 +230,12 @@ export function CanopyWidget() {
       handleRef.current = null
     }
   }, [])
+
+  // Follow canopy's own toggle while the widget is up. A no-op until the mount
+  // effect has created the handle; init already carried the mode at that point.
+  useEffect(() => {
+    handleRef.current?.setTheme?.({ mode: theme })
+  }, [theme])
 
   return null
 }

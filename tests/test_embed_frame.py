@@ -361,3 +361,52 @@ def test_the_shell_tells_the_frame_which_app_it_is(built_frontend):
     body = _get().content.decode()
     assert "window.CANOPY_EMBED" in body
     assert "connect-labs" in body
+
+
+# ---- the panel's light/dark (`?theme=`, set by the loader from theme.mode) ----
+#
+# Rendered by the SERVER so the panel is in the right mode from its first
+# paint. Applied later by the frame's JS instead, a light host would see the
+# panel flash dark on every page view.
+
+def _html_tag(body: str) -> str:
+    start = body.index("<html")
+    return body[start:body.index(">", start) + 1]
+
+
+def _shell(built_frontend, query=""):
+    if not AppCredential.objects.filter(name="connect-labs").exists():
+        _app()
+    return Client().get(f"/embed/chat?app=connect-labs{query}").content.decode()
+
+
+def test_no_theme_is_the_historical_dark_default(built_frontend):
+    """Every host that existed before theming must see exactly what it saw."""
+    assert 'class="dark"' in _html_tag(_shell(built_frontend))
+
+
+def test_a_light_host_gets_a_light_shell(built_frontend):
+    tag = _html_tag(_shell(built_frontend, "&theme=light"))
+    assert 'class=""' in tag and "dark" not in tag
+
+
+def test_auto_starts_dark_and_lets_the_browser_decide_before_anything_paints(built_frontend):
+    body = _shell(built_frontend, "&theme=auto")
+    assert 'class="dark"' in _html_tag(body)
+    # In <head>, BEFORE the stylesheet — after it, the wrong mode has painted.
+    head = body[:body.index("</head>")]
+    assert "prefers-color-scheme: dark" in head
+    assert head.index("prefers-color-scheme") < head.index("<style>")
+
+
+def test_an_unrecognised_theme_cannot_reach_the_attribute(built_frontend):
+    """The value lands in an HTML attribute. It is looked up in an allowlist,
+    never echoed."""
+    body = _shell(built_frontend, '&theme=%22%3E%3Cscript%3Ealert(1)%3C/script%3E')
+    assert "alert(1)" not in body
+    assert 'class="dark"' in _html_tag(body)
+
+
+def test_only_auto_carries_the_media_query_script(built_frontend):
+    assert "prefers-color-scheme" not in _shell(built_frontend, "&theme=light")
+    assert "prefers-color-scheme" not in _shell(built_frontend, "&theme=dark")

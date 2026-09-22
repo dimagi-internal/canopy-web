@@ -309,3 +309,29 @@ describe('the page state channel', () => {
     expect(link.pageState()).toEqual({ visible_ids: [3] })
   })
 })
+
+describe('the host theme', () => {
+  it('rides init unvalidated, for applyFrameTheme to check itself', async () => {
+    const { link, fromHost } = harness()
+    fromHost({ source: SOURCE, type: 'init', token: 't', actions: [], theme: { mode: 'light' } })
+    expect((await link.waitForInit()).theme).toEqual({ mode: 'light' })
+  })
+
+  it('delivers a live re-theme to listeners', () => {
+    const { link, fromHost } = harness()
+    fromHost({ source: SOURCE, type: 'init', token: 't', actions: [] })
+    const seen: unknown[] = []
+    link.onThemeChanged((t) => seen.push(t))
+    fromHost({ source: SOURCE, type: 'theme', theme: { mode: 'dark' } })
+    expect(seen).toEqual([{ mode: 'dark' }])
+  })
+
+  it('ignores a theme from an origin that is not the host', () => {
+    const { link, fromHost } = harness()
+    fromHost({ source: SOURCE, type: 'init', token: 't', actions: [] })
+    const seen: unknown[] = []
+    link.onThemeChanged((t) => seen.push(t))
+    fromHost({ source: SOURCE, type: 'theme', theme: { accent: '#000' } }, 'https://evil.example')
+    expect(seen).toEqual([])
+  })
+})
