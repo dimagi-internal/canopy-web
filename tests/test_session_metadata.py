@@ -117,3 +117,21 @@ def test_a_contacts_conversation_is_recorded_like_anyone_elses():
     assert s.metadata.get(services.TRANSCRIPT_SOURCED) is True
     assert s.created_by_id is None and s.contact_id is not None
     assert not s.participants.exists()
+
+
+def test_a_contacts_history_is_the_same_page_a_users_is():
+    """It 500'd: the rows were built from `m.body`, which Message does not have."""
+    from apps.canopy_sessions.models import Message
+
+    c = _contact_client()
+    sid = c.post("/api/contact/sessions", {"agent_slug": "echo"},
+                 content_type="application/json").json()["id"]
+    s = Session.objects.get(pk=sid)
+    for i, (role, text) in enumerate([("user", "hi"), ("assistant", "hello")]):
+        Message.objects.create(session=s, turn_index=i, role=role, plaintext=text,
+                               content={"text": text})
+    r = c.get(f"/api/contact/sessions/{sid}/messages?before=99")
+    assert r.status_code == 200, r.content
+    rows = r.json()["messages"]
+    assert [(m["role"], m["plaintext"]) for m in rows] == [("user", "hi"), ("assistant", "hello")]
+    assert set(rows[0]) == {"turn_index", "role", "plaintext", "content", "created_at"}

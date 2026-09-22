@@ -1253,7 +1253,14 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Earlier messages */
+        /**
+         * Earlier messages
+         * @description The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
+         *     renders a contact's conversation with the one renderer it already has.
+         *
+         *     (It used to hand-build rows from `m.body`, a field `Message` does not have —
+         *     every call on a conversation with a message in it was a 500.)
+         */
         readonly get: operations["apps_tokens_contact_api_messages"];
         readonly put?: never;
         readonly post?: never;
@@ -6897,6 +6904,34 @@ export interface components {
              */
             readonly client_id: string;
         };
+        /** MessageOut */
+        readonly MessageOut: {
+            /** Turn Index */
+            readonly turn_index: number;
+            /** Role */
+            readonly role: string;
+            /** Plaintext */
+            readonly plaintext: string;
+            /** Content */
+            readonly content: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * MessagePageOut
+         * @description One backward page of transcript for scroll-back ("Load earlier").
+         */
+        readonly MessagePageOut: {
+            /** Messages */
+            readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Has More Before */
+            readonly has_more_before: boolean;
+        };
         /** ContactTokenOut */
         readonly ContactTokenOut: {
             /** Token */
@@ -11896,34 +11931,6 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
-        /** MessageOut */
-        readonly MessageOut: {
-            /** Turn Index */
-            readonly turn_index: number;
-            /** Role */
-            readonly role: string;
-            /** Plaintext */
-            readonly plaintext: string;
-            /** Content */
-            readonly content: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /**
-         * MessagePageOut
-         * @description One backward page of transcript for scroll-back ("Load earlier").
-         */
-        readonly MessagePageOut: {
-            /** Messages */
-            readonly messages: readonly components["schemas"]["MessageOut"][];
-            /** Has More Before */
-            readonly has_more_before: boolean;
-        };
         /** SessionNotifyIn */
         readonly SessionNotifyIn: {
             /** Every Completion */
@@ -14365,9 +14372,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["MessagePageOut"];
                 };
             };
         };

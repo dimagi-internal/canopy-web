@@ -18,6 +18,8 @@ import logging
 
 from django.http import HttpRequest
 from ninja import Router, Schema
+
+from apps.canopy_sessions.schemas import MessagePageOut
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
@@ -393,21 +395,21 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
 
 
-@contact_router.get("/sessions/{session_id}/messages", response=dict,
+@contact_router.get("/sessions/{session_id}/messages", response=MessagePageOut,
                     summary="Earlier messages")
-def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50) -> dict:
+def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50):
+    """The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
+    renders a contact's conversation with the one renderer it already has.
+
+    (It used to hand-build rows from `m.body`, a field `Message` does not have —
+    every call on a conversation with a message in it was a 500.)
+    """
     from apps.api.pagination import clamp_limit
     from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions.schemas import MessageOut
 
     session = _session_or_404(request, session_id)
     rows, has_more = session_services.messages_before(
         session, before=before, limit=clamp_limit(limit)
     )
-    return {
-        "messages": [
-            {"turn_index": m.turn_index, "role": m.role, "body": m.body,
-             "created_at": m.created_at.isoformat()}
-            for m in rows
-        ],
-        "has_more_before": has_more,
-    }
+    return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
