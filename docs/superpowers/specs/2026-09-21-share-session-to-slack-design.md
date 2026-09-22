@@ -26,8 +26,18 @@ The ask, in the session: *"summarize and share what we are doing"*.
   replies becomes a participant. **Replying in the thread steers the session** —
   that is the point, and why bind is a deliberate choice rather than the default.
 
-A session holds one thread. Binding an already-bound session is refused, naming
-the existing thread; there is no unbind in this change.
+A session holds one thread; there is no unbind in this change. **Sharing a bound
+session again posts an update** into that thread (a reply headed `*Update* from
+@you`), whatever mode or channel was asked for. Once bound, work done in the
+session itself never reaches the thread (the thread hears only what it asked),
+so re-sharing is how the people watching it stay current. *(Amended 2026-09-21:
+this was first built as a refusal, which left no way to post an update where
+people were watching.)*
+
+Turns asked **before** the bind are not the thread's business. The bind stamps
+`slack_bound_at`, and the relay and status line skip earlier turns — otherwise a
+share from the chat page, which is itself a turn, would open its own new thread
+with "Shared to <link>" and a done-line.
 
 ## One service, two entry points
 
@@ -112,7 +122,9 @@ Through the real Slack fake in `tests/test_slack.py`:
 - bind on an agent-less session: a member's reply continues it, a contact's does
   not;
 - refusals: not installed, not linked, not visible, agent not Slack-enabled,
-  already bound, unresolvable session (bind), ambiguous match, `not_in_channel`;
+  unresolvable session (bind), ambiguous match, `not_in_channel`;
+- re-sharing a bound session posts an update in its thread; a turn asked before the bind
+  is neither relayed nor given a status line;
 - the MCP tool resolves by `claude_session_id` and by emdash task, and cannot
   reach another workspace's session.
 

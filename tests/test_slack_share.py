@@ -146,12 +146,22 @@ def test_naming_an_agent_in_a_bound_repo_thread_asks_that_agent(slack, linked, a
 
 # ---- refusals ----------------------------------------------------------------
 
-def test_bind_twice_is_refused_naming_the_thread(slack, linked, alice, repo_session):
+def test_sharing_a_bound_session_again_posts_an_update_in_its_thread(slack, linked, alice, repo_session):
     _share(alice, session=repo_session, mode=share.BIND)
-    result = _share(alice, session=repo_session, mode=share.BIND, channel="C2")
-    assert result.status == share.ALREADY_BOUND
-    assert "<#C1>" in result.message
-    assert len(slack.said("chat.postMessage")) == 1
+    result = _share(alice, session=repo_session, mode=share.BIND, channel="C2",
+                    summary="Tests pass; opening the PR next.")
+    assert result.status == share.UPDATED and result.ok
+    first, update = slack.said("chat.postMessage")
+    assert update["channel"] == "C1" and update["thread_ts"] == POSTED_TS   # its thread, not C2
+    assert "*Update*" in update["text"] and "opening the PR next" in update["text"]
+    repo_session.refresh_from_db()
+    assert repo_session.metadata["slack_thread_ts"] == POSTED_TS           # still the same thread
+
+
+def test_an_update_needs_no_channel_but_a_first_share_does(slack, linked, alice, repo_session):
+    assert _share(alice, session=repo_session, channel="").status == share.BAD_REQUEST
+    _share(alice, session=repo_session, mode=share.BIND)
+    assert _share(alice, session=repo_session, channel="", mode=share.BROADCAST).status == share.UPDATED
 
 
 def test_bind_without_a_session_is_refused(slack, linked, alice):
@@ -264,3 +274,30 @@ def test_the_share_command_itself_is_not_announced_as_elsewhere(slack, linked, a
     before = len(slack.said("chat.postMessage"))
     assert relay.notify_elsewhere(repo_session, ["/canopy:share-to-slack #dev bind"]) is False
     assert len(slack.said("chat.postMessage")) == before
+
+
+def _asked_before_the_bind(session):
+    """A turn enqueued, then the session bound — the chat page's share turn."""
+    import datetime as dt
+
+    turn = Turn.objects.create(chat_session=session, prompt="/canopy:share-to-slack #dev bind",
+                               origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    Turn.objects.filter(pk=turn.pk).update(created_at=turn.created_at - dt.timedelta(seconds=5))
+    turn.refresh_from_db()
+    return turn
+
+
+def test_the_share_turns_own_reply_does_not_open_the_thread(slack, linked, alice, repo_session):
+    from apps.harness.models import TurnEvent
+    from apps.slack import relay, status
+
+    turn = _asked_before_the_bind(repo_session)
+    _share(alice, session=repo_session, mode=share.BIND)
+    repo_session.refresh_from_db()
+    turn.refresh_from_db()
+    posts = len(slack.said("chat.postMessage"))
+    row = TurnEvent.objects.create(turn=turn, seq=1, kind="assistant", payload={"text": "Shared to #dev."})
+    assert relay.relay(turn, [row]) == 0
+    assert status.post(turn) is None
+    assert relay.relay_after_turn(repo_session, [(7, "Shared to #dev.")]) == 0
+    assert len(slack.said("chat.postMessage")) == posts
