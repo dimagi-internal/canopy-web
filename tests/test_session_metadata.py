@@ -135,3 +135,15 @@ def test_a_contacts_history_is_the_same_page_a_users_is():
     rows = r.json()["messages"]
     assert [(m["role"], m["plaintext"]) for m in rows] == [("user", "hi"), ("assistant", "hello")]
     assert set(rows[0]) == {"turn_index", "role", "plaintext", "content", "created_at"}
+
+
+def test_a_contact_can_attach_to_their_own_conversation_only():
+    from apps.canopy_sessions.models import Session as S
+
+    c = _contact_client()
+    sid = c.post("/api/contact/sessions", {"agent_slug": "echo"},
+                 content_type="application/json").json()["id"]
+    assert c.post(f"/api/contact/sessions/{sid}/attach").status_code == 200
+    assert c.post(f"/api/contact/sessions/{sid}/detach").status_code == 200
+    other = S.objects.create(workspace_id=S.objects.get(pk=sid).workspace_id, title="not theirs")
+    assert c.post(f"/api/contact/sessions/{other.pk}/attach").status_code == 404

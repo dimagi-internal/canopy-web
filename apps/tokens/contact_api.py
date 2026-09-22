@@ -413,3 +413,21 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
         session, before=before, limit=clamp_limit(limit)
     )
     return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
+
+
+@contact_router.post("/sessions/{session_id}/attach", response=dict,
+                     summary="I am watching this conversation (stream it live)")
+def attach(request: HttpRequest, session_id: str) -> dict:
+    """The same viewer signal a user's chat sends, so a contact watching their
+    own conversation sees the agent's reply as it is written, not when it lands."""
+    from apps.canopy_sessions import services as session_services
+
+    return {"streaming": session_services.attach_session(_session_or_404(request, session_id))}
+
+
+@contact_router.post("/sessions/{session_id}/detach", response=dict,
+                     summary="I stopped watching")
+def detach(request: HttpRequest, session_id: str) -> dict:
+    from apps.canopy_sessions import services as session_services
+
+    return {"streaming": session_services.detach_session(_session_or_404(request, session_id))}
