@@ -56,8 +56,21 @@ ALGORITHM = "EdDSA"
 TTL_SECONDS = 120
 
 
+def _configured_key() -> str:
+    """The key, or "" — where "" includes the CFN secret's birth value.
+
+    A secret container is created holding "PLACEHOLDER" (the same convention
+    `apps/slack/services.py` follows), and reading that as a key would be worse
+    than reading it as absent: `configured()` would say yes and every signature
+    would die inside the crypto library instead of producing the clean "this
+    canopy cannot vouch" the agent is meant to get.
+    """
+    value = (getattr(settings, "ONBEHALF_SIGNING_KEY", "") or "").strip()
+    return "" if value == "PLACEHOLDER" else value
+
+
 def _private_key() -> str:
-    key = (getattr(settings, "ONBEHALF_SIGNING_KEY", "") or "").strip()
+    key = _configured_key()
     if not key:
         raise OnBehalfError(
             "this canopy has no on-behalf-of signing key, so it cannot vouch for "
@@ -68,7 +81,7 @@ def _private_key() -> str:
 
 def configured() -> bool:
     """Whether this deployment can sign at all — an unconfigured one is normal."""
-    return bool((getattr(settings, "ONBEHALF_SIGNING_KEY", "") or "").strip())
+    return bool(_configured_key())
 
 
 def issuer() -> str:
