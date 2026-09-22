@@ -474,3 +474,16 @@ def test_the_client_budget_is_generous_by_default():
     from django.conf import settings as s
 
     assert int(getattr(s, "CONTACT_TOKEN_CLIENT_LIMIT", 300)) >= 120
+
+
+def test_the_audience_is_this_canopys_public_url_as_the_handoff_doc_says():
+    """The doc tells a host `"aud": settings.CANOPY_BASE_URL`. The verifier used
+    to fall back to an undefined `SITE_BASE_URL` and so to the literal "canopy",
+    which refused every host that did what the doc said."""
+    from django.test import override_settings
+
+    with override_settings(EMBED_ASSERTION_AUDIENCE="",
+                           CANOPY_PUBLIC_BASE_URL="https://labs.connect.dimagi.com/canopy/"):
+        assert assertions.audience() == "https://labs.connect.dimagi.com/canopy"
+    with override_settings(EMBED_ASSERTION_AUDIENCE="urn:canopy:x"):
+        assert assertions.audience() == "urn:canopy:x"
