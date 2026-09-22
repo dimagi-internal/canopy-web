@@ -262,10 +262,10 @@ export function AgentOverviewSection() {
           </Setting>
           <Setting
             title="Callers"
-            who="Published from the agent's repo by its owner or an admin"
-            description={`What people who are not ${agent.name}'s admins — an emailer, a widget visitor, a workspace member — may ask it for. Each runs confined to what is listed.`}
+            who="The agent's owner and admins"
+            description={`Who else may use ${agent.name}, and for what: the whole agent for addresses you trust (e.g. everyone at your domain), a confined capability for everyone else. Each also appears as an MCP tool.`}
           >
-            <AgentInterfaceView agentSlug={agent.slug} />
+            <AgentInterfaceView agentSlug={agent.slug} canEdit={agent.is_admin ?? false} />
           </Setting>
           <Setting
             title="Turn mode"

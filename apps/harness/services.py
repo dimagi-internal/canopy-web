@@ -90,7 +90,8 @@ def _member_behind_email(agent, contact):
     would be confined as callers. The who-is-asking arrival rule (§2, D1) —
     existing accounts only, never created — applied to mail. All of:
 
-      * THIS message is DMARC-aligned on our own receiver's verdict. SPF or DKIM
+      * THIS message is aligned (DMARC, or DKIM signed BY the From: domain) on our
+        own receiver's verdict. SPF or unaligned DKIM
         alone do not tie the signature to the visible From; the best-ever grade
         says nothing about a spoof today.
       * exactly one canopy user holds that address as a VERIFIED allauth email.
@@ -103,7 +104,7 @@ def _member_behind_email(agent, contact):
     from apps.contacts import services as contacts
     from apps.contacts.models import Contact
 
-    if contact is None or contact.last_auth_result != Contact.AUTH_DMARC or not contact.email:
+    if contact is None or contact.last_auth_result not in Contact.EMAIL_ALIGNED or not contact.email:
         return None
     from allauth.account.models import EmailAddress
 

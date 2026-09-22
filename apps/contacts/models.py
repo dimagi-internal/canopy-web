@@ -73,6 +73,11 @@ class Contact(models.Model):
     AUTH_SLACK = "slack"
     # Tier 3 — the signature is also tied to the identity the reader sees.
     AUTH_DMARC = "dmarc"
+    # A DKIM signature BY the From: domain itself (`header.d`/`header.i` equal to
+    # it). That is exactly what DMARC's DKIM-alignment check establishes; DMARC
+    # only adds a published policy on top. It is what a domain that signs its
+    # mail but publishes no DMARC record (dimagi-associate.com) can prove.
+    AUTH_DKIM_ALIGNED = "dkim_aligned"
     AUTH_APP_SIGNED_ORIGIN = "app_signed_origin"
     AUTH_CHOICES = [
         (AUTH_NONE, "Unverified"),
@@ -82,13 +87,14 @@ class Contact(models.Model):
         (AUTH_APP_SIGNED, "Signed assertion from the app"),
         (AUTH_SLACK, "Slack account (event signed by Slack)"),
         (AUTH_DMARC, "DMARC aligned"),
+        (AUTH_DKIM_ALIGNED, "DKIM signed by the From: domain"),
         (AUTH_APP_SIGNED_ORIGIN, "Signed assertion from a framed origin"),
     ]
     AUTH_RANK = {
         AUTH_NONE: 0,
         AUTH_SPF: 1, AUTH_APP_SECRET: 1,
         AUTH_DKIM: 2, AUTH_APP_SIGNED: 2, AUTH_SLACK: 2,
-        AUTH_DMARC: 3, AUTH_APP_SIGNED_ORIGIN: 3,
+        AUTH_DMARC: 3, AUTH_DKIM_ALIGNED: 3, AUTH_APP_SIGNED_ORIGIN: 3,
     }
     #: Tier-level aliases. Prefer these in a rule: `auth_at_least(TIER_SIGNED)`
     #: keeps working when a channel adds a label, where naming `AUTH_DKIM`
@@ -281,6 +287,10 @@ class Contact(models.Model):
     @property
     def is_blocked(self) -> bool:
         return self.blocked_at is not None
+
+    #: Email grades that tie the signature to the visible From: — the ones that
+    #: make THIS message "verified" (tier 3 on the mail side).
+    EMAIL_ALIGNED = frozenset({AUTH_DMARC, AUTH_DKIM_ALIGNED})
 
     def auth_at_least(self, grade: str) -> bool:
         """Has this contact ever authenticated at `grade`'s tier or better?

@@ -301,13 +301,17 @@ class AgentAdminOut(StrictModel):
 
 
 class AgentInterfaceIn(StrictModel):
-    # The parsed `config/interface.yaml` — see apps/agents/interface.py.
-    interface: dict
+    # Exactly one of: `source`, the YAML an editor wrote (kept, comments and all),
+    # or `interface`, an already-parsed mapping. See apps/agents/interface.py.
+    source: str | None = None
+    interface: dict | None = None
 
 
 class AgentInterfaceOut(StrictModel):
     # Empty when nothing is published: every turn runs in the full profile.
     interface: dict
+    # The YAML as last saved; "" when it was published as a parsed mapping.
+    source: str = ""
     published_at: dt.datetime | None = None
     published_by_email: str | None = None
 
