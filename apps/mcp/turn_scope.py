@@ -30,6 +30,11 @@ def _allowed(name: str, claims: dict) -> bool:
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
 
 
+#: Tools whose `turn_id` argument must name a turn in this token's own
+#: conversation.
+TURN_PINNED = frozenset({"who_is_asking", "act_on_behalf_of_caller"})
+
+
 class TurnScopeMiddleware(Middleware):
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         tools = await call_next(context)
@@ -44,7 +49,14 @@ class TurnScopeMiddleware(Middleware):
             name = context.message.name
             if not _allowed(name, claims):
                 raise ToolError(f"{name} is not part of what this caller's session may use")
-            if name == "who_is_asking":
+            # Every tool that takes a `turn_id` is pinned to THIS token's own
+            # conversation. Without it the argument is the whole gate: a caller
+            # could name someone else's turn and be told who THEY are
+            # (`who_is_asking`), or be vouched for as them
+            # (`act_on_behalf_of_caller`, which mints a credential). The list is
+            # explicit rather than "any tool with a turn_id argument", so a new
+            # tool is pinned by a person deciding to pin it.
+            if name in TURN_PINNED:
                 asked = str((context.message.arguments or {}).get("turn_id") or "")
                 if asked not in set(claims.get("turn_ids") or []):
                     raise ToolError("turn not found")

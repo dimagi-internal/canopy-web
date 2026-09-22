@@ -614,6 +614,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/tokens/on-behalf-of/jwks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Public keys for canopy's on-behalf-of assertions
+         * @description The public keys that verify canopy's on-behalf-of assertions.
+         *
+         *     A canopy agent answering someone on your site can attach a short assertion
+         *     saying who it is answering: `iss` is this canopy, `aud` is your site's
+         *     registered name, `sub` is YOUR id for that person, and `act.sub` is the
+         *     agent. Verify it against these keys and act as that person, for that call
+         *     only — `exp` is 120 seconds and `jti` is single-use if you track it.
+         */
+        readonly get: operations["apps_tokens_api_onbehalf_jwks"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/feedback/": {
         readonly parameters: {
             readonly query?: never;
@@ -13597,6 +13623,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["GitHubInstallationOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_api_onbehalf_jwks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };

@@ -142,3 +142,36 @@ def github_installations(request: HttpRequest) -> list[GitHubInstallationOut]:
         })
         for r in rows
     ]
+
+
+# --- On-behalf-of: canopy's public key -------------------------------------
+#
+# Published so a HOST can verify the assertions canopy signs about who its
+# agent is currently answering (`apps/tokens/onbehalf.py`). Public by
+# necessity and by nature: it is a public key, a verifier must be able to fetch
+# it before it trusts anything, and JWKS is the shape every JWT library already
+# reads. `auth=None` plus an entry in the login middleware's allowlist, like
+# the inbound `contact-token` route it is the mirror of.
+#
+# An unconfigured deployment answers with an EMPTY key set rather than an
+# error: "this canopy signs nothing" is a real state, and a host polling the
+# endpoint should read it as "no keys", not as an outage.
+onbehalf_router = Router(auth=None, tags=["tokens"])
+
+
+@onbehalf_router.get("/on-behalf-of/jwks", response=dict, auth=None,
+                     summary="Public keys for canopy's on-behalf-of assertions")
+def onbehalf_jwks(request: HttpRequest) -> dict:
+    """The public keys that verify canopy's on-behalf-of assertions.
+
+    A canopy agent answering someone on your site can attach a short assertion
+    saying who it is answering: `iss` is this canopy, `aud` is your site's
+    registered name, `sub` is YOUR id for that person, and `act.sub` is the
+    agent. Verify it against these keys and act as that person, for that call
+    only — `exp` is 120 seconds and `jti` is single-use if you track it.
+    """
+    from . import onbehalf
+
+    if not onbehalf.configured():
+        return {"keys": []}
+    return {"keys": [onbehalf.public_jwk()]}
