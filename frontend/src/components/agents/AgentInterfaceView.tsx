@@ -7,6 +7,7 @@ type Capability = {
   entry?: string | null
   tools?: string[]
   bash?: string[]
+  input?: Record<string, string>
 }
 
 // Read-only: the interface lives in the agent's repo (config/interface.yaml) and is
@@ -56,6 +57,11 @@ export function AgentInterfaceView({ agentSlug }: { agentSlug: string }) {
                 <td className="py-1.5 align-top text-foreground">
                   <span className="font-mono">{n}</span>
                   {c.description && <div className="text-[12px] text-muted-foreground">{c.description}</div>}
+                  <div className="text-[11px] text-muted-foreground">
+                    MCP: <span className="font-mono">{`${agentSlug}__${n}`}</span>
+                    {Object.keys(c.input ?? {}).length > 0 &&
+                      ` (${Object.entries(c.input ?? {}).map(([k, t]) => `${k}: ${t}`).join(', ')})`}
+                  </div>
                 </td>
                 <td className="py-1.5 align-top text-[12px] text-foreground-secondary">
                   {(c.callers ?? []).join(', ') || 'nobody'}

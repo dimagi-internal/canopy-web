@@ -66,6 +66,14 @@ def relationship(turn, agent) -> str:
     user = turn.initiator_user if kind == who.USER else None
     if user is None or agent is None:
         return CALLER
+    return relationship_for_user(user, agent)
+
+
+def relationship_for_user(user, agent) -> str:
+    """What a canopy USER is to the agent, with no turn in hand (e.g. listing
+    the MCP tools they may call)."""
+    if agent is None or not getattr(user, "is_authenticated", False):
+        return CALLER
     if agent.owner_id == user.pk:
         return OWNER
     is_admin = getattr(agent, "is_admin", None)

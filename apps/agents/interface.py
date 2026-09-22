@@ -47,6 +47,12 @@ ASK = "ask"
 FULL = ""
 
 CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
+
+#: What a capability's `input` fields may be — each becomes a typed, required
+#: parameter of the capability's MCP tool (apps/mcp/agent_tools.py).
+INPUT_TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
+#: Parameters every capability tool already has; an `input` field may not shadow one.
+_RESERVED_INPUTS = frozenset({"message", "conversation_id", "wait_seconds"})
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 _MAX_ITEMS = 100
 _MAX_PATTERN = 300
@@ -96,7 +102,8 @@ def parse(doc) -> dict:
             raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
-        bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths"}
+        bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
+                          "input"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _strings(cap.get("callers"), "callers", name)
@@ -110,7 +117,17 @@ def parse(doc) -> dict:
         if entry is not None and (not isinstance(entry, str) or not entry.startswith("/")
                                   or "\n" in entry or len(entry) > _MAX_PATTERN):
             raise InterfaceError(f"{name}.entry must be a one-line slash command")
+        inputs = cap.get("input") or {}
+        if not isinstance(inputs, dict) or len(inputs) > 20:
+            raise InterfaceError(f"{name}.input must be a mapping of at most 20 fields")
+        for field, typ in inputs.items():
+            if not isinstance(field, str) or not _NAME.match(field) or field in _RESERVED_INPUTS:
+                raise InterfaceError(f"{name}.input: {field!r} must match {_NAME.pattern} "
+                                     f"and not be one of {sorted(_RESERVED_INPUTS)}")
+            if typ not in INPUT_TYPES:
+                raise InterfaceError(f"{name}.input.{field}: type must be one of {sorted(INPUT_TYPES)}")
         out[name] = {
+            "input": dict(inputs),
             "description": str(cap.get("description") or "")[:500],
             "callers": callers,
             "entry": entry,
@@ -142,13 +159,14 @@ def caller_classes(turn, relationship: str) -> set[str]:
     return classes
 
 
-def capability_for(turn, agent) -> str | None:
+def capability_for(turn, agent, requested: str | None = None) -> str | None:
     """Which profile this turn runs in: FULL, a capability name, or None (refused).
 
     FULL when the agent has published no interface (opt-in: nothing changes
     until it does), and for its owner, admins, and canopy's own turns. A
-    caller gets `ask` if their class is listed for it, and is refused
-    otherwise — `callers_default: none`.
+    caller gets the capability they asked for — `requested`, e.g. a tool called
+    over MCP — or `ask` by default (every free-form channel), if their class is
+    listed for it; otherwise they are refused (`callers_default: none`).
     """
     from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
 
@@ -158,10 +176,35 @@ def capability_for(turn, agent) -> str | None:
     rel = relationship(turn, agent)
     if rel in (OWNER, ADMIN, SYSTEM):
         return FULL
-    cap = iface["capabilities"].get(ASK)
+    name = requested or ASK
+    cap = iface["capabilities"].get(name)
     if cap and caller_classes(turn, rel) & set(cap.get("callers") or []):
-        return ASK
+        return name
     return None
+
+
+def offered_to(user, agent) -> list[str]:
+    """The capabilities `user` may invoke on `agent` directly — the MCP tool list.
+
+    Everything, for the owner and admins (their turns run FULL anyway). For a
+    workspace member, the capabilities listing `member` or `member:verified`:
+    a request authenticated by a canopy session or token IS verified, so the
+    two are the same for someone calling as themselves. Nothing for anyone
+    who is not a member of the agent's workspace — this surface is for people
+    canopy already knows by login; outsiders arrive by email or widget.
+    """
+    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
+    if not caps or not getattr(user, "is_authenticated", False):
+        return []
+    from apps.harness.caller_context import ADMIN, MEMBER, OWNER, relationship_for_user
+
+    rel = relationship_for_user(user, agent)
+    if rel in (OWNER, ADMIN):
+        return sorted(caps)
+    if rel != MEMBER:
+        return []
+    return sorted(n for n, c in caps.items()
+                  if {"member", "member:verified"} & set(c.get("callers") or []))
 
 
 def profile(agent, capability: str) -> dict | None:
@@ -175,6 +218,7 @@ def profile(agent, capability: str) -> dict | None:
         return None
     cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
     cap = cap or {"description": "", "callers": [], "entry": None,
-                  "tools": [], "bash": [], "read_paths": []}
+                  "tools": [], "bash": [], "read_paths": [], "input": {}}
     return {"name": capability, **{k: cap.get(k) for k in
-                                   ("description", "entry", "tools", "bash", "read_paths")}}
+                                   ("description", "entry", "tools", "bash", "read_paths",
+                                    "input")}}
