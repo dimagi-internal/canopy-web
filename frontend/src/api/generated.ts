@@ -1189,7 +1189,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** My conversations on this site */
+        /**
+         * My conversations on this site
+         * @description The same host filters a user's list takes, over the contact's OWN
+         *     conversations only — a filter narrows, it never widens what `contact_session_q`
+         *     already allows.
+         */
         readonly get: operations["apps_tokens_contact_api_list_sessions"];
         readonly put?: never;
         /**
@@ -1248,10 +1253,55 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Earlier messages */
+        /**
+         * Earlier messages
+         * @description The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
+         *     renders a contact's conversation with the one renderer it already has.
+         *
+         *     (It used to hand-build rows from `m.body`, a field `Message` does not have —
+         *     every call on a conversation with a message in it was a 500.)
+         */
         readonly get: operations["apps_tokens_contact_api_messages"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/attach": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * I am watching this conversation (stream it live)
+         * @description The same viewer signal a user's chat sends, so a contact watching their
+         *     own conversation sees the agent's reply as it is written, not when it lands.
+         */
+        readonly post: operations["apps_tokens_contact_api_attach"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/detach": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** I stopped watching */
+        readonly post: operations["apps_tokens_contact_api_detach"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6857,11 +6907,30 @@ export interface components {
             readonly status: string;
             /** Created At */
             readonly created_at: string;
+            /**
+             * Metadata
+             * @default {}
+             */
+            readonly metadata: {
+                readonly [key: string]: unknown;
+            };
         };
         /** ContactSessionCreateIn */
         readonly ContactSessionCreateIn: {
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Metadata
+             * @default {}
+             */
+            readonly metadata: {
+                readonly [key: string]: unknown;
+            };
         };
         /** ContactSendIn */
         readonly ContactSendIn: {
@@ -6872,6 +6941,34 @@ export interface components {
              * @default
              */
             readonly client_id: string;
+        };
+        /** MessageOut */
+        readonly MessageOut: {
+            /** Turn Index */
+            readonly turn_index: number;
+            /** Role */
+            readonly role: string;
+            /** Plaintext */
+            readonly plaintext: string;
+            /** Content */
+            readonly content: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * MessagePageOut
+         * @description One backward page of transcript for scroll-back ("Load earlier").
+         */
+        readonly MessagePageOut: {
+            /** Messages */
+            readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Has More Before */
+            readonly has_more_before: boolean;
         };
         /** ContactTokenOut */
         readonly ContactTokenOut: {
@@ -11877,34 +11974,6 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
-        /** MessageOut */
-        readonly MessageOut: {
-            /** Turn Index */
-            readonly turn_index: number;
-            /** Role */
-            readonly role: string;
-            /** Plaintext */
-            readonly plaintext: string;
-            /** Content */
-            readonly content: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /**
-         * MessagePageOut
-         * @description One backward page of transcript for scroll-back ("Load earlier").
-         */
-        readonly MessagePageOut: {
-            /** Messages */
-            readonly messages: readonly components["schemas"]["MessageOut"][];
-            /** Has More Before */
-            readonly has_more_before: boolean;
-        };
         /** SessionNotifyIn */
         readonly SessionNotifyIn: {
             /** Every Completion */
@@ -14227,7 +14296,14 @@ export interface operations {
     };
     readonly apps_tokens_contact_api_list_sessions: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly source?: string;
+                readonly origin_key?: string;
+                readonly opp_slug?: string;
+                readonly opp_run_id?: string;
+                readonly resource?: string;
+                readonly page_path?: string;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -14325,6 +14401,52 @@ export interface operations {
                 readonly before: number;
                 readonly limit?: number;
             };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MessagePageOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_attach: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_detach: {
+        readonly parameters: {
+            readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly session_id: string;

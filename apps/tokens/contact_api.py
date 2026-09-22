@@ -18,6 +18,8 @@ import logging
 
 from django.http import HttpRequest
 from ninja import Router, Schema
+
+from apps.canopy_sessions.schemas import MessagePageOut
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
@@ -245,10 +247,18 @@ class ContactSessionOut(Schema):
     title: str
     status: str
     created_at: str
+    #: The host's own descriptive keys, as it set them (e.g. ace-web's
+    #: `origin_key`, `opp_slug`) — never canopy's (`host_metadata`).
+    metadata: dict = {}
 
 
 class ContactSessionCreateIn(Schema):
     agent_slug: str
+    title: str = ""
+    #: The host's link for this conversation — the same rule as a user's
+    #: (`canopy_sessions.services.host_metadata`), so a contact's chat carries
+    #: e.g. its opportunity exactly as a user's does.
+    metadata: dict = {}
 
 
 class ContactSendIn(Schema):
@@ -278,12 +288,15 @@ def _session_or_404(request: HttpRequest, session_id):
 
 
 def _session_out(s) -> ContactSessionOut:
+    from apps.canopy_sessions.services import SERVER_OWNED_METADATA
+
     return ContactSessionOut(
         id=str(s.id),
         agent_slug=s.agent.slug if s.agent_id else None,
         title=s.title,
         status=s.status,
         created_at=s.created_at.isoformat(),
+        metadata={k: v for k, v in (s.metadata or {}).items() if k not in SERVER_OWNED_METADATA},
     )
 
 
@@ -297,7 +310,6 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     own workspace, and there is deliberately no third leg.
     """
     from apps.agents.models import Agent
-    from apps.canopy_sessions.models import Session
 
     contact = request.contact
     app = request.delegated_app
@@ -312,14 +324,20 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     if agent is None:
         raise HttpError(404, f"{payload.agent_slug!r} is not offered here")
 
-    session = Session.objects.create(
-        workspace=contact.workspace,
-        agent=agent,
-        contact=contact,
-        # No `created_by`: there is no user, and leaving it null is what keeps
-        # this row out of `visible_session_q` for every member of the tenant.
-        title="",
-        metadata={"embed_app": app.name},
+    from apps.canopy_sessions import services as session_services
+
+    try:
+        metadata = session_services.host_metadata(payload.metadata)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    metadata["embed_app"] = app.name          # server-owned: which site, from the token
+    # The same constructor a user's session goes through — so a contact's
+    # conversation is recorded the same way (its transcript is its record under a
+    # real runner) — with no `created_by`: there is no user, and leaving it null is
+    # what keeps this row out of `visible_session_q` for every member of the tenant.
+    session = session_services.create_session(
+        workspace=contact.workspace, agent=agent, contact=contact,
+        title=(payload.title or "")[:200], metadata=metadata,
     )
     audit(event=EmbedAuditLog.MINT, request=request, app=app,
           detail=f"contact={contact.identity} started session {session.id} with {agent.slug}")
@@ -328,16 +346,22 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
 
 @contact_router.get("/sessions", response=list[ContactSessionOut],
                     summary="My conversations on this site")
-def list_sessions(request: HttpRequest) -> list[ContactSessionOut]:
+def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
+                  opp_slug: str = "", opp_run_id: str = "", resource: str = "",
+                  page_path: str = "") -> list[ContactSessionOut]:
+    """The same host filters a user's list takes, over the contact's OWN
+    conversations only — a filter narrows, it never widens what `contact_session_q`
+    already allows."""
     from apps.canopy_sessions.access import contact_session_q
     from apps.canopy_sessions.models import Session
 
-    rows = (
-        Session.objects.select_related("agent")
-        .filter(contact_session_q(request.contact))
-        .order_by("-created_at")[:50]
-    )
-    return [_session_out(s) for s in rows]
+    rows = Session.objects.select_related("agent").filter(contact_session_q(request.contact))
+    for field, value in (("metadata__source", source), ("metadata__origin_key", origin_key),
+                         ("metadata__opp_slug", opp_slug), ("metadata__opp_run_id", opp_run_id),
+                         ("page_state__resource", resource), ("page_state__path", page_path)):
+        if value:
+            rows = rows.filter(**{field: value})
+    return [_session_out(s) for s in rows.order_by("-created_at")[:50]]
 
 
 @contact_router.get("/sessions/{session_id}", response=ContactSessionOut,
@@ -371,21 +395,39 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
 
 
-@contact_router.get("/sessions/{session_id}/messages", response=dict,
+@contact_router.get("/sessions/{session_id}/messages", response=MessagePageOut,
                     summary="Earlier messages")
-def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50) -> dict:
+def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50):
+    """The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
+    renders a contact's conversation with the one renderer it already has.
+
+    (It used to hand-build rows from `m.body`, a field `Message` does not have —
+    every call on a conversation with a message in it was a 500.)
+    """
     from apps.api.pagination import clamp_limit
     from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions.schemas import MessageOut
 
     session = _session_or_404(request, session_id)
     rows, has_more = session_services.messages_before(
         session, before=before, limit=clamp_limit(limit)
     )
-    return {
-        "messages": [
-            {"turn_index": m.turn_index, "role": m.role, "body": m.body,
-             "created_at": m.created_at.isoformat()}
-            for m in rows
-        ],
-        "has_more_before": has_more,
-    }
+    return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
+
+
+@contact_router.post("/sessions/{session_id}/attach", response=dict,
+                     summary="I am watching this conversation (stream it live)")
+def attach(request: HttpRequest, session_id: str) -> dict:
+    """The same viewer signal a user's chat sends, so a contact watching their
+    own conversation sees the agent's reply as it is written, not when it lands."""
+    from apps.canopy_sessions import services as session_services
+
+    return {"streaming": session_services.attach_session(_session_or_404(request, session_id))}
+
+
+@contact_router.post("/sessions/{session_id}/detach", response=dict,
+                     summary="I stopped watching")
+def detach(request: HttpRequest, session_id: str) -> dict:
+    from apps.canopy_sessions import services as session_services
+
+    return {"streaming": session_services.detach_session(_session_or_404(request, session_id))}
