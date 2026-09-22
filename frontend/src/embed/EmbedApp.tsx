@@ -1,4 +1,4 @@
-import { ChatPanel, MenuPrompt, useSessionSocket } from 'canopy-ui/chat'
+import { ChatPanel, MenuPrompt, SendBox, useSessionSocket } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -394,37 +394,32 @@ function EmbedStart({
         </p>
       </div>
 
-      {error ? (
-        <p className="px-3 pb-1 text-[12px] text-destructive">{error}</p>
-      ) : null}
-
-      <div className="border-t border-border p-2">
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              send()
-            }
-          }}
-          rows={3}
-          disabled={sending}
-          autoFocus
-          placeholder={`Message ${agent.name}…`}
-          className="w-full resize-none rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground"
-        />
-        <div className="flex justify-end pt-1">
-          <button
-            type="button"
-            onClick={send}
-            disabled={!body.trim() || sending}
-            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-50"
-          >
-            {sending ? 'Starting…' : 'Send'}
-          </button>
-        </div>
-      </div>
+      {/* The kit's own composer, not a hand-rolled one. This screen used to
+          draw its own textarea and button, which is how it drifted: in light
+          mode the box was filled with `bg-input` (a BORDER token in this set, so
+          a mid-grey) and the Send button was a tiny `text-xs` pill at 50%
+          opacity — the "button doesn't look good" the widget was reported for.
+          Rendering SendBox with a local draft (the same adapter the contact
+          path uses, since no server draft exists before the session does)
+          makes this screen and the chat that follows it one component. */}
+      <SendBox
+        draft={contactDraft(body)}
+        connected
+        currentUserId={0}
+        holderIsPresent={false}
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={setBody}
+        onSend={send}
+        onStop={() => undefined}
+        onTakeOver={() => undefined}
+        // Sending is the only thing that can happen here, so "blocked" is
+        // exactly "starting" — and it says so where the button is.
+        disabledReason={sending ? 'Starting…' : undefined}
+        banner={
+          error ? <p className="text-[12px] text-destructive">{error}</p> : undefined
+        }
+      />
     </div>
   )
 }

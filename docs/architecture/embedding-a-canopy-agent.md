@@ -377,7 +377,14 @@ called when data your page shows has changed (§5a); `dismissible`, `storage`,
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `setPageState()`, `registerAction()`,
-`unregisterAction()`, `setTheme()`, `destroy()`, and the older `provideContext()` (§5).
+`unregisterAction()`, `setTheme()`, `setLauncherVisible()`, `destroy()`, and the older
+`provideContext()` (§5).
+
+`setLauncherVisible(false)` hides the bubble on a page where it is wrong — it
+covers that page's own controls, or duplicates what the page already is — and
+`true` brings it back on the next route. It is yours, not the visitor's: unlike
+`dismiss()` it is reversible, and it is what canopy uses to keep the bubble off
+its own chat pages, where it sat on the Send button.
 
 ---
 

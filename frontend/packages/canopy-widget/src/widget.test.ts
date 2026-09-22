@@ -785,3 +785,41 @@ describe('theming', () => {
     expect(host.style.getPropertyValue('--canopy-accent')).toBe('')
   })
 })
+
+describe('the host hiding its launcher for a page', () => {
+  it('hides and restores the launcher without the visitor\'s dismiss semantics', () => {
+    const { widget, root } = widgetHarness()
+    const dock = root.querySelector('.dock') as HTMLElement
+    widget.setLauncherVisible(false)
+    expect(dock.dataset.suppressed).toBe('true')
+    // Not dismissed: that is the visitor's, and lasts the page load.
+    expect(widget.isDismissed()).toBe(false)
+    widget.setLauncherVisible(true)
+    expect(dock.dataset.suppressed).toBe('false')
+    // Still in the DOM — reversible, unlike dismiss().
+    expect(root.querySelector('.launcher')).not.toBeNull()
+  })
+
+  it('closes an open panel rather than strand it with no bubble', () => {
+    const { widget } = widgetHarness()
+    widget.open()
+    widget.setLauncherVisible(false)
+    expect(widget.isOpen()).toBe(false)
+  })
+
+  it('hides by a rule that beats `.dock { display: flex }`', () => {
+    // jsdom does not compute the cascade, so pin the rule itself: the
+    // `hidden` attribute LOSES to `.dock`, which is how dismiss() once left the
+    // bubble on screen. A class+attribute selector outranks the class alone.
+    const { root } = widgetHarness()
+    const css = root.querySelector('style')!.textContent!
+    expect(css).toMatch(/\.dock\[data-suppressed="true"\]\s*\{\s*display:\s*none/)
+  })
+
+  it('is a no-op in inline mode, which has no launcher', () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const { widget } = widgetHarness({ mode: 'inline', target })
+    expect(() => widget.setLauncherVisible(false)).not.toThrow()
+  })
+})
