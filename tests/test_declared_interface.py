@@ -64,8 +64,8 @@ def _as_user(agent, user, key):
 
 @pytest.mark.parametrize("doc, msg", [
     ({"capabilities": {"ask": {"tool": ["Read"]}}}, "unknown key"),
-    ({"capabilities": {"ask": {"callers": ["everyone"]}}}, "is not one of"),
-    ({"capabilities": {"ask": {"callers": ["contact:signed"]}}}, "is not one of"),
+    ({"capabilities": {"ask": {"callers": ["everyone"]}}}, "not a caller class"),
+    ({"capabilities": {"ask": {"callers": ["contact:signed"]}}}, "not a caller class"),
     ({"capabilities": {"Ask!": {}}}, "must match"),
     ({"capabilities": {}, "callers_default": "all"}, "callers_default"),
     ({"capabilities": {"ask": {"entry": "run everything"}}}, "slash command"),

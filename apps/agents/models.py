@@ -31,11 +31,15 @@ class Agent(models.Model):
         help_text="The human who operates the agent.",
     )
     #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
-    #: may ask this agent for. Published from the agent repo's
-    #: `config/interface.yaml`; validated by `apps.agents.interface.parse`.
+    #: may ask this agent for. LIVE STATE held here, not in the agent's repo:
+    #: edited on the agent's page (or `canopy agent interface set`), validated by
+    #: `apps.agents.interface.parse`.
     #: Empty means "not published", and every turn runs in the full profile,
     #: exactly as before interfaces existed. See `apps/agents/interface.py`.
     interface = models.JSONField(default=dict, blank=True)
+    #: The interface as its editor wrote it (YAML, comments and all). `interface`
+    #: is its parsed, validated form — the one everything enforces.
+    interface_source = models.TextField(blank=True, default="")
     interface_published_at = models.DateTimeField(null=True, blank=True)
     interface_published_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,

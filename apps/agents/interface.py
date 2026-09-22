@@ -4,8 +4,8 @@ Phase 4 of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
 and-access-design.md` (§4). An agent has two relationships (§3): its owner and
 admins reach its full working session; everyone else — a workspace member, an
 emailer, a widget visitor — is a CALLER, and reaches only what the agent
-declares here. The definition lives in the agent's repo (`config/interface.yaml`);
-canopy holds the published copy and enforces it.
+declares here. It is LIVE STATE held by canopy-web (see "Stored on canopy-web"
+below) — never a file in the agent's repo — and canopy enforces it.
 
 **Allowlist by construction.** Restricting a fully-powered agent per caller —
 instructions, a policy file, a hook with a denylist — leaks. So a caller turn
@@ -27,8 +27,19 @@ the caller path on, so an agent is never half-restricted by accident.
 
 Caller classes: `member` (a workspace member who is not an admin), `contact`
 (someone canopy knows who is not a member), `unknown` (nobody established who).
-A `:verified` suffix additionally requires THIS message to be verified — for a
-contact, DMARC-aligned mail or a signed assertion from a framed origin.
+`@domain.tld` narrows one to addresses at exactly that domain; `:verified`
+additionally requires THIS message to be verified — for a contact, mail that is
+DMARC-aligned or DKIM-signed by its own From: domain, or a signed assertion
+from a framed origin.
+
+**`full:` — domain-wide access.** A list of caller classes that get the agent's
+WHOLE profile, as its admins do, e.g. `full: [contact@dimagi.com:verified]`:
+staff writing in from a verified company address steer the agent exactly as
+before interfaces existed, while everyone else is confined to a capability.
+
+**Stored on canopy-web, not in the agent's repo.** Who may do what is live
+state an owner changes as people come and go, not code that ships with the
+agent; it is edited on the agent's page (or `canopy agent interface set`).
 """
 from __future__ import annotations
 
@@ -47,6 +58,14 @@ ASK = "ask"
 FULL = ""
 
 CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
+
+#: `base[@domain][:verified]` — `contact@dimagi.com:verified` is a contact whose
+#: address is at dimagi.com AND whose message proves it. The domain is matched
+#: EXACTLY: not a subdomain, not a suffix, so `@dimagi.com` never admits
+#: `dimagi.com.evil.org` or `x.dimagi.com`.
+_CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
+                     r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
+                     r"(?::(?P<verified>verified))?$")
 
 #: What a capability's `input` fields may be — each becomes a typed, required
 #: parameter of the capability's MCP tool (apps/mcp/agent_tools.py).
@@ -86,7 +105,7 @@ def parse(doc) -> dict:
     """
     if not isinstance(doc, dict):
         raise InterfaceError("the interface must be a mapping")
-    extra = set(doc) - {"capabilities", "callers_default", "version"}
+    extra = set(doc) - {"capabilities", "callers_default", "version", "full"}
     if extra:
         raise InterfaceError(f"unknown top-level key(s): {sorted(extra)}")
     if doc.get("callers_default", "none") != "none":
@@ -106,13 +125,7 @@ def parse(doc) -> dict:
                           "input"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
-        callers = _strings(cap.get("callers"), "callers", name)
-        for c in callers:
-            base, _, suffix = c.partition(":")
-            if base not in CALLER_CLASSES or suffix not in ("", "verified"):
-                raise InterfaceError(
-                    f"{name}.callers: {c!r} is not one of {sorted(CALLER_CLASSES)} "
-                    "(optionally with ':verified')")
+        callers = _classes(cap.get("callers"), f"{name}.callers")
         entry = cap.get("entry")
         if entry is not None and (not isinstance(entry, str) or not entry.startswith("/")
                                   or "\n" in entry or len(entry) > _MAX_PATTERN):
@@ -135,28 +148,57 @@ def parse(doc) -> dict:
             "bash": _strings(cap.get("bash"), "bash", name),
             "read_paths": _strings(cap.get("read_paths"), "read_paths", name),
         }
-    return {"version": VERSION, "capabilities": out, "callers_default": "none"}
+    full = _classes(doc.get("full"), "full")
+    return {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
+
+
+def _classes(value, where: str) -> list[str]:
+    out = []
+    for c in _strings(value, where.rpartition(".")[2] or where, where.rpartition(".")[0] or "interface"):
+        c = c.lower()
+        if not _CALLER.match(c):
+            raise InterfaceError(
+                f"{where}: {c!r} is not a caller class — member | contact | unknown, "
+                "optionally @domain.tld, optionally :verified")
+        out.append(c)
+    return out
 
 
 def caller_classes(turn, relationship: str) -> set[str]:
-    """The classes this turn's asker falls in, including `:verified` forms."""
+    """The classes this turn's asker falls in: the base, the base at their
+    address's domain, and the `:verified` form of each when THIS message is."""
     from apps.harness.caller_context import _verified
 
     kind = turn.initiator_kind
     if kind == who.CONTACT:
         base = "contact"
+        address = getattr(turn.initiator_contact, "email", "") or ""
     elif kind == who.USER and relationship == "member":
         base = "member"
-    elif kind == who.USER:
-        # A canopy user who is not even a member of the agent's workspace: no
-        # relationship at all, so nothing more than someone unidentified.
-        base = "unknown"
+        address = getattr(turn.initiator_user, "email", "") or ""
     else:
-        base = "unknown"
+        # Anyone else — including a canopy user with no business in this
+        # workspace — is no more than someone unidentified.
+        base, address = "unknown", ""
+    return _expand(base, address, _verified(turn))
+
+
+def _expand(base: str, address: str, verified: bool) -> set[str]:
     classes = {base}
-    if _verified(turn):
-        classes.add(f"{base}:verified")
+    domain = address.strip().lower().rpartition("@")[2] if "@" in (address or "") else ""
+    if domain:
+        classes.add(f"{base}@{domain}")
+    if verified:
+        classes |= {f"{c}:verified" for c in list(classes)}
     return classes
+
+
+def full_rule(classes: set[str], iface: dict) -> str | None:
+    """The `full:` entry that grants these classes the agent's whole profile."""
+    for rule in iface.get("full") or []:
+        if rule in classes:
+            return rule
+    return None
 
 
 def capability_for(turn, agent, requested: str | None = None) -> str | None:
@@ -171,16 +213,36 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
 
     iface = getattr(agent, "interface", None) or {}
-    if not iface.get("capabilities"):
+    if not iface.get("capabilities") and not iface.get("full"):
         return FULL
     rel = relationship(turn, agent)
     if rel in (OWNER, ADMIN, SYSTEM):
         return FULL
+    classes = caller_classes(turn, rel)
+    if full_rule(classes, iface):
+        return FULL
     name = requested or ASK
     cap = iface["capabilities"].get(name)
-    if cap and caller_classes(turn, rel) & set(cap.get("callers") or []):
+    if cap and classes & set(cap.get("callers") or []):
         return name
     return None
+
+
+def granted_by(turn, agent) -> str:
+    """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
+    `system`, `full:<rule>`, `capability:<name>`, `no-interface` or `refused`."""
+    from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
+
+    iface = getattr(agent, "interface", None) or {}
+    if not iface.get("capabilities") and not iface.get("full"):
+        return "no-interface"
+    rel = relationship(turn, agent)
+    if rel in (OWNER, ADMIN, SYSTEM):
+        return rel
+    rule = full_rule(caller_classes(turn, rel), iface)
+    if rule:
+        return f"full:{rule}"
+    return f"capability:{turn.capability}" if turn.capability else "refused"
 
 
 def offered_to(user, agent) -> list[str]:
@@ -203,8 +265,11 @@ def offered_to(user, agent) -> list[str]:
         return sorted(caps)
     if rel != MEMBER:
         return []
-    return sorted(n for n, c in caps.items()
-                  if {"member", "member:verified"} & set(c.get("callers") or []))
+    # Calling as themselves over an authenticated token IS verified.
+    classes = _expand("member", getattr(user, "email", "") or "", True)
+    if full_rule(classes, agent.interface or {}):
+        return sorted(caps)
+    return sorted(n for n, c in caps.items() if classes & set(c.get("callers") or []))
 
 
 def profile(agent, capability: str) -> dict | None:

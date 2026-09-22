@@ -478,8 +478,23 @@ export async function revokeAgentAdmin(slug: string, userId: number): Promise<Ag
 export type AgentInterfaceOut = Schemas['AgentInterfaceOut']
 
 // What callers (anyone not the owner or an admin) may ask this agent for.
-// Published from the agent repo's config/interface.yaml; read-only here.
+// Live state on canopy-web: owners/admins edit it here (saveAgentInterface).
 export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.GET('/api/agents/{slug}/interface', { params: { path: { slug } } })
   return unwrap(res, 'getAgentInterface') as unknown as AgentInterfaceOut
+}
+
+// Save the interface as YAML (kept verbatim, comments and all). Owner/admin only;
+// a 422 carries the parser's reason, which the editor shows as-is.
+export async function saveAgentInterface(slug: string, source: string): Promise<AgentInterfaceOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/interface', {
+    params: { path: { slug } },
+    body: { source },
+  })
+  return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
+}
+
+export async function unpublishAgentInterface(slug: string): Promise<AgentInterfaceOut> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/interface', { params: { path: { slug } } })
+  return unwrap(res, 'unpublishAgentInterface') as unknown as AgentInterfaceOut
 }

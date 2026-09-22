@@ -1807,7 +1807,7 @@ export interface paths {
         };
         /** What this agent offers callers — its declared interface */
         readonly get: operations["apps_agents_api_get_interface"];
-        /** Publish the agent's declared interface (its config/interface.yaml) */
+        /** Save the agent's declared interface (YAML source, or a parsed mapping) */
         readonly put: operations["apps_agents_api_publish_interface"];
         readonly post?: never;
         /** Unpublish the declared interface: every turn runs in the full profile again */
@@ -8150,6 +8150,11 @@ export interface components {
             readonly interface: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
             /** Published At */
             readonly published_at?: string | null;
             /** Published By Email */
@@ -8157,10 +8162,12 @@ export interface components {
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
+            /** Source */
+            readonly source?: string | null;
             /** Interface */
-            readonly interface: {
+            readonly interface?: {
                 readonly [key: string]: unknown;
-            };
+            } | null;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {

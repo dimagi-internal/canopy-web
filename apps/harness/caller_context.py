@@ -32,7 +32,7 @@ VERSION = 1
 #: `dmarc` is a member resolved from a DMARC-aligned email (harness
 #: `_member_behind_email`), which is only ever done on THIS message's grade.
 _VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED,
-                            who.APPROVAL, Contact.AUTH_DMARC})
+                            who.APPROVAL, Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED})
 
 #: Relationships, strongest first. `admin` arrives with `Agent.admins` (§3).
 OWNER, ADMIN, MEMBER, CALLER, SYSTEM = "owner", "admin", "member", "caller", "system"
@@ -127,8 +127,20 @@ def build(turn) -> dict:
         # that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
         "profile": "restricted" if turn.capability else "full",
+        # WHY: owner | admin | system | full:<rule> | capability:<name> | no-interface.
+        # `full:contact@dimagi.com:verified` is canopy granting domain-wide access —
+        # what `canopy caller tier` reads instead of an allowlist in the repo.
+        "granted_by": _granted_by(turn, agent),
         "capability": _profile(agent, turn.capability),
     }
+
+
+def _granted_by(turn, agent) -> str:
+    if agent is None:
+        return "no-interface"
+    from apps.agents.interface import granted_by
+
+    return granted_by(turn, agent)
 
 
 def _profile(agent, capability: str):

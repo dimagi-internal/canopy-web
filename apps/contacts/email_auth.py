@@ -48,6 +48,20 @@ _METHOD_RE = re.compile(r"\b(spf|dkim|dmarc)\s*=\s*([a-z]+)", re.IGNORECASE)
 _HEADER_FROM_RE = re.compile(r"header\.from\s*=\s*([^\s;,()]+)", re.IGNORECASE)
 
 
+#: The DKIM signing domain: `header.d=example.org`, or the domain of the
+#: agent/user identity `header.i=@example.org` (Gmail writes the latter).
+_DKIM_D_RE = re.compile(r"\bdkim\s*=\s*pass\b[^;]*?\bheader\.d\s*=\s*([^\s;,()]+)", re.IGNORECASE)
+_DKIM_I_RE = re.compile(r"\bdkim\s*=\s*pass\b[^;]*?\bheader\.i\s*=\s*([^\s;,()]+)", re.IGNORECASE)
+
+
+def _dkim_signer(auth_results: str) -> str:
+    m = _DKIM_D_RE.search(auth_results or "")
+    if m:
+        return m.group(1).strip(". ").lower()
+    m = _DKIM_I_RE.search(auth_results or "")
+    return m.group(1).rpartition("@")[2].strip(". ").lower() if m else ""
+
+
 def _domain_of(address: str) -> str:
     return (address or "").strip().lower().rpartition("@")[2]
 
@@ -84,6 +98,10 @@ def grade_of(auth_results: str, *, from_address: str = "") -> str:
         else:
             return Contact.AUTH_DMARC
     if verdicts.get("dkim") == "pass":
+        # Signed BY the From: domain → as strong as a DMARC pass via DKIM. Only
+        # checkable when we know whose From: it is; otherwise plain DKIM.
+        if from_address and _dkim_signer(auth_results) == _domain_of(from_address):
+            return Contact.AUTH_DKIM_ALIGNED
         return Contact.AUTH_DKIM
     if verdicts.get("spf") == "pass":
         return Contact.AUTH_SPF
