@@ -694,10 +694,38 @@ your visitor's identity through to the agent's tools. So:
 
 **What this means in practice:** give an embedded agent tool access that is fine
 for *every* visitor who can reach it, because in effect every visitor can ask it
-to use that access. Per-visitor tool permissions — the agent acting *as* your
-visitor — do not exist yet. They are the next piece of work, and if your data
-needs them, the right move is to wait for it rather than scope around it in your
-page.
+to use that access.
+
+### Acting as your visitor, when your own API can check
+
+There is now one way to close that, and it is yours to switch on. In a confined
+caller session the agent can ask canopy for a short assertion naming the person
+it is answering, and attach it to a call into YOUR API:
+
+```json
+{ "iss": "<this canopy's base URL>", "aud": "<your site's registered Name>",
+  "sub": "<YOUR id for that person — the `sub` you asserted at arrival>",
+  "act": { "sub": "agent:<slug>" },
+  "iat": …, "exp": iat + 120, "jti": "<single use, if you track it>" }
+```
+
+Verify it against `GET /api/tokens/on-behalf-of/jwks` (public, EdDSA, `kid`
+`canopy-on-behalf-of`) and run that call as that person. Check `aud` is your own
+name and `exp`, exactly as canopy does with yours — an assertion addressed to
+another site must not work at yours. `act.sub` says a machine is acting, so your
+audit trail can record "the agent did this, for them" rather than a click your
+visitor never made.
+
+What it deliberately does not do: it is minted only inside a caller's session
+(an owner talking to their own agent has their own login at your product), only
+for a visitor who ARRIVED from your site — an email correspondent has no account
+of yours to act as, and canopy refuses rather than asserting their address —
+and it names one site, so it cannot be spent anywhere else. Canopy does not
+proxy your tools: the agent calls you directly, as it always did, and this only
+changes who you run the call as.
+
+Until you verify it, nothing changes: the agent keeps calling you with its own
+credential, and the paragraph above still applies.
 
 ---
 

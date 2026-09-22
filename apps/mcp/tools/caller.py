@@ -91,3 +91,66 @@ async def who_is_asking(turn_id: str) -> dict:
     await write_audit(user_id=user_id, tool="who_is_asking",
                       args_summary=f"turn={turn_id} -> {env['who'].get('kind')}", ok=True)
     return env
+
+
+def _mint_sync(turn_id: str) -> dict:
+    from apps.harness.models import Turn
+    from apps.tokens import onbehalf
+
+    turn = (Turn.objects.select_related("agent", "chat_session__agent",
+                                        "initiator_contact__app")
+            .filter(pk=turn_id).first())
+    if turn is None:
+        raise TurnNotFound("turn not found")
+    agent = turn.agent if turn.agent_id else (
+        turn.chat_session.agent if turn.chat_session_id else None)
+    if agent is None:
+        raise onbehalf.OnBehalfError("this turn belongs to no agent")
+    return onbehalf.mint(turn, agent_slug=agent.slug)
+
+
+@mcp.tool
+async def act_on_behalf_of_caller(turn_id: str) -> dict:
+    """A short assertion you can hand to the CALLER'S OWN product, saying who
+    you are answering.
+
+    Use it when you are about to read or write something in the site this
+    person came from, and that site accepts it: attach the `assertion` to your
+    call and the site runs it as THEM, not as you. It names only this turn's
+    caller, lasts 120 seconds, and is addressed to the one site they arrived
+    from — it is not usable anywhere else, so there is nothing to reuse.
+
+    Refused, with the reason, when the caller did not arrive from a connected
+    site (an email correspondent has no account there for anyone to act as) or
+    when this canopy holds no signing key. A refusal means do it as yourself,
+    under your own credential, or say you cannot.
+    """
+    from apps.mcp.turn_scope import _turn_claims
+
+    user_id = current_user_id()
+    # Deliberately caller-token only. The point of this is a CONFINED
+    # conversation — somebody outside the agent being answered — and outside
+    # one, "the caller" is the agent's own owner, who has their own login at
+    # the host and needs nothing minted. Narrow is also what keeps this
+    # unable to become a general-purpose identity oracle.
+    claims = await sync_to_async(_turn_claims, thread_sensitive=True)()
+    if claims is None:
+        await write_audit(user_id=user_id, tool="act_on_behalf_of_caller",
+                          args_summary=f"turn={turn_id}", ok=False,
+                          error="not a caller session")
+        raise PermissionError(
+            "only a caller's session can ask canopy to vouch for that caller"
+        )
+    try:
+        out = await sync_to_async(_mint_sync, thread_sensitive=True)(turn_id)
+    except Exception as exc:  # noqa: BLE001
+        await write_audit(user_id=user_id, tool="act_on_behalf_of_caller",
+                          args_summary=f"turn={turn_id}", ok=False, error=str(exc))
+        raise
+    # The assertion itself is never audited — it is a bearer credential for the
+    # next 120 seconds, and an audit row is exactly the kind of place a copy
+    # outlives its purpose. WHO it was for is the part worth keeping.
+    await write_audit(user_id=user_id, tool="act_on_behalf_of_caller",
+                      args_summary=f"turn={turn_id} -> {out['audience']}:{out['subject']}",
+                      ok=True)
+    return out

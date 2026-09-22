@@ -451,6 +451,14 @@ FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 # Secrets Manager entry. Only the client secret is a secret. (GOOGLE_OAUTH_CLIENT_ID
 # is in Secrets Manager for historical uniformity; there is no security reason to
 # copy that here, and keeping it plain removes a manual step per deployment.)
+# The private key canopy signs ON-BEHALF-OF assertions with: the short
+# statement an embedded agent attaches to a call into the HOST's own API,
+# saying which of that host's people it is answering (apps/tokens/onbehalf.py).
+# Asymmetric on purpose — hosts hold only the public half, published at
+# /api/tokens/on-behalf-of/jwks. Empty is a real state: the deployment simply
+# cannot vouch for a caller elsewhere, and says so rather than degrading.
+ONBEHALF_SIGNING_KEY = env("ONBEHALF_SIGNING_KEY", default="").replace("\\n", "\n")
+
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")
 GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # The app's slug, used only to build the "install it somewhere else" link
