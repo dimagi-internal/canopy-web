@@ -1137,8 +1137,19 @@ step4_claude_plugins() {
       && ok "added canopy marketplace" \
       || warn "claude plugin marketplace add failed"
   fi
+  # Adding the marketplace once is not keeping it current. Nothing here used to
+  # pull it: the clone advanced only when some session's async SessionStart hook
+  # happened to update it, so a refresh re-ran bootstrap against whatever canopy
+  # the box last saw, and the CLI sync below faithfully matched that stale clone
+  # (hal's drill, 2026-09-22: plugin 0.2.509, origin 0.2.511). Every agent
+  # plugin already updates by `git pull` in its own clone; this is canopy's.
+  claude plugin marketplace update canopy >/dev/null 2>&1 \
+    && ok "canopy marketplace updated" \
+    || warn "claude plugin marketplace update canopy failed — continuing with the clone as it is"
   if claude plugin list 2>/dev/null | grep -q 'canopy@canopy'; then
-    ok "canopy@canopy already installed"
+    claude plugin update canopy@canopy >/dev/null 2>&1 \
+      && ok "canopy@canopy updated to the marketplace's version" \
+      || warn "claude plugin update canopy@canopy failed — keeping the installed version"
   else
     claude plugin install canopy@canopy \
       && ok "installed canopy@canopy" \
