@@ -90,7 +90,7 @@ def test_the_push_is_sent_once_due_and_lands_on_the_chat(session, user):
         assert push.send_due_session_pushes(timezone.now() + dt.timedelta(minutes=6)) == 1
         assert push.send_due_session_pushes(timezone.now() + dt.timedelta(minutes=7)) == 0  # once
     payload = send.call_args.args[1]
-    assert payload["title"] == "Fix the login bug is done"
+    assert payload["title"] == "canopy-web · Fix the login bug is done"
     assert payload["body"] == "Fixed it — the cookie was scoped wrong."
     assert payload["url"] == f"/w/canopy/chat/{session.id}"
 
@@ -140,7 +140,7 @@ def test_a_failed_turn_says_so(session, user):
     Session.objects.filter(pk=session.pk).update(notify_every_completion=True)
     with patch("apps.push.services._send_one") as send:
         _finish(session, user, status=Turn.FAILED)
-    assert send.call_args.args[1]["title"] == "Fix the login bug failed"
+    assert send.call_args.args[1]["title"] == "canopy-web · Fix the login bug failed"
 
 
 def test_a_cancelled_turn_never_pushes(session, user):

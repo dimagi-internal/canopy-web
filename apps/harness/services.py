@@ -2082,6 +2082,20 @@ def fire_sessions_closed(session_ids: list) -> None:
         logger.exception("sessions_closed receivers failed")
 
 
+# What a dialog IS, as opposed to how it was last seen: its question and the
+# options offered. `observed_at` is re-stamped on every read, `selected` follows
+# the cursor, `answer_*` report on a tap, and `title`/`body`/`source` differ
+# between the hook, transcript and screen producers for the SAME dialog — none
+# of those make it a different question. Mirrors `apps.slack.menus.content_key`,
+# which dedupes the Slack post the same way.
+def _ask_identity(menu):
+    if not menu:
+        return None
+    return (str(menu.get("question") or ""),
+            tuple(str(o.get("label") or "") for o in (menu.get("options") or [])
+                  if isinstance(o, dict)))
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None,
     complete: bool = False,
@@ -2153,6 +2167,7 @@ def replace_reported_sessions(
     # a reload. Only the edges: the report repeats every ~10s and republishing
     # an unchanged menu would re-render the buttons under a thumb.
     menu_changes: list[tuple] = []
+    new_asks: list[tuple] = []
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
@@ -2317,6 +2332,15 @@ def replace_reported_sessions(
             binding.pending_question = getattr(s, "question", None) or None
             if was_asking != binding.pending_question:
                 menu_changes.append((binding.session_id, binding.pending_question))
+                # Whether this is a NEW ask, not the same one seen again. Every
+                # producer re-stamps `observed_at` on each read, so the raw dicts
+                # differ on every ~10s report for as long as a dialog is up —
+                # comparing them is what buzzed a phone every ten seconds
+                # (2026-09-22). The frame above still goes out (it carries the
+                # fresh stamp); the push is for the ask itself.
+                if binding.pending_question and (
+                        _ask_identity(was_asking) != _ask_identity(binding.pending_question)):
+                    new_asks.append((binding.session_id, binding.pending_question))
             binding.save()
             touched_ids.append(binding.pk)
 
@@ -2437,7 +2461,7 @@ def replace_reported_sessions(
         # This is the half no rendering fix could cover. A menu that renders
         # perfectly still needs somebody to open the app, and the failure being
         # fixed here is 52 minutes of nobody knowing there was anything to open.
-        asking = [(sid, menu) for sid, menu in menu_changes if menu]
+        asking = new_asks
         if asking:
             from apps.canopy_sessions.models import Session
             from apps.push import services as push_services

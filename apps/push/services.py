@@ -202,6 +202,27 @@ def _question_audience(session):
     return getattr(runner, "paired_by", None) if runner is not None else None
 
 
+def session_label(session, default: str = "An agent") -> str:
+    """"<agent or project> · <session>", so a lock screen says WHICH one.
+
+    A session's title alone is usually its emdash task name (`mcp`), which
+    names nothing on a phone that is not looking at emdash — it read "mcp is
+    asking" about an ace-web deploy (2026-09-22). The agent, or for an agentless
+    runner session the repo it runs in, is what tells you where to go.
+    """
+    agent = getattr(session, "agent", None)
+    owner = (getattr(agent, "name", "") or "").strip() if agent is not None else ""
+    if not owner:
+        owner = (getattr(session, "project", "") or "").strip()
+    if not owner:
+        binding = getattr(session, "runner_binding", None)
+        owner = (getattr(binding, "emdash_project", "") or "").strip() if binding else ""
+    title = (session.title or "").strip()
+    if owner and title and title.lower() != owner.lower():
+        return f"{owner} · {title}"
+    return owner or title or default
+
+
 def notify_session_question(session, menu: dict) -> int:
     """Push "this agent is asking you something", deep-linked to the answer.
 
@@ -219,11 +240,10 @@ def notify_session_question(session, menu: dict) -> int:
     question = str(menu.get("question") or "").strip() or "a question"
     if len(question) > QUESTION_BODY_MAX:
         question = question[: QUESTION_BODY_MAX - 1].rstrip() + "…"
-    name = (session.title or "").strip() or "An agent"
     try:
         return send_to_user(
             user,
-            title=f"{name} is asking",
+            title=f"{session_label(session)} is asking",
             body=question,
             url=f"/w/{session.workspace_id}/chat/{session.id}",
         )
@@ -280,7 +300,7 @@ def _finish_body(session: Session, turn: Turn) -> str:
 
 def _send_finish(session: Session, turn: Turn, user) -> int:
     """Deep-linked to the chat itself — the tap lands on the reply."""
-    name = (session.title or "").strip() or "Your chat"
+    name = session_label(session, default="Your chat")
     title = f"{name} failed" if turn.status == Turn.FAILED else f"{name} is done"
     try:
         return send_to_user(
