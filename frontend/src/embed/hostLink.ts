@@ -39,6 +39,8 @@ export interface HostInit {
   agent?: string
   metadata?: Record<string, unknown>
   actions: ActionSpec[]
+  /** The host's theme, UNVALIDATED — `applyFrameTheme` checks it itself. */
+  theme?: unknown
 }
 
 const SOURCE = 'canopy-widget'
@@ -67,6 +69,9 @@ export interface HostLink {
    *  user's screen blank. */
   pageState(): Record<string, unknown> | null
   onPageStateChanged(listener: (state: Record<string, unknown>) => void): () => void
+  /** The host re-themed while the panel is up (its own light/dark toggle).
+   *  The value is unvalidated, exactly as it arrived. */
+  onThemeChanged(listener: (theme: unknown) => void): () => void
   /** Tell the host that a resource its page is showing has changed. */
   invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
@@ -105,6 +110,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
   // never pushes must not be read as one declaring an empty screen.
   let latestState: Record<string, unknown> | null = null
   const stateListeners = new Set<(state: Record<string, unknown>) => void>()
+  const themeListeners = new Set<(theme: unknown) => void>()
 
   /** The parent's origin, learned from the first accepted message. Until then
    *  there is nothing to reply to — every outbound message except `ready` is a
@@ -162,6 +168,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
           agent: data.agent ? String(data.agent) : undefined,
           metadata: (data.metadata as Record<string, unknown> | undefined) ?? {},
           actions: Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : [],
+          theme: data.theme,
         })
         actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
         return
@@ -205,6 +212,9 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         stateListeners.forEach((l) => l(latestState as Record<string, unknown>))
         return
       }
+      case 'theme':
+        themeListeners.forEach((l) => l(data.theme))
+        return
       default:
         return
     }
@@ -230,6 +240,10 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     onPageStateChanged(listener) {
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
+    },
+    onThemeChanged(listener) {
+      themeListeners.add(listener)
+      return () => themeListeners.delete(listener)
     },
     invalidate: (resource: string) => send({ type: 'invalidate', resource }),
     requestClose: () => send({ type: 'close' }),

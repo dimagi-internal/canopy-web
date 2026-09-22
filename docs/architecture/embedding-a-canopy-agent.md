@@ -253,7 +253,7 @@ never starts, with nothing on the page to say why.
 </script>
 ```
 
-No npm, no React, no build step, no framework. The loader is ~6 kB and imports
+No npm, no React, no build step, no framework. The loader is ~15 kB (under 6 kB gzipped) and imports
 nothing; the chat UI runs inside an iframe with its own React, so it cannot
 collide with anything your page already loads. That is what makes it work on a
 page built from non-module scripts sharing a global scope.
@@ -275,6 +275,90 @@ next load, deliberately: a widget that stays hidden with no way back is a
 support ticket. Pass `dismissible: false` if you have laid out around it, or
 call `widget.dismiss()` to offer your own way.
 
+### Match it to your brand
+
+By default the launcher is an orange pill and the panel is dark, which will not
+suit every page. There are three ways to change it, and which one you need
+depends on **which half** you are styling:
+
+| Half | Where it lives | What reaches it |
+| --- | --- | --- |
+| **Launcher** (the bubble, its ×, the panel's frame) | your page, inside a shadow root | CSS variables, `::part()`, or `theme` |
+| **Panel contents** (messages, composer, Send) | canopy's own document, in the iframe | **only** `theme` — no CSS of yours can reach it |
+
+The shadow root is deliberate: a global `button { … }` or `* { … }` on your
+page must not be able to deform the launcher by accident. Everything below is
+explicit, so that promise still holds.
+
+**1. `theme` in `canopy.init`: one option, both halves.**
+
+```js
+canopy.init({
+  // …
+  theme: {
+    mode: 'light',          // 'light' | 'dark' (default) | 'auto' (follows the OS)
+    accent: '#2563eb',      // launcher, Send button, links, focus rings
+    // accentForeground: '#fff',  // text on the accent; derived if you omit it
+    radius: 8,              // px, or any CSS length
+    font: 'Inter, system-ui, sans-serif',
+  },
+})
+```
+
+`mode` is rendered by the server, so the panel paints in the right mode from
+its first frame instead of flashing dark on a light page. The accent recolours
+canopy's own `--primary` token, which every primary control inside the panel
+reads, so it reaches all of them rather than whichever someone remembered.
+
+If your page has its own light/dark toggle, keep the widget in step:
+
+```js
+myThemeToggle.onChange(function (mode) { widget.setTheme({ mode: mode, accent: '#2563eb' }) })
+```
+
+`setTheme()` **replaces** the whole theme, so pass everything you still want.
+
+Every value is validated, twice: once in the loader and again inside canopy's
+document, which does not take your page's word for it. A value that is not a
+colour, length or font-family, or that contains `;`, `{`, `}`, `url(` and the
+like, is dropped with a `console.warn` naming it. If your accent does not show
+up, look in the console.
+
+**The font has to exist inside the iframe too.** A webfont your page loads is
+not visible inside canopy's document. Name a system stack, or a font canopy also
+serves, or the panel falls back to its default while the launcher uses yours.
+
+**2. CSS variables: the launcher, from your own stylesheet, no JS.** Custom
+properties are the one thing that crosses a shadow boundary:
+
+```css
+:root {
+  --canopy-accent: #2563eb;
+  --canopy-accent-foreground: #fff;
+  --canopy-radius: 8px;            /* the panel frame AND the bubble */
+  --canopy-launcher-radius: 24px;  /* just the bubble, e.g. keep it a pill */
+  --canopy-font: Inter, system-ui, sans-serif;
+  --canopy-panel-background: #fff; /* the panel frame behind the iframe */
+  --canopy-panel-border: #e5e7eb;
+  --canopy-focus-ring: #1d4ed8;
+}
+```
+
+These style the launcher only. A `theme` passed to `canopy.init` wins over the
+same variable set here.
+
+**3. `::part()`: anything else about the launcher.** For size, shadow,
+letter-spacing and so on:
+
+```css
+[data-canopy-widget]::part(launcher) { height: 40px; box-shadow: none; }
+[data-canopy-widget]::part(dismiss)  { display: none; }  /* prefer dismissible: false */
+[data-canopy-widget]::part(panel)    { border-radius: 16px; }
+```
+
+The parts are `launcher`, `dismiss` and `panel`. Only rules you write against
+them reach in.
+
 **Pick a mode:**
 
 | mode | shape | use when |
@@ -286,14 +370,14 @@ call `widget.dismiss()` to offer your own way.
 `inline` requires `target` (a selector or element) and is always open — there is
 no launcher to reopen it with.
 
-**Other options:** `agent: 'labs-helper'` skips the picker; `metadata: {…}`
+**Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
 called when data your page shows has changed (§5a); `dismissible`, `storage`,
 `csrfCookieName` as above; plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `setPageState()`, `registerAction()`,
-`unregisterAction()`, `destroy()`, and the older `provideContext()` (§5).
+`unregisterAction()`, `setTheme()`, `destroy()`, and the older `provideContext()` (§5).
 
 ---
 
@@ -669,6 +753,12 @@ Steps 2 and 3 still do not apply when the site *is* canopy. A third-party host
 signs an assertion because canopy cannot see who its visitor is; here the two
 are one process, so `POST /api/embed/token` is session-authenticated and mints
 for `request.user` directly. No secret, no signing key, no backend endpoint.
+
+**It follows canopy's own light/dark toggle**, through the same `theme` option
+any host uses (`frontend/src/widget/CanopyWidget.tsx`: `mode` at init,
+`setTheme` on each toggle). Before that, switching canopy to light left a dark
+panel on a light page — which is the first thing anyone dogfooding it noticed.
+No accent is passed: canopy's accent is the widget's default.
 
 **What this does and does not prove.** The frame is same-origin here, so none of
 the origin discipline is exercised — not `targetOrigin`, not `event.origin`

@@ -703,3 +703,85 @@ describe('the page state channel', () => {
     expect(sent('state')).toHaveLength(0)
   })
 })
+
+
+/**
+ * Theming. The launcher is host DOM in our shadow root and the panel is
+ * canopy's own document, so a theme has to reach both — by custom properties
+ * and `::part()` on one side and by the handshake on the other.
+ */
+describe('theming', () => {
+  it('changes nothing for a host that sets no theme', () => {
+    const { iframe, host } = widgetHarness()
+    // No `&theme=` means the server renders the historical dark default.
+    expect(iframe.src).not.toContain('theme=')
+    expect(host.style.getPropertyValue('--canopy-accent')).toBe('')
+    expect(host.dataset.theme).toBe('dark')
+  })
+
+  it('puts the mode in the iframe URL, so the shell renders it from the first byte', () => {
+    const { iframe } = widgetHarness({ theme: { mode: 'light' } })
+    expect(iframe.src).toContain('&theme=light')
+  })
+
+  it('dresses the launcher through the documented variables', () => {
+    const { host, root } = widgetHarness({ theme: { mode: 'light', accent: '#2563eb', radius: 8 } })
+    expect(host.style.getPropertyValue('--canopy-accent')).toBe('#2563eb')
+    expect(host.style.getPropertyValue('--canopy-accent-foreground')).toBe('#ffffff')
+    expect(host.style.getPropertyValue('--canopy-radius')).toBe('8px')
+    expect(host.dataset.theme).toBe('light')
+    expect((root.querySelector('.panel') as HTMLElement).dataset.theme).toBe('light')
+  })
+
+  it('names the parts a host may style explicitly', () => {
+    const { root } = widgetHarness()
+    expect(root.querySelector('[part="launcher"]')).not.toBeNull()
+    expect(root.querySelector('[part="dismiss"]')).not.toBeNull()
+    expect(root.querySelector('[part="panel"]')).not.toBeNull()
+  })
+
+  it('reads every colour from a variable whose fallback is today\'s value', () => {
+    // The promise that a host setting nothing sees no change, pinned at the
+    // source: if a hard-coded colour creeps back into the launcher, a host's
+    // `--canopy-accent` silently stops working.
+    const { root } = widgetHarness()
+    const css = root.querySelector('style')!.textContent!
+    expect(css).toContain('var(--canopy-accent, #c2410c)')
+    expect(css).not.toMatch(/\.launcher\s*\{[^}]*background:\s*#/)
+    // The general radius reaches the launcher; the launcher-only one wins.
+    expect(css).toContain('var(--canopy-launcher-radius, var(--canopy-radius, 24px))')
+  })
+
+  it('refuses a hostile accent and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { host } = widgetHarness({ theme: { accent: 'red; background: url(https://evil.example)' } })
+    expect(host.style.getPropertyValue('--canopy-accent')).toBe('')
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('hands the validated theme to the frame in init', async () => {
+    const { fromFrame, sent } = widgetHarness({ theme: { mode: 'light', accent: '#2563eb' } })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    const [init] = sent('init')
+    expect(init.message.theme).toEqual({
+      mode: 'light', accent: '#2563eb', accentForeground: '#ffffff',
+    })
+  })
+
+  it('re-themes live: the launcher at once, the frame once it is listening', async () => {
+    const { widget, host, fromFrame, sent } = widgetHarness({ theme: { mode: 'dark' } })
+    widget.setTheme({ mode: 'light', accent: '#16a34a' })
+    // Not posted before `ready` — init will carry it, and nothing is listening.
+    expect(sent('theme')).toHaveLength(0)
+    expect(host.dataset.theme).toBe('light')
+    expect(host.style.getPropertyValue('--canopy-accent')).toBe('#16a34a')
+
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    expect(sent('init')[0].message.theme).toMatchObject({ mode: 'light', accent: '#16a34a' })
+
+    widget.setTheme({ mode: 'dark' })
+    expect(sent('theme').at(-1)!.message.theme).toEqual({ mode: 'dark' })
+    // Replace, not merge: the accent the host dropped is gone, not stuck.
+    expect(host.style.getPropertyValue('--canopy-accent')).toBe('')
+  })
+})

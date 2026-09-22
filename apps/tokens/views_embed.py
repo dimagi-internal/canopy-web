@@ -100,17 +100,22 @@ def _embed_assets() -> tuple[str | None, list[str]]:
 #: in the bundle (frontend/src/embed/hostLink.ts) rather than inline here, so
 #: there is one implementation of the protocol instead of two.
 _SHELL = """<!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="{html_class}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Canopy</title>
+{auto_script}
 {css}
 <style>
   html, body {{ margin: 0; height: 100%; }}
   #canopy-widget-boot {{ height: 100%; }}
   .canopy-boot {{ display: grid; place-items: center; height: 100%;
                   font: 14px/1.5 system-ui, sans-serif; color: #a8a29e; }}
+  /* The boot screen paints before the app CSS applies, so it carries its own
+     background in each mode — otherwise a light panel flashes dark first. */
+  html {{ background: #fafaf9; }}
+  html.dark {{ background: #0c0a09; }}
 </style>
 </head>
 <body>
@@ -125,6 +130,27 @@ _SHELL = """<!doctype html>
 </body>
 </html>
 """
+
+
+#: The panel's light/dark, from `?theme=` — set by the loader from the host's
+#: `theme.mode`. Rendered by the SERVER, not applied later by the frame's JS,
+#: so the panel is in the right mode from its first paint instead of flashing
+#: dark on every page view of a light host. Anything unrecognised is the
+#: historical default.
+THEME_MODES = ("light", "dark", "auto")
+DEFAULT_THEME_MODE = "dark"
+
+#: `auto` is the one mode only the browser can resolve. In <head>, before any
+#: stylesheet, so the class is right before anything paints.
+_AUTO_THEME = (
+    "<script>if(window.matchMedia&&!matchMedia('(prefers-color-scheme: dark)').matches)"
+    "document.documentElement.classList.remove('dark')</script>"
+)
+
+
+def _theme_mode(request: HttpRequest) -> str:
+    mode = (request.GET.get("theme") or "").strip().lower()
+    return mode if mode in THEME_MODES else DEFAULT_THEME_MODE
 
 
 @require_GET
@@ -166,7 +192,12 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
             "</p>"
         )
     else:
+        mode = _theme_mode(request)
         body = _SHELL.format(
+            # From an allowlist, never the raw parameter: it lands in an HTML
+            # attribute.
+            html_class="dark" if mode in ("dark", "auto") else "",
+            auto_script=_AUTO_THEME if mode == "auto" else "",
             # json.dumps, not an f-string: these values land inside a <script>
             # block, and an app name or origin containing a quote would
             # otherwise end the string and inject.

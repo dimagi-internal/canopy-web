@@ -13,6 +13,8 @@
  * merely ignored by origin.
  */
 
+import type { SafeTheme } from './theme'
+
 export const SOURCE = 'canopy-widget' as const
 
 /**
@@ -68,6 +70,10 @@ export type HostMessage =
       agent?: string
       metadata?: Record<string, unknown>
       actions: ActionSpec[]
+      /** Validated host theme for the panel's contents. The frame validates it
+       *  AGAIN — it is canopy's document, and does not take a host's word for
+       *  what may be written into its styles. */
+      theme?: SafeTheme
     }
   | { source: typeof SOURCE; type: 'token'; id: string; token: string }
   | { source: typeof SOURCE; type: 'token-error'; id: string; message: string }
@@ -86,6 +92,8 @@ export type HostMessage =
    *  fact about a page: what it can do, and what it is showing. */
   | { source: typeof SOURCE; type: 'state'; state: Record<string, unknown> }
   | { source: typeof SOURCE; type: 'visibility'; open: boolean }
+  /** The host re-themed (e.g. its own light/dark toggle) while the panel is up. */
+  | { source: typeof SOURCE; type: 'theme'; theme: SafeTheme }
 
 export function isFrameMessage(data: unknown): data is FrameMessage {
   if (typeof data !== 'object' || data === null) return false
