@@ -237,6 +237,46 @@ def test_the_same_question_does_not_push_again_every_ten_seconds(
     assert len(sent) == 1
 
 
+def test_a_re_stamped_question_does_not_push_again(
+        monkeypatch, django_capture_on_commit_callbacks):
+    """What the runner actually sends. Every producer stamps `observed_at` on
+    each read, so the same dialog arrives as a DIFFERENT dict every ~10s — and
+    a raw comparison buzzed a phone every ten seconds for one waiting agent
+    (2026-09-22). The cursor moving (`selected`) is not a new question either."""
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    for i in range(3):
+        with django_capture_on_commit_callbacks(execute=True):
+            _report(client, runner.id, [{"emdash_task": "spark", "project": "ace",
+                                         "question": {**MENU, "observed_at": 1000.0 + 10 * i,
+                                                      "selected": i}}])
+    assert len(sent) == 1
+    binding = RunnerBinding.objects.get(session_key="spark")
+    assert binding.pending_question["observed_at"] == 1020.0  # the stamp still refreshes
+
+
+def test_a_different_question_is_news(monkeypatch, django_capture_on_commit_callbacks):
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    for question in (MENU, {**MENU, "question": "Deploy now?"}):
+        with django_capture_on_commit_callbacks(execute=True):
+            _report(client, runner.id, [
+                {"emdash_task": "spark", "project": "ace", "question": question}])
+    assert [kw["body"] for _u, kw in sent] == [MENU["question"], "Deploy now?"]
+
+
+def test_the_push_names_the_project_and_the_session(
+        monkeypatch, django_capture_on_commit_callbacks):
+    """"mcp is asking" named nothing: `mcp` is an emdash task name. The repo it
+    runs in is what tells you where to go."""
+    sent = _sent(monkeypatch)
+    _jj, _ws, runner, client = _setup()
+    with django_capture_on_commit_callbacks(execute=True):
+        _report(client, runner.id, [
+            {"emdash_task": "mcp", "project": "canopy-web", "question": MENU}])
+    assert sent[0][1]["title"] == "canopy-web · mcp is asking"
+
+
 def test_answering_does_not_push(monkeypatch, django_capture_on_commit_callbacks):
     """A retraction is not news — and the UI it would correct has already been
     corrected by the session.menu frame."""
