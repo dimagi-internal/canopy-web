@@ -76,8 +76,11 @@ export PATH="{stub_dir}:/usr/bin:/bin"
 ok()   {{ echo "OK: $*"; }}
 warn() {{ echo "WARN: $*"; }}
 gog_config_dir() {{ printf '%s\\n' "{gog_dir}"; }}
+{_fn("mark")}
+{_fn("detail_join")}
+declare -A CLIENT_CREDS_OK BOOTSTRAP_DETAIL
 {_fn("ensure_client_creds")}
-ensure_client_creds "{client}" "Agent-Ace" "ace"
+ensure_client_creds "{client}" "Agent-Ace" "ace" "Acme-Shared" "SHARED-KEY" "AGENT-KEY"
 """
     res = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
     return res.stdout
@@ -101,8 +104,8 @@ def test_a_shared_client_failure_names_the_vault_boundary(tmp_path):
     holds a per-agent key. That is the actual defect behind the outage, so the
     warning has to point at it rather than leaving the reader to rediscover it."""
     out = _run(tmp_path, "canopy-web", op_stderr=REAL_OP_ERROR)
-    assert "Canopy-Shared" in out
-    assert "per-agent" in out
+    assert "Acme-Shared" in out
+    assert "the workspace's shared vault" in out
 
 
 def test_a_per_agent_client_does_not_claim_a_shared_vault_problem(tmp_path):

@@ -23,13 +23,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(tmp_path, *, op_exit: int, op_stderr: str = "", tpl: bool = True) -> str:
+def _run(tmp_path, *, op_exit: int, op_stderr: str = "", tpl: bool = True,
+         token: str = "AGENT-KEY") -> str:
     stub = tmp_path / "bin"
     stub.mkdir()
     op = stub / "op"
     # A real `op inject` writes the -o file on success; the stub does too.
     op.write_text(
         "#!/usr/bin/env bash\n"
+        f'printf "OP_SERVICE_ACCOUNT_TOKEN=%s\\n" "${{OP_SERVICE_ACCOUNT_TOKEN:-<unset>}}" >> {tmp_path}/op.env\n'
+        
         f"printf %s {shlex.quote(op_stderr)} >&2\n"
         f'[ {op_exit} -eq 0 ] && for a; do [ "$prev" = -o ] && echo K=v > "$a"; prev="$a"; done\n'
         f"exit {op_exit}\n"
@@ -45,8 +48,9 @@ export PATH="{stub}:/usr/bin:/bin" HOME="{tmp_path}"
 ok()   {{ echo "OK: $*"; }}
 warn() {{ echo "WARN: $*"; }}
 {_fn("mark")}
+{_fn("detail_join")}
 {_fn("inject_agent_env")}
-inject_agent_env ace "{clone}"
+inject_agent_env ace "{clone}" "Agent-Ace" "{token}"
 echo "SURVIVED"
 declare -gA ENV_OK BOOTSTRAP_DETAIL
 echo "ENV_OK=${{ENV_OK[ace]-unset}}"
@@ -67,10 +71,27 @@ def test_a_failed_inject_says_why_and_the_bootstrap_carries_on(tmp_path):
                op_stderr='[ERROR] could not resolve "op://Agent-Hal/canopy-pat/credential": not found')
     assert "SURVIVED" in out
     assert "ENV_OK=0" in out
-    assert 'op inject failed: [ERROR] could not resolve "op://Agent-Hal/canopy-pat/credential"' in out
+    assert 'op inject from Agent-Ace failed: [ERROR] could not resolve "op://Agent-Hal/canopy-pat/credential"' in out
 
 
 def test_no_template_is_not_a_failure(tmp_path):
     out = _run(tmp_path, op_exit=1, tpl=False)
     assert "SURVIVED" in out
     assert "ENV_OK=unset" in out
+
+
+def test_an_unregistered_agent_injects_nothing_and_names_the_remedy(tmp_path):
+    """No vault/key in canopy-web is NOT CONFIGURED, not "use whatever key is
+    lying around". The old fallback (a derived vault name plus the box-wide key)
+    made an unregistered agent look provisioned."""
+    out = _run(tmp_path, op_exit=0, token="")
+    assert "SURVIVED" in out
+    assert "ENV_OK=0" in out
+    assert "PUT /api/agents/ace/vault" in out
+    assert not (tmp_path / ".ace" / ".env").exists()   # nothing was read or written
+
+
+def test_the_inject_runs_under_the_agents_own_key(tmp_path):
+    out = _run(tmp_path, op_exit=0)
+    assert "OP_SERVICE_ACCOUNT_TOKEN=AGENT-KEY" in (tmp_path / "op.env").read_text()
+    assert "ENV_OK=1" in out

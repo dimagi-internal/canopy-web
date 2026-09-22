@@ -59,6 +59,54 @@ ssh -i canopy-cloud-runner-key.pem ubuntu@<ip> 'journalctl -u canopy-runner -f'
 # cloud-init progress: ssh ... 'sudo cat /var/log/cloud-init-output.log'
 ```
 
+## Where secrets live, and which key reads them
+
+Two levels, each with its OWN 1Password service-account key, both **stored in
+canopy-web** (encrypted) and handed to a box per agent at bootstrap. There is no
+third level and no fallback: a level that is not registered is *not configured*,
+and the box says so instead of reaching for another credential.
+
+| level | vault | key stored on | holds | registered with |
+|---|---|---|---|---|
+| **tenant** (workspace) | e.g. `Canopy-Shared` | `Workspace.shared_op_vault` + `shared_op_sa_token_enc` | what every agent in the tenant shares: the `canopy` / `canopy-web` gog OAuth **clients** | `PUT /api/workspaces/<ws>/shared-vault` |
+| **agent** | e.g. `Agent-Hal` | `Agent.op_vault` + `op_sa_token_enc` | that agent's own secrets: its `.env.tpl` values (`CANOPY_WEB_PAT`, mailbox config…), its gmail token, its per-agent gog client | `PUT /api/agents/<slug>/vault` |
+
+The split is the blast radius: an agent's key reads that agent's vault **and
+nothing else**, so a compromise is bounded to one agent. That is also why the
+shared gog clients need the tenant key — using an agent key against the shared
+vault is the 2026-09-07 outage (a good gmail token with no client id+secret
+beside it).
+
+**What the box holds:** no 1Password key of its own for agent work. Every `op`
+call names the key it is made with — the agent's for an agent vault, the
+tenant's for the shared vault — so "which identity read this secret" always has
+an answer. Until 2026-09-22 an unregistered agent silently fell back to a
+derived `Agent-<Slug>` name and the box-wide key staged by `wire.sh`, which made
+four unconfigured agents look provisioned while running on secrets months old.
+
+**Unregistered now looks like this**, in the runner's log and in
+`GET /api/agents/<slug>/readiness` (`env_ok: false` plus the reason):
+
+```
+WARN: hal: NOT registered in canopy-web — no agent vault/key. Register it: PUT /api/agents/hal/vault
+WARN: hal: no vault registered in canopy-web — keeping any existing ~/.hal/.env, which may be stale
+```
+
+**To register one** (the key is a 1Password service account scoped to that one
+vault, minted in 1Password, then handed to canopy-web — it is never typed on the
+box):
+
+```bash
+curl -X PUT "$CANOPY/api/agents/hal/vault" -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' \
+  -d '{"vault": "Agent-Hal", "service_key": "ops_..."}'      # per agent
+curl -X PUT "$CANOPY/api/workspaces/connect/shared-vault" -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' \
+  -d '{"vault": "Canopy-Shared", "service_key": "ops_..."}'  # once per tenant
+```
+
+Then press **Refresh** on the runner page; the next bootstrap materializes it.
+
 ## Is it healthy? (no shell needed)
 
 Open `/supervisor` → **Runners** → the box. The **Health** panel is the box's own
@@ -283,14 +331,18 @@ so nothing else has to change once the line is there.
 
 ## Vault standard
 
-Agent secrets manifests (`config/secrets.yaml` in each agent repo) reference
+See "Where secrets live" above for WHICH KEY reads which vault — this section is
+only about naming. Agent `.env.tpl` files reference
 **`op://Agent-<Name>/<kebab-item>/<field>`** (e.g. `Agent-Ace/gog-token/credential`)
-for per-agent items, and **`op://Canopy-Shared/<kebab-item>/<field>`** for
-fleet-wide ones (`github-token`, `gog-oauth-client`, `canopy-drive-folder`). The old
-`AI-Agents` vault stays readable during the migration but nothing new should point
-at it. `wire.sh` reads `Canopy-Shared/github-token/credential` for this runner's own
-git access; `bootstrap_agents.sh` reads each agent's own
-`Agent-<Name>/gog-token/credential` for its gmail refresh token. See
+for per-agent items, and the tenant's shared vault (**`op://Canopy-Shared/...`** in
+the `connect`/`dimagi` workspaces) for fleet-wide ones (`github-token`,
+`gog-oauth-client`, `canopy-drive-folder`). The old `AI-Agents` vault stays readable
+during the migration but nothing new should point at it. The vault NAME is whatever
+canopy-web has registered for that agent or workspace — it is no longer derived from
+the slug, so an agent whose vault is not registered is simply not provisioned.
+`wire.sh` reads `Canopy-Shared/github-token/credential` **on the operator's laptop**
+for this runner's own git access; `bootstrap_agents.sh` reads each agent's own
+`Agent-<Name>/gog-token/credential` with that agent's key. See
 `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
 ## Gmail token re-staging
@@ -310,7 +362,7 @@ back to `rm -f`) whether the import succeeded or not.
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
 - `canopy/cloud-runner/canopy-pat` — a canopy-web PAT (the runner pairs + claims as this user). **Required** — `up.sh` refuses to deploy without it.
 - `canopy/cloud-runner/claude-oauth-token` — a **dedicated** claude setup-token (`CLAUDE_CODE_OAUTH_TOKEN`). Mint with `claude setup-token` as `ace@dimagi-ai.com` (Max subscription). It's long-lived and non-rotating, so the runner is self-sufficient after one bootstrap. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh). **Required**.
-- `canopy/cloud-runner/op-service-account-token` — a 1Password service-account token, same one the laptop runners use for now (see the design spec's "out of scope: dedicated cloud SA token"). **Optional** — without it, `bootstrap_agents.sh`'s `canopy provision` and gmail-token-import steps skip (logged, not fatal); the runner still comes up and can serve `canopy-web`-repo turns.
+- `canopy/cloud-runner/op-service-account-token` — **no longer used for agent work, and deliberately not exported into the runner's environment.** Agent secrets are read with per-agent and per-tenant keys that canopy-web issues (see "Where secrets live"); a box-wide key in this process's env was inherited by every turn, which is the per-agent boundary undone by inheritance. Staging it is harmless but buys nothing; an agent with no registered key simply has no `op`.
 
 Two more are published by `up.sh` itself, not staged by hand:
 - `canopy/cloud-runner/runner-code` — `cloud_runner.py` as gzip+base64, the first-boot seed.

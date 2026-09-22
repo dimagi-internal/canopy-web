@@ -14,23 +14,29 @@ one agent (Agent.op_vault, 2026-09-06). Using it against the shared vault is the
 then could not read the client id+secret that token is useless without, and
 every gmail call died on `No auth for gmail ace@dimagi-ai.com`.
 
-So canopy-web serves both halves per workspace, and both are blank-safe — a
-deployment that configures neither behaves exactly as it did before.
+So canopy-web serves both halves per workspace — and as of 2026-09-22 there is
+no fallback under either. An unregistered vault or key means NOT CONFIGURED: the
+read is refused and the report says where to register it. The old blank-safe
+behaviour (a compiled-in "Canopy-Shared" and whatever key was in the
+environment) made a misconfigured agent look healthy and left "which identity
+read this secret" unanswerable.
 """
 from __future__ import annotations
 
-import pathlib
 import shlex
 import subprocess
 
-SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "bootstrap_agents.sh"
+import pytest
+
+# The report arrays are associative, so these need bash 4+ (macOS ships 3.2).
+from test_readiness_is_observed import BASH, _fn
+
+pytestmark = pytest.mark.skipif(
+    BASH is None,
+    reason="no bash with associative arrays (macOS ships 3.2; `brew install bash`)",
+)
 
 
-def _fn(name: str) -> str:
-    lines = SCRIPT.read_text().splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"{name}() {{"))
-    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
-    return "\n".join(lines[start:end + 1])
 
 
 def _run(tmp_path, client, *, shared_vault="", shared_token="", agent_token="AGENT-KEY"):
@@ -55,15 +61,18 @@ def _run(tmp_path, client, *, shared_vault="", shared_token="", agent_token="AGE
     script = f"""
 set -uo pipefail
 export PATH="{stub_dir}:/usr/bin:/bin"
-export OP_SERVICE_ACCOUNT_TOKEN={shlex.quote(agent_token)}
-DEFAULT_SHARED_VAULT="Canopy-Shared"
 ok()   {{ echo "OK: $*"; }}
 warn() {{ echo "WARN: $*"; }}
 gog_config_dir() {{ printf '%s\\n' "{gog_dir}"; }}
 {_fn("ensure_client_creds")}
-ensure_client_creds {shlex.quote(client)} "Agent-Ace" "ace" {shlex.quote(shared_vault)} {shlex.quote(shared_token)}
+{_fn("mark")}
+{_fn("detail_join")}
+declare -A CLIENT_CREDS_OK BOOTSTRAP_DETAIL
+ensure_client_creds {shlex.quote(client)} "Agent-Ace" "ace" {shlex.quote(shared_vault)} {shlex.quote(shared_token)} {shlex.quote(agent_token)}
+echo "CLIENT_CREDS_OK=${{CLIENT_CREDS_OK[ace]:-unset}}"
+echo "DETAIL=${{BOOTSTRAP_DETAIL[ace]:-}}"
 """
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60).stdout
+    out = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60).stdout
     calls = log.read_text().strip().splitlines() if log.exists() else []
     return out, calls
 
@@ -89,45 +98,34 @@ def test_a_per_agent_client_still_uses_the_agent_key_and_vault(tmp_path):
     assert calls[0].endswith("|AGENT-KEY")
 
 
-def test_an_unconfigured_tenant_behaves_exactly_as_before(tmp_path):
-    """Blank-safe: no shared vault and no shared key falls back to the historical
-    constant and the key already in the environment. This is what makes the
-    change additive rather than a flag day across every deployment."""
-    _, calls = _run(tmp_path, "canopy-web")
-    assert "op://Canopy-Shared/gog-oauth-client-web/credential" in calls[0]
-    assert calls[0].endswith("|AGENT-KEY")
+def test_an_unconfigured_tenant_reads_nothing_and_says_where_to_fix_it(tmp_path):
+    """No fallback. A tenant with no shared vault gets no read at all — not a
+    read against a compiled-in name with whatever key happened to be around."""
+    out, calls = _run(tmp_path, "canopy-web")
+    assert calls == []
+    assert "Canopy-Shared" not in out
+    assert "CLIENT_CREDS_OK=0" in out
+    assert "shared vault" in out and "canopy-web" in out
 
 
-def test_a_vault_without_a_key_still_falls_back_to_the_agent_key(tmp_path):
-    """The half-configured tenant: a shared vault is named but no key for it.
-    The read is then attempted under the per-agent key — which is exactly the
-    combination that cannot work — so the wiring must be visible in the call
-    rather than inferred, and the failure path (below) has to name it."""
-    _, calls = _run(tmp_path, "canopy-web", shared_vault="Acme-Shared")
-    assert "op://Acme-Shared/gog-oauth-client-web/credential" in calls[0]
-    assert calls[0].endswith("|AGENT-KEY")
+def test_a_vault_without_a_key_is_not_configured(tmp_path):
+    """The half-configured tenant: a shared vault named, no key for it. That
+    combination cannot work, so it is refused rather than attempted under
+    somebody else's key."""
+    out, calls = _run(tmp_path, "canopy-web", shared_vault="Acme-Shared")
+    assert calls == []
+    assert "CLIENT_CREDS_OK=0" in out
 
 
-def test_the_no_shared_key_warning_names_the_remedy(tmp_path):
-    """Same case, but with op failing — which is how it presented in production."""
-    gog_dir = tmp_path / "gogcli"
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    op = stub_dir / "op"
-    op.write_text('#!/usr/bin/env bash\nprintf %s "denied" >&2\nexit 1\n')
-    op.chmod(0o755)
-    script = f"""
-set -uo pipefail
-export PATH="{stub_dir}:/usr/bin:/bin"
-export OP_SERVICE_ACCOUNT_TOKEN="AGENT-KEY"
-DEFAULT_SHARED_VAULT="Canopy-Shared"
-ok()   {{ echo "OK: $*"; }}
-warn() {{ echo "WARN: $*"; }}
-gog_config_dir() {{ printf '%s\\n' "{gog_dir}"; }}
-{_fn("ensure_client_creds")}
-ensure_client_creds "canopy-web" "Agent-Ace" "ace" "" ""
-"""
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60).stdout
-    assert "denied" in out                      # op's own reason still surfaces
-    assert "NO shared-vault key" in out
-    assert "shared_op_vault" in out             # names where to fix it
+def test_an_unregistered_agent_reads_nothing_for_its_own_client(tmp_path):
+    out, calls = _run(tmp_path, "ace", agent_token="")
+    assert calls == []
+    assert "CLIENT_CREDS_OK=0" in out
+
+
+def test_the_refusal_reaches_the_report_not_just_the_log(tmp_path):
+    """The detail is what /agents/<slug>/readiness shows, and it has to name the
+    remedy — this failure is a registration someone has to perform."""
+    out, _ = _run(tmp_path, "canopy-web")
+    detail = [l for l in out.splitlines() if l.startswith("DETAIL=")][0]
+    assert "shared vault" in detail and ("no vault" in detail or "no key" in detail)
