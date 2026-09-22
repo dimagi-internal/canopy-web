@@ -169,7 +169,6 @@ from apps.contacts.api import router as contacts_router
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
-from apps.tokens.exchange_api import exchange_router  # noqa: E402
 
 api.add_router("/projects", projects_router)
 api.add_router("/issues", issues_router)
@@ -185,7 +184,6 @@ api.add_router("/events", events_router)
 api.add_router("/inbound", inbound_router)
 api.add_router("/slack-config", slack_config_router)
 api.add_router("/storyboards", storyboards_router)
-api.add_router("/auth", exchange_router)
 api.add_router("/embed", embed_router)
 # The contact surface. `/api/contact/` is the ONLY prefix a contact token can
 # reach — see apps/tokens/contact_api.py and the allowlist in

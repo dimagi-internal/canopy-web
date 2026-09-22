@@ -35,10 +35,6 @@ export async function connectApp(
     agents: string[]
     public_keys: string[]
     show_on_canopy_pages: boolean
-    /** Always empty. The server refuses anything else — a site vouches for its
-     *  own contacts with a signing key now, not for an email domain. Sent
-     *  because the schema still declares it. */
-    delegation_domains: string[]
   },
 ): Promise<ConnectedAppCreated> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -53,7 +49,6 @@ export async function updateConnectedApp(
   appId: number,
   body: {
     origins?: string[]
-    delegation_domains?: string[]
     agents?: string[]
     public_keys?: string[]
     show_on_canopy_pages?: boolean

@@ -83,8 +83,8 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     # published OpenAPI description; see #757). Neither condition is sufficient
     # alone: the allowlist alone would let a host offer an agent to someone with
     # no access to it, and membership alone is just "every agent you can see",
-    # which ignores what the host was permitted to embed. Fails closed the same
-    # way an empty `allowed_delegation_domains` vouches for nobody.
+    # which ignores what the host was permitted to embed. Fails closed: an app
+    # with no agent rows offers nothing.
     app = _acting_app(request)
     reachable = wsvc.user_workspace_slugs(request.user)
     rows = (

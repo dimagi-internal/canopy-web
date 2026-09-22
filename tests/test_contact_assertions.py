@@ -58,7 +58,7 @@ def _setup(name="connect-labs", with_key=True):
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    _raw, app = AppCredential.create_credential(name=name, domains=[], created_by=owner)
+    _raw, app = AppCredential.create_credential(name=name, created_by=owner)
     app.workspace = ws
     priv, pub = _keypair()
     app.public_keys = [pub] if with_key else []

@@ -30,8 +30,7 @@ def _ctx(app_name="connect-labs"):
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.EDITOR)
     agent = Agent.objects.create(slug="labs-helper", name="Labs Helper", workspace=ws)
     admin = User.objects.create_user(f"a-{app_name}", f"a-{app_name}@dimagi.com", "pw")
-    _raw, app = AppCredential.create_credential(
-        name=app_name, domains=["dimagi.com"], created_by=admin,
+    _raw, app = AppCredential.create_credential(        name=app_name, created_by=admin,
     )
     return user, ws, agent, app
 
@@ -125,7 +124,7 @@ def test_origin_key_is_left_to_the_host():
 def test_the_list_can_be_scoped_to_this_app():
     user, ws, agent, app = _ctx()
     _raw2, other_app = AppCredential.create_credential(
-        name="ace-web", domains=["dimagi.com"],
+        name="ace-web",
         created_by=User.objects.create_user("a2", "a2@dimagi.com", "pw"),
     )
     mine = _create(_bearer(app, user)).json()["id"]

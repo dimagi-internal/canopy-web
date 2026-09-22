@@ -33,7 +33,6 @@ _STATUS = {
     "duplicate_name": 409,
     "bad_name": 422,
     "bad_origin": 422,
-    "no_vouching": 422,
     "bad_key": 422,
     "already_shown": 409,
     "unknown_agent": 422,
@@ -55,7 +54,6 @@ class ConnectedAppOut(Schema):
     id: int
     name: str
     origins: list[str]
-    delegation_domains: list[str]
     #: Domains whose EXISTING canopy users this site's visitors arrive as
     #: (who-is-asking §2). Empty: every visitor is a contact.
     resolvable_domains: list[str] = []
@@ -86,16 +84,11 @@ class ConnectIn(Schema):
     origins: list[str] = []
     agents: list[str] = []
     public_keys: list[str] = []
-    #: Accepted and required to be empty — see `embed_apps._no_domains_here`.
-    #: Kept in the schema rather than removed so an older client gets the
-    #: reason rather than a silent drop.
-    delegation_domains: list[str] = []
     show_on_canopy_pages: bool = False
 
 
 class UpdateIn(Schema):
     origins: list[str] | None = None
-    delegation_domains: list[str] | None = None
     agents: list[str] | None = None
     public_keys: list[str] | None = None
     show_on_canopy_pages: bool | None = None
@@ -110,7 +103,6 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         # Echoing the raw column would show a rejected origin as though it were
         # in force, which is the confusion `frame_origins()` exists to prevent.
         origins=app.frame_origins(),
-        delegation_domains=list(app.allowed_delegation_domains or []),
         resolvable_domains=list(app.resolvable_domains or []),
         public_keys=list(app.public_keys or []),
         signs_assertions=bool(app.public_keys),
@@ -166,8 +158,8 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
     try:
         raw, app = embed_apps.register(
             user=request.user, workspace_slug=slug, name=payload.name,
-            origins=payload.origins, domains=payload.delegation_domains,
-            agents=payload.agents, public_keys=payload.public_keys,
+            origins=payload.origins, agents=payload.agents,
+            public_keys=payload.public_keys,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -178,8 +170,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
               actor=request.user, ok=False, reason=exc.code)
         raise _refuse(exc)
     audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
-          detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
-                 f"agents={payload.agents}")
+          detail=f"origins={app.frame_origins()} agents={payload.agents}")
     return Status(201, ConnectedAppCreatedOut(app=_out(app), secret=raw))
 
 
@@ -191,8 +182,8 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     try:
         embed_apps.update(
             user=request.user, app=app, origins=payload.origins,
-            domains=payload.delegation_domains, agents=payload.agents,
-            public_keys=payload.public_keys, resolvable_domains=payload.resolvable_domains,
+            agents=payload.agents, public_keys=payload.public_keys,
+            resolvable_domains=payload.resolvable_domains,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
@@ -206,8 +197,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     # What it is NOW, not what was asked for: a partial payload leaves the rest
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
-          detail=f"origins={app.frame_origins()} domains={app.allowed_delegation_domains} "
-                 f"resolvable={app.resolvable_domains} "
+          detail=f"origins={app.frame_origins()} resolvable={app.resolvable_domains} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
 

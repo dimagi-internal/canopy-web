@@ -44,7 +44,6 @@ PUBLIC_PATH_PREFIXES = (
     # self-enforces the part that matters (it is served only for a registered,
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
-    "/api/auth/token-exchange",  # auth=None — self-enforces via the AppCredential Bearer header
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
     # canopy's PUBLIC key, for a host verifying the on-behalf-of assertions
     # canopy signs about who its agent is answering. A verifier must be able to

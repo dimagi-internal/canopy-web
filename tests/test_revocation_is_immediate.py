@@ -28,7 +28,7 @@ def _live_token():
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
-    _raw, app = AppCredential.create_credential(name="x", domains=[], created_by=user)
+    _raw, app = AppCredential.create_credential(name="x", created_by=user)
     token, _row = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600)
     return user, app, token
 
