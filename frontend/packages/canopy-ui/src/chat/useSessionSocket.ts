@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromAgui, resetAguiState } from "./agui";
-import type { Message, SessionState, WsEvent } from "./protocol";
+import type { Draft, Message, SessionState, WsEvent } from "./protocol";
 import { shouldSyncDraftLive } from "./drafts";
 import { prependHistory } from "./history";
 import { sessionReducer } from "./sessionReducer";
@@ -56,6 +56,18 @@ export interface UseSessionSocketOptions {
    * that against a fixture the server generates).
    */
   protocol?: "canopy" | "ag-ui";
+  /**
+   * For a principal whose socket is READ-ONLY — a canopy CONTACT, someone a
+   * site vouched for who has no canopy account. They can watch the conversation
+   * over the socket but not write to it, so their message goes out over HTTP
+   * (canopy-client's `rest.send`, which routes to `/api/contact/…`) and their
+   * draft stays local: there is no shared draft to co-edit with nobody else.
+   *
+   * Everything else is unchanged — the same `state`, the same pending row, the
+   * same "waiting for a reply" — so one chat UI serves a user and a contact
+   * without a second send path in every host. Omit for a user (the default).
+   */
+  sendOverHttp?: (text: string) => Promise<unknown>;
 }
 
 /**
@@ -132,7 +144,10 @@ export function useSessionSocket({
   onTitleUpdated,
   onUnknownEvent,
   protocol = "canopy",
+  sendOverHttp,
 }: UseSessionSocketOptions): UseSessionSocketResult {
+  // The local draft a read-only principal types into (see `sendOverHttp`).
+  const [localDraft, setLocalDraft] = useState<Draft | null>(null);
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -442,6 +457,15 @@ export function useSessionSocket({
     });
   }, []);
 
+  // `sendOverHttp`'s half of the hook: typing is local, sending is HTTP. Defined
+  // here, after noteLocalSend, which it reuses for the pending row.
+  const updateLocalDraft = useCallback((body: string) => {
+    setLocalDraft({
+      id: "local", slot: "next", status: "open", body, version: 0, last_editor: 0,
+      last_edit_at: new Date().toISOString(),
+    });
+  }, []);
+
   const noteLocalSend = useCallback((text: string) => {
     setAwaitingReply(true);
     const body = text.trim();
@@ -465,13 +489,31 @@ export function useSessionSocket({
     );
   }, []);
 
+  const sendChatOverHttp = useCallback(() => {
+    const body = (localDraft?.body ?? "").trim();
+    if (!body || !sendOverHttp) return;
+    noteLocalSend(body);
+    setLocalDraft(null);
+    sendOverHttp(body).catch((err: unknown) => {
+      setAwaitingReply(false);
+      setLastError(err instanceof Error ? err.message : "the message could not be sent");
+      // Put the words back, so a failed send never costs what was typed.
+      updateLocalDraft(body);
+    });
+  }, [localDraft, sendOverHttp, noteLocalSend, updateLocalDraft]);
+
+  const exposedState = useMemo(
+    () => (sendOverHttp ? { ...state, active_draft: localDraft } : state),
+    [sendOverHttp, state, localDraft],
+  );
+
   return {
-    state,
+    state: exposedState,
     connected,
     awaitingReply,
-    sendChat,
+    sendChat: sendOverHttp ? sendChatOverHttp : sendChat,
     stopChat,
-    updateDraft,
+    updateDraft: sendOverHttp ? updateLocalDraft : updateDraft,
     takeOverDraft,
     discardDraft,
     prependMessages,
