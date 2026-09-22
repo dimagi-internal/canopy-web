@@ -1,6 +1,6 @@
 {
   "name": "canopy-client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Framework-free client for canopy-web: delegated-token cache, REST, and the session WebSocket. Zero dependencies.",
   "repository": {
