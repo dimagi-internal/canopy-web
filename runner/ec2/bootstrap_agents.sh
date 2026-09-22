@@ -103,7 +103,6 @@ except Exception:
 # canopy-web now serves it per workspace and this is only the fallback.
 # $CANOPY_SHARED_VAULT is the same override wire.sh and
 # deploy/secrets/bootstrap_1password.sh take — one name across all three.
-DEFAULT_SHARED_VAULT="${CANOPY_SHARED_VAULT:-Canopy-Shared}"
 
 gog_config_dir() {
   if [[ -n "${GOG_HOME:-}" ]]; then
@@ -265,6 +264,15 @@ except Exception:
 # That is not hypothetical: it made ensure_client_creds unusable in isolation and
 # broke four tests the moment they ran on a bash that could execute them.
 # `declare -gA` is idempotent and preserves an existing array's contents.
+# Append to an agent's detail without clobbering what is already there — the
+# report carries ONE string per agent and two different failures can both be
+# true (no vault, and a gog client that therefore could not be read).
+detail_join() {  # <slug> <text> -> the new detail
+  declare -gA BOOTSTRAP_DETAIL
+  local slug="$1" text="$2" prior="${BOOTSTRAP_DETAIL[$slug]:-}"
+  printf '%s' "${prior:+$prior; }$text"
+}
+
 mark() {  # <array-name> <slug> <value>
   declare -gA "$1"
   printf -v "$1[$2]" '%s' "$3"
@@ -339,30 +347,40 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   # The tenant's shared vault and its OWN key, from canopy-web. Blank on a
   # deployment that has not configured one, which falls back to the historical
   # constant and today's (agent) key — i.e. exactly current behaviour.
-  local shared_vault="${4:-}" shared_token="${5:-}"
-  [[ -n "$shared_vault" ]] || shared_vault="${DEFAULT_SHARED_VAULT:-Canopy-Shared}"
+  local shared_vault="${4:-}" shared_token="${5:-}" agent_token="${6:-}"
   [[ -n "$client" ]] || return 0
   if ! command -v op >/dev/null 2>&1; then
     warn "$slug: op unavailable — cannot materialize gog client creds for $client"
     return 0
   fi
 
-  # NOTE the vault split, and that it crosses the per-agent key boundary:
-  # bootstrap_one_agent exports a SCOPED OP_SERVICE_ACCOUNT_TOKEN that canopy-web
-  # issues per agent, and a per-agent key can read op://Agent-<Slug> and nothing
-  # else. Both shared clients live in Canopy-Shared, so those two arms need a key
-  # this function may not hold. Measured 2026-09-07 on cloud-ec2-1: inside ONE
-  # bootstrap pass, seconds apart, op://Agent-Ace reads succeeded (op inject, the
-  # gog-token read, credentials-ace.json) while op://Canopy-Shared/gog-oauth-client-web
-  # failed — so ACE imported a browser-minted token bound to `canopy-web` and then
-  # had no client id+secret to use it with. Every gmail call died on
-  # `No auth for gmail ace@dimagi-ai.com` with a perfectly good token beside it.
-  local client_vault client_item is_shared=0
+  # The vault split crosses a KEY boundary, which is why the key travels with the
+  # vault here. A per-agent key reads that agent's vault and nothing else, and the
+  # shared gog clients live in the tenant's vault. Measured 2026-09-07 on
+  # cloud-ec2-1: inside ONE bootstrap pass, seconds apart, op://Agent-Ace reads
+  # succeeded while op://Canopy-Shared/gog-oauth-client-web failed — so ACE
+  # imported a browser-minted token and had no client id+secret to use it with.
+  # Every gmail call died on `No auth for gmail ace@dimagi-ai.com` with a
+  # perfectly good token beside it.
+  #
+  # WHICH vault, and WHICH key reads it — decided together, because they are one
+  # decision. A shared client lives in the tenant's vault and needs the TENANT's
+  # key; a per-agent client lives in the agent's vault and needs the AGENT's.
+  local client_vault client_item client_token which
   case "$client" in
-    canopy)     client_vault="$shared_vault"; client_item="gog-oauth-client";     is_shared=1 ;;
-    canopy-web) client_vault="$shared_vault"; client_item="gog-oauth-client-web"; is_shared=1 ;;
-    *)          client_vault="$agent_vault";  client_item="gog-oauth-client" ;;
+    canopy)     client_vault="$shared_vault"; client_item="gog-oauth-client";     client_token="$shared_token"; which="the workspace's shared vault" ;;
+    canopy-web) client_vault="$shared_vault"; client_item="gog-oauth-client-web"; client_token="$shared_token"; which="the workspace's shared vault" ;;
+    *)          client_vault="$agent_vault";  client_item="gog-oauth-client";     client_token="$agent_token";  which="this agent's vault" ;;
   esac
+  # No vault, or no key for it, means NOT CONFIGURED — say so and stop. There is
+  # no second key to try: reaching for another agent's or the box's credential is
+  # what made "which identity read this secret" unanswerable.
+  if [[ -z "$client_vault" || -z "$client_token" ]]; then
+    mark CLIENT_CREDS_OK "$slug" 0
+    mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "gog client '$client' needs $which, which canopy-web has no $( [[ -z "$client_vault" ]] && echo vault || echo key ) for")"
+    warn "$slug: no credential for $which — cannot materialize gog client '$client' (register it in canopy-web)"
+    return 0
+  fi
 
   local gog_dir; gog_dir="$(gog_config_dir)"
   local client_file="$gog_dir/credentials-${client}.json"
@@ -379,20 +397,11 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   # key, a throttle, or an outage. Five diagnostic round trips to a cloud box
   # recovered one line op had already written and this function threw away.
   # A shared vault needs the SHARED key. The caller has already exported this
-  # agent's per-agent key, and that key reads Agent-<Slug> and nothing else —
-  # so using it here is the 2026-09-07 outage. Scoped to this one command
-  # rather than exported, so nothing downstream inherits a broader credential.
-  local -a openv=()
-  if (( is_shared )) && [[ -n "$shared_token" ]]; then
-    openv=(env "OP_SERVICE_ACCOUNT_TOKEN=$shared_token")
-  fi
-
-  # `${openv[@]+"${openv[@]}"}` and not `"${openv[@]}"`: expanding an EMPTY
-  # array under `set -u` is an unbound-variable error on bash 3.2, which turns
-  # the per-agent path — the common one — into a silent failed read. Caught by
-  # the tests in this directory, which run on 3.2 deliberately.
+  # Always an explicit key, as an assignment PREFIX so it scopes to this one
+  # command and nothing downstream inherits a broader credential. Every op call
+  # in this file names the key it is made with.
   local readerr
-  if readerr="$(${openv[@]+"${openv[@]}"} op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
+  if readerr="$(OP_SERVICE_ACCOUNT_TOKEN="$client_token" op read "op://${client_vault}/${client_item}/credential" 2>&1 >"$client_file")" \
      && [[ -s "$client_file" ]]; then
     chmod 0600 "$client_file"
     mark CLIENT_CREDS_OK "$slug" 1
@@ -400,15 +409,12 @@ ensure_client_creds() {  # <client> <agent-vault> <slug> [shared-vault] [shared-
   else
     rm -f "$client_file"
     mark CLIENT_CREDS_OK "$slug" 0
-    mark BOOTSTRAP_DETAIL "$slug" "op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
-    warn "$slug: op read op://${client_vault}/${client_item}/credential failed: ${readerr:-(no output)}"
-    if (( is_shared )); then
-      if [[ -n "$shared_token" ]]; then
-        warn "$slug: $client is a SHARED client, read with this tenant's shared-vault key — check that key can read $client_vault"
-      else
-        warn "$slug: $client is a SHARED client and this tenant has NO shared-vault key, so the read used the per-agent key — which reads $agent_vault and nothing else. Set the workspace's shared_op_vault + token in canopy-web."
-      fi
-    fi
+    # Name the key TIER, not just the path. "op read failed" against a vault is
+    # the same sentence whether the key is the wrong one or the item is absent,
+    # and those have different fixes.
+    mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "op read op://${client_vault}/${client_item}/credential with ${which}'s key failed: ${readerr:-(no output)}")"
+    warn "$slug: op read op://${client_vault}/${client_item}/credential with ${which}'s key failed: ${readerr:-(no output)}"
+    warn "$slug: $client is read from ${which} ($client_vault) — check that key can read it"
     warn "$slug: gmail will not authorize as $client until this resolves"
   fi
 }
@@ -465,10 +471,6 @@ if v:
 ' 2>/dev/null || true
 }
 
-vault_name() {  # ace -> Agent-Ace (bash 5, shipped on Ubuntu 24.04: ${var^} title-cases)
-  local slug="$1"
-  printf 'Agent-%s\n' "${slug^}"
-}
 
 # Ask canopy-web which vault this agent's secrets live in, and for a service
 # token scoped to it. Prints "<vault>\t<token>"; either half may be empty.
@@ -491,8 +493,14 @@ agent_vault_config() {  # <slug> -> "<vault>\t<token>\t<shared-vault>\t<shared-t
   local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
   [[ -n "$base" && -n "$tok" ]] || { printf '\t\t\t\n'; return 0; }
   local body
-  body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
-          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)" || { printf '\t\t\t\n'; return 0; }
+  # A control plane we could not ASK is not the same as an agent nobody has
+  # registered, and since there is no fallback the difference decides what a
+  # human should do next — retry, or go register a vault.
+  if ! body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)"; then
+    warn "$slug: could not reach canopy-web for its vault config — treating as unregistered this pass"
+    printf '\t\t\t\n'; return 0
+  fi
   BODY="$body" python3 -c '
 import json, os
 try:
@@ -768,7 +776,7 @@ install_required_plugins() {
   done <<<"$specs"
 }
 
-run_agent_provisioner() {
+run_agent_provisioner() {  # <slug> <clone>; caller scopes OP_SERVICE_ACCOUNT_TOKEN
   local slug="$1" dest="$2"
   local setup="$dest/bin/${slug}-setup"
   [[ -x "$setup" || -f "$setup" ]] || return 0
@@ -808,8 +816,8 @@ run_agent_provisioner() {
 # credentials-only pass runs EXACTLY this, rather than a second copy that can
 # drift from it — the drift between two implementations of one rule is the
 # original sin behind most of this file's history.
-refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <shared-token>
-  local slug="$1" account="$2" client="$3" vault="$4" shared_vault="$5" shared_token="$6"
+refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <shared-token> <agent-key>
+  local slug="$1" account="$2" client="$3" vault="$4" shared_vault="$5" shared_token="$6" agent_token="${7:-}"
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
@@ -823,7 +831,14 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
     log "$slug: gmail token not live — taking the NEWEST of the vault and canopy-web"
     local tokfile; tokfile="$(mktemp)"
     local vaultfile webfile; vaultfile="$(mktemp)"; webfile="$(mktemp)"
-    op read "op://${vault}/gog-token/credential" >"$vaultfile" 2>/dev/null || : >"$vaultfile"
+    # Only with this agent's own key. No key means the vault half simply has
+    # nothing to offer, and canopy-web's copy below is then the only source.
+    if [[ -n "$vault" && -n "$agent_token" ]]; then
+      OP_SERVICE_ACCOUNT_TOKEN="$agent_token" op read "op://${vault}/gog-token/credential" \
+        >"$vaultfile" 2>/dev/null || : >"$vaultfile"
+    else
+      : >"$vaultfile"
+    fi
     fetch_canopy_web_token "$slug" "$webfile"
 
     # Both 0 (no python3, unparseable dates, or neither store has one) falls to
@@ -970,12 +985,24 @@ verify_turn_client() {  # <slug> <account>
 # `ENV_OK[$slug]=`: from inside a function that name is undeclared, bash makes
 # it an INDEXED array, evaluates `ace` arithmetically and dies under `set -u` —
 # which on 2026-09-22 stopped the whole bootstrap at the first agent.
-inject_agent_env() {  # <slug> <agent-clone>
-  local slug="$1" dest="$2"
+inject_agent_env() {  # <slug> <agent-clone> <agent-vault> <agent-key>
+  local slug="$1" dest="$2" vault="${3:-}" token="${4:-}"
+  declare -gA ENV_OK BOOTSTRAP_DETAIL
   local env_tpl="$dest/.env.tpl"
   local env_out="$HOME/.${slug}/.env"
   if [[ ! -f "$env_tpl" ]]; then
     warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
+    return 0
+  fi
+  # An agent with no vault registered in canopy-web is NOT provisioned here. It
+  # used to fall back to a derived vault name and the box-wide key, which meant
+  # "who read this secret" had no answer and a misconfigured agent looked healthy
+  # until something else broke (ada/echo/hal, 2026-09-22).
+  if [[ -z "$vault" || -z "$token" ]]; then
+    mark ENV_OK "$slug" 0
+    local what; what="$( [[ -z "$vault" ]] && echo "no vault" || echo "no service-account key" )"
+    mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "canopy-web has $what for $slug (PUT /api/agents/$slug/vault) — .env not injected")"
+    warn "$slug: $what registered in canopy-web — keeping any existing $env_out, which may be stale"
     return 0
   fi
   mkdir -p "$(dirname "$env_out")"
@@ -983,17 +1010,15 @@ inject_agent_env() {  # <slug> <agent-clone>
   # two weeks with no stated reason — cloud-ec2-1, 2026-09-22). op names the
   # reference it could not resolve, never a resolved value, so it is safe to log
   # and to report. --account isn't needed with a service-account token.
-  local inject_err prior
-  if inject_err="$(op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
+  local inject_err
+  if inject_err="$(OP_SERVICE_ACCOUNT_TOKEN="$token" op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
     chmod 0600 "$env_out"
     mark ENV_OK "$slug" 1
     ok "$slug: op inject .env.tpl -> $env_out"
   else
     mark ENV_OK "$slug" 0
     inject_err="$(printf '%s' "$inject_err" | tr '\n' ' ' | cut -c1-300)"
-    declare -gA BOOTSTRAP_DETAIL
-    prior="${BOOTSTRAP_DETAIL[$slug]:-}"
-    mark BOOTSTRAP_DETAIL "$slug" "${prior:+$prior; }op inject failed: ${inject_err}"
+    mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "op inject from $vault failed: ${inject_err}")"
     warn "$slug: op inject failed — keeping the existing $env_out, which may be stale: ${inject_err}"
   fi
 }
@@ -1003,20 +1028,28 @@ bootstrap_one_agent() {
   local dest="$AGENT_ROOT/$slug"
   local client="${GOG_CLIENT[$slug]:-$slug}"
   local account="${slug}@dimagi-ai.com"
-  # Vault + key from canopy-web when it has them; otherwise the derived name and
-  # the runner-wide token, so an agent nobody has configured behaves exactly as
-  # it did before this existed.
+  # WHERE this agent's secrets live and WHICH key reads them — from canopy-web,
+  # the custodian of both, and from nowhere else. Two levels, each with its own
+  # key, and neither substitutes for the other:
+  #   * this agent's vault   (Agent.op_vault)            — its own secrets
+  #   * the workspace's vault (Workspace.shared_op_vault) — what the tenant shares
+  # There is deliberately NO fallback. It used to derive "Agent-<Slug>" and use
+  # the box-wide key, so an agent nobody had registered looked configured, and
+  # "which identity read this secret" had no answer. Unregistered now says so,
+  # here and in the readiness report.
   local vault op_token shared_vault shared_token cfg
   cfg="$(agent_vault_config "$slug")"
   IFS=$'\t' read -r vault op_token shared_vault shared_token <<<"$cfg"
-  if [[ -n "$vault" ]]; then
-    ok "$slug: vault $vault (from canopy-web)"
+  if [[ -n "$vault" && -n "$op_token" ]]; then
+    ok "$slug: agent vault $vault (key from canopy-web)"
   else
-    vault="$(vault_name "$slug")"
+    warn "$slug: NOT registered in canopy-web — no agent vault/key. Register it: PUT /api/agents/$slug/vault"
   fi
-  # Scoped key wins over the runner-wide one for THIS agent's reads only.
-  local OP_SERVICE_ACCOUNT_TOKEN="${op_token:-${OP_SERVICE_ACCOUNT_TOKEN:-}}"
-  export OP_SERVICE_ACCOUNT_TOKEN
+  if [[ -n "$shared_vault" && -n "$shared_token" ]]; then
+    ok "$slug: shared vault $shared_vault (workspace key from canopy-web)"
+  else
+    warn "$slug: this workspace has no shared vault/key registered — shared gog clients are unavailable. PUT /api/workspaces/<slug>/shared-vault"
+  fi
 
   log "── agent $slug ──"
 
@@ -1024,8 +1057,8 @@ bootstrap_one_agent() {
   # and re-provisioning under a live agent is how a working box gets broken, and
   # none of it is needed to materialize a credential.
   if (( CREDENTIALS_ONLY )); then
-    ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
-    refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
+    ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token" "$op_token"
+    refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
     verify_mailbox "$slug" "$account" "$client"
     verify_turn_client "$slug" "$account"
     report_bootstrap "$slug"
@@ -1041,11 +1074,13 @@ bootstrap_one_agent() {
   fi
   ok "$slug: repo at $dest"
 
-  inject_agent_env "$slug" "$dest"
+  inject_agent_env "$slug" "$dest" "$vault" "$op_token"
 
   install_agent_plugin "$slug" "$dest"
   install_required_plugins "$slug" "$dest"
-  run_agent_provisioner "$slug" "$dest"
+  # The agent's own installer may read 1Password. It gets THIS agent's key and
+  # no other — nothing on this box carries a key that spans agents any more.
+  OP_SERVICE_ACCOUNT_TOKEN="$op_token" run_agent_provisioner "$slug" "$dest"
 
   # The gog OAuth-client credential FILE — see ensure_client_creds. Materialized
   # from the FALLBACK client name here, because the token that names the real one

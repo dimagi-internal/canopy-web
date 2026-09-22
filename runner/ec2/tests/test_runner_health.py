@@ -188,3 +188,45 @@ def test_a_failed_bootstrap_says_why_in_the_check(cloud_runner, monkeypatch, tmp
 def test_a_silent_hang_is_still_killed(cloud_runner):
     rc, tail = cloud_runner._run_teed(["bash", "-c", "sleep 30"], env=dict(cloud_runner.os.environ), timeout=0.5)
     assert rc != 0 and tail == ["killed after 0s"]
+
+
+# ── a turn carries its OWN 1Password key, never a box-wide one ───────────────
+# Agent.op_vault exists so a compromise is bounded to one agent. Staging a
+# box-wide key into this process's env handed every turn a credential that reads
+# every vault — the boundary undone by inheritance (2026-09-22).
+
+def test_a_turn_gets_its_own_op_key_not_the_boxs(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "BOX-WIDE-KEY")
+    monkeypatch.setattr(cloud_runner, "_AGENT_OP", {})
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda m, p, *a, **k: (200, {"op_sa_token": "HAL-KEY"}))
+    assert cloud_runner._agent_env("hal")["OP_SERVICE_ACCOUNT_TOKEN"] == "HAL-KEY"
+
+
+def test_an_unregistered_agent_gets_no_op_key_at_all(cloud_runner, monkeypatch, tmp_path):
+    # Not the box's. `op` is simply unavailable, which is the honest state and
+    # says so in the log.
+    monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "BOX-WIDE-KEY")
+    monkeypatch.setattr(cloud_runner, "_AGENT_OP", {})
+    monkeypatch.setattr(cloud_runner, "_api", lambda m, p, *a, **k: (200, {"op_sa_token": ""}))
+    assert "OP_SERVICE_ACCOUNT_TOKEN" not in cloud_runner._agent_env("ada")
+
+
+def test_the_key_is_cached_but_not_forever(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
+    calls = []
+    monkeypatch.setattr(cloud_runner, "_AGENT_OP", {})
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda m, p, *a, **k: (calls.append(p), (200, {"op_sa_token": "K"}))[1])
+    cloud_runner._agent_env("hal"); cloud_runner._agent_env("hal")
+    assert len(calls) == 1
+    cloud_runner._AGENT_OP["hal"] = (0.0, "K")   # expired
+    cloud_runner._agent_env("hal")
+    assert len(calls) == 2
+
+
+def test_a_project_turn_carries_no_agent_key(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: pytest.fail("must not resolve"))
+    assert cloud_runner._agent_env(None) is not None

@@ -740,6 +740,35 @@ def _child_safe_env() -> dict:
 _TURN_ENV = threading.local()
 
 
+#: Per-agent 1Password keys, resolved from canopy-web and cached briefly. The
+#: cache keeps a turn from re-fetching on every claim; the TTL keeps a rotated
+#: or revoked key from living on this box longer than a few minutes.
+_AGENT_OP: dict[str, tuple[float, str]] = {}
+_AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
+_BOX_OP_TOKEN_PRESENT = False
+
+
+def _agent_op_token(slug: str) -> str:
+    """THIS agent's 1Password key, or "" — never another agent's, never a
+    box-wide one. canopy-web is the custodian (`Agent.op_sa_token_enc`)."""
+    hit = _AGENT_OP.get(slug)
+    now = time.time()
+    if hit and now - hit[0] < _AGENT_OP_TTL_SECONDS:
+        return hit[1]
+    token = ""
+    try:
+        status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents")
+        if status == 200 and isinstance(payload, dict):
+            token = str(payload.get("op_sa_token") or "")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not resolve {slug}'s 1Password key ({exc}); the turn runs without one")
+    _AGENT_OP[slug] = (now, token)
+    if not token:
+        _log(f"{slug}: no 1Password key registered in canopy-web — `op` is unavailable to this turn "
+             f"(register it: PUT /api/agents/{slug}/vault)")
+    return token
+
+
 def _agent_env(slug: str | None) -> dict:
     """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
 
@@ -770,6 +799,13 @@ def _agent_env(slug: str | None) -> dict:
     # session had no canopy-web MCP at all (cloud-ec2-1, 2026-09-22). A slug is
     # not a secret; the helper reads the PAT from ~/.<slug>/.env itself.
     env["CANOPY_AGENT"] = slug
+    # The agent's OWN 1Password key, or none at all. Inheriting this process's
+    # would hand every agent a credential that reads every vault.
+    op_token = _agent_op_token(slug)
+    if op_token:
+        env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
+    else:
+        env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()
@@ -2150,8 +2186,15 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
                 _log("warn: only ONE Claude credential is set — a usage cap will stop "
                      "every agent on this box with nothing to fail over to "
                      "(`canopy runner credential` adds a fallback)")
+            # DELIBERATELY NOT into os.environ. Every turn's env is built from
+            # this process's, so a box-wide 1Password key here is inherited by
+            # every agent — a key that reads other agents' vaults, which is the
+            # per-agent boundary undone (Agent.op_vault exists so a compromise is
+            # bounded to one agent). An agent turn gets ITS OWN key, resolved per
+            # slug in `_agent_env`; bootstrap likewise reads each vault with the
+            # key for that vault. Kept only so a human can see it was delivered.
             if cred.get("op_sa_token"):
-                os.environ["OP_SERVICE_ACCOUNT_TOKEN"] = cred["op_sa_token"]
+                globals()["_BOX_OP_TOKEN_PRESENT"] = True
             if cred.get("github_token"):
                 _stage_github_token(cred["github_token"])
             _log("staged credential bundle from canopy-web (claude"
