@@ -365,6 +365,11 @@ class ReportSessionsIn(Schema):
     # emdash task names this runner has seen ARCHIVED. Defaulted so an older runner
     # (which does not send it) keeps working unchanged — it simply never closes a row.
     archived: list[str] = []
+    # True when `sessions` is this runner's WHOLE open set (it was not cut off by
+    # the runner's report limit). Only then is absence an observation: a session
+    # missing from consecutive complete reports was closed. Defaulted False so an
+    # older runner never has anything retired on absence.
+    complete: bool = False
 
 
 class EmdashSessionOut(Schema):

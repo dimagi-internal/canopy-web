@@ -469,6 +469,13 @@ class RunnerBinding(models.Model):
     # following report retires it anyway") assumes the runner DELETED the task,
     # which never happens if the frame is lost.
     close_requested = models.BooleanField(default=False)
+    # Consecutive COMPLETE reports from this binding's own runner that did not
+    # include its task. A report that arrives is an observation of the whole
+    # open set (a runner that cannot read emdash sends none), so absence from
+    # one means the task was closed — unlike a laptop asleep, which sends
+    # nothing. Two in a row before it counts, to absorb one flickering read.
+    # Reset whenever the task is reported. See replace_reported_sessions.
+    missed_reports = models.PositiveSmallIntegerField(default=0)
     summary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=40, blank=True, default="")
     # The ENGINE's own answer to "is this session working right now" — emdash's

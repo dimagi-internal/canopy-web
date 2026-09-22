@@ -28,6 +28,13 @@ sessions_reported = Signal()
 # into the thread the conversation started in).
 session_menu_changed = Signal()
 
+# Sent with: sender=Session, session_ids=<list[uuid]> for sessions that just became
+# ARCHIVED because they were CLOSED — archived in emdash, closed from canopy, or
+# absent from consecutive complete reports by their own runner. Never for a runner
+# that merely went quiet. Post-commit. apps/slack tells a thread a session was
+# shared into that its replies no longer reach anything.
+sessions_closed = Signal()
+
 # Sent with: sender=Session, session=<Session>, rows=<list[(index, kind, text)]>
 # — the `user` and `assistant` text records of a runner's live transcript stream,
 # for a batch that persisted something new. This is the half of a conversation

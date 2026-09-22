@@ -12,6 +12,7 @@ from django.dispatch import receiver
 
 from apps.harness.signals import (
     session_menu_changed,
+    sessions_closed,
     sessions_reported,
     transcript_rows_streamed,
     turn_events_appended,
@@ -88,3 +89,13 @@ def _status_sweep(sender, runner, **kwargs):
         sweep()
     except Exception:  # noqa: BLE001 — never break a runner's report over Slack
         logger.exception("slack status sweep failed")
+
+
+@receiver(sessions_closed, dispatch_uid="slack_closed_notice")
+def _closed(sender, session_ids, **kwargs):
+    from .relay import notify_closed
+
+    try:
+        notify_closed(session_ids)
+    except Exception:  # noqa: BLE001 — never break a report over Slack
+        logger.exception("slack closed notice failed")

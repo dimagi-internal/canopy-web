@@ -284,7 +284,10 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         transcript.attach_pending_questions(
             sessions, hook_menu_for=hooks.pending_hook_menu
         )
-        client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing))
+        # Complete = not cut off by the limit. Only a complete report lets the
+        # server read a task's absence as "closed" (emdash deletes closed tasks).
+        client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing),
+                               complete=len(sessions) < cfg.session_report_limit)
         # Discard only the names this report actually carried (mutate in place —
         # `_PENDING_CLOSED -= closing` would rebind the name, making it local
         # under Python's scoping rules and shadowing the module-level set). A

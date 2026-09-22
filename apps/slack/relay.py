@@ -314,6 +314,56 @@ def notify_elsewhere(session, texts) -> bool:
     return True
 
 
+#: The thread a "this session was closed" notice was posted into — so a notice
+#: is said once per thread, however many signals report the same close.
+CLOSED_NOTICE = "slack_closed_notice"
+
+
+def notify_closed(session_ids) -> int:
+    """Tell the thread a session was SHARED into (bind mode) that it was closed.
+
+    Only a shared thread: there a person chose to point colleagues at a session,
+    and after the close their replies reach nothing, so silence would read as
+    being ignored. A Slack-born conversation is not told — replying there asks
+    the agent again, which still works.
+
+    `sessions_closed` fires only for a real close (archived in emdash, closed
+    from canopy, or absent from consecutive complete runner reports), never for
+    a laptop that went to sleep, which is what makes it safe to say.
+    """
+    from apps.canopy_sessions.models import Session
+
+    from .services import SLACK_THREAD_KEY
+
+    posted = 0
+    for session in Session.objects.select_related("agent").filter(pk__in=list(session_ids),
+                                                                  status=Session.ARCHIVED):
+        if not (session.metadata or {}).get("slack_shared_by"):
+            continue
+        dest = session_destination(session)
+        if dest is None:
+            continue
+        with transaction.atomic():
+            locked = Session.objects.select_for_update().get(pk=session.pk)
+            meta = dict(locked.metadata or {})
+            key = meta.get(SLACK_THREAD_KEY)
+            if meta.get(CLOSED_NOTICE) == key:
+                continue
+            meta[CLOSED_NOTICE] = key
+            locked.metadata = meta
+            locked.save(update_fields=["metadata", "updated_at"])
+        installation, channel, thread_ts = dest
+        try:
+            client.post_message(installation.bot_token, channel=channel, thread_ts=thread_ts,
+                                text=":lock: This session was closed — replies here no longer reach it.",
+                                persona=persona(session.agent if session.agent_id else None))
+            posted += 1
+        except Exception as e:  # noqa: BLE001 — a missed notice must not fail a report
+            logger.exception("could not post a Slack closed notice")
+            _log_failure(installation, session, channel, str(e))
+    return posted
+
+
 def _norm(text: str) -> str:
     return " ".join((text or "").split())
 

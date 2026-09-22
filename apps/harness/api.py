@@ -898,7 +898,7 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     if ws is None:
         raise HttpError(404, "runner has no workspace")
     count = services.replace_reported_sessions(
-        runner, ws, payload.sessions, payload.archived
+        runner, ws, payload.sessions, payload.archived, complete=payload.complete
     )
     return SessionReportOut(count=count)
 

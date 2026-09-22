@@ -20,11 +20,13 @@ class _Client:
         self.reports = 0
         self.sessions_seen = []
         self.archived_seen = []
+        self.complete_seen = []
 
-    def report_sessions(self, runner_id, sessions, archived=None):
+    def report_sessions(self, runner_id, sessions, archived=None, complete=False):
         self.reports += 1
         self.sessions_seen.append(sessions)
         self.archived_seen.append(archived)
+        self.complete_seen.append(complete)
 
 
 def _asst(text):
@@ -125,3 +127,22 @@ def test_a_failed_archived_read_still_reports_open_sessions(tmp_path, monkeypatc
     sessions_mod.maybe_report_sessions(_Cfg(), c, now_fn=lambda: 100.0)
     assert c.reports == 1
     assert c.archived_seen[-1] == []
+
+
+def test_a_report_says_whether_it_holds_the_whole_open_set(tmp_path, monkeypatch):
+    """emdash deletes a closed task, so the server can read a task's ABSENCE as
+    "closed" — but only from a report that was not cut off by the limit."""
+    monkeypatch.setattr(transcript, "attach_recent_tail", lambda _s, **_k: None)
+    monkeypatch.setattr(transcript, "attach_pending_questions", lambda _s, **_k: None)
+
+    class Small(_Cfg):
+        session_report_limit = 2
+
+    for rows, want in ((1, True), (2, False)):
+        sessions_mod._tail_readers.clear()
+        sessions_mod._last_session_report = 0.0
+        found = [{"emdash_task": f"t{i}", "project": "p"} for i in range(rows)]
+        monkeypatch.setattr(emdash, "list_open_sessions", lambda _db, limit=30, _f=found: _f)
+        c = _Client()
+        sessions_mod.maybe_report_sessions(Small(), c, now_fn=lambda: 1000.0)
+        assert c.complete_seen == [want]

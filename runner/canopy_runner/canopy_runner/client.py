@@ -221,15 +221,21 @@ class Client:
         return payload or {}
 
     def report_sessions(
-        self, runner_id: str, sessions: list[dict], archived: list[str] | None = None
+        self, runner_id: str, sessions: list[dict], archived: list[str] | None = None,
+        complete: bool = False,
     ) -> None:
         """Report the open emdash sessions this runner can see (wholesale), plus the
         task names it has seen ARCHIVED — the closing signal that lets the server
-        retire a session instead of inferring it from absence."""
+        retire a session instead of inferring it from absence.
+
+        `complete` says `sessions` is the WHOLE open set, not cut off by the report
+        limit. emdash deletes a task it closes, leaving nothing to name, so for an
+        ordinary close absence is the only signal — and it is one only when the
+        report is complete."""
         self._call(
             "POST",
             f"/runners/{runner_id}/sessions",
-            {"sessions": sessions, "archived": archived or []},
+            {"sessions": sessions, "archived": archived or [], "complete": complete},
         )
 
     def sync_streams(self, runner_id: str) -> list[dict]:
