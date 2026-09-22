@@ -434,8 +434,22 @@ function Centered({ children }: { children: React.ReactNode }) {
  *  cannot be, because every field that makes it multiplayer is keyed on a user
  *  id they do not have. Presenting theirs as a `Draft` keeps the shared kit
  *  from having to learn about a second principal for a difference that is
- *  entirely about where the text lives.
+ *  entirely about where the text lives. The chat itself now gets this from
+ *  the kit (`sendOverHttp`); the start screen still needs it, because no
+ *  session — and so no socket — exists until its first send.
  */
+function contactDraft(body: string) {
+  return {
+    id: 'local',
+    slot: 'next' as const,
+    status: 'open' as const,
+    body,
+    version: 0,
+    last_editor: 0,
+    last_edit_at: '',
+  }
+}
+
 function EmbedChat({
   sessionId,
   firstMessage,
