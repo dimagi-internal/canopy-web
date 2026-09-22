@@ -11037,6 +11037,8 @@ export interface components {
             readonly caller_context: {
                 readonly [key: string]: unknown;
             };
+            /** Mcp Token */
+            readonly mcp_token?: string | null;
         };
         /**
          * InitiatorOut

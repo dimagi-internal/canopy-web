@@ -163,7 +163,13 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
         raise ProfileError(f"a caller's turn must run in a cx- session, not {task!r}")
     root = root or PROFILE_ROOT
     doc = {"version": PROFILES_VERSION, "turn_id": str(turn.get("id") or ""),
-           "thread_id": thread_id(turn) or None, "capability": cap}
+           "thread_id": thread_id(turn) or None, "capability": cap,
+           # canopy's MCP credential for THIS session — the caller, scoped to the
+           # capability — sent by the canopy plugin's headers helper in place of the
+           # owner's PAT. The session cannot read this file (profile_guard), so it
+           # cannot lift the token; a missing one makes the helper send an invalid
+           # header, never the PAT.
+           "mcp_token": turn.get("mcp_token") or None}
     try:
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)

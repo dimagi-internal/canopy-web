@@ -14,7 +14,7 @@ CAP = {"name": "ask", "entry": "/ace:ask --thread {thread_id}",
 def _restricted(**kw):
     d = {"id": "3f2b8c1e-0000-4000-8000-000000000001", "agent_slug": "ace",
          "origin_ref": {"thread_id": "18c9abc", "subject": "payments?"},
-         "prompt": "/ace:turn --thread 18c9abc",
+         "prompt": "/ace:turn --thread 18c9abc", "mcp_token": "cct_test",
          "caller_context": {"profile": "restricted", "capability": CAP,
                             "conversation": {"thread_id": "18c9abc"}}}
     d.update(kw)
@@ -67,6 +67,7 @@ def test_create_writes_the_profile_before_the_session_and_starts_with_the_entry(
     assert seen["prompt"].startswith("/ace:ask --thread 18c9abc --caller ")
     prof = seen["profile_at_create"]
     assert prof["capability"]["name"] == "ask" and prof["thread_id"] == "18c9abc"
+    assert prof["mcp_token"] == "cct_test"
     # And the server was told the caller's own thread key, not the admin's.
     assert client.calls[0][2] == "18c9abc#ask"
 

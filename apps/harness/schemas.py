@@ -532,6 +532,13 @@ class ClaimedTurnOut(TurnOut):
     person, which a turn LISTING has no reason to spread."""
 
     caller_context: dict
+    # For a CONFINED turn only: the token the session uses for canopy's MCP in
+    # place of the runner owner's PAT (harness.models.CallerToken). Null otherwise.
+    mcp_token: str | None = None
+
+    @staticmethod
+    def resolve_mcp_token(obj) -> str | None:
+        return getattr(obj, "mcp_token", None)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:

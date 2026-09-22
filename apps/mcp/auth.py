@@ -40,12 +40,39 @@ def _lookup_user(raw: str):
     return token.user, token
 
 
+#: Scope for a CONFINED session's caller token (harness.caller_tokens): tools run
+#: as the caller, limited to the capability — see apps/mcp/turn_scope.py.
+TURN_SCOPES = ["canopy:turn"]
+
+
+def _lookup_turn_grant(raw: str):
+    from apps.harness.caller_tokens import resolve
+
+    return resolve(raw)
+
+
 class CanopyPATVerifier(TokenVerifier):
-    """Resolve a canopy-web Personal Access Token to an AccessToken."""
+    """Resolve a canopy-web Personal Access Token — or a confined session's
+    caller token — to an AccessToken."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token:
             return None
+        if token.startswith("cct_"):
+            grant = await sync_to_async(_lookup_turn_grant, thread_sensitive=True)(token)
+            if grant is None:
+                return None
+            # `user_id` is the CALLER — their own ACL applies — or absent for an
+            # outside contact, who has no canopy account and so reaches nothing
+            # that needs one. `sub` is deliberately not a number, so nothing can
+            # fall back to reading it as a user id.
+            return AccessToken(
+                token=token, client_id=f"turn:{grant.turn.pk}", scopes=TURN_SCOPES,
+                claims={"sub": f"turn:{grant.turn.pk}",
+                        "user_id": grant.user.pk if grant.user is not None else None,
+                        "auth_method": "caller_token", "turn_id": str(grant.turn.pk),
+                        "turn_ids": sorted(grant.turn_ids), "tool_globs": grant.tool_globs},
+            )
         user, _pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
         if user is None:
             return None
