@@ -762,6 +762,14 @@ def _agent_env(slug: str | None) -> dict:
     extra = getattr(_TURN_ENV, "extra", None) or {}
     if not slug:
         return {**env, **extra}
+    # WHICH agent this is, as a variable Claude Code will actually hand on. It
+    # strips secret-looking variables (CANOPY_WEB_PAT among them) from the env it
+    # gives a plugin's MCP `headersHelper`, and runs that helper from the plugin's
+    # own directory, so the canopy-web helper could neither read the agent's PAT
+    # nor find the agent by walking up from cwd — it sent no auth header and the
+    # session had no canopy-web MCP at all (cloud-ec2-1, 2026-09-22). A slug is
+    # not a secret; the helper reads the PAT from ~/.<slug>/.env itself.
+    env["CANOPY_AGENT"] = slug
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()
@@ -1489,15 +1497,16 @@ def _chat_session_id(turn: dict) -> str:
 def _turn_agent_slug(turn: dict) -> str:
     """The agent this turn runs AS, or "" — the single place that decision is made.
 
-    A chat turn surfaces agent_slug (you chat WITH an agent) but carries its
-    session id in origin_ref; that, not a top-level field, is the session signal
-    on TurnOut. A live chat is bridged, never run from a checkout, so it is not
-    an agent-identity turn. Shared by `_turn_cwd` (which clone to run in) and
-    `_agent_env` (whose credentials to load) so the two can never disagree about
-    what counts as an agent turn.
+    A chat WITH an agent is that agent, the same as any other turn for it. This
+    used to return "" for a chat, on the theory that a live chat is bridged
+    rather than run from a checkout — which made a cloud chat with hal a bare
+    Claude in a scratch directory: no hal persona, none of hal's own hooks
+    (its gating rails live in the repo's .claude/settings.json), and none of its
+    credentials. On a laptop the same chat runs in an emdash worktree of the
+    agent's repo; `_turn_cwd` now gives the cloud the same thing. Shared by
+    `_turn_cwd` (which clone to run in) and `_agent_env` (whose credentials to
+    load) so the two can never disagree about who the turn is.
     """
-    if _chat_session_id(turn):
-        return ""
     return turn.get("agent_slug") or ""
 
 
@@ -1509,6 +1518,51 @@ def _safe_session_dirname(session_id: str) -> str:
     `_safe_name` for the same reason."""
     cleaned = "".join(c if (c.isalnum() or c in "._-") else "-" for c in session_id).strip(".-")
     return cleaned[:80] or "unknown-session"
+
+
+def _git_quiet(*args: str, timeout: float = 60) -> bool:
+    try:
+        return subprocess.run(["git", *args], capture_output=True, timeout=timeout).returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path) -> None:
+    """Give an agent chat session its OWN worktree of the agent's repo, at the
+    session's stable path — the cloud equivalent of the emdash worktree a laptop
+    chat runs in. The path never changes (`--resume` resolves a Claude session
+    by cwd), so this only decides what is IN it:
+
+    * absent → a new detached worktree at origin/main (HEAD if a fetch fails);
+    * a worktree with no local changes → moved to origin/main, so a week-old
+      conversation still runs the agent's current skills and rails;
+    * a worktree with local changes → left alone: the agent is mid-work there;
+    * a plain directory → left alone: a session from before this existed, whose
+      `--resume` target lives under exactly this path.
+
+    Best-effort throughout; a failure leaves a plain directory, which is what
+    every session got before."""
+    if path.exists():
+        if not (path / ".git").exists():
+            return
+        try:
+            dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain"],
+                                   capture_output=True, text=True, timeout=30).stdout.strip()
+        except Exception:  # noqa: BLE001
+            return
+        if dirty:
+            return
+        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin")
+        _git_quiet("-C", str(path), "checkout", "--quiet", "--detach", "origin/main")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _git_quiet("-C", str(clone), "fetch", "--quiet", "origin")
+    for ref in ("origin/main", "HEAD"):
+        if _git_quiet("-C", str(clone), "worktree", "add", "--quiet", "--detach", str(path), ref):
+            _log(f"session worktree: {path} from {clone.name} {ref}")
+            return
+    _log(f"warn: could not create a worktree of {clone} at {path}; using a plain directory")
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
@@ -1535,9 +1589,13 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     Everything else (project turns, or an agent bootstrap hasn't reached yet)
     keeps the original scratch-dir behavior."""
     session_id = _chat_session_id(turn)
-    if session_id:
-        return pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
     slug = _turn_agent_slug(turn)
+    if session_id:
+        path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+        clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
+        if clone is not None and (clone / ".git").exists():
+            _ensure_session_worktree(clone, path)
+        return path
     if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
         if (agent_dir / ".git").is_dir():
