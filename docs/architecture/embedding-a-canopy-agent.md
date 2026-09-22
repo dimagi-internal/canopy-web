@@ -159,10 +159,14 @@ def vouch_for(user) -> dict:
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(seconds=60)).timestamp()),
             "jti": str(uuid.uuid4()),              # single use
-            # Optional and descriptive only — canopy records them, and matches
-            # on neither.
+            # Optional. `name` is descriptive. `email` + `email_verified` let a
+            # visitor who ALREADY has a canopy account arrive as that account —
+            # only at a domain your site's owner allowed it to resolve (Connected
+            # sites → "Visitors with a canopy account arrive as themselves"), and
+            # only when YOU verified the address. Never creates an account.
             "name": user.get_full_name(),
             "email": user.email,
+            "email_verified": True,                 # only if your product verified it
         },
         settings.CANOPY_SIGNING_KEY,               # the PRIVATE half. Never leaves here.
         algorithm="EdDSA",
@@ -667,8 +671,11 @@ your visitor's identity through to the agent's tools. So:
 - `backing_tool` re-reads your rows **as the agent**. If the agent can see
   more than your visitor, the ids in your page state narrow what it looks at,
   but they do not *limit* what it could look at.
-- For canopy's own MCP tools, the agent reads with whatever token its runner
-  holds — not the visitor's permissions.
+- For canopy's own MCP tools, a visitor who is not the agent's owner or an
+  admin talks to a CONFINED session, and that session reaches canopy's MCP with
+  a caller token scoped to **agent ∩ visitor**: the visitor's own canopy
+  permissions (none, for a contact), limited to the tools the agent's declared
+  interface lists. The owner's token is never used there.
 - For **your** MCP tools, the agent needs its own credential for your product,
   set up on the runner. That credential is what bounds it.
 
@@ -691,7 +698,11 @@ page.
   than a gap.
 - **The agent's tools run as the agent, not your visitor** (§8a). The largest
   limit on what an embedded agent should be allowed to do.
-- **Visitors are contacts, not canopy users** (§3). Any visitor your server
+- **Visitors are contacts unless they already have a canopy account** (§3).
+  With `email` + `email_verified: true` in your assertion, at a domain your
+  site is allowed to resolve, an EXISTING canopy user arrives as themselves
+  (their own permissions; `kind: "user"` in the response). Nobody else does, and
+  no account is ever created. Any visitor your server
   vouches for can chat — there is no domain allowlist on this path — but none of
   them acts as a canopy account.
 - ~~**Context is a snapshot.**~~ **Fixed 2026-09-16.** Page state is pushed on

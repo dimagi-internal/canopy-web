@@ -145,6 +145,50 @@ def for_workspace(workspace_slug: str):
 
 
 @transaction.atomic
+def resolve_arrival(*, app, contact: Contact, claims: dict):
+    """The existing canopy USER a widget visitor is, or None — never a new one.
+    (Issued a DelegatedToken with assurance `host_signed`.)
+
+    Who-is-asking §2 (D1: no dynamic user creation). In order:
+
+      1. The contact is already linked to a user (`promote_to_user`): that user.
+      2. The site signed `email_verified: true` for an address at one of ITS
+         `resolvable_domains`, and exactly one active canopy user already holds
+         that address as a VERIFIED allauth email: link the contact and return
+         that user.
+      3. Otherwise None — the visitor is a contact, as before.
+
+    Either way the user must be a member of the site's workspace; a canopy
+    account with no business in this tenant stays a contact rather than
+    arriving with an empty agent list. Linking grants nothing (see
+    `promote_to_user`); arriving as a user means that user's OWN ACL applies.
+    """
+    from allauth.account.models import EmailAddress
+    from django.contrib.auth import get_user_model
+
+    from apps.workspaces import services as wsvc
+
+    User = get_user_model()
+    user = None
+    if contact.user_id:
+        user = User.objects.filter(pk=contact.user_id, is_active=True).first()
+    else:
+        email = _normalize(str(claims.get("email") or ""))
+        domain = email.rpartition("@")[2]
+        if (email and claims.get("email_verified") is True
+                and domain in {d.lower() for d in (app.resolvable_domains or [])}):
+            ids = list(EmailAddress.objects.filter(email__iexact=email, verified=True)
+                       .values_list("user_id", flat=True).distinct()[:2])
+            if len(ids) == 1:
+                user = User.objects.filter(pk=ids[0], is_active=True).first()
+    # A question about the VISITOR's membership, asked through the one authorizer.
+    if user is None or not wsvc.is_member(user, contact.workspace_id):
+        return None
+    if contact.user_id is None:
+        promote_to_user(contact, user)
+    return user
+
+
 def record_embed_visitor(
     *,
     workspace,

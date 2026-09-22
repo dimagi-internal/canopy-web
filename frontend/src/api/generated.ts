@@ -6883,6 +6883,11 @@ export interface components {
             readonly contact_id: number;
             /** Display Name */
             readonly display_name: string;
+            /**
+             * Kind
+             * @default contact
+             */
+            readonly kind: string;
         };
         /** ContactTokenIn */
         readonly ContactTokenIn: {
@@ -10315,6 +10320,11 @@ export interface components {
             readonly origins: readonly string[];
             /** Delegation Domains */
             readonly delegation_domains: readonly string[];
+            /**
+             * Resolvable Domains
+             * @default []
+             */
+            readonly resolvable_domains: readonly string[];
             /** Agents */
             readonly agents: readonly components["schemas"]["ConnectedAgentOut"][];
             /** Public Keys */
@@ -10378,6 +10388,8 @@ export interface components {
             readonly public_keys?: readonly string[] | null;
             /** Show On Canopy Pages */
             readonly show_on_canopy_pages?: boolean | null;
+            /** Resolvable Domains */
+            readonly resolvable_domains?: readonly string[] | null;
         };
         /** SecretOut */
         readonly SecretOut: {

@@ -88,6 +88,65 @@ function Secret({ value, onDone }: { value: string; onDone: () => void }): JSX.E
   )
 }
 
+// Which domains' EXISTING canopy users arrive as themselves (who-is-asking §2)
+// rather than as contacts. Only on a signed assertion, never creates an account;
+// the server refuses a domain that is not the owner's own or not admitted.
+export function ArrivalDomains({
+  value,
+  editable,
+  signs,
+  onSave,
+}: {
+  value: string[]
+  editable: boolean
+  signs: boolean
+  onSave: (domains: string[]) => void
+}): JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null)
+  const label = value.length ? value.join(', ') : 'none — every visitor is a contact'
+  return (
+    <div className="text-xs">
+      <span className="text-foreground-secondary">Visitors with a canopy account arrive as themselves: </span>
+      {draft === null ? (
+        <>
+          <span data-testid="arrival-domains" className="text-foreground">{label}</span>
+          {editable && (
+            <button type="button" className="ml-2 underline text-muted-foreground" onClick={() => setDraft(value.join(', '))}>
+              Change
+            </button>
+          )}
+          {!signs && value.length > 0 && (
+            <span className="ml-2 text-warning">— the site signs no assertions yet, so nobody resolves</span>
+          )}
+        </>
+      ) : (
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <Input
+            aria-label="Arrival domains"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="dimagi.com"
+            className="h-7 w-56 text-xs"
+          />
+          <button
+            type="button"
+            className="underline text-primary"
+            onClick={() => {
+              onSave(draft.split(/[\s,]+/).map((d) => d.trim()).filter(Boolean))
+              setDraft(null)
+            }}
+          >
+            Save
+          </button>
+          <button type="button" className="underline text-muted-foreground" onClick={() => setDraft(null)}>
+            Cancel
+          </button>
+        </span>
+      )}
+    </div>
+  )
+}
+
 function AgentPicker({
   agents,
   selected,
@@ -279,6 +338,16 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   </div>
                 )}
               </div>
+              {!app.revoked && (
+                <ArrivalDomains
+                  value={[...(app.resolvable_domains ?? [])]}
+                  editable={isOwner}
+                  signs={app.signs_assertions}
+                  onSave={(domains) =>
+                    void run(() => updateConnectedApp(slug, app.id, { resolvable_domains: domains }))
+                  }
+                />
+              )}
               {!app.revoked && (
                 <AgentPicker
                   agents={agents}

@@ -69,6 +69,11 @@ class ContactTokenOut(Schema):
     expires_at: str
     contact_id: int
     display_name: str
+    #: "user" when the visitor has an existing canopy account they arrive as
+    #: (the token is then a delegated USER token — their own ACL); "contact"
+    #: otherwise. The widget does not need this (it discovers its principal),
+    #: but a host that behaves differently for its canopy users can read it.
+    kind: str = "contact"
 
 
 class ContactAgentOut(Schema):
@@ -165,6 +170,22 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     )
     if contact is None:
         raise HttpError(400, "the assertion does not identify a visitor")
+
+    user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
+    if user is not None:
+        # An existing canopy account arrives AS ITSELF: a delegated user token,
+        # the same short-lived revocable row canopy's own widget mints. Never a
+        # new account — resolve_arrival only finds, it does not create.
+        from .models import DelegatedToken
+
+        raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=CONTACT_TOKEN_TTL_SECONDS,
+                                          assurance=DelegatedToken.ASSURANCE_HOST_SIGNED)
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
+              detail=f"contact={contact.identity} arrived as user {user.pk} "
+                     f"(assurance=host_signed) ttl={CONTACT_TOKEN_TTL_SECONDS}s")
+        return ContactTokenOut(token=raw, expires_at=token.expires_at.isoformat(),
+                               contact_id=contact.pk, display_name=contact.display_name,
+                               kind="user")
 
     raw, token = ContactToken.issue(
         app=app, contact=contact, ttl_seconds=CONTACT_TOKEN_TTL_SECONDS
