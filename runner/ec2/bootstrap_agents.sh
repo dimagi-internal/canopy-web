@@ -961,6 +961,43 @@ verify_turn_client() {  # <slug> <account>
   fi
 }
 
+# Provision the agent's env the 1Password-NATIVE way: `op inject` resolves the
+# tracked `.env.tpl` (KEY=op://... lines) into the worktree-clean global home
+# ~/.<slug>/.env. This is the fleet standard — one injector (op inject), no
+# bespoke manifest tool. `bin/_env.py` in each agent reads ~/.<slug>/.env.
+#
+# Records ENV_OK / BOOTSTRAP_DETAIL through `mark`, never a bare
+# `ENV_OK[$slug]=`: from inside a function that name is undeclared, bash makes
+# it an INDEXED array, evaluates `ace` arithmetically and dies under `set -u` —
+# which on 2026-09-22 stopped the whole bootstrap at the first agent.
+inject_agent_env() {  # <slug> <agent-clone>
+  local slug="$1" dest="$2"
+  local env_tpl="$dest/.env.tpl"
+  local env_out="$HOME/.${slug}/.env"
+  if [[ ! -f "$env_tpl" ]]; then
+    warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$env_out")"
+  # stderr is KEPT (it was discarded, which is why four agents failed this for
+  # two weeks with no stated reason — cloud-ec2-1, 2026-09-22). op names the
+  # reference it could not resolve, never a resolved value, so it is safe to log
+  # and to report. --account isn't needed with a service-account token.
+  local inject_err prior
+  if inject_err="$(op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
+    chmod 0600 "$env_out"
+    mark ENV_OK "$slug" 1
+    ok "$slug: op inject .env.tpl -> $env_out"
+  else
+    mark ENV_OK "$slug" 0
+    inject_err="$(printf '%s' "$inject_err" | tr '\n' ' ' | cut -c1-300)"
+    declare -gA BOOTSTRAP_DETAIL
+    prior="${BOOTSTRAP_DETAIL[$slug]:-}"
+    mark BOOTSTRAP_DETAIL "$slug" "${prior:+$prior; }op inject failed: ${inject_err}"
+    warn "$slug: op inject failed — keeping the existing $env_out, which may be stale: ${inject_err}"
+  fi
+}
+
 bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
@@ -1004,34 +1041,7 @@ bootstrap_one_agent() {
   fi
   ok "$slug: repo at $dest"
 
-  # Provision the agent's env the 1Password-NATIVE way: `op inject` resolves the
-  # tracked `.env.tpl` (KEY=op://... lines) into the worktree-clean global home
-  # ~/.<slug>/.env. This is the fleet standard — one injector (op inject), no
-  # bespoke manifest tool. `bin/_env.py` in each agent reads ~/.<slug>/.env.
-  local env_tpl="$dest/.env.tpl"
-  local env_out="$HOME/.${slug}/.env"
-  if [[ -f "$env_tpl" ]]; then
-    mkdir -p "$(dirname "$env_out")"
-    # --account isn't needed with a service-account token (OP_SERVICE_ACCOUNT_TOKEN);
-    # op inject writes the resolved file, or errors and writes nothing.
-    # stderr is KEPT (it was discarded, which is why four agents failed this
-    # for two weeks with no stated reason — cloud-ec2-1, 2026-09-22). op names
-    # the reference it could not resolve, never a resolved value, so it is safe
-    # to log and to report.
-    local inject_err
-    if inject_err="$(op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
-      chmod 0600 "$env_out"
-      ENV_OK[$slug]=1
-      ok "$slug: op inject .env.tpl -> $env_out"
-    else
-      ENV_OK[$slug]=0
-      inject_err="$(printf '%s' "$inject_err" | tr '\n' ' ' | cut -c1-300)"
-      BOOTSTRAP_DETAIL[$slug]="${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }op inject failed: ${inject_err}"
-      warn "$slug: op inject failed — keeping the existing $env_out, which may be stale: ${inject_err}"
-    fi
-  else
-    warn "$slug: no .env.tpl in the repo — nothing to inject (does this agent declare .env.tpl provisioning?)"
-  fi
+  inject_agent_env "$slug" "$dest"
 
   install_agent_plugin "$slug" "$dest"
   install_required_plugins "$slug" "$dest"

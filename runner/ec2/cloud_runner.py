@@ -1799,6 +1799,41 @@ def bootstrap_agent_fleet() -> None:
         _HEALTH_SLOW_AT = 0.0
 
 
+def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4) -> tuple[int, list[str]]:
+    """Run `cmd`, passing every output line through to our own stdout (so it
+    still lands in `journalctl -u canopy-runner` exactly as before) while
+    keeping the last `keep` non-empty lines for the health check."""
+    import collections
+
+    tail: collections.deque = collections.deque(maxlen=keep)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace")
+    # A watchdog rather than a check per line: a bootstrap that hangs SILENTLY
+    # never yields a line to check on.
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(timeout, _kill)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if line.strip():
+                tail.append(line.strip()[:300])
+        rc = proc.wait()
+    finally:
+        watchdog.cancel()
+    if timed_out.is_set():
+        tail.append(f"killed after {int(timeout)}s")
+    return rc, list(tail)
+
+
 def _run_bootstrap() -> None:
     if not sync_runner_src():
         _set_check("bootstrap", "fail", f"no runner clone at {RUNNER_SRC_DIR}; agent bootstrap skipped")
@@ -1812,12 +1847,13 @@ def _run_bootstrap() -> None:
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     _log(f"running {script}")
     try:
-        # Inherits stdout/stderr (no PIPE capture) so its OK/WARN/FAIL lines land
-        # straight in `journalctl -u canopy-runner` alongside everything else.
-        proc = subprocess.run(["bash", str(script)], env=env, timeout=900)
-        _log(f"bootstrap_agents.sh exited {proc.returncode}")
-        _set_check("bootstrap", *(("ok", "") if proc.returncode == 0 else
-                   ("fail", f"bootstrap_agents.sh exited {proc.returncode}; per-agent results are on each agent's readiness")))
+        rc, tail = _run_teed(["bash", str(script)], env=env, timeout=900)
+        _log(f"bootstrap_agents.sh exited {rc}")
+        # The last lines carry the reason. "exited 1" alone still sent someone
+        # to journald on 2026-09-22 (`line 1024: ace: unbound variable`), which
+        # is the trip this check exists to save.
+        _set_check("bootstrap", *(("ok", "") if rc == 0 else
+                   ("fail", f"bootstrap_agents.sh exited {rc}: " + " | ".join(tail))))
     except Exception as exc:
         _log(f"warn: bootstrap_agents.sh failed to run: {exc}")
         _set_check("bootstrap", "fail", f"bootstrap_agents.sh did not run: {exc}")

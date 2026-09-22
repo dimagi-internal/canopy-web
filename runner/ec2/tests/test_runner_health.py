@@ -167,3 +167,24 @@ def test_the_floor_between_restarts_survives_a_restart(refresh):
     assert cr.maybe_self_refresh(True, now=2000.0 + 60) is False
     assert cr.maybe_self_refresh(True, now=2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS) is True
     assert len(calls) == 2
+
+
+def test_a_failed_bootstrap_says_why_in_the_check(cloud_runner, monkeypatch, tmp_path, capsys):
+    # "exited 1" alone sent someone to journald on 2026-09-22; the reason was the
+    # script's last line (`line 1024: ace: unbound variable`).
+    src = tmp_path / "src"
+    script = src / "runner" / "ec2" / "bootstrap_agents.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("echo 'step 3: agents'\necho 'line 1024: ace: unbound variable' >&2\nexit 1\n")
+    monkeypatch.setattr(cloud_runner, "RUNNER_SRC_DIR", str(src))
+    monkeypatch.setattr(cloud_runner, "sync_runner_src", lambda: True)
+    cloud_runner._run_bootstrap()
+    check = cloud_runner._HEALTH["bootstrap"]
+    assert check["status"] == "fail"
+    assert "ace: unbound variable" in check["detail"]
+    assert "step 3: agents" in capsys.readouterr().out  # still reaches journald
+
+
+def test_a_silent_hang_is_still_killed(cloud_runner):
+    rc, tail = cloud_runner._run_teed(["bash", "-c", "sleep 30"], env=dict(cloud_runner.os.environ), timeout=0.5)
+    assert rc != 0 and tail == ["killed after 0s"]
