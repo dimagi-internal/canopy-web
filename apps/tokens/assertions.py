@@ -69,9 +69,13 @@ def audience() -> str:
     deployment behind a rename would otherwise reject every assertion in
     flight.
     """
-    return (getattr(settings, "EMBED_ASSERTION_AUDIENCE", "") or "").strip() or (
-        getattr(settings, "SITE_BASE_URL", "") or "canopy"
-    )
+    # `SITE_BASE_URL` was named here and is defined nowhere, so every
+    # deployment verified against the literal "canopy" while the handoff doc
+    # told hosts to send the base URL — a host that followed the doc was
+    # refused with `wrong_audience`. `CANOPY_PUBLIC_BASE_URL` is the setting
+    # that actually holds it.
+    explicit = (getattr(settings, "EMBED_ASSERTION_AUDIENCE", "") or "").strip()
+    return explicit or (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
 
 
 def _unverified_issuer(token: str) -> str:
