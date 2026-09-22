@@ -26,7 +26,7 @@ from apps.contacts.models import Contact
 from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.slack import services
-from apps.slack.models import SlackInstallation, SlackUserLink
+from apps.slack.models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
 from apps.slack.verify import sign
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
@@ -126,9 +126,10 @@ def ws(default_workspace):
 
 @pytest.fixture
 def installation(ws):
-    inst = SlackInstallation(team_id=TEAM, team_name="Dimagi", bot_user_id=BOT, workspace=ws)
+    inst = SlackInstallation(team_id=TEAM, team_name="Dimagi", bot_user_id=BOT)
     inst.bot_token = "xoxb-test"
     inst.save()
+    SlackWorkspaceLink.objects.create(installation=inst, workspace=ws)
     return inst
 
 
@@ -354,7 +355,7 @@ def test_a_linked_user_outside_the_workspace_is_a_contact(slack, installation, h
     SlackUserLink.objects.create(installation=installation, slack_user_id=ALICE, user=outsider)
     mention("hal do it")
     _is_contact_turn(Turn.objects.get())
-    assert not wsvc.is_member(outsider, installation.workspace_id)
+    assert not wsvc.is_member(outsider, hal.workspace_id)
 
 
 def test_a_blocked_contact_is_refused_and_logged(slack, installation, hal, ws):
@@ -506,7 +507,7 @@ def test_install_round_trip_stores_an_encrypted_token(slack, ws):
     resp = c.get("/auth/slack/callback/", {"code": "abc", "state": state})
     assert resp.status_code == 200
     inst = SlackInstallation.objects.get(team_id=TEAM)
-    assert inst.workspace == ws and inst.bot_user_id == BOT
+    assert inst.workspace_ids() == [ws.slug] and inst.bot_user_id == BOT
     # The installer proved both identities in that one trip, so they are linked.
     assert SlackUserLink.objects.get(slack_user_id=ALICE).user.email == "owner@dimagi.com"
     assert inst.bot_token == "xoxb-new" and "xoxb-new" not in inst.bot_token_enc
@@ -519,15 +520,20 @@ def test_install_callback_rejects_a_foreign_state(slack, ws):
     assert resp.status_code == 400 and not SlackInstallation.objects.exists()
 
 
-def test_install_cannot_steal_a_team_bound_to_a_workspace_you_do_not_own(slack, installation):
+def test_a_second_workspace_joins_a_connected_slack_beside_the_first(slack, installation, ws):
+    """One Slack serves several tenants: connecting another ADDS a link and
+    leaves the first tenant's in place (it used to be refused, then re-pointed)."""
     other = a_workspace("elsewhere")
     c = _link_client(_owner(other))
     start = c.get("/auth/slack/install/", {"workspace": other.slug})
     state = parse_qs(urlparse(start["Location"]).query)["state"][0]
     resp = c.get("/auth/slack/callback/", {"code": "abc", "state": state})
-    assert resp.status_code == 409
+    assert resp.status_code == 200
+    assert SlackInstallation.objects.count() == 1
     installation.refresh_from_db()
-    assert installation.workspace_id != other.slug
+    assert installation.workspace_ids() == [ws.slug, other.slug]
+    # The shared bot token is refreshed for every tenant.
+    assert installation.bot_token == "xoxb-new"
 
 
 # ---- the owner's switch -----------------------------------------------------------

@@ -151,6 +151,9 @@ class Outcome:
     turn: Turn | None = None
     agent: Agent | None = None
     extra: dict = field(default_factory=dict)
+    #: The tenant this message resolved to, when it resolved to one — where its
+    #: refusal is logged. See `log_workspace`.
+    workspace_id: str | None = None
 
 
 @dataclass
@@ -174,11 +177,39 @@ class Principal:
 
 
 def installation_for(team_id: str) -> SlackInstallation | None:
-    return SlackInstallation.objects.select_related("workspace").filter(team_id=team_id).first()
+    """The Slack install for this team — if it still serves at least one tenant."""
+    inst = SlackInstallation.objects.filter(team_id=team_id).first()
+    return inst if inst is not None and inst.links.exists() else None
+
+
+def installation_for_workspace(workspace_id: str) -> SlackInstallation | None:
+    """The Slack this canopy workspace is connected to, or None."""
+    return SlackInstallation.objects.filter(links__workspace_id=workspace_id).first()
+
+
+def tenant_sessions(installation: SlackInstallation):
+    """Sessions in the tenants this Slack serves. Every lookup by thread key or
+    button goes through this, so an unlinked tenant's rows are unreachable."""
+    return Session.objects.filter(workspace_id__in=installation.workspace_ids())
+
+
+def log_workspace(installation: SlackInstallation, outcome: "Outcome | None" = None) -> str | None:
+    """Where to log something about this message: the tenant it resolved to, else
+    the Slack's home (earliest-linked) tenant. Never an access decision."""
+    if outcome is not None:
+        for candidate in (outcome.workspace_id,
+                          getattr(outcome.session, "workspace_id", None),
+                          getattr(outcome.agent, "workspace_id", None)):
+            if candidate:
+                return candidate
+    return installation.home_workspace_id
 
 
 def enabled_agents(installation: SlackInstallation):
-    return Agent.objects.filter(workspace=installation.workspace, slack_enabled=True).order_by("slug")
+    """Agents reachable from this Slack: Slack-enabled, in ANY tenant it serves.
+    Slugs are globally unique, so a name picks one agent — and with it, the tenant."""
+    return Agent.objects.filter(workspace_id__in=installation.workspace_ids(),
+                                slack_enabled=True).order_by("slug")
 
 
 def strip_mentions(text: str, bot_user_id: str) -> str:
@@ -238,9 +269,29 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     return link.user
 
 
-def resolve_principal(installation: SlackInstallation, slack_user_id: str) -> tuple[Principal | None, Outcome | None]:
-    """A member if we can establish one, otherwise a contact. Only a blocked
-    contact is turned away.
+def slack_user(installation: SlackInstallation, slack_user_id: str) -> tuple[object, str, dict | None]:
+    """(the canopy user this Slack user is, the assurance, the profile if fetched).
+
+    Identity only — which canopy account this is. Whether that account may act
+    in a given tenant is `resolve_principal`'s question, asked per message.
+    """
+    link = (SlackUserLink.objects.select_related("user")
+            .filter(installation=installation, slack_user_id=slack_user_id).first())
+    if link is not None:
+        return link.user, who.SLACK_LINKED, None
+    info = slack_profile(installation, slack_user_id)
+    return auto_link(installation, slack_user_id, info), who.SLACK_EMAIL, info
+
+
+def resolve_principal(installation: SlackInstallation, slack_user_id: str,
+                      workspace_id: str) -> tuple[Principal | None, Outcome | None]:
+    """A member OF `workspace_id` if we can establish one, otherwise a contact
+    of it. Only a blocked contact is turned away.
+
+    `workspace_id` is the tenant this message is ABOUT (its thread's session,
+    or the agent it names) — never "the Slack's tenant", because a Slack can
+    serve several. A member of tenant A talking to tenant B's agent is B's
+    contact, exactly like anyone else outside B.
 
     Everyone who can post where an agent is invited gets an answer, the way
     anyone who can send an email gets one. What differs is WHAT they are to
@@ -250,29 +301,24 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str) -> tu
     granted nothing.
     """
     from apps.contacts import services as contacts
+    from apps.workspaces.models import Workspace
 
-    link = (SlackUserLink.objects.select_related("user")
-            .filter(installation=installation, slack_user_id=slack_user_id).first())
-    info: dict | None = None
-    user, assurance = (link.user, who.SLACK_LINKED) if link is not None else (None, "")
-    if user is None:
-        info = slack_profile(installation, slack_user_id)
-        user, assurance = auto_link(installation, slack_user_id, info), who.SLACK_EMAIL
-    if user is not None and wsvc.is_member(user, installation.workspace_id):
+    user, assurance, info = slack_user(installation, slack_user_id)
+    if user is not None and wsvc.is_member(user, workspace_id):
         return Principal(user=user, assurance=assurance), None
 
     if info is None:
         info = slack_profile(installation, slack_user_id)
     profile = info.get("profile") or {}
     contact = contacts.record_slack_user(
-        workspace=installation.workspace,
+        workspace=Workspace.objects.get(pk=workspace_id),
         team_id=installation.team_id,
         slack_user_id=slack_user_id,
         email=str(profile.get("email") or ""),
         display_name=str(profile.get("real_name") or profile.get("display_name") or info.get("name") or ""),
     )
     if contact is None or contact.is_blocked:
-        return None, Outcome(BLOCKED, "You can't reach agents from this Slack.")
+        return None, Outcome(BLOCKED, "You can't reach agents from this Slack.", workspace_id=workspace_id)
     return Principal(contact=contact), None
 
 
@@ -289,8 +335,7 @@ def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple
     named, rest = named_agent(installation, text)
     if named is not None:
         return named, rest
-    existing = (Session.objects.filter(workspace=installation.workspace,
-                                       agent__slack_enabled=True,
+    existing = (tenant_sessions(installation).filter(agent__slack_enabled=True,
                                        **{f"metadata__{SLACK_THREAD_KEY}": key})
                 .select_related("agent").order_by("-created_at").first())
     if existing is not None:
@@ -303,8 +348,7 @@ def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple
 def has_thread_session(installation: SlackInstallation, inbound: Inbound) -> bool:
     """Whether canopy is already in this thread — the gate on a plain reply."""
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
-    return Session.objects.filter(workspace=installation.workspace,
-                                  **{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
+    return tenant_sessions(installation).filter(**{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
 
 
 def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
@@ -349,9 +393,6 @@ def handle_message(inbound: Inbound) -> Outcome:
     installation = installation_for(inbound.team_id)
     if installation is None:
         return Outcome(NOT_INSTALLED, "This Slack workspace isn't connected to canopy.")
-    principal, refusal = resolve_principal(installation, inbound.slack_user_id)
-    if refusal is not None:
-        return refusal
     text = strip_mentions(inbound.text, installation.bot_user_id)
     # `@canopy cloud` — the mention form of `/canopy cloud`. Not on a plain
     # thread reply: there "cloud" is far more likely a word meant for the agent.
@@ -364,10 +405,18 @@ def handle_message(inbound: Inbound) -> Outcome:
 
     shared = bound_repo_session(installation, key)
     if shared is not None and named_agent(installation, text)[0] is None:
+        principal, refusal = resolve_principal(installation, inbound.slack_user_id, shared.workspace_id)
+        if refusal is not None:
+            return refusal
         return _continue_shared(shared, principal, text, inbound)
     agent, prompt = resolve_agent(installation, text, key)
     if agent is None:
         return Outcome(NO_AGENT, agent_list(installation))
+    # The tenant is the agent's — decided by what the message is about, never
+    # by the Slack it arrived through, which may serve several tenants.
+    principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
+    if refusal is not None:
+        return refusal
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
@@ -449,8 +498,8 @@ def _slack_session(installation: SlackInstallation, session_id, channel_id: str)
     if not session_id:
         return None
     try:
-        return (Session.objects.select_related("agent")
-                .filter(pk=session_id, workspace=installation.workspace,
+        return (tenant_sessions(installation).select_related("agent")
+                .filter(pk=session_id,
                         metadata__slack_team=installation.team_id,
                         metadata__slack_channel=channel_id)
                 .first())
@@ -561,7 +610,7 @@ def route_from_click(installation: SlackInstallation, *, slack_user_id: str, cha
     session = _slack_session(installation, value.get("s"), channel_id)
     if session is None:
         return Outcome(STALE, "That conversation is no longer here.")
-    principal, refusal = resolve_principal(installation, slack_user_id)
+    principal, refusal = resolve_principal(installation, slack_user_id, session.workspace_id)
     if refusal is not None:
         return refusal
     if principal.user is None:
@@ -575,13 +624,13 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
     ones no live runner is about to take, and only onto a box they administer."""
     from apps.harness import services as harness
 
-    principal, refusal = resolve_principal(installation, slack_user_id)
-    if refusal is not None:
-        return refusal
-    if principal.user is None:
+    user, _assurance, _info = slack_user(installation, slack_user_id)
+    mine = [ws for ws in installation.workspace_ids() if user is not None and wsvc.is_member(user, ws)]
+    if not mine:
         return Outcome(FORBIDDEN, "Only a canopy member who administers the cloud runner can do that.")
+    principal = Principal(user=user)
     queued = (Turn.objects.filter(status=Turn.QUEUED, enqueued_by=principal.user,
-                                  chat_session__workspace=installation.workspace)
+                                  chat_session__workspace_id__in=mine)
               .select_related("chat_session").order_by("created_at"))
     stuck: dict = {}
     for turn in queued:
@@ -656,8 +705,8 @@ def answer_from_click(installation: SlackInstallation, *, slack_user_id: str, ch
         value = json.loads(action.get("value") or "{}")
     except ValueError:
         value = {}
-    session = (Session.objects.select_related("agent")
-               .filter(pk=value.get("s"), workspace=installation.workspace,
+    session = (tenant_sessions(installation).select_related("agent")
+               .filter(pk=value.get("s"),
                        metadata__slack_team=installation.team_id,
                        metadata__slack_channel=channel_id)
                .first()) if value.get("s") else None
@@ -668,7 +717,7 @@ def answer_from_click(installation: SlackInstallation, *, slack_user_id: str, ch
             _resolve_post(installation, post, ":heavy_minus_sign: This question is no longer open.")
         return Outcome(STALE, "That question is no longer open.")
 
-    _principal, refusal = resolve_principal(installation, slack_user_id)
+    _principal, refusal = resolve_principal(installation, slack_user_id, session.workspace_id)
     if refusal is not None:
         return refusal
 

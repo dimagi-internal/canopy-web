@@ -513,7 +513,7 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     agent = _agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
-    result = slack_commands.sync_quietly(SlackInstallation.objects.filter(workspace=agent.workspace).first())
+    result = slack_commands.sync_quietly(SlackInstallation.objects.filter(links__workspace=agent.workspace).first())
     detail = result.get("detail", "")
     if result["status"] == "synced":
         name = slack_commands.command_name(agent.slug)

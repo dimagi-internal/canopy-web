@@ -170,7 +170,13 @@ def relay(turn, rows) -> int:
 def _log_failure(installation, subject, channel: str, error: str) -> None:
     from apps.events import services as events_services
     from apps.events.models import Event
+    from apps.workspaces.models import Workspace
 
+    # The failing session's own tenant (the subject is a session or a turn on
+    # one); the Slack's home tenant only if neither says.
+    workspace_id = (getattr(subject, "workspace_id", None)
+                    or getattr(getattr(subject, "chat_session", None), "workspace_id", None)
+                    or installation.home_workspace_id)
     try:
         events_services.record([{
             "source": "slack",
@@ -181,7 +187,7 @@ def _log_failure(installation, subject, channel: str, error: str) -> None:
             "key": f"relay_failed:{channel}",
             "summary": f"could not post {subject.id}'s reply to Slack: {error}"[:500],
             "payload": {"subject": str(subject.id), "channel": channel},
-        }], workspace=installation.workspace)
+        }], workspace=Workspace.objects.get(pk=workspace_id))
     except Exception:  # noqa: BLE001
         logger.exception("could not record a Slack relay failure")
 

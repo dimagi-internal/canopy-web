@@ -37,7 +37,7 @@ class Command(BaseCommand):
         if opts["team"]:
             rows = rows.filter(team_id=opts["team"])
         if opts["workspace"]:
-            rows = rows.filter(workspace_id=opts["workspace"])
+            rows = rows.filter(links__workspace_id=opts["workspace"])
         installs = list(rows[:2])
         if not installs:
             raise CommandError("no matching Slack installation")
