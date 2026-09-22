@@ -164,6 +164,9 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
     root = root or PROFILE_ROOT
     doc = {"version": PROFILES_VERSION, "turn_id": str(turn.get("id") or ""),
            "thread_id": thread_id(turn) or None, "capability": cap,
+           # The envelope the session is told to read (`--caller`); naming it here
+           # lets the guard allow exactly that one file outside the worktree.
+           "caller_path": str(CALLER_ROOT / f"{turn.get('id')}.json"),
            # canopy's MCP credential for THIS session — the caller, scoped to the
            # capability — sent by the canopy plugin's headers helper in place of the
            # owner's PAT. The session cannot read this file (profile_guard), so it

@@ -368,6 +368,8 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         "code_sha": info["sha"],
         "code_committed_at": info["committed_at"],
         "health": health_report(),
+        # Whether canopy may give this box a CALLER's turn (see `_confine`).
+        "profiles": profiles_supported(),
         **extra,
     }
 
@@ -732,6 +734,12 @@ def _child_safe_env() -> dict:
     return env
 
 
+#: Per-turn environment the worker thread adds on top of `_agent_env` — today only
+#: CANOPY_PROFILE for a confined turn (see `_confine`). Thread-local because every
+#: turn runs on its own thread, so this cannot leak from one turn into another.
+_TURN_ENV = threading.local()
+
+
 def _agent_env(slug: str | None) -> dict:
     """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
 
@@ -751,13 +759,14 @@ def _agent_env(slug: str | None) -> dict:
     rather than guessed at.
     """
     env = _child_safe_env()
+    extra = getattr(_TURN_ENV, "extra", None) or {}
     if not slug:
-        return env
+        return {**env, **extra}
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()
     except OSError:
-        return env  # not provisioned (yet) — the turn still runs
+        return {**env, **extra}  # not provisioned (yet) — the turn still runs
     loaded = 0
     for line in raw.splitlines():
         line = line.strip()
@@ -772,7 +781,9 @@ def _agent_env(slug: str | None) -> dict:
         loaded += 1
     if loaded:
         _log(f"loaded {loaded} vars from {env_file}")
-    return env
+    # LAST, over the agent's own .env: a confined turn's profile is the runner's
+    # decision, and nothing an agent provisions may switch it off.
+    return {**env, **extra}
 
 
 # Bounded retry for a transient transcript-POST failure (5xx/timeout/URLError).
@@ -3172,12 +3183,129 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
         _log(f"session view sync error: {exc}")
 
 
+# ── confined turns (who-is-asking phase 5, cloud) ────────────────────────────
+# A CALLER's turn — someone who is not the agent's owner or an admin — runs
+# confined to the capability canopy granted them. On a laptop the runner cannot
+# set a session's environment (emdash spawns it), so canopy's profile_guard finds
+# the profile from the `cx-` session name. Here the runner spawns claude itself,
+# so it says so directly: CANOPY_PROFILE=<profile file>, inherited by every hook
+# and by the canopy plugin's MCP headers helper. The agent cannot unset it for
+# them — they are started by claude, not by the agent's shell.
+PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
+CALLER_ROOT = pathlib.Path.home() / ".canopy" / "caller"
+#: The canopy plugin's guard must implement at least this for a confined turn to be
+#: safe here: version 2 is the one that honours CANOPY_PROFILE.
+CLOUD_PROFILES_VERSION = 2
+
+
+class ConfineError(RuntimeError):
+    pass
+
+
+def _capability(turn: dict) -> dict | None:
+    env = turn.get("caller_context") or {}
+    if env.get("profile") != "restricted":
+        return None
+    cap = env.get("capability")
+    return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],
+                                              "read_paths": [], "entry": None}
+
+
+def _confined_prompt(turn: dict) -> str:
+    cap = _capability(turn) or {}
+    prompt = turn.get("prompt", "")
+    entry = cap.get("entry")
+    if not entry:
+        return prompt
+    tid = str(((turn.get("caller_context") or {}).get("conversation") or {}).get("thread_id")
+              or (turn.get("origin_ref") or {}).get("thread_id") or "")
+    if "{thread_id}" in entry and not tid:
+        raise ConfineError(f"capability '{cap.get('name')}' starts on a thread, and this turn has none")
+    return entry.replace("{thread_id}", tid)
+
+
+def _write_private(path: pathlib.Path, doc: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(doc, fh)
+
+
+def _confine(turn: dict) -> tuple[dict, str]:
+    """Write the turn's caller envelope and profile. Returns (env, caller_path):
+    the env points the session at its profile; the envelope is what the agent's
+    `answer-caller` skill reads first (`--caller <path>`), and the profile names
+    it so the guard allows reading exactly that one file."""
+    turn_id = str(turn["id"])
+    cap = _capability(turn)
+    caller_path = CALLER_ROOT / f"{turn_id}.json"
+    doc = {"version": CLOUD_PROFILES_VERSION, "turn_id": turn_id, "capability": cap,
+           "caller_path": str(caller_path),
+           "thread_id": str(((turn.get("caller_context") or {}).get("conversation") or {})
+                            .get("thread_id") or "") or None,
+           "mcp_token": turn.get("mcp_token") or None}
+    path = PROFILE_ROOT / f"cloud-{turn_id}.json"
+    try:
+        _write_private(caller_path, turn.get("caller_context") or {})
+        _write_private(path, doc)
+    except OSError as exc:
+        raise ConfineError(f"could not write the session profile: {exc}") from exc
+    return {"CANOPY_PROFILE": str(path)}, str(caller_path)
+
+
+def _canopy_plugin_root() -> pathlib.Path | None:
+    try:
+        d = json.loads((pathlib.Path.home() / ".claude" / "plugins" /
+                        "installed_plugins.json").read_text())
+        return pathlib.Path(d["plugins"]["canopy@canopy"][0]["installPath"])
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
+    """CLOUD_PROFILES_VERSION when the installed canopy plugin's guard honours
+    CANOPY_PROFILE, else 0 — and 0 means canopy never gives this box a caller's turn."""
+    import re as _re
+
+    root = plugin_root or _canopy_plugin_root()
+    if root is None:
+        return 0
+    try:
+        guard = (root / "hooks" / "profile_guard.py").read_text()
+        hooks = (root / "hooks" / "hooks.json").read_text()
+    except OSError:
+        return 0
+    m = _re.search(r"^PROFILE_ENFORCEMENT_VERSION\s*=\s*(\d+)", guard, _re.M)
+    ok = m and int(m.group(1)) >= CLOUD_PROFILES_VERSION and "profile_guard.py" in hooks
+    return CLOUD_PROFILES_VERSION if ok else 0
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
     try:
         cwd = _turn_cwd(turn, turn_id)
         resume_id = turn.get("_resume_id") or None
+        prompt = turn.get("prompt", "")
+        confined = _capability(turn) is not None
+        _TURN_ENV.extra = {}
+        if confined:
+            # Never resume, never be resumed: an email thread can hold a staff turn
+            # (full) and a partner's (confined) on ONE canopy Session, and resuming
+            # would carry the full turn's context into the caller's session.
+            resume_id = None
+            try:
+                prompt = _confined_prompt(turn)
+                _TURN_ENV.extra, caller_path = _confine(turn)
+                if prompt.startswith("/"):
+                    first, sep, rest = prompt.partition("\n")
+                    prompt = f"{first} --caller {caller_path}{sep}{rest}"
+            except ConfineError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"a caller's turn was not run: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
+                return
 
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
@@ -3186,18 +3314,21 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         try:
             try:
                 ok, text, cli_session_id = execute_prompt(
-                    turn.get("prompt", ""), turn_id, emit, cwd=cwd,
+                    prompt, turn_id, emit, cwd=cwd,
                     agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
                 )
             except Exception as exc:  # never let one turn kill the runner
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
+        _TURN_ENV.extra = {}
         if cli_session_id:
             # Never let bookkeeping cost us the finish below — an exception here
             # used to strand the turn exactly like a dead socket did (#448).
             for step, fn in (("record session resume", _record_session_resume),
                              ("ship transcript rows", None)):
+                if confined and fn is _record_session_resume:
+                    continue  # never a resume target: see the confined branch above
                 try:
                     if fn is None:
                         _ship_transcript_rows(runner_id, turn, cwd, cli_session_id)
