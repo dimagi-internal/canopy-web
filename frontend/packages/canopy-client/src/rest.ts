@@ -116,29 +116,62 @@ export function createRest(config: RestConfig) {
     }
   }
 
+  /** Which surface this token reaches. Resolved AFTER a token exists, since
+   *  the mint is what says whether it is for a user or a contact. */
+  async function isContact(): Promise<boolean> {
+    await config.tokens.get()
+    return config.tokens.principal() === 'contact'
+  }
+
+  function filters(params: URLSearchParams): void {
+    if (config.source) params.set('source', config.source)
+    // Scopes the list to this product. Omitted when the host has no scope to
+    // apply, in which case canopy's own per-principal filtering is the only limit.
+    if (config.originKey) params.set('origin_key', config.originKey)
+  }
+
   return {
     raw,
     json,
 
-    /** Agents this embedding app may offer this user — the picker's source.
-     *  The app is resolved from the bearer token server-side, so there is
-     *  deliberately no parameter here to get wrong. */
+    /** `user` or `contact` — who this client is talking as. A contact is a
+     *  first-class principal: someone the host vouched for who has no canopy
+     *  account. Every method below routes to what they can reach. */
+    async principal(): Promise<'user' | 'contact'> {
+      return (await isContact()) ? 'contact' : 'user'
+    },
+
+    /** Agents this embedding app may offer — the picker's source. The app is
+     *  resolved from the bearer token server-side, so there is deliberately no
+     *  parameter here to get wrong. */
     async listAgents(): Promise<
-      { slug: string; name: string; description: string; avatar_url: string; workspace: string }[]
+      { slug: string; name: string; description: string; avatar_url?: string; workspace?: string }[]
     > {
+      if (await isContact()) {
+        const me = await json<{ agents: { slug: string; name: string; description: string }[] }>(
+          '/api/contact/me',
+        )
+        return me.agents
+      }
       return json('/api/embed/agents')
     },
 
     async listSessions(
-      filters: { state?: string; agentSlug?: string } = {},
+      opts: { state?: string; agentSlug?: string } = {},
     ): Promise<CanopySessionSummary[]> {
       const params = new URLSearchParams()
-      if (config.source) params.set('source', config.source)
-      // Scopes the list to this product. Omitted when the host has no scope to
-      // apply, in which case canopy's own per-user filtering is the only limit.
-      if (config.originKey) params.set('origin_key', config.originKey)
-      if (filters.state) params.set('state', filters.state)
-      if (filters.agentSlug) params.set('agent_slug', filters.agentSlug)
+      filters(params)
+      if (await isContact()) {
+        // A contact's list is their OWN conversations; `state` does not apply
+        // (a contact's conversation is not archived by a runner report).
+        const qs = params.toString()
+        const rows = await json<Record<string, unknown>[]>(`/api/contact/sessions${qs ? `?${qs}` : ''}`)
+        return rows
+          .map(mapSummary)
+          .filter((r) => !opts.agentSlug || r.agentSlug === opts.agentSlug)
+      }
+      if (opts.state) params.set('state', opts.state)
+      if (opts.agentSlug) params.set('agent_slug', opts.agentSlug)
       const qs = params.toString()
       const rows = await json<Record<string, unknown>[]>(
         `/api/canopy-sessions/${qs ? `?${qs}` : ''}`,
@@ -151,6 +184,12 @@ export function createRest(config: RestConfig) {
      *  "is there more history" — an archived or page-201st session vanishes from
      *  the list but is still directly gettable. */
     async getSession(id: string): Promise<CanopySessionDetail> {
+      if (await isContact()) {
+        const r = await json<Record<string, unknown>>(`/api/contact/sessions/${encodeURIComponent(id)}`)
+        // A contact's detail carries no scroll-back cursor; `fetchOlder` answers
+        // "is there more" itself, so report "maybe" and let the first page decide.
+        return { ...mapSummary(r), hasMoreBefore: true, oldestLoadedTurnIndex: null }
+      }
       const r = await json<Record<string, unknown>>(
         `/api/canopy-sessions/${encodeURIComponent(id)}`,
       )
@@ -161,21 +200,29 @@ export function createRest(config: RestConfig) {
       }
     },
 
+    /** `origin` is the routing source a USER's send may declare (e.g. `ace_web`);
+     *  a contact's send is recorded as the site's widget by canopy itself. */
     async send(id: string, text: string, clientId: string, origin?: string): Promise<unknown> {
+      if (await isContact()) {
+        return json(`/api/contact/sessions/${encodeURIComponent(id)}/send`, {
+          method: 'POST',
+          body: JSON.stringify({ text, client_id: clientId }),
+        })
+      }
       return json(`/api/canopy-sessions/${encodeURIComponent(id)}/send`, {
         method: 'POST',
         body: JSON.stringify({ text, client_id: clientId, ...(origin ? { origin } : {}) }),
       })
     },
 
+    /** The same page shape for both principals (canopy's `MessagePageOut`). */
     async fetchOlder(
       id: string,
       before: number,
     ): Promise<{ messages: unknown[]; has_more_before: boolean }> {
+      const root = (await isContact()) ? '/api/contact/sessions' : '/api/canopy-sessions'
       return json(
-        `/api/canopy-sessions/${encodeURIComponent(id)}/messages?before=${encodeURIComponent(
-          String(before),
-        )}`,
+        `${root}/${encodeURIComponent(id)}/messages?before=${encodeURIComponent(String(before))}`,
       )
     },
 
@@ -184,10 +231,12 @@ export function createRest(config: RestConfig) {
     // the last viewer leaves. Best-effort by design — a caller fires these on
     // mount/unmount and must never block rendering on the result.
     async attach(id: string): Promise<void> {
-      await raw(`/api/canopy-sessions/${encodeURIComponent(id)}/attach`, { method: 'POST' })
+      const root = (await isContact()) ? '/api/contact/sessions' : '/api/canopy-sessions'
+      await raw(`${root}/${encodeURIComponent(id)}/attach`, { method: 'POST' })
     },
     async detach(id: string): Promise<void> {
-      await raw(`/api/canopy-sessions/${encodeURIComponent(id)}/detach`, { method: 'POST' })
+      const root = (await isContact()) ? '/api/contact/sessions' : '/api/canopy-sessions'
+      await raw(`${root}/${encodeURIComponent(id)}/detach`, { method: 'POST' })
     },
   }
 }

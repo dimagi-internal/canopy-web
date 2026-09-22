@@ -22,7 +22,15 @@
 export interface CanopyToken {
   token: string
   expiresAt: string
+  /** WHO the token is for, as canopy's `contact-token` answers it: a `user` (a
+   *  canopy account, arriving as themselves) or a `contact` (someone with no
+   *  canopy account). Both are first-class: every REST helper routes to the
+   *  surface that principal reaches. Omitted = `user`, which is what every host
+   *  minted before contacts existed. */
+  kind?: Principal
 }
+
+export type Principal = 'user' | 'contact'
 
 export type FetchToken = () => Promise<CanopyToken>
 
@@ -36,6 +44,9 @@ export interface TokenStore {
   peek(): string | null
   /** Drop the cached token. For a host that knows the user signed out. */
   clear(): void
+  /** Which principal the current token is for — `user` until a mint says
+   *  otherwise. Read after `get()` has resolved. */
+  principal(): Principal
 }
 
 /** Refetch this long before real expiry, so a request kicked off just under the
@@ -52,7 +63,7 @@ function expiresAtMs(expiresAt: string): number {
 }
 
 export function createTokenStore(fetchToken: FetchToken): TokenStore {
-  let cached: { token: string; expiresAtMs: number } | null = null
+  let cached: { token: string; expiresAtMs: number; kind: Principal } | null = null
   // In-flight dedup. Without it, several components mounting in the same tick
   // each call get() before any has a cached result, firing N concurrent mints —
   // and N new DelegatedToken rows server-side. Every caller in that tick awaits
@@ -66,8 +77,8 @@ export function createTokenStore(fetchToken: FetchToken): TokenStore {
       }
       if (!inflight) {
         inflight = fetchToken()
-          .then(({ token, expiresAt }) => {
-            cached = { token, expiresAtMs: expiresAtMs(expiresAt) }
+          .then(({ token, expiresAt, kind }) => {
+            cached = { token, expiresAtMs: expiresAtMs(expiresAt), kind: kind === 'contact' ? 'contact' : 'user' }
             return token
           })
           .finally(() => {
@@ -83,6 +94,9 @@ export function createTokenStore(fetchToken: FetchToken): TokenStore {
     },
     clear() {
       cached = null
+    },
+    principal() {
+      return cached ? cached.kind : 'user'
     },
   }
 }

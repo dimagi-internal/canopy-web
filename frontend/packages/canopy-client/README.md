@@ -40,12 +40,14 @@ import { createCanopyClient } from 'canopy-client'
 const canopy = createCanopyClient({
   baseUrl: 'https://labs.connect.dimagi.com/canopy',
   // YOUR backend endpoint that mints a short-lived canopy token for the
-  // signed-in user. The app credential is a secret: it never reaches a browser,
-  // which is why minting is a callback and not something this package does.
+  // signed-in visitor (it signs an assertion with a key only your server holds,
+  // which is why minting is a callback and not something this package does).
+  // Pass canopy's `kind` through: a visitor with a canopy account is a `user`,
+  // anyone else a `contact` — and every call below routes to what they reach.
   fetchToken: async () => {
     const r = await fetch('/your-app/canopy/token', { method: 'POST', credentials: 'same-origin' })
-    const { token, expires_at } = await r.json()
-    return { token, expiresAt: expires_at }
+    const { token, expires_at, kind } = await r.json()
+    return { token, expiresAt: expires_at, kind }
   },
 })
 
@@ -59,13 +61,21 @@ await canopy.rest.send(session.id, 'what is stale here?', crypto.randomUUID())
 const url = canopy.sessionSocketUrl(session.id)
 ```
 
+**Users and contacts are both first-class.** `canopy.rest.principal()` says which
+one you have; `listAgents`, `listSessions`, `getSession`, `send`, `fetchOlder`,
+`attach` and `detach` reach `/api/canopy-sessions/…` for a user and
+`/api/contact/…` for a contact, with the same shapes back. A host that returns no
+`kind` is treated as minting user tokens, as every host did before 0.3.0.
+
 The token is cached and re-minted shortly before it expires, and once more on a
 401. Call `canopy.invalidateToken()` when your user signs out or switches
 account.
 
 Sessions are **created by your backend**, not by this package: the host stamps
 provenance on a session server-side, and a browser that could set it could claim
-another tenant's scope.
+another tenant's scope. Create a user's at `POST /api/canopy-sessions/` and a
+contact's at `POST /api/contact/sessions` — both take `title` and your own
+`metadata` (e.g. `origin_key`); canopy drops any key it owns.
 
 ## Host bridge
 

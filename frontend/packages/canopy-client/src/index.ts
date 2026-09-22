@@ -25,8 +25,11 @@
  *
  * What stays OUT, and why:
  *
- *  - **Token minting.** The `AppCredential` is a secret, so only a host backend
- *    can exchange it. The client takes a `fetchToken` callback.
+ *  - **Token minting.** Only a host backend can vouch for its visitor (it signs
+ *    an assertion with a key canopy never holds), so the client takes a
+ *    `fetchToken` callback. The host returns canopy's answer as-is, including
+ *    `kind`: a visitor with a canopy account is a `user`; anyone else is a
+ *    `contact`. Both are first-class here — every call routes by it.
  *  - **Session creation.** The host stamps `origin_key` server-side from a
  *    membership-checked path; a client that could set its own would be able to
  *    claim another tenant's scope. So creation is the host's endpoint, and this
@@ -34,7 +37,7 @@
  */
 
 export { createTokenStore } from './token'
-export type { CanopyToken, FetchToken, TokenStore } from './token'
+export type { CanopyToken, FetchToken, Principal, TokenStore } from './token'
 
 export { buildSessionWsUrl } from './ws'
 export type { WsLocation } from './ws'

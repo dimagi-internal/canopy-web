@@ -192,6 +192,10 @@ def canopy_token(request):
     return JsonResponse({
         "token": vouched["token"],
         "expires_at": vouched["expires_at"],
+        # "user" (a visitor with a canopy account, arriving as themselves) or
+        # "contact". Hand it to canopy-client's fetchToken as `kind`, and every
+        # call routes to what that visitor can reach. Both are first-class.
+        "kind": vouched.get("kind", "contact"),
     })
 ```
 
@@ -200,7 +204,9 @@ def canopy_token(request):
 > because it verified your signature. Taking `sub` from the request body would
 > let any caller be anybody.
 
-**What the visitor becomes.** A `Contact` in the workspace that owns your app —
+**What the visitor becomes.** If they already have a canopy account you may
+resolve (see the `email_verified` note above), **that user**. Otherwise a
+`Contact` in the workspace that owns your app —
 somebody canopy knows about, who is *not* a member of anything. They can talk to
 the agents you were allowed to offer and see their own conversations with your
 site. They cannot reach the workspace, its other agents, or anyone else's

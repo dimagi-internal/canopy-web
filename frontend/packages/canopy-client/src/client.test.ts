@@ -315,3 +315,81 @@ describe('host bridge', () => {
     await expect(bridge.runAction('act')).rejects.toThrow('not allowed on a completed run')
   })
 })
+
+describe('both principals are first-class', () => {
+  function recording(body: unknown = []) {
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url.replace('https://c', '')}`)
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof fetch
+    return { calls, fetchImpl }
+  }
+
+  function client(kind: 'user' | 'contact' | undefined, body?: unknown) {
+    const { calls, fetchImpl } = recording(body)
+    const c = createCanopyClient({
+      baseUrl: 'https://c',
+      originKey: 'ace-web:w1',
+      fetchToken: async () => ({ token: 't', expiresAt: TOKEN_TTL(), ...(kind ? { kind } : {}) }),
+      fetchImpl,
+    })
+    return { c, calls }
+  }
+
+  it('a contact reaches the contact surface for every call', async () => {
+    const { c, calls } = client('contact', [])
+    expect(await c.rest.principal()).toBe('contact')
+    await c.rest.listSessions()
+    await c.rest.getSession('s1').catch(() => {})
+    await c.rest.send('s1', 'hi', 'n1')
+    await c.rest.fetchOlder('s1', 10)
+    await c.rest.attach('s1')
+    await c.rest.detach('s1')
+    expect(calls).toEqual([
+      'GET /api/contact/sessions?origin_key=ace-web%3Aw1',
+      'GET /api/contact/sessions/s1',
+      'POST /api/contact/sessions/s1/send',
+      'GET /api/contact/sessions/s1/messages?before=10',
+      'POST /api/contact/sessions/s1/attach',
+      'POST /api/contact/sessions/s1/detach',
+    ])
+  })
+
+  it("a contact's agents come from /api/contact/me", async () => {
+    const { c, calls } = client('contact', { agents: [{ slug: 'ace', name: 'ACE', description: '' }] })
+    expect((await c.rest.listAgents()).map((a) => a.slug)).toEqual(['ace'])
+    expect(calls).toEqual(['GET /api/contact/me'])
+  })
+
+  it('a user reaches the user surface, as before', async () => {
+    const { c, calls } = client('user', [])
+    await c.rest.listSessions({ state: 'active' })
+    await c.rest.fetchOlder('s1', 10)
+    expect(calls).toEqual([
+      'GET /api/canopy-sessions/?origin_key=ace-web%3Aw1&state=active',
+      'GET /api/canopy-sessions/s1/messages?before=10',
+    ])
+  })
+
+  it('a host that never says which is a user — every host minted before contacts existed', async () => {
+    const { c, calls } = client(undefined, [])
+    expect(await c.rest.principal()).toBe('user')
+    await c.rest.listSessions()
+    expect(calls[0]).toMatch(/^GET \/api\/canopy-sessions\//)
+  })
+
+  it("a contact's send carries no routing origin — canopy records the site itself", async () => {
+    const seen: unknown[] = []
+    const fetchImpl = vi.fn(async (_u: string, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)))
+      return new Response('{}', { status: 200 })
+    }) as unknown as typeof fetch
+    const c = createCanopyClient({
+      baseUrl: 'https://c', fetchImpl,
+      fetchToken: async () => ({ token: 't', expiresAt: TOKEN_TTL(), kind: 'contact' as const }),
+    })
+    await c.rest.send('s1', 'hi', 'n1', 'ace_web')
+    expect(seen).toEqual([{ text: 'hi', client_id: 'n1' }])
+  })
+})
