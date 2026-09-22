@@ -585,9 +585,46 @@ def detach_session(session) -> bool:
     return bool(b and b.stream_desired)
 
 
-def create_session(*, workspace, created_by, agent=None, project: str = "", title: str = "", metadata: dict | None = None) -> Session:
-    # The creator is the owner (SP3 multiplayer). Atomic so a session never exists
-    # without its owner participant. Local imports avoid a cycle.
+#: Session metadata keys canopy itself writes and ACTS on. A caller — a user, a
+#: contact, a host — may never set one: `slack_*` decide which Slack channel an
+#: agent's replies are posted into, `email_thread_key` decides which session an
+#: inbound email thread is delivered to, `transcript_sourced` where the durable
+#: record comes from, `embed_app` which host a conversation belongs to. Accepting
+#: them from a request let a caller aim the relay at an arbitrary channel or
+#: capture someone else's email thread. Spelled as strings (their owners are in
+#: other apps); tests/test_session_metadata.py pins each against its owner.
+SERVER_OWNED_METADATA = frozenset({
+    "embed_app", "requested_runner_id", "transcript_sourced",
+    "slack_thread", "slack_team", "slack_channel", "slack_thread_ts",
+    "email_thread_key", "via", "capability",
+})
+MAX_HOST_METADATA_KEYS = 20
+MAX_HOST_METADATA_BYTES = 4096
+
+
+def host_metadata(raw) -> dict:
+    """What a caller may put on a session: their own descriptive keys (ace-web's
+    `origin_key`, `opp_slug`, …), never one canopy acts on. ONE rule for every
+    principal — a signed-in user, a PAT, a widget contact — so a contact's
+    conversation carries a host's link exactly as a user's does."""
+    import json
+
+    if not isinstance(raw, dict):
+        return {}
+    out = {str(k): v for k, v in raw.items() if str(k) not in SERVER_OWNED_METADATA}
+    if len(out) > MAX_HOST_METADATA_KEYS or len(json.dumps(out, default=str)) > MAX_HOST_METADATA_BYTES:
+        raise ValueError(f"session metadata is limited to {MAX_HOST_METADATA_KEYS} keys "
+                         f"and {MAX_HOST_METADATA_BYTES} bytes")
+    return out
+
+
+def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
+                   metadata: dict | None = None, contact=None) -> Session:
+    """One way to start a conversation, whoever starts it. A USER owns it (a
+    participant row, SP3 multiplayer); a CONTACT has no account, so the session
+    records them on `contact` instead and has no creator — which is what keeps
+    it out of every member's list (`access.contact_session_q`)."""
+    # Atomic so a session never exists without its owner. Local imports avoid a cycle.
     from .models import SessionParticipant
     from .participants import ensure_participant
 
@@ -602,9 +639,10 @@ def create_session(*, workspace, created_by, agent=None, project: str = "", titl
     with transaction.atomic():
         session = Session.objects.create(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
-            title=title, metadata=meta,
+            title=title, metadata=meta, contact=contact,
         )
-        ensure_participant(session, created_by, SessionParticipant.OWNER)
+        if created_by is not None:
+            ensure_participant(session, created_by, SessionParticipant.OWNER)
     return session
 
 

@@ -1189,7 +1189,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** My conversations on this site */
+        /**
+         * My conversations on this site
+         * @description The same host filters a user's list takes, over the contact's OWN
+         *     conversations only — a filter narrows, it never widens what `contact_session_q`
+         *     already allows.
+         */
         readonly get: operations["apps_tokens_contact_api_list_sessions"];
         readonly put?: never;
         /**
@@ -6857,11 +6862,30 @@ export interface components {
             readonly status: string;
             /** Created At */
             readonly created_at: string;
+            /**
+             * Metadata
+             * @default {}
+             */
+            readonly metadata: {
+                readonly [key: string]: unknown;
+            };
         };
         /** ContactSessionCreateIn */
         readonly ContactSessionCreateIn: {
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Metadata
+             * @default {}
+             */
+            readonly metadata: {
+                readonly [key: string]: unknown;
+            };
         };
         /** ContactSendIn */
         readonly ContactSendIn: {
@@ -14222,7 +14246,14 @@ export interface operations {
     };
     readonly apps_tokens_contact_api_list_sessions: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly source?: string;
+                readonly origin_key?: string;
+                readonly opp_slug?: string;
+                readonly opp_run_id?: string;
+                readonly resource?: string;
+                readonly page_path?: string;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;

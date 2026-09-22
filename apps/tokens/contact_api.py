@@ -245,10 +245,18 @@ class ContactSessionOut(Schema):
     title: str
     status: str
     created_at: str
+    #: The host's own descriptive keys, as it set them (e.g. ace-web's
+    #: `origin_key`, `opp_slug`) — never canopy's (`host_metadata`).
+    metadata: dict = {}
 
 
 class ContactSessionCreateIn(Schema):
     agent_slug: str
+    title: str = ""
+    #: The host's link for this conversation — the same rule as a user's
+    #: (`canopy_sessions.services.host_metadata`), so a contact's chat carries
+    #: e.g. its opportunity exactly as a user's does.
+    metadata: dict = {}
 
 
 class ContactSendIn(Schema):
@@ -278,12 +286,15 @@ def _session_or_404(request: HttpRequest, session_id):
 
 
 def _session_out(s) -> ContactSessionOut:
+    from apps.canopy_sessions.services import SERVER_OWNED_METADATA
+
     return ContactSessionOut(
         id=str(s.id),
         agent_slug=s.agent.slug if s.agent_id else None,
         title=s.title,
         status=s.status,
         created_at=s.created_at.isoformat(),
+        metadata={k: v for k, v in (s.metadata or {}).items() if k not in SERVER_OWNED_METADATA},
     )
 
 
@@ -297,7 +308,6 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     own workspace, and there is deliberately no third leg.
     """
     from apps.agents.models import Agent
-    from apps.canopy_sessions.models import Session
 
     contact = request.contact
     app = request.delegated_app
@@ -312,14 +322,20 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     if agent is None:
         raise HttpError(404, f"{payload.agent_slug!r} is not offered here")
 
-    session = Session.objects.create(
-        workspace=contact.workspace,
-        agent=agent,
-        contact=contact,
-        # No `created_by`: there is no user, and leaving it null is what keeps
-        # this row out of `visible_session_q` for every member of the tenant.
-        title="",
-        metadata={"embed_app": app.name},
+    from apps.canopy_sessions import services as session_services
+
+    try:
+        metadata = session_services.host_metadata(payload.metadata)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    metadata["embed_app"] = app.name          # server-owned: which site, from the token
+    # The same constructor a user's session goes through — so a contact's
+    # conversation is recorded the same way (its transcript is its record under a
+    # real runner) — with no `created_by`: there is no user, and leaving it null is
+    # what keeps this row out of `visible_session_q` for every member of the tenant.
+    session = session_services.create_session(
+        workspace=contact.workspace, agent=agent, contact=contact,
+        title=(payload.title or "")[:200], metadata=metadata,
     )
     audit(event=EmbedAuditLog.MINT, request=request, app=app,
           detail=f"contact={contact.identity} started session {session.id} with {agent.slug}")
@@ -328,16 +344,22 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
 
 @contact_router.get("/sessions", response=list[ContactSessionOut],
                     summary="My conversations on this site")
-def list_sessions(request: HttpRequest) -> list[ContactSessionOut]:
+def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
+                  opp_slug: str = "", opp_run_id: str = "", resource: str = "",
+                  page_path: str = "") -> list[ContactSessionOut]:
+    """The same host filters a user's list takes, over the contact's OWN
+    conversations only — a filter narrows, it never widens what `contact_session_q`
+    already allows."""
     from apps.canopy_sessions.access import contact_session_q
     from apps.canopy_sessions.models import Session
 
-    rows = (
-        Session.objects.select_related("agent")
-        .filter(contact_session_q(request.contact))
-        .order_by("-created_at")[:50]
-    )
-    return [_session_out(s) for s in rows]
+    rows = Session.objects.select_related("agent").filter(contact_session_q(request.contact))
+    for field, value in (("metadata__source", source), ("metadata__origin_key", origin_key),
+                         ("metadata__opp_slug", opp_slug), ("metadata__opp_run_id", opp_run_id),
+                         ("page_state__resource", resource), ("page_state__path", page_path)):
+        if value:
+            rows = rows.filter(**{field: value})
+    return [_session_out(s) for s in rows.order_by("-created_at")[:50]]
 
 
 @contact_router.get("/sessions/{session_id}", response=ContactSessionOut,

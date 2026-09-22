@@ -189,7 +189,10 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         agent = agent_services.get_agent(payload.agent_slug)
         if agent is None or agent.workspace_id != workspace.slug:
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
-    metadata = dict(payload.metadata)
+    try:
+        metadata = services.host_metadata(payload.metadata)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
     # `embed_app` is SERVER-OWNED: it records which registered embedding app
     # created this session, and it is taken from the delegated token rather
     # than the request body, so one host's widget cannot create or list under
@@ -202,7 +205,6 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     # scope (ace-web derives one per ace workspace from a membership-checked
     # path) and it answers a different question; overriding it would break that
     # for no gain. See tests/test_embed_session_provenance.py.
-    metadata.pop(EMBED_APP_KEY, None)
     acting_app = getattr(request, "delegated_app", None)
     if acting_app is not None:
         metadata[EMBED_APP_KEY] = acting_app.name
