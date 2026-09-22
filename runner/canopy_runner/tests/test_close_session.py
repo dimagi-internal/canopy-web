@@ -67,7 +67,7 @@ def test_a_pending_close_forces_a_report_even_when_nothing_changed(monkeypatch):
     sent = {}
 
     class _Client:
-        def report_sessions(self, runner_id, payload, archived=None):
+        def report_sessions(self, runner_id, payload, archived=None, complete=False):
             sent["archived"] = archived
             sent["sessions"] = payload
 
@@ -93,7 +93,7 @@ def test_a_close_queued_mid_post_survives_the_report(monkeypatch):
     sent = {}
 
     class _Client:
-        def report_sessions(self, runner_id, payload, archived=None):
+        def report_sessions(self, runner_id, payload, archived=None, complete=False):
             sent["archived"] = archived
             # Simulate a close_session control frame landing on the wake-listener
             # thread while this POST's round-trip is still in flight.

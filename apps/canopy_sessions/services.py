@@ -1568,4 +1568,9 @@ def close_session(*, session: Session) -> str:
     cancel_session_turns(session)
     session.status = Session.ARCHIVED
     session.save(update_fields=["status", "updated_at"])
+    # The REPORTED branch announces itself when the runner's report retires the
+    # row; this one never gets a report, so it says so here.
+    from apps.harness.services import fire_sessions_closed
+
+    transaction.on_commit(lambda: fire_sessions_closed([session.pk]))
     return "closed"

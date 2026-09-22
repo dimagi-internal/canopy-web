@@ -76,7 +76,7 @@ class FakeClient:
     def claim(self, runner_id, paused_agents=None):
         return None
 
-    def report_sessions(self, runner_id, sessions, archived=None):
+    def report_sessions(self, runner_id, sessions, archived=None, complete=False):
         self.reported_sessions.append((runner_id, sessions, archived))
 
 
@@ -407,7 +407,7 @@ class _CdpLoopClient:
                                 "code_version": code_version, "code_sha": code_sha,
                                 "projects": projects})
 
-    def report_sessions(self, runner_id, sessions, archived=None):
+    def report_sessions(self, runner_id, sessions, archived=None, complete=False):
         pass
 
     def sync_schedules(self, runner_id):

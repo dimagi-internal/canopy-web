@@ -23,6 +23,7 @@ def test_report_sessions_carries_the_archived_list(monkeypatch):
     assert sent[-1]["body"] == {
         "sessions": [{"emdash_task": "a"}],
         "archived": ["gone", "also-gone"],
+        "complete": False,
     }
 
 
@@ -31,7 +32,13 @@ def test_report_sessions_defaults_archived_to_empty(monkeypatch):
     was archived' from an older runner that cannot report it."""
     c, sent = _client(monkeypatch)
     c.report_sessions("r1", [])
-    assert sent[-1]["body"] == {"sessions": [], "archived": []}
+    assert sent[-1]["body"] == {"sessions": [], "archived": [], "complete": False}
+
+
+def test_report_sessions_says_when_it_is_the_whole_open_set(monkeypatch):
+    c, sent = _client(monkeypatch)
+    c.report_sessions("r1", [], complete=True)
+    assert sent[-1]["body"]["complete"] is True
 
 
 def test_finish_defaults_status_done(monkeypatch):

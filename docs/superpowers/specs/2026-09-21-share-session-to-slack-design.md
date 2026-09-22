@@ -106,6 +106,20 @@ belongs to an agent-less session, that session is continued directly (members
 only). The agent case needs no change — the existing lookup already finds any
 session carrying the thread key.
 
+## When the session closes *(added 2026-09-22)*
+
+The thread a session was bound to is told once, when the session closes. Later
+replies are answered with "this session was closed" rather than queued. This
+fires only on a real close:
+- archived in emdash;
+- closed from canopy;
+- absent from two consecutive **complete** reports from its own runner.
+
+emdash deletes a task it closes, so for an ordinary close, absence is the only
+signal. It counts only when a report arrived and held the whole open set: a
+sleeping laptop sends nothing, and a report cut off by the runner's limit says
+`complete: false`.
+
 ## Observability
 
 Every share writes an `apps/events` row: `slack.shared` (info) on success, and

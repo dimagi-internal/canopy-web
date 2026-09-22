@@ -136,6 +136,8 @@ ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "an
 STALE = "stale"
 #: A contact replying in a thread a repo session was shared into.
 MEMBERS_ONLY = "members_only"
+#: A reply in a thread whose shared session has since been closed.
+SESSION_CLOSED = "session_closed"
 # Sending waiting work to a cloud runner, and the ways that can go.
 MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
     "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
@@ -454,6 +456,12 @@ def _adoption_ref(inbound: Inbound) -> dict | None:
 
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
           inbound: Inbound) -> Outcome:
+    # A SHARED session that has been closed has no one left to answer: say so
+    # instead of queueing a turn nothing will ever take. (A Slack-born one is
+    # simply asked again, which still works.)
+    if session.status == Session.ARCHIVED and (session.metadata or {}).get("slack_shared_by"):
+        return Outcome(SESSION_CLOSED, "This session was closed, so replies here no longer reach it. "
+                       "Ask its owner to share a new one.", session=session, agent=agent)
     if not created:
         answered = _answer_if_waiting(session, agent, prompt)
         if answered is not None:

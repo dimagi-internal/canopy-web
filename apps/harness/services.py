@@ -2068,8 +2068,19 @@ def _agent_for_project(project: str):
     return Agent.objects.select_related("workspace").filter(slug=project).first()
 
 
+def fire_sessions_closed(session_ids: list) -> None:
+    from apps.canopy_sessions.models import Session
+    from apps.harness.signals import sessions_closed
+
+    try:
+        sessions_closed.send(sender=Session, session_ids=list(session_ids))
+    except Exception:  # noqa: BLE001 — a notifier must never fail the report
+        logger.exception("sessions_closed receivers failed")
+
+
 def replace_reported_sessions(
-    runner: Runner, workspace, sessions: list, archived: list[str] | None = None
+    runner: Runner, workspace, sessions: list, archived: list[str] | None = None,
+    complete: bool = False,
 ) -> int:
     """Upsert a durable Session(origin=runner) + RunnerBinding per reported
     session. Sessions that fell off the report keep their Session row but have
@@ -2324,11 +2335,32 @@ def replace_reported_sessions(
     # towards leaving a row open is the safe direction (staleness retires it on its
     # own clock); erring the other way deletes a live session from the web.
     closed = [k for k in (archived or []) if k and k not in now_keys]
+    newly_closed: list = []
     if closed:
-        Session.objects.filter(
+        closing = Session.objects.filter(
             runner_binding__runner=runner,
             runner_binding__session_key__in=closed,
-        ).update(status=Session.ARCHIVED)
+        ).exclude(status=Session.ARCHIVED)
+        newly_closed += list(closing.values_list("id", flat=True))
+        closing.update(status=Session.ARCHIVED)
+
+    # The other closing signal: absence from a COMPLETE report. emdash deletes a
+    # task it closes (no row, no flag), so for an ordinary close the report's
+    # silence is all there is — but it is a real observation when the report
+    # arrived and held the runner's whole open set: a runner that cannot read
+    # emdash sends no report at all, and a laptop asleep sends nothing, so
+    # neither can reach this. Two complete reports in a row, to absorb a
+    # flickering read. A wrong call heals itself: a task that is reported again
+    # is un-archived above on the very next report.
+    RunnerBinding.objects.filter(id__in=touched_ids).exclude(missed_reports=0).update(missed_reports=0)
+    if complete:
+        missing = (RunnerBinding.objects.filter(runner=runner)
+                   .exclude(session_key="").exclude(id__in=touched_ids)
+                   .exclude(session__status=Session.ARCHIVED))
+        missing.update(missed_reports=F("missed_reports") + 1)
+        gone = Session.objects.filter(runner_binding__in=missing.filter(missed_reports__gte=2))
+        newly_closed += list(gone.values_list("id", flat=True))
+        gone.update(status=Session.ARCHIVED)
 
     # A menu, unlike the runner FK below, MUST be cleared when its session stops
     # being reported. `pending_question` is only written inside the loop above,
@@ -2415,6 +2447,8 @@ def replace_reported_sessions(
                     push_services.notify_session_question(session, menu)
 
     transaction.on_commit(_fire_reported)
+    if newly_closed:
+        transaction.on_commit(lambda: fire_sessions_closed(newly_closed))
     return len(deduped)
 
 

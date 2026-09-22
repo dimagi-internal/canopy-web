@@ -11159,6 +11159,11 @@ export interface components {
              * @default []
              */
             readonly archived: readonly string[];
+            /**
+             * Complete
+             * @default false
+             */
+            readonly complete: boolean;
         };
         /** ReportedSessionIn */
         readonly ReportedSessionIn: {
