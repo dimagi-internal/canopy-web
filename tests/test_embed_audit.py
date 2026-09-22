@@ -54,8 +54,7 @@ def _shown_app(user):
     A column an owner ticks, not a name matched against a setting — see
     `AppCredential.show_on_canopy_pages`.
     """
-    _raw, app = AppCredential.create_credential(
-        name="canopy-web", domains=[], created_by=user
+    _raw, app = AppCredential.create_credential(        name="canopy-web", created_by=user
     )
     app.show_on_canopy_pages = True
     app.save(update_fields=["show_on_canopy_pages"])
@@ -68,62 +67,13 @@ def _rows(event=None):
 
 
 # --- identity handed over -----------------------------------------------------
-
-
-def test_an_exchange_records_who_was_asserted_and_by_which_app():
-    """THE row. An app was believed about who somebody is."""
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    raw, app = AppCredential.create_credential(
-        name="connect-labs", domains=["dimagi.com"], created_by=user
-    )
-
-    r = Client().post(
-        "/api/auth/token-exchange",
-        data={"acting_as_email": "jj@dimagi.com"},
-        content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {raw}",
-    )
-
-    assert r.status_code == 200, r.content
-    row = _rows(EmbedAuditLog.EXCHANGE)[0]
-    assert row.ok
-    assert row.app_name == "connect-labs"
-    assert row.subject_email == "jj@dimagi.com"
-
-
-def test_a_refused_exchange_is_recorded_too():
-    """A domain refusal is what an attempt to overreach looks like."""
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    raw, _app = AppCredential.create_credential(
-        name="connect-labs", domains=["dimagi.com"], created_by=user
-    )
-
-    Client().post(
-        "/api/auth/token-exchange",
-        data={"acting_as_email": "someone@elsewhere.com"},
-        content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {raw}",
-    )
-
-    row = _rows(EmbedAuditLog.EXCHANGE)[0]
-    assert not row.ok
-    assert row.reason == "domain_not_allowed"
-
-
-def test_an_unknown_credential_is_recorded_with_no_app():
-    """There is nothing to attribute it to, which is the point: a run of these
-    is someone trying secrets."""
-    Client().post(
-        "/api/auth/token-exchange",
-        data={"acting_as_email": "jj@dimagi.com"},
-        content_type="application/json",
-        HTTP_AUTHORIZATION="Bearer not-a-real-secret",
-    )
-
-    row = _rows(EmbedAuditLog.EXCHANGE)[0]
-    assert not row.ok
-    assert row.reason == "invalid_credential"
-    assert row.app is None
+#
+# The three token-exchange tests that stood here went with that endpoint
+# (2026-09-22). Its replacement writes the SAME `EXCHANGE` rows from
+# `/api/auth/contact-token`, and they are asserted where that endpoint is
+# tested — `tests/test_contact_assertions.py`, which covers the accepted row,
+# each refusal and a throttled attempt. Duplicating them here would be two
+# copies of one contract.
 
 
 def test_a_session_mint_is_recorded():
@@ -209,18 +159,10 @@ def test_an_audit_failure_never_breaks_the_operation(monkeypatch):
 
     monkeypatch.setattr(audit_mod.EmbedAuditLog.objects, "create", boom)
 
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    raw, _app = AppCredential.create_credential(
-        name="x", domains=["dimagi.com"], created_by=user
-    )
-    r = Client().post(
-        "/api/auth/token-exchange",
-        data={"acting_as_email": "jj@dimagi.com"},
-        content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {raw}",
-    )
+    user, _ws, c = _owner()
+    _shown_app(user)
 
-    assert r.status_code == 200
+    assert c.post("/api/embed/token").status_code == 200
 
 
 # --- rate limits --------------------------------------------------------------

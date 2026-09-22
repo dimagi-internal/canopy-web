@@ -250,11 +250,10 @@ export function ConnectedAppsPage(): JSX.Element | null {
       const created = await connectApp(slug!, {
         name: name.trim(),
         origins: parseOrigins(origins),
-        // A domain is never typed. The server grants the acting owner's own
-        // domain and refuses any other, so the question a person can answer
-        // ("does your site sign users in?") is the one being asked.
+        // No domain is typed here. A site vouches for a visitor with a signing
+        // key; resolving one to their canopy account is a separate grant, and
+        // the server bounds it to the acting owner's own domain.
         show_on_canopy_pages: showHere,
-        delegation_domains: [],
         agents: picked,
         public_keys: parseKeys(signingKey),
       })

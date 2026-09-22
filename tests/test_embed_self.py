@@ -37,8 +37,7 @@ def _app(name="canopy-web", *, shown=True):
     match produced no widget and no error on either side.
     """
     admin = User.objects.create_user(f"a-{name}", f"a-{name}@dimagi.com", "pw")
-    app = AppCredential.create_credential(
-        name=name, domains=["dimagi.com"], created_by=admin,
+    app = AppCredential.create_credential(        name=name, created_by=admin,
     )[1]
     if shown:
         app.show_on_canopy_pages = True

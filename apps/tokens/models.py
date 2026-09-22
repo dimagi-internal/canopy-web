@@ -21,7 +21,6 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.workspaces.models import WorkspaceMembership
 
 
 class PersonalToken(models.Model):
@@ -149,42 +148,25 @@ def is_valid_frame_origin(value) -> bool:
 
 
 class AppCredential(models.Model):
-    """A registered embedding application (e.g. ace-web). Its ONLY power is the
-    token-exchange endpoint: it can mint short-lived DelegatedTokens for humans
-    in its allowlisted email domains. It is NOT a user token — BearerTokenAuth
-    never resolves it, so it cannot call normal APIs.
+    """A registered embedding application (e.g. ace-web) — a SITE canopy knows,
+    not a user token. `BearerTokenAuth` never resolves it, so it cannot call
+    normal APIs.
 
-    `provision_workspace` / `provision_role` grant this credential's exchange
-    calls the additional power to add a JIT-created (or existing) user to ONE
-    tenant workspace, at `provision_role`, the first time they exchange. Null
-    `provision_workspace` = no provisioning power (the historical behavior).
-    The workspace is fixed on this server-side row — it is never client
-    input, so an app can only ever provision into the tenant it was granted.
-    `provision_role` must be one of `PROVISION_ROLE_CHOICES` (viewer/editor) —
-    `owner` is deliberately excluded from the choices, since an app must never
-    be able to mint an administrator of a tenant (owners can invite/remove
-    members and change roles). This is an ALLOWLIST, not an owner-only
-    denylist: an unrecognized value ("Owner", "admin", a typo) is rejected
-    the same as `owner` — both here (`create_credential`) and by a DB-level
-    CheckConstraint (`provision_role__in=[...]`), so a shell caller bypassing
-    `create_credential` (e.g. `AppCredential.objects.create(...)`) is blocked
-    too, and nothing but a known-valid role can ever reach
-    `WorkspaceMembership.role` (which `ROLE_RANK[...]` would otherwise
-    KeyError on downstream, e.g. in `accept_invite`).
+    What it can do is vouch for one of its visitors, with a SIGNED ASSERTION
+    verified against `public_keys` (`apps/tokens/assertions.py`), and frame the
+    embed shell at `allowed_frame_origins`. Canopy decides who that visitor is:
+    an existing user at one of `resolvable_domains`, or a contact.
 
-    `provision_role` is a durable ceiling: `ensure_member` is create-only, so
-    once this grant creates the membership, nothing (including a later
-    explicit self-join via `POST /api/workspaces/{slug}/join`) can raise or
-    lower the role it set. There is no more domain-wide auto-join to race
-    against — see docs/archive/plans/
-    2026-07-26-tenant-scoped-provisioning.md (design + F3 fix, from when
-    there was).
+    It used to hold a second, much larger power: `/api/auth/token-exchange`
+    traded a SHARED SECRET plus an email address for a token, and created the
+    canopy user — and a workspace membership — as a side effect. The whole
+    cluster went on 2026-09-22 (`allowed_delegation_domains`,
+    `provision_workspace`, `provision_role`). A signature proves the claim
+    without canopy holding anything that could make one, and arrival never
+    creates an account, so nothing was left for those fields to mean.
+    `WorkspaceMembership.provisioned_by_app` stays: it records how existing
+    rows came to be, and erasing that would erase real provenance.
     """
-
-    PROVISION_ROLE_CHOICES = [
-        (WorkspaceMembership.VIEWER, "Viewer"),
-        (WorkspaceMembership.EDITOR, "Editor"),
-    ]
 
     name = models.CharField(max_length=100, unique=True)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
@@ -210,26 +192,15 @@ class AppCredential(models.Model):
         help_text="Workspace whose owners administer this app. Blank for rows "
         "registered before the Connected apps page existed.",
     )
-    #: Email domains this app may assert a user in, at `token-exchange`.
-    #:
-    #: `blank=True` because EMPTY IS A REAL CONFIGURATION, not an unfinished
-    #: one: it means the credential vouches for nobody, and that is exactly
-    #: right for an app that never exchanges — canopy's own self-embed mints
-    #: through `POST /api/embed/token`, which is session-authenticated and asks
-    #: no domain question. Without `blank=True` the admin made the field
-    #: required, so registering the self-app forced an operator to grant a
-    #: delegation domain it does not use — turning a credential that can only
-    #: frame a shell into one that can impersonate every user in that domain.
-    allowed_delegation_domains = models.JSONField(default=list, blank=True)
     #: Origins permitted to frame this app's embed shell, as a
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
     #:
     #: A JSONField rather than a related table (the v2 spec left this open):
-    #: it is the same kind of thing as `allowed_delegation_domains` directly
-    #: above — a short, admin-managed allowlist of opaque strings that nothing
-    #: joins against — and splitting one of the pair into a table would make
-    #: two shapes for one idea. Revisit if an app ever needs enough origins to
-    #: want paging or per-origin metadata.
+    #: it is the same kind of thing as `resolvable_domains` below — a short,
+    #: admin-managed allowlist of opaque strings that nothing joins against —
+    #: and splitting one of the pair into a table would make two shapes for one
+    #: idea. Revisit if an app ever needs enough origins to want paging or
+    #: per-origin metadata.
     #:
     #: Empty means the embed shell is NOT SERVED (404), not "any origin".
     #: `frame_origins()` is the only reader, and it sanitises, because an
@@ -281,21 +252,6 @@ class AppCredential(models.Model):
     #: constraint, because the useful behaviour is an error naming the app
     #: that already has it rather than an IntegrityError.
     show_on_canopy_pages = models.BooleanField(default=False)
-    provision_workspace = models.ForeignKey(
-        "workspaces.Workspace",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-        help_text="Tenant this credential may provision JIT/existing users into. "
-        "Null = no provisioning power.",
-    )
-    provision_role = models.CharField(
-        max_length=16,
-        choices=PROVISION_ROLE_CHOICES,
-        default=WorkspaceMembership.EDITOR,
-        help_text="Role granted on first provisioning. Never 'owner'.",
-    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -304,33 +260,14 @@ class AppCredential(models.Model):
 
     class Meta:
         db_table = "app_credentials"
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(
-                    provision_role__in=[WorkspaceMembership.VIEWER, WorkspaceMembership.EDITOR]
-                ),
-                name="app_credential_provision_role_valid",
-            ),
-        ]
 
     @classmethod
-    def create_credential(cls, *, name, domains, created_by,
-                          provision_workspace=None, provision_role=WorkspaceMembership.EDITOR):
-        valid_roles = dict(cls.PROVISION_ROLE_CHOICES)
-        if provision_role not in valid_roles:
-            raise ValueError(
-                f"AppCredential.provision_role must be one of {sorted(valid_roles)} "
-                f"— got {provision_role!r}. An app credential must never mint a "
-                "workspace owner or an unrecognized role."
-            )
+    def create_credential(cls, *, name, created_by):
         raw = secrets.token_urlsafe(32)
         cred = cls.objects.create(
             name=name,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
-            allowed_delegation_domains=list(domains),
             created_by=created_by,
-            provision_workspace=provision_workspace,
-            provision_role=provision_role,
         )
         return raw, cred
 
@@ -374,9 +311,8 @@ class AppCredentialAgent(models.Model):
     Explicit rows rather than a list of slugs on `AppCredential`, for the reason
     `RunnerAssignment` replaced self-declared `capabilities.agents`: a real FK
     cannot name an agent that no longer exists, and it is queryable from both
-    ends. And server-side only, following `provision_workspace` — the app is
-    resolved from the bearer token, never from request data, so one host cannot
-    borrow another's allowlist.
+    ends. And server-side only — the app is resolved from its own credential,
+    never from request data, so one host cannot borrow another's allowlist.
 
     Not exclusive: the same agent may be offered by several apps.
 

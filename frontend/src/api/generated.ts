@@ -1085,23 +1085,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/auth/token-exchange": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Exchange an app credential for a delegated user token */
-        readonly post: operations["apps_tokens_exchange_api_token_exchange"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/embed/agents": {
         readonly parameters: {
             readonly query?: never;
@@ -6892,28 +6875,6 @@ export interface components {
             /** Capability */
             readonly capability: string;
         };
-        /** TokenExchangeOut */
-        readonly TokenExchangeOut: {
-            /** Token */
-            readonly token: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            readonly expires_at: string;
-            /** Workspace */
-            readonly workspace?: string | null;
-        };
-        /** TokenExchangeIn */
-        readonly TokenExchangeIn: {
-            /** Acting As Email */
-            readonly acting_as_email: string;
-            /**
-             * Ttl Seconds
-             * @default 3600
-             */
-            readonly ttl_seconds: number;
-        };
         /**
          * EmbedAgentOut
          * @description One agent an embedding app may offer the caller — `GET /api/embed/agents`.
@@ -10589,8 +10550,6 @@ export interface components {
             readonly name: string;
             /** Origins */
             readonly origins: readonly string[];
-            /** Delegation Domains */
-            readonly delegation_domains: readonly string[];
             /**
              * Resolvable Domains
              * @default []
@@ -10637,11 +10596,6 @@ export interface components {
              */
             readonly public_keys: readonly string[];
             /**
-             * Delegation Domains
-             * @default []
-             */
-            readonly delegation_domains: readonly string[];
-            /**
              * Show On Canopy Pages
              * @default false
              */
@@ -10651,8 +10605,6 @@ export interface components {
         readonly UpdateIn: {
             /** Origins */
             readonly origins?: readonly string[] | null;
-            /** Delegation Domains */
-            readonly delegation_domains?: readonly string[] | null;
             /** Agents */
             readonly agents?: readonly string[] | null;
             /** Public Keys */
@@ -14307,30 +14259,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["NarrativeReadOut"];
-                };
-            };
-        };
-    };
-    readonly apps_tokens_exchange_api_token_exchange: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["TokenExchangeIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TokenExchangeOut"];
                 };
             };
         };

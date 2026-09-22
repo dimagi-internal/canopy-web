@@ -37,9 +37,9 @@ def _agent(slug, ws):
     return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws)
 
 
-def _app(name, *, domains=("dimagi.com",)):
+def _app(name):
     admin = User.objects.create_user(f"admin-{name}", f"admin-{name}@dimagi.com", "pw")
-    return AppCredential.create_credential(name=name, domains=list(domains), created_by=admin)
+    return AppCredential.create_credential(name=name, created_by=admin)
 
 
 def _bearer(app, user):

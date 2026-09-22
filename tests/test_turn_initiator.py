@@ -149,8 +149,7 @@ def test_a_chat_message_through_a_hosts_widget_names_the_host(ctx):
     """A delegated token means an embedding host's widget: the channel says which
     host, and the assurance says the token was minted by an app."""
     owner, workspace, _agent = ctx
-    _secret, app = AppCredential.create_credential(name="connect-labs", domains=[],
-                                                   created_by=owner)
+    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
     app.workspace = workspace
     app.save(update_fields=["workspace"])
     raw, _tok = DelegatedToken.issue(app=app, user=owner, ttl_seconds=600)
@@ -173,8 +172,7 @@ def test_a_widget_contact_is_the_contact_with_its_own_grade(ctx):
     from apps.contacts.models import Contact
 
     owner, workspace, _agent = ctx
-    _secret, app = AppCredential.create_credential(name="connect-labs", domains=[],
-                                                   created_by=owner)
+    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
     contact = Contact.objects.create(workspace=workspace, app=app, external_id="42",
                                      email="visitor@partner.org",
                                      auth_result=Contact.AUTH_APP_SIGNED,

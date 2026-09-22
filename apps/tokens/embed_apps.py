@@ -113,30 +113,6 @@ def _clean_origins(origins) -> list[str]:
     return cleaned
 
 
-def _no_domains_here(domains) -> list[str]:
-    """This surface does not grant delegation domains, and says so.
-
-    A domain let whoever held the app's secret exchange it for a token acting
-    as ANY canopy user in that domain — an assertion the app proved only by
-    possessing a static string. Signed assertions replaced it
-    (`apps/tokens/assertions.py`): a site now vouches for its own contacts, in
-    its own namespace, which cannot reach canopy's user population at all.
-
-    The field and `/api/auth/token-exchange` remain for the server-to-server
-    callers that predate this (ace-web), and are managed outside this page.
-    Accepting an empty list rather than rejecting the key outright keeps an
-    older client working; anything non-empty is refused with the reason.
-    """
-    if domains:
-        raise EmbedAppError(
-            "no_vouching",
-            "connected sites no longer vouch for email domains. Register a "
-            "signing key instead: the site signs a short-lived statement about "
-            "each visitor, which cannot name anybody outside its own users.",
-        )
-    return []
-
-
 def _clean_resolvable(user, domains) -> list[str]:
     """Domains this site may resolve to existing canopy users — bounded twice.
 
@@ -237,7 +213,7 @@ def set_agents(app: AppCredential, slugs: list[str]) -> None:
 
 
 def register(*, user, workspace_slug: str, name: str, origins: list[str],
-             domains: list[str] | None = None, agents: list[str] | None = None,
+             agents: list[str] | None = None,
              public_keys: list[str] | None = None,
              ) -> tuple[str, AppCredential]:
     """Register an app and return `(raw secret, row)`. The secret is shown once."""
@@ -258,12 +234,9 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
         raise EmbedAppError("duplicate_name", f"an app named {name!r} is already registered")
 
     cleaned_origins = _clean_origins(origins)
-    cleaned_domains = _no_domains_here(domains)
     cleaned_keys = _clean_keys(public_keys or [])
 
-    raw, app = AppCredential.create_credential(
-        name=name, domains=cleaned_domains, created_by=user,
-    )
+    raw, app = AppCredential.create_credential(name=name, created_by=user)
     app.workspace_id = workspace_slug
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
@@ -272,7 +245,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     return raw, app
 
 
-def update(*, user, app: AppCredential, origins=None, domains=None, agents=None,
+def update(*, user, app: AppCredential, origins=None, agents=None,
            public_keys=None, resolvable_domains=None) -> AppCredential:
     """Change what an already-registered app may do. Every field is optional."""
     fields: list[str] = []
@@ -288,9 +261,6 @@ def update(*, user, app: AppCredential, origins=None, domains=None, agents=None,
     if origins is not None:
         app.allowed_frame_origins = _clean_origins(origins)
         fields.append("allowed_frame_origins")
-    if domains is not None:
-        app.allowed_delegation_domains = _no_domains_here(domains)
-        fields.append("allowed_delegation_domains")
     if public_keys is not None:
         app.public_keys = _clean_keys(public_keys)
         fields.append("public_keys")

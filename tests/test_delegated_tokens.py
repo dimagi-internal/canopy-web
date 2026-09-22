@@ -14,8 +14,7 @@ def user():
 
 
 def test_app_credential_lookup_roundtrip(user):
-    raw, cred = AppCredential.create_credential(
-        name="ace-web", domains=["dimagi.com"], created_by=user)
+    raw, cred = AppCredential.create_credential(        name="ace-web", created_by=user)
     assert AppCredential.lookup(raw).pk == cred.pk
     assert AppCredential.lookup("nope") is None
     cred.revoked_at = timezone.now()
@@ -24,7 +23,7 @@ def test_app_credential_lookup_roundtrip(user):
 
 
 def test_delegated_token_expires(user):
-    _, cred = AppCredential.create_credential(name="a", domains=[], created_by=user)
+    _, cred = AppCredential.create_credential(name="a", created_by=user)
     raw, tok = DelegatedToken.issue(app=cred, user=user, ttl_seconds=60)
     assert DelegatedToken.lookup(raw).user_id == user.pk
     DelegatedToken.objects.filter(pk=tok.pk).update(
@@ -35,7 +34,7 @@ def test_delegated_token_expires(user):
 def test_middleware_rejects_delegated_token_for_deactivated_user(user):
     """F1: a delegated token minted before deactivation must stop authenticating
     REST once the user is deactivated (BearerTokenAuthMiddleware guard)."""
-    _, cred = AppCredential.create_credential(name="a", domains=[], created_by=user)
+    _, cred = AppCredential.create_credential(name="a", created_by=user)
     raw, _ = DelegatedToken.issue(app=cred, user=user, ttl_seconds=600)
 
     ok = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {raw}")

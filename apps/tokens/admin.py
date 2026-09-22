@@ -59,7 +59,6 @@ class AppCredentialAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "workspace",
-        "domains_display",
         "origins_display",
         "agents_display",
         "created_at",
@@ -82,10 +81,6 @@ class AppCredentialAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         return [f.name for f in self.model._meta.fields]
-
-    @admin.display(description="delegation domains")
-    def domains_display(self, obj):
-        return ", ".join(obj.allowed_delegation_domains or []) or "— none (cannot mint)"
 
     @admin.display(description="frame origins")
     def origins_display(self, obj):

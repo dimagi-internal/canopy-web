@@ -107,7 +107,7 @@ def test_an_app_registered_before_this_page_existed_is_not_adoptable_by_anyone()
     exclude it.
     """
     _user, _ws, c = _ctx()
-    AppCredential.create_credential(name="legacy", domains=[], created_by=None)
+    AppCredential.create_credential(name="legacy", created_by=None)
 
     assert c.get("/api/workspaces/w1/connected-apps").json() == []
 
@@ -154,21 +154,23 @@ def test_several_environments_can_be_connected_at_once():
 # tests/test_contact_assertions.py, which covers what took its place.
 
 
-def test_no_domains_is_the_default_and_is_a_real_configuration():
-    """An app that never calls token-exchange should vouch for nobody."""
+def test_the_surface_hands_out_no_email_vouching_at_all():
+    """A connected site cannot speak for canopy's users. Vouching by email
+    domain, and the provisioning that rode with it, went with token-exchange —
+    so there is no field for a form to set and none for the API to echo. A site
+    proves who its visitor is with a signature instead, and an arrival never
+    creates an account."""
     _user, _ws, c = _ctx()
-    r = _connect(c)
-    assert r.json()["app"]["delegation_domains"] == []
 
+    app = _connect(c, {"name": "x", "origins": [LABS],
+                       # Ignored, not honoured: these keys no longer exist.
+                       "delegation_domains": ["dimagi.com"],
+                       "provision_workspace": "w1", "provision_role": "editor"}).json()["app"]
 
-def test_the_surface_cannot_grant_provisioning():
-    """`provision_workspace` lets a credential add users to a tenant — a larger
-    and different power than embedding, and not something a form should hand
-    out. Nothing here can set it."""
-    _user, _ws, c = _ctx()
-    _connect(c, {"name": "x", "origins": [LABS], "provision_workspace": "w1",
-                 "provision_role": "editor"})
-    assert AppCredential.objects.get(name="x").provision_workspace_id is None
+    assert "delegation_domains" not in app
+    row = AppCredential.objects.get(name="x")
+    assert not hasattr(row, "allowed_delegation_domains")
+    assert not hasattr(row, "provision_workspace_id")
 
 
 # --- agents -------------------------------------------------------------------
@@ -321,35 +323,6 @@ def test_a_revoked_app_stops_showing_there():
 
 
 # --- vouching for a domain is no longer something this page can do -----------
-
-
-def test_the_page_refuses_to_grant_a_delegation_domain():
-    """Replaced by signed assertions: a site vouches for its own contacts, in
-    its own namespace, which cannot reach canopy's user population at all."""
-    _user, _ws, c = _ctx()
-
-    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": ["dimagi.com"]})
-
-    assert r.status_code == 422
-    assert b"signing key" in r.content, "the refusal should say what to do instead"
-    assert not AppCredential.objects.filter(name="x").exists()
-
-
-def test_an_empty_domain_list_is_still_accepted():
-    """So an older client that sends the key keeps working."""
-    _user, _ws, c = _ctx()
-    r = _connect(c, {"name": "x", "origins": [LABS], "delegation_domains": []})
-    assert r.status_code == 201
-
-
-def test_an_existing_grant_is_left_alone():
-    """ace-web's credential predates this page and is managed elsewhere;
-    removing the capability here must not revoke what it already has."""
-    _user, _ws, _c = _ctx()
-    _raw, legacy = AppCredential.create_credential(
-        name="ace-web", domains=["dimagi.com"], created_by=None
-    )
-    assert legacy.allowed_delegation_domains == ["dimagi.com"]
 
 
 # --- the service layer's own guard --------------------------------------------

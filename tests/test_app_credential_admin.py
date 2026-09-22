@@ -36,8 +36,7 @@ def _staff():
 
 
 def _existing():
-    _raw, cred = AppCredential.create_credential(
-        name="connect-labs", domains=[], created_by=None
+    _raw, cred = AppCredential.create_credential(        name="connect-labs", created_by=None
     )
     cred.allowed_frame_origins = [LABS]
     cred.save(update_fields=["allowed_frame_origins"])

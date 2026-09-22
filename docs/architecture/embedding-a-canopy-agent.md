@@ -224,16 +224,17 @@ symmetric algorithm would let anyone sign); `aud` must match; `exp` at most 120
 seconds out; and each `jti` works exactly once.
 
 **If your visitors already have canopy accounts** — Dimagi staff on a Dimagi
-product, say — they still arrive as contacts through this flow, not as their
-canopy selves. That is deliberate: a contact can reach only the agents you
-offer and their own conversations, so a mistake on your side cannot hand a
-visitor your workspace. There is a second, older kind of token that *does*
-resolve to the canopy user — `POST /api/auth/token-exchange`, with the site's
-secret and the visitor's email, as ace-web uses — but it depends on the
-email-domain grant this page no longer issues, and can only be set up by
-command, which a deployment cannot run. If your product needs visitors to act
-as their canopy accounts, raise it rather than working around it; the widget
-accepts either kind of token unchanged, so nothing else would move.
+product, say — they can arrive as *themselves*, with their own canopy
+permissions, instead of as contacts. It is one grant, made by a workspace owner
+on **Connected sites → "Visitors with a canopy account arrive as themselves"**,
+and it is bounded twice: only a domain that owner is in, and only one canopy
+admits at login. Your assertion then has to carry `email` and
+`email_verified: true` for that visitor, and the person must ALREADY have a
+canopy account at that address — arrival never creates one. Anyone else, at any
+other domain, is a contact, which is the safe default: a contact reaches only
+the agents you offer and their own conversations, so a mistake on your side
+cannot hand a visitor your workspace. The token comes back with `kind` saying
+which happened, and nothing else about your integration changes.
 
 The widget calls this endpoint with `credentials: 'same-origin'` and sends an
 `X-CSRFToken` header if you set a `csrftoken` cookie, so your normal session

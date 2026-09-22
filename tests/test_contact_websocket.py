@@ -60,7 +60,7 @@ def _world():
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     priv, pub = _keypair()
-    _raw, app = AppCredential.create_credential(name="connect-labs", domains=[], created_by=owner)
+    _raw, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
     app.workspace = ws
     app.public_keys = [pub]
     app.save(update_fields=["workspace", "public_keys"])

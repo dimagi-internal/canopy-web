@@ -30,7 +30,7 @@ def _ws(slug="w1"):
 
 
 def _app(name="connect-labs"):
-    _raw, app = AppCredential.create_credential(name=name, domains=[], created_by=None)
+    _raw, app = AppCredential.create_credential(name=name, created_by=None)
     return app
 
 
