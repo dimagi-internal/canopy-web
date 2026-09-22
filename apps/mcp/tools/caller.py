@@ -34,6 +34,18 @@ def _tenant_of(turn) -> str | None:
     return turn.workspace_id
 
 
+def _envelope_for_caller_token(turn_id: str) -> dict:
+    """The middleware has already pinned `turn_id` to the token's conversation."""
+    from apps.harness.caller_context import build
+    from apps.harness.models import Turn
+
+    turn = (Turn.objects.select_related("agent", "chat_session", "initiator_user",
+                                        "initiator_contact").filter(pk=turn_id).first())
+    if turn is None:
+        raise TurnNotFound("turn not found")
+    return build(turn)
+
+
 def _envelope_sync(user_id, turn_id: str) -> dict:
     from apps.harness.caller_context import build
     from apps.harness.models import Turn
@@ -64,9 +76,14 @@ async def who_is_asking(turn_id: str) -> dict:
     member, caller (anyone outside, e.g. an email contact) or system. `contact`
     holds the workspace's notes and attributes for an outside person.
     """
+    from apps.mcp.turn_scope import _turn_claims
+
     user_id = current_user_id()
     try:
-        env = await sync_to_async(_envelope_sync, thread_sensitive=True)(user_id, turn_id)
+        if _turn_claims() is not None:
+            env = await sync_to_async(_envelope_for_caller_token, thread_sensitive=True)(turn_id)
+        else:
+            env = await sync_to_async(_envelope_sync, thread_sensitive=True)(user_id, turn_id)
     except Exception as exc:  # noqa: BLE001
         await write_audit(user_id=user_id, tool="who_is_asking",
                           args_summary=f"turn={turn_id}", ok=False, error=str(exc))

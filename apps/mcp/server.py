@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("canopy-web", auth=CanopyPATVerifier())
 
+# A confined session's caller token sees only its capability's canopy tools.
+from .turn_scope import TurnScopeMiddleware  # noqa: E402
+
+mcp.add_middleware(TurnScopeMiddleware())
+
 # Registering tools is a side effect of importing the tools package.
 from . import tools  # noqa: E402,F401
 from .page_tools import PageActionProvider  # noqa: E402

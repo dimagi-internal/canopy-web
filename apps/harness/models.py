@@ -629,6 +629,35 @@ class Turn(models.Model):
         return f"turn:{self.target}:{self.status}:{self.id.hex[:8]}"
 
 
+class CallerToken(models.Model):
+    """The credential a CONFINED session uses for canopy's own MCP — instead of
+    the runner owner's personal token.
+
+    Who-is-asking §7: a caller's session must reach canopy's tools as
+    `agent ∩ caller`, never as the human who paired the runner. The runner gets
+    one of these with each confined turn it claims, writes it into the session's
+    profile (which the session itself cannot read), and the canopy plugin's MCP
+    headers helper sends it in place of the PAT. canopy resolves it to the
+    conversation's CURRENT turn: that turn's asker is who the tools run as (their
+    own ACL, or no canopy user at all for an outside contact), and its
+    capability decides which tools exist.
+
+    Bound to the conversation when there is one, because a long confined session
+    outlives any single turn and its MCP connection is not re-made per turn.
+    Only the hash is stored.
+    """
+
+    token_hash = models.CharField(max_length=64, unique=True)
+    chat_session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
+                                     null=True, blank=True, related_name="caller_tokens")
+    turn = models.ForeignKey("Turn", on_delete=models.CASCADE, related_name="caller_tokens")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"caller token for turn {self.turn_id}"
+
+
 class TurnEvent(models.Model):
     """Append-only per-turn ledger. seq is monotonic per turn (assigned in services)."""
 

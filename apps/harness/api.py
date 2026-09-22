@@ -819,6 +819,12 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     turn = services.claim_next_turn(runner, exclude_slugs=exclude or None)
     if turn is None:
         return Status(204, None)
+    if turn.capability:
+        # A confined turn's credential for canopy's own MCP (models.CallerToken):
+        # handed to the claiming runner only, never to a listing.
+        from .caller_tokens import mint
+
+        turn.mcp_token = mint(turn)
     return Status(200, turn)
 
 
