@@ -136,6 +136,18 @@ def test_the_jwks_endpoint_publishes_the_public_half_and_nothing_else():
     assert "PRIVATE" not in r.content.decode()
 
 
+@override_settings(ONBEHALF_SIGNING_KEY="PLACEHOLDER")
+def test_the_cfn_secrets_birth_value_reads_as_unconfigured_not_as_a_key():
+    """A secret container is born holding "PLACEHOLDER". Treating that as a key
+    would make `configured()` say yes and every signature die inside the crypto
+    library, instead of the clean refusal the agent is meant to get."""
+    turn, _a, _c = _world()
+    assert onbehalf.configured() is False
+    with pytest.raises(onbehalf.OnBehalfError):
+        onbehalf.mint(turn, agent_slug="echo")
+    assert Client().get("/api/tokens/on-behalf-of/jwks").json() == {"keys": []}
+
+
 @override_settings(ONBEHALF_SIGNING_KEY="")
 def test_an_unconfigured_deployment_publishes_an_empty_key_set_not_an_error():
     r = Client().get("/api/tokens/on-behalf-of/jwks")
