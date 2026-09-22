@@ -272,6 +272,13 @@ class AgentBootstrapReport(models.Model):
     #: shared `canopy` app. Distinct from `gog_client` above on purpose: that
     #: one is whichever client the box's token happened to be minted under.
     turn_client = models.CharField(max_length=120, blank=True, default="")
+    #: Did the agent's secrets materialize (`op inject` of its `.env.tpl`)?
+    #: Null = the box did not say. False means the box kept whatever `.env` it
+    #: already had, so the agent still runs — on secrets that may be stale, and
+    #: without any key added to the template since. Observed on cloud-ec2-1
+    #: (2026-09-22): four agents failing this for two weeks, visible only in
+    #: journald.
+    env_ok = models.BooleanField(null=True, blank=True)
     #: Can the mailbox authenticate under `turn_client` — the client the CONSUMER
     #: uses, not the one the verifier picked. Null means the box did not check
     #: (an older box, or gog absent), which must not read as False.

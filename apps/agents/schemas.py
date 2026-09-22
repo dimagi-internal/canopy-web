@@ -734,6 +734,9 @@ class BootstrapReportIn(StrictModel):
     #: which would report a healthy agent as broken.
     turn_client: str = ""
     turn_ready: bool | None = None
+    #: Did the agent's secrets materialize (`op inject` of its .env.tpl)? None
+    #: from a box that did not say — never False.
+    env_ok: bool | None = None
     detail: str = ""
 
 
@@ -744,6 +747,7 @@ class BootstrapReportOut(StrictModel):
     gog_client: str = ""
     turn_client: str = ""
     turn_ready: bool | None = None
+    env_ok: bool | None = None
     detail: str = ""
     reported_at: datetime | None = None
 

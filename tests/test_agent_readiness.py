@@ -199,3 +199,15 @@ def test_a_later_report_can_clear_the_alarm(fleet):
     assert len(rows) == 1, "one row per (agent, runner) — this is state, not history"
     assert rows[0]["turn_ready"] is True
     assert rows[0]["gog_client"] == "canopy"
+
+
+def test_env_ok_is_reported_and_null_means_unsaid(fleet):
+    """`op inject` failing keeps the box's OLD .env — the agent runs, on secrets
+    that may be stale. Four agents sat in that state for two weeks on
+    cloud-ec2-1 (2026-09-22), visible only in journald."""
+    r = _post(fleet["user"], {**DEAD, "env_ok": False})
+    assert r.status_code == 200, r.content
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is False
+    # A box that does not say leaves it unknown rather than broken.
+    _post(fleet["user"], DEAD)
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is None

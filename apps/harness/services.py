@@ -372,6 +372,7 @@ def heartbeat(
     ready: bool = True, ready_note: str = "", code_branch: str = "",
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
+    health: dict | None = None,
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -415,6 +416,9 @@ def heartbeat(
         if cleaned != runner.capabilities.get("projects"):
             runner.capabilities = {**runner.capabilities, "projects": cleaned}
             fields.append("capabilities")
+    if health is not None:
+        runner.health = {**health, "received_at": now.isoformat()}
+        fields.append("health")
     if int(runner.capabilities.get("profiles") or 0) != int(profiles or 0):
         runner.capabilities = {**runner.capabilities, "profiles": int(profiles or 0)}
         if "capabilities" not in fields:
@@ -2593,6 +2597,19 @@ def runner_credential_status(runner) -> dict:
         "updated_at": cred.updated_at,
     }
 # ---- Runner administrators (administer a box without speaking for it) -----
+def request_refresh(runner: Runner) -> Runner:
+    """Ask a box to refresh itself — re-run its bootstrap (plugins, the canopy
+    CLI, Claude Code, each agent's provisioning) at its next idle moment.
+
+    Only recorded here; the box acts on it. It reads `refresh_pending` off its
+    heartbeat reply, so a dropped socket costs one beat rather than the request,
+    and the request is discharged by the box reporting a newer bootstrap — never
+    by this side guessing that it happened."""
+    runner.refresh_requested_at = timezone.now()
+    runner.save(update_fields=["refresh_requested_at"])
+    return runner
+
+
 def can_administer_runner(user, runner) -> bool:
     """May this person change what this box RUNS ON — its credentials, its
     sign-in — as opposed to speaking as it?

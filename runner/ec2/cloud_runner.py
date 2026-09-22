@@ -39,8 +39,12 @@ Config comes from the environment (see runner/ec2/README.md):
                      (default: /tmp/canopy-runner-work)
   AGENT_ROOT         where bootstrapped agent clones live (default: /opt/agents);
                      an agent turn with a clone here runs IN it, not WORK_DIR
-  CANOPY_WEB_REPO_DIR/CANOPY_WEB_REPO_URL  where bootstrap_agent_fleet() clones/
-                     pulls canopy-web from, to run its bootstrap_agents.sh
+  RUNNER_SRC_DIR    the runner's OWN canopy-web clone (default:
+                     /opt/canopy-runner/src) — the in-repo packages it imports and
+                     the bootstrap_agents.sh it runs come from here, never from a
+                     clone agent turns can reach
+  CANOPY_WEB_REPO_DIR/CANOPY_WEB_REPO_URL  the shared canopy-web clone the
+                     auto-updater reads (`git show`), and the repo URL both use
   POLL_SECONDS      idle poll interval (default: 15)
   STATE_FILE        runner-id cache (default: ~/.canopy-cloud-runner.json)
   RUNNER_HOME       where this runner's bytes + its two auto-update files live
@@ -150,6 +154,14 @@ AGENT_SLUGS = os.environ.get("AGENT_SLUGS", "")
 INBOX_POLL_SECONDS = int(os.environ.get("INBOX_POLL_SECONDS", "300"))
 CANOPY_WEB_REPO_DIR = os.environ.get("CANOPY_WEB_REPO_DIR", "/opt/canopy-web")
 CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/dimagi-internal/canopy-web.git")
+#: The runner's own clone, kept apart from CANOPY_WEB_REPO_DIR on purpose. That
+#: one is reachable by agent turns (it is where anything that wants a canopy-web
+#: checkout finds one), and on 2026-09-22 a turn left it on a local branch: the
+#: next start's `git pull --ff-only` failed, the packages below were never put on
+#: sys.path, and the box ran six hours with no transcripts, no inbox and no ACP
+#: while reporting ready. Nothing but this process writes here, and it is reset
+#: to origin/main on every start rather than merged into.
+RUNNER_SRC_DIR = os.environ.get("RUNNER_SRC_DIR", "/opt/canopy-runner/src")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "15"))
 # App-level heartbeat cadence (keeps the lease + status fresh).
 HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "20"))
@@ -355,8 +367,181 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         "host": RUNNER_HOST,
         "code_sha": info["sha"],
         "code_committed_at": info["committed_at"],
+        "health": health_report(),
         **extra,
     }
+
+
+# ── self-reported health ─────────────────────────────────────────────────────
+# What this box can actually do, one named check each, sent on every heartbeat
+# (Runner.health on the server). The reason it exists: on 2026-09-22 this box
+# read online + ready + code-current while three of its features were off, and
+# the only evidence was journald. A feature that turns itself off must say so
+# where an operator looks — the runner page — without anyone opening a shell.
+#
+# Cheap checks (imports, the credential cascade) are recomputed on every beat;
+# checks that start a process (versions) are cached for HEALTH_SLOW_SECONDS.
+
+HEALTH_SLOW_SECONDS = int(os.environ.get("HEALTH_SLOW_SECONDS", "600"))
+_HEALTH: dict[str, dict] = {}
+_HEALTH_LOCK = threading.Lock()
+_HEALTH_SLOW_AT = 0.0
+#: When bootstrap_agent_fleet last FINISHED (epoch). Reported so the server can
+#: discharge a refresh request by observation; 0 = not since this process started.
+_BOOTSTRAPPED_AT = 0.0
+
+
+def _set_check(name: str, status: str, detail: str = "") -> None:
+    with _HEALTH_LOCK:
+        _HEALTH[name] = {"name": name, "status": status, "detail": detail[:2000]}
+
+
+def _package_checks() -> None:
+    """Did each in-repo package this box depends on actually IMPORT? Asks the
+    same lazy loaders the features use, so this cannot disagree with them."""
+    _set_check("packages.transcripts", *(
+        ("ok", "") if _transcript_core() is not None
+        else ("fail", "canopy_transcript did not import: chat sessions on this box write no durable rows")))
+    _set_check("packages.inbox", *(
+        ("ok", "") if _inbox_core() is not None
+        else ("fail", "canopy_runner did not import: this box reads no mail and the Gmail doorbell does nothing")))
+    if RUNNER_EXECUTOR == "acp":
+        _set_check("packages.acp", *(
+            ("ok", "") if _acp_core() is not None
+            else ("fail", "canopy_acp did not import: turns fall back to claude -p and cannot be steered or stopped")))
+
+
+def _credential_check() -> None:
+    n = len(_CLAUDE_CREDS)
+    if n == 0:
+        _set_check("claude.credentials", "fail", "no Claude credential staged: this box cannot run a turn")
+    elif n == 1:
+        _set_check("claude.credentials", "warn",
+                   "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
+    else:
+        _set_check("claude.credentials", "ok", f"{n} credentials in the fallback chain")
+
+
+def _version_of(cmd: list[str]) -> str:
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except Exception:  # noqa: BLE001
+        return ""
+    if out.returncode != 0:
+        return ""
+    # `claude --version` says "2.1.266 (Claude Code)", `canopy --version` says
+    # "canopy 0.2.509": the version is the one dotted number in either.
+    m = re.search(r"\d+\.\d+\.\d+", out.stdout or "")
+    return m.group(0) if m else ""
+
+
+def _marketplace_canopy_version() -> str:
+    """The canopy plugin version the marketplace clone holds — what the CLI
+    should match. Read from the plugin's own manifest, like bootstrap does."""
+    root = pathlib.Path.home() / ".claude" / "plugins" / "marketplaces" / "canopy"
+    for rel in ("plugins/canopy/.claude-plugin/plugin.json", ".claude-plugin/plugin.json"):
+        try:
+            v = json.loads((root / rel).read_text()).get("version")
+        except Exception:  # noqa: BLE001
+            continue
+        if v:
+            return str(v)
+    return ""
+
+
+def _slow_checks() -> None:
+    claude = _version_of([CLAUDE_BIN, "--version"])
+    _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
+                                   else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
+    cli = _version_of(["canopy", "--version"])
+    want = _marketplace_canopy_version()
+    if not cli:
+        _set_check("canopy.cli", "fail", "the canopy CLI did not run")
+    elif want and cli != want:
+        _set_check("canopy.cli", "warn", f"canopy CLI {cli}, but the plugin is {want}: refresh this runner")
+    else:
+        _set_check("canopy.cli", "ok", f"canopy {cli}")
+
+
+def health_report() -> dict:
+    """The `health` block for a heartbeat. Never raises: health is decoration on
+    a liveness call, and a check that throws must not cost the beat."""
+    global _HEALTH_SLOW_AT
+    try:
+        _credential_check()
+        if _BOOTSTRAPPED_AT:
+            # Before bootstrap the packages are not exposed yet; reporting them
+            # as failed would be a false alarm on every start.
+            _package_checks()
+        now = time.time()
+        if now - _HEALTH_SLOW_AT >= HEALTH_SLOW_SECONDS:
+            _HEALTH_SLOW_AT = now
+            _slow_checks()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"health: a check raised ({exc}); reporting what completed")
+    with _HEALTH_LOCK:
+        checks = list(_HEALTH.values())
+    return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT}
+
+
+# ── self-refresh ─────────────────────────────────────────────────────────────
+# A refresh is a restart: bootstrap runs once per service start (see
+# bootstrap_agent_fleet), and it is what updates the canopy plugin + CLI, Claude
+# Code and each agent's provisioning — so re-running it IS restarting. The
+# scoped sudoers rule the auto-updater uses already allows exactly this command.
+#
+# Two triggers: an operator's request (Runner.refresh_pending, read off the
+# heartbeat reply — durable, so a dropped socket costs a beat, not the request),
+# and age, because without it a box's plugins only moved when its RUNNER code
+# changed, which is how hal's cloud drill came to fail on a stale canopy CLI.
+
+REFRESH_MAX_AGE_SECONDS = int(os.environ.get("REFRESH_MAX_AGE_SECONDS", str(24 * 3600)))
+#: Floor between self-restarts, persisted across them, so a bootstrap that
+#: cannot complete can never become a restart loop.
+REFRESH_MIN_INTERVAL_SECONDS = int(os.environ.get("REFRESH_MIN_INTERVAL_SECONDS", "1800"))
+
+
+def _refresh_marker() -> pathlib.Path:
+    return pathlib.Path(RUNNER_HOME) / "last-self-refresh"
+
+
+def _refresh_reason(pending: bool, now: float) -> str:
+    if pending:
+        return "an operator asked for a refresh"
+    if _BOOTSTRAPPED_AT and now - _BOOTSTRAPPED_AT >= REFRESH_MAX_AGE_SECONDS:
+        return f"last bootstrap was {int((now - _BOOTSTRAPPED_AT) // 3600)}h ago"
+    return ""
+
+
+def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
+    """Restart this service to re-run bootstrap, if asked or overdue AND idle.
+
+    Called only from the thread that CLAIMS turns, right after a heartbeat, so
+    "idle" cannot change between the check and the restart: nothing else here
+    claims. Returns True when a restart was started."""
+    now = time.time() if now is None else now
+    reason = _refresh_reason(pending, now)
+    if not reason or _in_flight_ids():
+        return False
+    try:
+        last = float(_refresh_marker().read_text().strip() or 0)
+    except Exception:  # noqa: BLE001
+        last = 0.0
+    if now - last < REFRESH_MIN_INTERVAL_SECONDS:
+        return False
+    try:
+        _refresh_marker().write_text(str(now))
+    except Exception as exc:  # noqa: BLE001
+        _log(f"self-refresh: cannot write {_refresh_marker()} ({exc}); not restarting without the loop guard")
+        return False
+    _log(f"self-refresh: {reason}; restarting to re-run bootstrap")
+    try:
+        subprocess.run(["sudo", "-n", "systemctl", "restart", "canopy-runner.service"],
+                       capture_output=True, timeout=30, check=True)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"self-refresh: restart failed ({exc})")
+        return False
+    return True
 
 
 def _chunk_transcript_lines(
@@ -1356,26 +1541,40 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     return pathlib.Path(WORK_DIR) / turn_id[:8]
 
 
-def clone_or_pull_canopy_web() -> bool:
-    """canopy-web is PUBLIC (github.com/dimagi-internal/canopy-web) — this needs no
-    credential, but it still runs from bootstrap_agent_fleet (after credential
-    staging), not cloud-init, purely to keep the whole bootstrap sequence in
-    one place with one log stream."""
-    repo_dir = pathlib.Path(CANOPY_WEB_REPO_DIR)
+def sync_runner_src() -> bool:
+    """Bring RUNNER_SRC_DIR to origin/main and expose its packages.
+
+    Reset, not merged: this clone belongs to the runner alone, so there is no
+    local work to protect, and `pull --ff-only` is exactly what failed on
+    2026-09-22. The packages are exposed WHENEVER the clone exists — a stale
+    clone beats a disabled feature — and the outcome lands in the `code_clone`
+    health check instead of one journald line."""
+    repo_dir = pathlib.Path(RUNNER_SRC_DIR)
+    synced = False
     try:
         if (repo_dir / ".git").is_dir():
-            subprocess.run(["git", "-C", str(repo_dir), "pull", "--ff-only"], check=True, timeout=120)
+            subprocess.run(["git", "-C", str(repo_dir), "fetch", "--quiet", "--depth", "1",
+                            CANOPY_WEB_REPO_URL, "main"], check=True, timeout=120)
+            subprocess.run(["git", "-C", str(repo_dir), "checkout", "--quiet", "--force",
+                            "--detach", "FETCH_HEAD"], check=True, timeout=60)
         else:
             repo_dir.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                ["git", "clone", "--depth", "1", CANOPY_WEB_REPO_URL, str(repo_dir)],
-                check=True, timeout=180,
-            )
-        _install_transcript_core(repo_dir)
-        return True
-    except Exception as exc:
-        _log(f"warn: could not clone/pull canopy-web ({CANOPY_WEB_REPO_URL}) for bootstrap: {exc}")
+            subprocess.run(["git", "clone", "--quiet", "--depth", "1", CANOPY_WEB_REPO_URL,
+                            str(repo_dir)], check=True, timeout=180)
+        synced = True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not sync {repo_dir} to origin/main: {exc}")
+        _set_check("code_clone", "fail" if not (repo_dir / ".git").is_dir() else "warn",
+                   f"could not sync {repo_dir} to origin/main ({exc}); "
+                   + ("using the clone as it was" if (repo_dir / ".git").is_dir() else "no clone"))
+    if not (repo_dir / ".git").is_dir():
         return False
+    if synced:
+        sha = subprocess.run(["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        _set_check("code_clone", "ok", f"{repo_dir} at origin/main {sha}")
+    _install_transcript_core(repo_dir)
+    return True
 
 
 def _expose_repo_package(
@@ -1588,18 +1787,27 @@ def bootstrap_agent_fleet() -> None:
     or just project/session turns with no agent clone at all) still works;
     see bootstrap_agents.sh step 5 for the same policy one level down.
     """
-    if not clone_or_pull_canopy_web():
+    global _BOOTSTRAPPED_AT, _HEALTH_SLOW_AT
+    try:
+        _run_bootstrap()
+    finally:
+        # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
+        # is what discharges a refresh request. The checks say how it went.
+        _BOOTSTRAPPED_AT = time.time()
+        # Versions may have just moved (bootstrap updates Claude Code and the
+        # canopy CLI): re-read them on the next beat rather than in 10 minutes.
+        _HEALTH_SLOW_AT = 0.0
+
+
+def _run_bootstrap() -> None:
+    if not sync_runner_src():
+        _set_check("bootstrap", "fail", f"no runner clone at {RUNNER_SRC_DIR}; agent bootstrap skipped")
         return
-    script = pathlib.Path(CANOPY_WEB_REPO_DIR) / "runner" / "ec2" / "bootstrap_agents.sh"
+    script = pathlib.Path(RUNNER_SRC_DIR) / "runner" / "ec2" / "bootstrap_agents.sh"
     if not script.exists():
-        # One release of fallback: a box whose clone predates the runner/ move
-        # (or whose cloud_runner.py outlives it) still finds the script.
-        legacy = pathlib.Path(CANOPY_WEB_REPO_DIR) / "deploy" / "ec2-runner" / "bootstrap_agents.sh"
-        if legacy.exists():
-            script = legacy
-        else:
-            _log(f"warn: {script} not found — skipping agent bootstrap")
-            return
+        _log(f"warn: {script} not found — skipping agent bootstrap")
+        _set_check("bootstrap", "fail", f"{script} not found")
+        return
     env = dict(os.environ)
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     _log(f"running {script}")
@@ -1608,8 +1816,11 @@ def bootstrap_agent_fleet() -> None:
         # straight in `journalctl -u canopy-runner` alongside everything else.
         proc = subprocess.run(["bash", str(script)], env=env, timeout=900)
         _log(f"bootstrap_agents.sh exited {proc.returncode}")
+        _set_check("bootstrap", *(("ok", "") if proc.returncode == 0 else
+                   ("fail", f"bootstrap_agents.sh exited {proc.returncode}; per-agent results are on each agent's readiness")))
     except Exception as exc:
         _log(f"warn: bootstrap_agents.sh failed to run: {exc}")
+        _set_check("bootstrap", "fail", f"bootstrap_agents.sh did not run: {exc}")
 
 
 # ── Claude credential cascade ───────────────────────────────────────────────
@@ -2688,7 +2899,7 @@ def _in_flight_ids() -> list[str]:
 def _transcript_core():
     """canopy_transcript, imported lazily and cached.
 
-    Lazy because this module ALSO clones canopy-web (clone_or_pull_canopy_web),
+    Lazy because this module ALSO clones canopy-web (sync_runner_src),
     so at import time the package may not exist on the box yet. Returns None if
     it cannot be imported — the turn still runs and still finishes; only the
     durable transcript rows are skipped, which the laptop path would backfill
@@ -2997,7 +3208,8 @@ def run_over_rest(runner_id: str) -> None:
         # Every in-flight turn rides the heartbeat so the server renews all of
         # their leases — with concurrency, reporting only the newest would let
         # the others expire mid-run.
-        _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
+        _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
+        maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -3201,8 +3413,11 @@ def run_over_ws(runner_id: str) -> bool:
             # is the cloud runner's primary heartbeat, and the server assigns those
             # fields unconditionally — so a frame that omitted them would erase
             # what the REST paths reported, every 20 seconds.
-            _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
-                        "heartbeat.ack", timeout=15)
+            ack = _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
+                              "heartbeat.ack", timeout=15)
+            # This thread is the one that claims, so "idle" holds until the
+            # restart; see maybe_self_refresh.
+            maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)

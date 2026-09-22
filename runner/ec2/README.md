@@ -23,7 +23,7 @@ wire.
 - `runner.cfn.yaml` — the whole stack (instance + SG + IAM role + key pair + cloud-init).
 - `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` publishes it to Secrets Manager as the first-boot seed; after that the box updates itself from git (see "Updating the runner code" below).
 - `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
-- `bootstrap_agents.sh` — idempotent agent-fleet bootstrap (tooling, gog, per-agent clones + secrets, claude plugins). Runs ON the box, from a live `canopy-web` clone — not baked into the template. See "Bootstrap" below.
+- `bootstrap_agents.sh` — idempotent agent-fleet bootstrap (tooling, gog, per-agent clones + secrets, claude plugins, Claude Code itself). Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — validate + render + `cloudformation deploy`; pulls the private key from SSM for SSH.
 - `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. Run this after `up.sh`.
@@ -58,6 +58,44 @@ Watch it come up / work:
 ssh -i canopy-cloud-runner-key.pem ubuntu@<ip> 'journalctl -u canopy-runner -f'
 # cloud-init progress: ssh ... 'sudo cat /var/log/cloud-init-output.log'
 ```
+
+## Is it healthy? (no shell needed)
+
+Open `/supervisor` → **Runners** → the box. The **Health** panel is the box's own
+report of which features work, sent on every heartbeat; the list shows a red/amber
+`N issues` chip when anything is off. Checks the cloud runner makes:
+
+| check | fails / warns when |
+|---|---|
+| `code_clone` | the runner's own clone (`RUNNER_SRC_DIR`, default `/opt/canopy-runner/src`) could not be synced to origin/main |
+| `packages.transcripts` | `canopy_transcript` did not import — chat sessions write no durable rows |
+| `packages.inbox` | `canopy_runner` did not import — the box reads no mail; the Gmail doorbell does nothing |
+| `packages.acp` | (`RUNNER_EXECUTOR=acp` only) `canopy_acp` did not import — no steer/stop, turns fall back to `claude -p` |
+| `bootstrap` | `bootstrap_agents.sh` exited non-zero or did not run |
+| `claude.credentials` | 0 credentials (fail) or 1 (warn: a usage cap stops every agent here) |
+| `claude.version` | `claude --version` does not run |
+| `canopy.cli` | the canopy CLI is behind the marketplace plugin (warn) |
+
+Per-agent results (mailbox, secrets via `op inject` — `env_ok`, with op's own
+reason in `detail`) stay on `GET /api/agents/{slug}/readiness`. A readiness
+**drill** (the Drills panel, or `POST /api/harness/runners/{id}/drill`) is still
+the end-to-end proof that an agent can run a turn here and reach canopy-web.
+
+**Refresh** (the button on the Health panel, or `POST /api/harness/runners/{id}/refresh`)
+asks the box to re-run its bootstrap at its next idle moment: it restarts itself,
+which pulls the canopy plugin + CLI and each agent's clone, re-injects secrets and
+updates Claude Code (into `~/.local`, which shadows cloud-init's frozen copy in
+`/usr`). The box also refreshes itself once its last bootstrap is 24h old, and
+never restarts itself twice within 30 minutes. The request stays pending until
+the box reports a newer bootstrap.
+
+**Why the runner has its own clone.** `/opt/canopy-web` is reachable by agent
+turns, and on 2026-09-22 one left it on a local branch: the next start's
+`git pull --ff-only` failed and the three packages above were never loaded, while
+the box read online + ready for six hours. `RUNNER_SRC_DIR` belongs to the runner
+alone and is RESET to origin/main on every start (never merged into), and a clone
+that cannot sync is still loaded as it was. `/opt/canopy-web` stays for the
+auto-updater, which only ever `git show`s from it.
 
 ## Bootstrap (agent-fleet provisioning)
 

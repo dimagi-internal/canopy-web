@@ -982,7 +982,7 @@ def resolve_shared_vault(agent) -> tuple[str, str]:
 
 def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
                             gog_client="", detail="", turn_client="",
-                            turn_ready=None):
+                            turn_ready=None, env_ok=None):
     """Upsert one box's view of this agent. Latest wins — this is current state,
     not a log: the question it answers is "can this agent run RIGHT NOW", and a
     history of that would bury the answer under every prior boot."""
@@ -998,6 +998,7 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
             # report the agent as broken. Only a real observation flips it.
             "turn_client": (turn_client or "").strip(),
             "turn_ready": (None if turn_ready is None else bool(turn_ready)),
+            "env_ok": (None if env_ok is None else bool(env_ok)),
             "detail": (detail or "").strip()[:2000],
         },
     )

@@ -792,7 +792,20 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         code_committed_at=payload.code_committed_at,
         projects=payload.projects,
         profiles=payload.profiles,
+        health=payload.health.model_dump() if payload.health is not None else None,
     )
+
+
+@router.post("/runners/{runner_id}/refresh", response=RunnerOut)
+def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
+    """Ask this runner to refresh itself at its next idle moment: re-run its
+    bootstrap, which updates the canopy plugin and CLI, Claude Code, and each
+    agent's provisioning, then restart. `refresh_pending` stays true until the
+    runner reports a bootstrap newer than the request."""
+    # The administer tier, not the act-as tier: this changes what the box runs
+    # on, the same class of operation as setting its credentials.
+    runner = _runner_admin_or_404(request, runner_id)
+    return services.request_refresh(runner)
 
 
 @router.post("/runners/{runner_id}/claim", response={200: ClaimedTurnOut, 204: None})

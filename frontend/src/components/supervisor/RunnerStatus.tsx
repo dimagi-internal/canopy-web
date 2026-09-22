@@ -31,6 +31,27 @@ function drillBadgeClass(rollup: DrillRollup): string {
   return 'text-success'
 }
 
+// Health problems the box reported about itself. A box can be online and ready
+// while a feature is off (2026-09-22: no transcripts, no inbox), so this is its
+// own chip rather than folded into `not ready`. Red if any check failed, amber
+// if only warnings; nothing at all when the box does not report health.
+function HealthBadge({ runner }: { runner: RunnerOut }): JSX.Element | null {
+  const bad = Object.values(runner.health_checks ?? {}).filter((c) => c.status !== 'ok')
+  if (bad.length === 0) return null
+  const failing = bad.some((c) => c.status === 'fail')
+  return (
+    <span
+      data-testid={`runner-health-badge-${runner.name}`}
+      title={bad.map((c) => c.name).join(', ')}
+      className={`shrink-0 rounded px-1 text-[10px] ${
+        failing ? 'bg-destructive/15 text-destructive' : 'bg-warning/15 text-warning'
+      }`}
+    >
+      {bad.length} {bad.length === 1 ? 'issue' : 'issues'}
+    </span>
+  )
+}
+
 export function RunnerStatus({
   runners,
   onSelect,
@@ -74,6 +95,10 @@ export function RunnerStatus({
               not ready
             </span>
           ) : null}
+          {/* Health problems the box reported about itself. A box can be online
+              and ready while a feature is off (2026-09-22: no transcripts, no
+              inbox), so this is its own chip rather than folded into ready. */}
+          <HealthBadge runner={r} />
           {/* The host was `text-foreground-subtle` at 11px — 1.7:1 against this
               row, where AA asks 4.5:1 — AND `hidden sm:inline`, so on a phone it
               was not dim but absent. Which box a runner is on is the field that

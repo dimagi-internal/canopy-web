@@ -161,6 +161,26 @@ class Runner(models.Model):
     # today's direction-less "different" rather than going quiet, since a runner
     # too old to report this is the one most likely to be genuinely behind.
     code_committed_at = models.BigIntegerField(default=0)
+    # What the box REPORTS about its own features, one named check each —
+    # `{"checks": [{"name", "status": ok|warn|fail, "detail"}], "checked_at",
+    # "bootstrapped_at", "received_at"}`. OBSERVED, never typed, like `projects`.
+    #
+    # Separate from `ready` on purpose: `ready` answers "can this box execute a
+    # turn", this answers "which of its features actually work". Those came
+    # apart on 2026-09-22 — cloud-ec2-1 read online + ready + code-current for
+    # six hours while it wrote no durable chat rows, read no mail and could not
+    # steer a turn, because a failed `git pull` skipped loading three packages
+    # and the only record was a journald line. Empty = the runner does not
+    # report health (the laptops, an older box): UNKNOWN, never "healthy".
+    health = models.JSONField(default=dict, blank=True)
+    # An operator asked this box to refresh itself (re-run bootstrap: plugins,
+    # the canopy CLI, Claude Code, agent provisioning). DURABLE, not a frame: a
+    # control frame is a doorbell, and one sent while the socket is down is
+    # simply lost (spec 2026-08-01). The runner reads `refresh_pending` off its
+    # heartbeat reply and restarts itself once idle; the request is discharged by
+    # the box reporting a bootstrap newer than it (`health.bootstrapped_at`), so
+    # nothing has to clear it and a refresh that never happened stays visible.
+    refresh_requested_at = models.DateTimeField(null=True, blank=True)
     # The human who paired this runner. Load-bearing for authz AND for tenancy:
     # `_runner_visibility_q` requires paired_by to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`
@@ -217,6 +237,16 @@ class Runner(models.Model):
         has project="", so a stray "" here would let a non-session runner match it
         via `project__in`."""
         return [p for p in self.capabilities.get("projects", []) if p]
+
+    def refresh_pending(self) -> bool:
+        """Asked to refresh, and has not bootstrapped since."""
+        if self.refresh_requested_at is None:
+            return False
+        try:
+            booted = float((self.health or {}).get("bootstrapped_at") or 0)
+        except (TypeError, ValueError):
+            booted = 0.0
+        return booted < self.refresh_requested_at.timestamp()
 
     def expected_code_sha(self) -> str:
         """The sha the DEPLOYED server expects this runner's kind to be running.
