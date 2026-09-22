@@ -70,6 +70,8 @@ export interface Chrome {
   /** Re-dress the launcher and the panel frame. The panel's CONTENTS are
    *  canopy's document and are re-themed over the handshake, not here. */
   setTheme(theme: SafeTheme): void
+  /** Show or hide the launcher for the current page, reversibly. */
+  setLauncherVisible(visible: boolean): void
   destroy(): void
 }
 
@@ -130,6 +132,12 @@ const STYLES = `
   /* Once dragged the dock is placed by left/top, so the corner insets must stop
      applying or they fight the coordinates. */
   .dock[data-moved="true"] { right: auto; bottom: auto; }
+  /* Suppressed by the HOST for a page where the bubble is wrong (it covers
+     that page's own controls, or duplicates it). An attribute selector, not
+     the hidden attribute: [hidden] loses to .dock { display: flex },
+     which is the exact bug dismiss() records below. .dock[data-...] is more
+     specific than .dock, so this one wins. */
+  .dock[data-suppressed="true"] { display: none; }
   /* Without this a touch-drag scrolls the host's page instead of moving the
      bubble — the browser claims the gesture before pointermove ever fires. */
   .launcher { touch-action: none; }
@@ -420,6 +428,14 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       panel.style.height = `${px}px`
     },
     setTheme: applyTheme,
+    setLauncherVisible(visible: boolean) {
+      if (!dock) return // inline has no launcher
+      // Hiding the launcher under an open panel would leave the panel with the
+      // page's own controls beneath it and no bubble to fold it back into.
+      // Closing is not ending: the conversation is still there when it reopens.
+      if (!visible) api.close()
+      dock.dataset.suppressed = String(!visible)
+    },
     destroy() {
       host.remove()
     },

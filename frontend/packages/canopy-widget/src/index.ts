@@ -153,6 +153,13 @@ export interface CanopyWidget {
    *  Replaces the whole theme rather than merging, so a field you leave out
    *  goes back to its default. */
   setTheme(theme: WidgetTheme): void
+  /** Show or hide the launcher on the current page, reversibly — for a page
+   *  where the bubble covers the page's own controls, or duplicates what the
+   *  page already is. Hiding closes the panel (the conversation stays; it is
+   *  there when the panel reopens). Distinct from `dismiss()`, which is the
+   *  VISITOR's choice and lasts the page load: this is the host's, and a host
+   *  can reverse it on the next route. */
+  setLauncherVisible(visible: boolean): void
   /** Remove the widget and stop listening. Idempotent. */
   destroy(): void
 }
@@ -366,6 +373,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     isOpen: () => chrome.isOpen(),
     dismiss: () => chrome.dismiss(),
     isDismissed: () => chrome.isDismissed(),
+    setLauncherVisible: (visible: boolean) => chrome.setLauncherVisible(visible),
     setTheme(next: WidgetTheme) {
       theme = normalizeTheme(next)
       chrome.setTheme(theme)

@@ -20,18 +20,20 @@
  * replied to `event.origin` — an origin already checked against the list.
  */
 
+// The protocol's names come from the ONE module both ends share, as its header
+// promises ("so the two cannot disagree about a field name"). This file used to
+// redeclare them, which made that promise false: nothing stopped the frame's
+// copy of `ActionSpec` or `SOURCE` drifting from the loader's. Type-only for
+// ActionSpec, and the loader module has no dependencies, so importing it pulls
+// nothing extra into the frame's bundle.
+import { SOURCE, type ActionSpec } from '../../packages/canopy-widget/src/protocol'
+
+export type { ActionSpec }
+
 export interface EmbedBootstrap {
   app: string
   /** Origins permitted to frame (and therefore to talk to) this frame. */
   origins: string[]
-}
-
-/** One thing the host page can be asked to do. `parameters` is JSON-Schema —
- *  without it the agent knows the action exists but not how to call it. */
-export interface ActionSpec {
-  name: string
-  description?: string
-  parameters?: Record<string, unknown>
 }
 
 export interface HostInit {
@@ -42,8 +44,6 @@ export interface HostInit {
   /** The host's theme, UNVALIDATED — `applyFrameTheme` checks it itself. */
   theme?: unknown
 }
-
-const SOURCE = 'canopy-widget'
 
 type Pending = { resolve: (v: never) => void; reject: (e: Error) => void }
 

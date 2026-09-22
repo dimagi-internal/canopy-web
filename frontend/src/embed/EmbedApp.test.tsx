@@ -93,9 +93,11 @@ afterEach(() => {
  *  every assertion about the create call has to go through the composer, the
  *  same way a person does. */
 async function say(text = 'hello') {
-  const box = await screen.findByPlaceholderText(/^Message /)
+  // The start screen is the kit's SendBox now, the same composer the chat uses
+  // once the session exists — so this drives it exactly as the chat is driven.
+  const box = await screen.findByPlaceholderText(/^Type a message/)
   fireEvent.change(box, { target: { value: text } })
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  fireEvent.click(screen.getByTestId('send'))
 }
 
 const created = () =>
@@ -121,7 +123,7 @@ describe('starting a conversation', () => {
     )
 
     // Wait until the frame has settled far enough to have created one.
-    await screen.findByPlaceholderText(/^Message /)
+    await screen.findByPlaceholderText(/^Type a message/)
 
     expect(created()).toBeUndefined()
     expect(calls.some((c) => c.init?.method === 'POST')).toBe(false)

@@ -52,6 +52,7 @@ interface WidgetHandle {
   /** Optional in the type because the loader is fetched as a script: a stale
    *  cached copy from before theming existed must degrade, not throw. */
   setTheme?(theme: { mode?: 'light' | 'dark' | 'auto' }): void
+  setLauncherVisible?(visible: boolean): void
 }
 
 interface CanopyGlobal {
@@ -215,6 +216,9 @@ export function CanopyWidget() {
       unsubscribe = onPageActionsChanged(sync)
 
       handleRef.current = handle
+      // The route effect ran before the handle existed; apply its answer now,
+      // or a widget first mounted on a chat page would show its launcher there.
+      handle.setLauncherVisible?.(!onChatPageRef.current)
     }
 
     void mount().catch(() => {
@@ -231,6 +235,20 @@ export function CanopyWidget() {
     }
   }, [])
 
+  // No launcher on a chat page. You are already talking to an agent there, and
+  // the bubble sat directly on top of the composer's Send button — the one
+  // control that page exists for. The widget itself is not torn down (it lives
+  // across navigations so an open conversation is not cut off); only its
+  // launcher is hidden, and it comes back on the next non-chat route.
+  // Deliberately `location.pathname` in the deps, so it re-evaluates per route;
+  // before the handle exists this is a no-op and the mount effect applies it.
+  const onChatPage = isChatRoute(location.pathname)
+  const onChatPageRef = useRef(onChatPage)
+  onChatPageRef.current = onChatPage
+  useEffect(() => {
+    handleRef.current?.setLauncherVisible?.(!onChatPage)
+  }, [onChatPage])
+
   // Follow canopy's own toggle while the widget is up. A no-op until the mount
   // effect has created the handle; init already carried the mode at that point.
   useEffect(() => {
@@ -238,4 +256,11 @@ export function CanopyWidget() {
   }, [theme])
 
   return null
+}
+
+/** A chat session page, or the chat home: `/w/:workspace/chat[/:id]`. Exported
+ *  for its test — a route that is missed here puts the bubble back over a Send
+ *  button. */
+export function isChatRoute(pathname: string): boolean {
+  return /\/w\/[^/]+\/chat(\/|$)/.test(pathname)
 }
