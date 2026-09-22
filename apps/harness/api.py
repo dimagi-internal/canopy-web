@@ -1656,11 +1656,18 @@ def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/drills/{drill_id}/report", response=RunnerDrillOut)
 def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn):
-    """The drilled agent's callback. Gated like every runner route: the caller
-    must be the drilled runner's owner (the agent runs under the owner's
-    environment token, so this proves control-plane reachability too)."""
+    """The drilled agent's callback, accepted from the drilled agent's own login
+    or from the runner's owner."""
+    # Two callers, both legitimate. An agent with its own canopy login
+    # (`Agent.user`, per-agent PATs) reports AS ITSELF and correctly refuses to
+    # borrow the operator's token — gating on the runner owner alone 404'd that
+    # report and stranded the drill (cloud-ec2-1, 2026-09-22). The owner leg stays
+    # for agents with no login, which run on the pairer's token. Anyone else gets
+    # the same 404 as before, so a drill's existence never leaks.
     drill = get_object_or_404(
         RunnerDrill.objects.select_related("runner", "agent"), pk=drill_id
     )
-    _runner_or_404(request, drill.runner_id)  # reuse the owner gate; 404 on non-owner
+    agent_user_id = drill.agent.user_id
+    if agent_user_id is None or agent_user_id != request.user.id:
+        _runner_or_404(request, drill.runner_id)  # the owner gate; 404 on non-owner
     return services.report_drill(drill, outcome=payload.outcome, summary=payload.summary)

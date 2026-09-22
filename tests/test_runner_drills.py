@@ -168,3 +168,93 @@ def test_list_runners_drill_rollup_none_when_never_drilled(django_user_model):
     assert resp.status_code == 200
     [row] = resp.json()
     assert row["drill_rollup"] is None
+
+
+# --- The drilled agent reports as ITSELF (2026-09-22) -------------------------
+# Agents carry their own canopy login (per-agent PATs, `Agent.user`), and a
+# well-behaved agent refuses to borrow the operator's token. The report gate was
+# runner-OWNER only, so hal's correct report 404'd ("runner not found") and the
+# drill stranded pending while its turn finished DONE — observed on cloud-ec2-1.
+
+
+def _drilled(django_user_model, *, agent_user=None):
+    owner = django_user_model.objects.create_user(username="owner", password="x")
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, paired_by=owner,
+                              last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    a = Agent.objects.create(slug="hal", name="Hal", workspace=a_workspace(), user=agent_user)
+    RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
+    [d] = services.start_drill(r, [a])
+    return owner, r, a, d
+
+
+def _report(user, drill, outcome="pass"):
+    client = Client()
+    client.force_login(user)
+    return client.post(f"/api/harness/drills/{drill.id}/report",
+                       data={"outcome": outcome, "summary": "checks ran"},
+                       content_type="application/json")
+
+
+def test_drilled_agent_may_report_under_its_own_identity(django_user_model):
+    hal_user = django_user_model.objects.create_user(username="hal-bot", password="x")
+    _, _, _, d = _drilled(django_user_model, agent_user=hal_user)
+    resp = _report(hal_user, d)
+    assert resp.status_code == 200, resp.content
+    d.refresh_from_db()
+    assert d.outcome == RunnerDrill.OUTCOME_PASS
+
+
+def test_runner_owner_may_still_report(django_user_model):
+    owner, _, _, d = _drilled(django_user_model)
+    assert _report(owner, d).status_code == 200
+
+
+def test_a_stranger_may_not_report(django_user_model):
+    hal_user = django_user_model.objects.create_user(username="hal-bot", password="x")
+    _, _, _, d = _drilled(django_user_model, agent_user=hal_user)
+    stranger = django_user_model.objects.create_user(username="stranger", password="x")
+    assert _report(stranger, d).status_code == 404
+    d.refresh_from_db()
+    assert d.outcome == RunnerDrill.OUTCOME_PENDING
+
+
+def test_another_agents_identity_may_not_report(django_user_model):
+    # Identity is per AGENT: echo's login is not hal's.
+    hal_user = django_user_model.objects.create_user(username="hal-bot", password="x")
+    _, _, _, d = _drilled(django_user_model, agent_user=hal_user)
+    echo_user = django_user_model.objects.create_user(username="echo-bot", password="x")
+    Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace(), user=echo_user)
+    assert _report(echo_user, d).status_code == 404
+
+
+def _finish(r, status):
+    turn = Turn.objects.get(origin=Turn.ORIGIN_API)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_by=r)
+    turn.refresh_from_db()
+    services.finish_turn(turn, status=status, result_note="Readiness drill complete.")
+
+
+def test_done_drill_turn_without_a_report_fails_the_drill(django_user_model):
+    _, r, _, d = _drilled(django_user_model)
+    _finish(r, Turn.DONE)
+    d.refresh_from_db()
+    assert d.outcome == RunnerDrill.OUTCOME_FAIL
+    assert "without reporting" in d.summary
+    assert d.finished_at is not None
+
+
+def test_done_drill_turn_keeps_a_report_it_already_got(django_user_model):
+    owner, r, _, d = _drilled(django_user_model)
+    services.report_drill(d, outcome="pass", summary="all green")
+    _finish(r, Turn.DONE)
+    d.refresh_from_db()
+    assert d.outcome == RunnerDrill.OUTCOME_PASS and d.summary == "all green"
+
+
+def test_drill_prompt_prefers_the_agents_own_token(django_user_model):
+    _drilled(django_user_model)
+    prompt = Turn.objects.get(origin=Turn.ORIGIN_API).prompt
+    own = prompt.index("CANOPY_WEB_PAT")
+    borrowed = prompt.index("workbench-token")
+    assert own < borrowed
+    assert "~/.hal/.env" in prompt

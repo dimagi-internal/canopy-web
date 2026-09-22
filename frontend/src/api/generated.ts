@@ -4290,9 +4290,8 @@ export interface paths {
         readonly put?: never;
         /**
          * Report Drill
-         * @description The drilled agent's callback. Gated like every runner route: the caller
-         *     must be the drilled runner's owner (the agent runs under the owner's
-         *     environment token, so this proves control-plane reachability too).
+         * @description The drilled agent's callback, accepted from the drilled agent's own login
+         *     or from the runner's owner.
          */
         readonly post: operations["apps_harness_api_report_drill"];
         readonly delete?: never;

@@ -1532,8 +1532,20 @@ def finish_turn(
     # OUTCOME_PENDING forever — reintroducing, through the side door, the exact
     # failure this hook exists to prevent. The drill's resolution depends on "a stop
     # was requested", not on which label the turn ended up with.
-    if status in (Turn.FAILED, Turn.CANCELLED) or stop_ignored:
-        if stop_ignored:
+    # A drill turn that finished DONE without the agent ever reporting is a
+    # failure too: the report IS the drill's answer, and "the turn ran but the
+    # callback never arrived" is exactly the control-plane gap a drill exists to
+    # catch. Left alone it stranded OUTCOME_PENDING forever (drill 50 on
+    # cloud-ec2-1, 2026-09-22, whose report had 404'd). The agent reports DURING
+    # its turn, so by now any report has already landed and the PENDING filter
+    # below leaves it untouched.
+    unreported = status == Turn.DONE and not stop_ignored
+    if status in (Turn.FAILED, Turn.CANCELLED) or stop_ignored or unreported:
+        if unreported:
+            summary = "drill turn finished without reporting"
+            if result_note:
+                summary += f" — the agent said: {result_note[:1500]}"
+        elif stop_ignored:
             summary = "drill turn completed after a cancel that never landed"
         elif status == Turn.CANCELLED:
             summary = "drill turn cancelled"
@@ -2848,8 +2860,13 @@ Verify you can operate end-to-end in THIS environment, then report.
    reporting is indistinguishable from a box that could not reach the control
    plane — which is the exact failure the drill exists to detect.
 
+   Report as YOURSELF: your own canopy token comes first, and the operator's
+   workbench token is only a fallback for an agent that has no login of its own.
+
+   TOKEN="${{CANOPY_WEB_PAT:-$(sed -n 's/^CANOPY_WEB_PAT=//p' ~/.{agent_slug}/.env 2>/dev/null | head -1)}}"
+   TOKEN="${{TOKEN:-$(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "${{CANOPY_TOKEN:-$CANOPY_PAT}}")}}"
    curl -s -X POST "{report_url}" \\
-     -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token 2>/dev/null || echo "${{CANOPY_TOKEN:-$CANOPY_PAT}}")" \\
+     -H "Authorization: Bearer $TOKEN" \\
      -H "Content-Type: application/json" \\
      -d '{{"outcome": "pass", "summary": "<one-paragraph findings>"}}'
 
