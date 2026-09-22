@@ -48,7 +48,7 @@ def test_a_clean_session_worktree_follows_the_agents_repo(cloud_runner, monkeypa
     origin, agents = _agent_clone(tmp_path)
     monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(agents))
     monkeypatch.setattr(cloud_runner, "WORK_DIR", str(tmp_path / "work"))
-    cwd = cloud_runner._turn_cwd(_chat(), "t1")
+    cloud_runner._turn_cwd(_chat(), "t1")
     (origin / "CLAUDE.md").write_text("You are Hal, v2.\n")
     _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "v2", cwd=origin)
     assert (cloud_runner._turn_cwd(_chat(), "t2") / "CLAUDE.md").read_text() == "You are Hal, v2.\n"
