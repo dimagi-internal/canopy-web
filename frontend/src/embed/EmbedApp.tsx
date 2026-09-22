@@ -434,7 +434,9 @@ function Centered({ children }: { children: React.ReactNode }) {
  *  cannot be, because every field that makes it multiplayer is keyed on a user
  *  id they do not have. Presenting theirs as a `Draft` keeps the shared kit
  *  from having to learn about a second principal for a difference that is
- *  entirely about where the text lives.
+ *  entirely about where the text lives. The chat itself now gets this from
+ *  the kit (`sendOverHttp`); the start screen still needs it, because no
+ *  session — and so no socket — exists until its first send.
  */
 function contactDraft(body: string) {
   return {
@@ -467,10 +469,6 @@ function EmbedChat({
    *  over HTTP — see apps/canopy_sessions/consumers.py. */
   readOnlySocket?: boolean
 }) {
-  // Only used on the contact path. A member's draft is server-side and
-  // co-edited; a contact's cannot be, so it lives here.
-  const [localDraft, setLocalDraft] = useState('')
-  const [sending, setSending] = useState(false)
   const wsUrl = useCallback(
     () => client.sessionSocketUrl(sessionId) ?? '',
     [client, sessionId],
@@ -517,7 +515,26 @@ function EmbedChat({
   // `fromAgui` unwraps them into the canopy frames this handler already reads.
   // (Page actions were silently dropped by the AG-UI projection until
   // 2026-09-18 — flipping this before that fix would have disabled every one.)
-  const socket = useSessionSocket({ sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui' })
+  // A contact's socket only LISTENS, so their message goes out over HTTP — the
+  // kit's `sendOverHttp`, which keeps their draft local and raises the same
+  // pending row and "waiting for a reply" a member's send does. The page
+  // snapshot rides the first message, as it does for a member.
+  const sendOverHttp = useCallback(
+    (typed: string) => {
+      const context = contextPreamble.current
+      contextPreamble.current = null
+      const body = context ? `${typed}\n\n${context}` : typed
+      return client.rest.json(`/api/contact/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: 'POST',
+        body: JSON.stringify({ text: body }),
+      })
+    },
+    [client, sessionId, contextPreamble],
+  )
+  const socket = useSessionSocket({
+    sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui',
+    sendOverHttp: readOnlySocket ? sendOverHttp : undefined,
+  })
   const menu = socket.state.menu ?? null
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
@@ -602,28 +619,6 @@ function EmbedChat({
     }
   }, [client, sessionId])
 
-  const onSendAsContact = useCallback(() => {
-    const context = contextPreamble.current
-    const body = context ? `${localDraft}\n\n${context}` : localDraft
-    if (!body.trim() || sending) return
-    const typed = localDraft
-    contextPreamble.current = null
-    setSending(true)
-    // Show the line and start waiting BEFORE the round trip. A contact sends
-    // over HTTP, so nothing on the socket would otherwise announce it — and
-    // the old `awaitingReply={sending}` tracked the REQUEST, not the turn, so
-    // the indicator vanished the moment the POST returned and left the whole
-    // real wait silent.
-    socket.noteLocalSend(typed)
-    void client.rest
-      .json(`/api/contact/sessions/${encodeURIComponent(sessionId)}/send`, {
-        method: 'POST',
-        body: JSON.stringify({ text: body }),
-      })
-      .then(() => setLocalDraft(''))
-      .finally(() => setSending(false))
-  }, [client, sessionId, localDraft, sending, contextPreamble, socket])
-
   const onSend = useCallback(() => {
     // The page snapshot rides the FIRST message rather than an opening turn of
     // its own. An automatic turn on open would claim a runner and produce an
@@ -655,18 +650,10 @@ function EmbedChat({
       </header>
       <div className="min-h-0 flex-1">
         <ChatPanel
-          state={
-            readOnlySocket
-              ? // The composer reads its body off the draft, and a contact has
-                // no server-side one — so the local body is presented in the
-                // shape the panel already understands rather than teaching the
-                // shared kit about a second principal.
-                { ...socket.state, active_draft: contactDraft(localDraft) }
-              : socket.state
-          }
+          state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={readOnlySocket ? onSendAsContact : onSend}
+          onSend={readOnlySocket ? socket.sendChat : onSend}
           onStop={readOnlySocket ? () => undefined : socket.stopChat}
           // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
           // for a contact, which tracked the HTTP request and so cleared the
@@ -674,9 +661,9 @@ function EmbedChat({
           // for the actual wait. `noteLocalSend` raises it and only a stream
           // frame (or the server's settled status) lowers it.
           awaitingReply={socket.awaitingReply}
-          onUpdateDraft={readOnlySocket ? setLocalDraft : socket.updateDraft}
+          onUpdateDraft={socket.updateDraft}
           onTakeOver={readOnlySocket ? () => undefined : socket.takeOverDraft}
-          onDiscard={readOnlySocket ? () => setLocalDraft('') : socket.discardDraft}
+          onDiscard={readOnlySocket ? () => socket.updateDraft('') : socket.discardDraft}
           draftPersistKey={sessionId}
           // A parsed dialog is drawn WHERE the composer would be, so a send
           // bounces as COMPOSER_NOT_VISIBLE. Same rule and same helper as
