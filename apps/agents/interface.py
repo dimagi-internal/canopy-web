@@ -29,8 +29,14 @@ Caller classes: `member` (a workspace member who is not an admin), `contact`
 (someone canopy knows who is not a member), `unknown` (nobody established who).
 `@domain.tld` narrows one to addresses at exactly that domain; `:verified`
 additionally requires THIS message to be verified — for a contact, mail that is
-DMARC-aligned or DKIM-signed by its own From: domain, or a signed assertion
-from a framed origin.
+DMARC-aligned or DKIM-signed by its own From: domain.
+
+**`:verified` is mail-only for a contact**, so it can never admit a visitor from
+an embedded site: the host vouches for them, canopy verifies the host's
+signature rather than the person, and such an arrival is capped at tier 2 by
+design. Gate an embedded agent's interface on `contact`, not
+`contact:verified` — the latter reads like a slightly stricter rule and is in
+fact one nobody can ever pass.
 
 **`full:` — domain-wide access.** A list of caller classes that get the agent's
 WHOLE profile, as its admins do, e.g. `full: [contact@dimagi.com:verified]`:

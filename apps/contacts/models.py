@@ -78,7 +78,21 @@ class Contact(models.Model):
     # only adds a published policy on top. It is what a domain that signs its
     # mail but publishes no DMARC record (dimagi-associate.com) can prove.
     AUTH_DKIM_ALIGNED = "dkim_aligned"
-    AUTH_APP_SIGNED_ORIGIN = "app_signed_origin"
+    # There is deliberately NO tier-3 grade for an embedded site. A host signs a
+    # statement about its visitor, and canopy verifies the HOST's signature —
+    # never the person behind it, which is what tier 3 means. The mint says the
+    # same where it grades (`tokens/contact_api.py`: "it proves the SITE said
+    # this, not that the human is who the site thinks").
+    #
+    # `app_signed_origin` ("Signed assertion from a framed origin") used to sit
+    # here, ranked 3, and nothing ever assigned it — there is no path that could,
+    # since a token is minted server-to-server with no browser origin in sight,
+    # and a visitor canopy DOES resolve to an account stops being a contact
+    # (`resolve_arrival`) and is graded on the user ladder instead. It was an
+    # unearnable top grade that `:verified` rules were written against, so the
+    # gap read as "this visitor failed the check" rather than "this check can
+    # never pass". A stray stored value now ranks 0 via `AUTH_RANK.get(_, 0)`,
+    # which is the fail-closed direction.
     AUTH_CHOICES = [
         (AUTH_NONE, "Unverified"),
         (AUTH_SPF, "SPF only (envelope sender)"),
@@ -88,13 +102,12 @@ class Contact(models.Model):
         (AUTH_SLACK, "Slack account (event signed by Slack)"),
         (AUTH_DMARC, "DMARC aligned"),
         (AUTH_DKIM_ALIGNED, "DKIM signed by the From: domain"),
-        (AUTH_APP_SIGNED_ORIGIN, "Signed assertion from a framed origin"),
     ]
     AUTH_RANK = {
         AUTH_NONE: 0,
         AUTH_SPF: 1, AUTH_APP_SECRET: 1,
         AUTH_DKIM: 2, AUTH_APP_SIGNED: 2, AUTH_SLACK: 2,
-        AUTH_DMARC: 3, AUTH_DKIM_ALIGNED: 3, AUTH_APP_SIGNED_ORIGIN: 3,
+        AUTH_DMARC: 3, AUTH_DKIM_ALIGNED: 3,
     }
     #: Tier-level aliases. Prefer these in a rule: `auth_at_least(TIER_SIGNED)`
     #: keeps working when a channel adds a label, where naming `AUTH_DKIM`
