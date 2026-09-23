@@ -93,11 +93,14 @@ export const USER_ROLES: UserRole[] = [
     who: 'Whoever decides who else gets in, and holds the keys.',
     enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
     startHere: 'Open Settings to invite someone, or an agent\'s Credentials tab to hold its keys.',
-    surfaces: ['/w/:workspace/settings', '/w/:workspace/settings/members'],
+    surfaces: ['/w/:workspace/settings', '/w/:workspace/settings/members',
+      '/w/:workspace/settings/secrets'],
     note:
-      'Members and invites, Slack, inbound email, connected sites — one settings page for '
-      + 'the workspace. Agent credentials and the shared vault sit on the agent itself. ' +
-      'Credentials are owner-only because they are the keys a runner resolves everything ' +
-      'else from.',
+      'Members and invites, Slack, inbound email, connected sites, secrets — one settings '
+      + 'page for the workspace. Secrets has the SHARED vault every agent here reads (the '
+      + 'Google OAuth clients, the GitHub token); an agent\'s OWN vault sits on the agent, '
+      + 'under Overview → Credentials. Both are owner-only: they are the keys a runner '
+      + 'resolves everything else from. 1Password holds the secrets; canopy-web holds the '
+      + 'service accounts that open them.',
   },
 ]

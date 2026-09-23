@@ -19,6 +19,7 @@ import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
+import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
@@ -242,6 +243,7 @@ export const routeTable: RouteObject[] = [
           { path: 'slack', element: <SlackSettingsPage /> },
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
+          { path: 'secrets', element: <WorkspaceSecretsPage /> },
         ],
       },
       // The four pages these sections used to be. Live links were handed to

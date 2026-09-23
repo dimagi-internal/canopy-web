@@ -36,6 +36,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'slack', label: 'Slack' },
   { segment: 'inbound', label: 'Inbound email' },
   { segment: 'connected-apps', label: 'Connected sites' },
+  { segment: 'secrets', label: 'Secrets' },
 ]
 
 export function WorkspaceSettingsPage(): JSX.Element {
