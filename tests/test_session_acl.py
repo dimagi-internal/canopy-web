@@ -209,3 +209,16 @@ def test_only_explicit_acts_grant_participation():
                     isinstance(f, ast.Attribute) and "SessionParticipant" in ast.unparse(f.value):
                 offenders.append(f"{rel}:{node.lineno}")
     assert not offenders, f"participant grants outside the allowlist: {offenders}"
+
+
+def test_a_participant_row_never_demotes_what_the_rule_gives():
+    """An old auto-join row said "editor" for Hal's owner on Hal's own thread,
+    which hid the People control from the one person who could share it."""
+    people, s, _ws = _world()
+    SessionParticipant.objects.create(session=s["agent_thread"], user=people["owner"],
+                                      role=SessionParticipant.VIEWER)
+    assert access.role_for(people["owner"], s["agent_thread"]) == SessionParticipant.OWNER
+    # ...while a row still RAISES: made an editor of a discovered session stays one.
+    SessionParticipant.objects.create(session=s["discovered"], user=people["mate"],
+                                      role=SessionParticipant.VIEWER)
+    assert access.role_for(people["mate"], s["discovered"]) == SessionParticipant.EDITOR

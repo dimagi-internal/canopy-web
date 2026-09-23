@@ -162,24 +162,32 @@ def can_read(user, session) -> bool:
 def role_for(user, session) -> str | None:
     """The caller's EFFECTIVE role in this session, or None if they cannot read it.
 
-    An explicit participant row wins (that is how someone is made a viewer).
-    Otherwise the creator is the owner and every other leg is an editor: a
-    runner-discovered session and an agent's own thread are both meant to be
-    worked in, not only watched.
+    The HIGHER of two sources. The first is what the rule gives you: the creator
+    is the owner, the agent's owner owns the agent's own thread, and every other
+    leg is an editor, because a runner-discovered session and an agent's thread
+    are meant to be worked in, not only watched. The second is an explicit
+    participant row, which is how someone is made a viewer or an editor of
+    somebody else's chat. A row can raise you but never demote what the rule
+    already gives you. Old auto-join rows made an agent's owner a mere "editor"
+    of their own agent's thread, unable to share it (seen on labs 2026-09-23).
     """
     if not can_read(user, session):
         return None
+    ranks = {SessionParticipant.VIEWER: 0, SessionParticipant.EDITOR: 1, SessionParticipant.OWNER: 2}
     row = (SessionParticipant.objects.filter(session=session, user=user)
            .values_list("role", flat=True).first())
-    if row:
-        return row
     if session.created_by_id == user.pk:
-        return SessionParticipant.OWNER
+        derived = SessionParticipant.OWNER
     # An agent's own thread has no creator; the agent's owner stands in for one
     # (leg 4), so there is somebody who can share it.
-    if session.created_by_id is None and session.agent_id and session.agent.owner_id == user.pk:
-        return SessionParticipant.OWNER
-    return SessionParticipant.EDITOR
+    elif session.created_by_id is None and session.agent_id and session.agent.owner_id == user.pk:
+        derived = SessionParticipant.OWNER
+    elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
+        derived = SessionParticipant.EDITOR  # runner-discovered: tenant-visible, workable
+    else:
+        derived = None  # a web chat you did not create: only a row gets you in
+    candidates = [r for r in (row, derived) if r in ranks]
+    return max(candidates, key=ranks.__getitem__) if candidates else SessionParticipant.VIEWER
 
 
 def can_share(user, session) -> bool:
