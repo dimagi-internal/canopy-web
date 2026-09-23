@@ -38,6 +38,8 @@ export async function connectApp(
     /** Where the site publishes its keys. Preferred over `public_keys`: canopy
      *  follows a rotation instead of needing a new paste. */
     jwks_url: string
+    /** Domains this tenant lets the site resolve to existing canopy users. */
+    resolvable_domains: string[]
   },
 ): Promise<ConnectedAppCreated> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -79,4 +81,31 @@ export async function disconnectApp(slug: string, appId: number): Promise<void> 
     params: { path: { slug, app_id: appId } },
   })
   await unwrap<void>(res, 'Could not disconnect the site')
+}
+
+/**
+ * Let a site another workspace registered act for this one.
+ *
+ * A site is one identity in the world and may serve several tenants; this is
+ * how the second and every later tenant says yes. It does not touch the site's
+ * keys or origins — those belong to whoever registered it.
+ */
+export async function grantConnectedApp(
+  slug: string,
+  body: { name: string; resolvable_domains: string[]; agents: string[] },
+): Promise<ConnectedApp> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/grants', {
+    params: { path: { slug } },
+    body,
+  })
+  return unwrap<ConnectedApp>(res, 'Could not grant that site')
+}
+
+/** Withdraw this workspace's grant. The site keeps working for every other
+ *  tenant that granted it — which is why this is not "disconnect". */
+export async function revokeConnectedAppGrant(slug: string, appId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/connected-apps/{app_id}/grant', {
+    params: { path: { slug, app_id: appId } },
+  })
+  unwrap<void>(res, 'Could not withdraw the grant')
 }

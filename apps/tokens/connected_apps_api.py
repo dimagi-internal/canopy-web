@@ -67,6 +67,12 @@ class ConnectedAppOut(Schema):
     #: Where the site publishes its keys, if it does. `signs_assertions` is
     #: true for either door — a published JWKS or a pasted key.
     jwks_url: str
+    #: False when another workspace registered this site and this one merely
+    #: grants it — the page uses it to show what is editable here.
+    administered_here: bool = True
+    #: Every tenant this site serves, so an owner can see it is shared. Slugs
+    #: only: which agents those tenants offer is their business.
+    agent_workspaces: list[str] = []
     shows_on_canopy_pages: bool
     created_at: str
     last_used_at: str | None
@@ -89,6 +95,7 @@ class ConnectIn(Schema):
     agents: list[str] = []
     public_keys: list[str] = []
     jwks_url: str = ""
+    resolvable_domains: list[str] = []
     show_on_canopy_pages: bool = False
 
 
@@ -101,7 +108,7 @@ class UpdateIn(Schema):
     resolvable_domains: list[str] | None = None
 
 
-def _out(app: AppCredential) -> ConnectedAppOut:
+def _out(app: AppCredential, workspace_slug: str = "") -> ConnectedAppOut:
     return ConnectedAppOut(
         id=app.pk,
         name=app.name,
@@ -109,19 +116,34 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         # Echoing the raw column would show a rejected origin as though it were
         # in force, which is the confusion `frame_origins()` exists to prevent.
         origins=app.frame_origins(),
-        resolvable_domains=list(app.resolvable_domains or []),
+        # THIS tenant's grant, not a site-wide setting: what another tenant
+        # allows this site to resolve is that tenant's business.
+        resolvable_domains=list(_grant_domains(app, workspace_slug)),
+        administered_here=(app.workspace_id == workspace_slug) if workspace_slug else True,
+        agent_workspaces=sorted({link.agent.workspace_id for link in app.allowed_agents.all()}),
         public_keys=list(app.public_keys or []),
         jwks_url=app.jwks_url or "",
         signs_assertions=bool(app.public_keys) or bool(app.jwks_url),
+        # Only the agents THIS tenant granted. Another tenant's agents through
+        # the same site are not this page's business, and listing them would
+        # leak the existence of that tenant's agents to an unrelated owner.
         agents=[
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
+            if not workspace_slug or link.agent.workspace_id == workspace_slug
         ],
         shows_on_canopy_pages=app.show_on_canopy_pages,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
     )
+
+
+def _grant_domains(app: AppCredential, workspace_slug: str) -> list[str]:
+    for grant in app.tenant_grants.all():
+        if not workspace_slug or grant.workspace_id == workspace_slug:
+            return list(grant.resolvable_domains or [])
+    return []
 
 
 def _own_origin(request: HttpRequest) -> str:
@@ -153,7 +175,7 @@ def _app_or_404(request: HttpRequest, slug: str, app_id: int) -> AppCredential:
 def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut]:
     """Every site this workspace has connected, with what each may do."""
     try:
-        return [_out(a) for a in embed_apps.apps_for(request.user, slug)]
+        return [_out(a, slug) for a in embed_apps.apps_for(request.user, slug)]
     except embed_apps.EmbedAppError as exc:
         raise _refuse(exc)
 
@@ -167,6 +189,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, agents=payload.agents,
             public_keys=payload.public_keys, jwks_url=payload.jwks_url,
+            resolvable_domains=payload.resolvable_domains or None,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -178,17 +201,17 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
         raise _refuse(exc)
     audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} agents={payload.agents}")
-    return Status(201, ConnectedAppCreatedOut(app=_out(app), secret=raw))
+    return Status(201, ConnectedAppCreatedOut(app=_out(app, slug), secret=raw))
 
 
-@connected_apps_router.patch("/{slug}/connected-apps/{app_id}", response=ConnectedAppOut,
+@connected_apps_router.patch("/{slug}/connected-apps/{int:app_id}", response=ConnectedAppOut,
                              summary="Change what a connected site may do")
 def update_connected_app(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> ConnectedAppOut:
     app = _app_or_404(request, slug, app_id)
     try:
         embed_apps.update(
-            user=request.user, app=app, origins=payload.origins,
+            user=request.user, app=app, workspace_slug=slug, origins=payload.origins,
             agents=payload.agents, public_keys=payload.public_keys,
             resolvable_domains=payload.resolvable_domains, jwks_url=payload.jwks_url,
         )
@@ -204,12 +227,12 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     # What it is NOW, not what was asked for: a partial payload leaves the rest
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
-          detail=f"origins={app.frame_origins()} resolvable={app.resolvable_domains} "
+          detail=f"origins={app.frame_origins()} resolvable={_grant_domains(app, slug)} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
-    return _out(app)
+    return _out(app, slug)
 
 
-@connected_apps_router.post("/{slug}/connected-apps/{app_id}/rotate", response=SecretOut,
+@connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/rotate", response=SecretOut,
                             summary="Issue a new secret, invalidating the old one")
 def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
     """The previous secret stops working immediately — that is the point of the
@@ -220,7 +243,7 @@ def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
     return SecretOut(secret=secret)
 
 
-@connected_apps_router.delete("/{slug}/connected-apps/{app_id}", response={204: None},
+@connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},
                               summary="Disconnect a site")
 def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
     """Revoked rather than deleted: the row is the audit trail of what was once
@@ -229,3 +252,66 @@ def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
     embed_apps.revoke(app)
     audit(event=EmbedAuditLog.DISCONNECT, request=request, app=app, actor=request.user)
     return Status(204, None)
+
+
+# --- a site another workspace registered, granted by this one -----------------
+
+
+class GrantIn(Schema):
+    """Which site, named the way a host names it."""
+
+    name: str
+    resolvable_domains: list[str] = []
+    agents: list[str] = []
+
+
+@connected_apps_router.post("/{slug}/connected-apps/grants", response={201: ConnectedAppOut},
+                            summary="Let a site another workspace registered act for this one")
+def grant_site(request: HttpRequest, slug: str, payload: GrantIn) -> Status:
+    """Authorize an already-registered site to act for this workspace.
+
+    A site is one identity in the world and may serve several tenants; this is
+    how the second and every later tenant says yes, without touching the site's
+    keys, its origins, or any other tenant's grant. The site must already
+    exist — registering one is a different act, and typing a name that happens
+    to be free would silently create an identity nobody controls.
+    """
+    app = AppCredential.objects.filter(name=(payload.name or "").strip(),
+                                       revoked_at__isnull=True).first()
+    if app is None:
+        # Same answer as a name that exists but is revoked: a site's name is not
+        # a secret, but distinguishing the two tells a prober which of their
+        # guesses used to be real.
+        raise HttpError(404, f"no connected site named {(payload.name or '').strip()!r}")
+    try:
+        embed_apps.authorize_tenant(user=request.user, app=app, workspace_slug=slug,
+                                    resolvable_domains=payload.resolvable_domains)
+        if payload.agents:
+            embed_apps.set_agents(app, slug, payload.agents)
+    except embed_apps.EmbedAppError as exc:
+        audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
+              ok=False, reason=exc.code)
+        raise _refuse(exc)
+    app.refresh_from_db()
+    audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
+          detail=f"granted to {slug} agents={payload.agents}")
+    return Status(201, _out(app, slug))
+
+
+@connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}/grant", response={204: None},
+                              summary="Stop letting a site act for this workspace")
+def revoke_grant(request: HttpRequest, slug: str, app_id: int) -> tuple[int, None]:
+    """Withdraw this workspace's grant.
+
+    Its agents stop being offered here and no visitor is recorded here again.
+    The site keeps working for every other tenant that granted it — which is
+    the reason a grant is a row of its own rather than a column on the site.
+    """
+    app = _app_or_404(request, slug, app_id)
+    try:
+        embed_apps.revoke_tenant(user=request.user, app=app, workspace_slug=slug)
+    except embed_apps.EmbedAppError as exc:
+        raise _refuse(exc)
+    audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
+          detail=f"grant withdrawn by {slug}")
+    return 204, None

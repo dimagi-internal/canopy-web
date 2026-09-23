@@ -102,6 +102,30 @@ uv run python manage.py grant_app_agent --name connect-labs --agent labs-helper
 uv run python manage.py grant_app_agent --name connect-labs --list
 ```
 
+### Serving more than one canopy workspace
+
+Your site is **one identity**: one name, one key, one `iss`, however many
+workspaces it serves. Do not register it twice.
+
+Each workspace grants it separately — the second and every later one uses
+**"Let a site someone else registered act for us"** on their own Connected
+sites page, and picks which of *their* agents it may offer. That keeps the
+decision where it belongs: an owner of a workspace decides whether your site
+may act for them, and can withdraw it without touching your keys, your origins,
+or any other workspace's grant.
+
+What changes on your side is one field: **name the agent** when you mint a
+visitor token (`agent_slug` on `POST /api/auth/contact-token`). An agent
+belongs to exactly one workspace, so that says which tenant the token is for —
+and you already know it, because you know which agent you are mounting. Omit it
+and you get the workspace that registered the site, which is what every
+integration written before this meant.
+
+One consequence worth expecting: a visitor of yours who talks to agents in two
+workspaces is **two contacts**, one per workspace, and you mint a token for
+each. That is deliberate — merging them would leak one tenant's dealings into
+another — and it is why the tenant is named at mint time rather than inferred.
+
 ---
 
 ## 2. Keep the private key private

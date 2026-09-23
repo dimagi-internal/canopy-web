@@ -8,7 +8,9 @@ import { listAgents, type AgentOut } from '@/api/agents'
 import {
   connectApp,
   disconnectApp,
+  grantConnectedApp,
   listConnectedApps,
+  revokeConnectedAppGrant,
   rotateSecret,
   updateConnectedApp,
   type ConnectedApp,
@@ -202,6 +204,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
 
   const [name, setName] = useState('')
+  const [grantName, setGrantName] = useState('')
   const [origins, setOrigins] = useState('')
   const [showHere, setShowHere] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
@@ -255,6 +258,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
         // key; resolving one to their canopy account is a separate grant, and
         // the server bounds it to the acting owner's own domain.
         show_on_canopy_pages: showHere,
+        resolvable_domains: [],
         agents: picked,
         public_keys: parseKeys(signingKey),
         jwks_url: jwksUrl.trim(),
@@ -315,27 +319,55 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   {app.shows_on_canopy_pages && (
                     <p className="text-xs text-primary">Shown on canopy's own pages</p>
                   )}
+                  {!app.administered_here && (
+                    <p className="text-xs text-muted-foreground">
+                      Registered by another workspace — you choose which of your agents it
+                      offers; its URLs and keys are theirs to change.
+                    </p>
+                  )}
+                  {(app.agent_workspaces ?? []).length > 1 && (
+                    <p className="text-xs text-muted-foreground">
+                      Also acts for {(app.agent_workspaces ?? [])
+                        .filter((w) => w !== slug)
+                        .join(', ')}
+                    </p>
+                  )}
                 </div>
                 {isOwner && !app.revoked && (
                   <div className="flex shrink-0 gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(async () => setSecret(await rotateSecret(slug, app.id)))
-                      }
-                    >
-                      New secret
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void run(() => disconnectApp(slug, app.id))}
-                    >
-                      Disconnect
-                    </Button>
+                    {app.administered_here ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => setSecret(await rotateSecret(slug, app.id)))
+                          }
+                        >
+                          New secret
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => void run(() => disconnectApp(slug, app.id))}
+                        >
+                          Disconnect
+                        </Button>
+                      </>
+                    ) : (
+                      // Withdrawing a grant is not disconnecting the site: it keeps
+                      // working for every other workspace that granted it.
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => void run(() => revokeConnectedAppGrant(slug, app.id))}
+                      >
+                        Stop acting for us
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -361,6 +393,44 @@ export function ConnectedAppsPage(): JSX.Element | null {
             </div>
           ))}
       </section>
+
+      {isOwner && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void run(async () => {
+              await grantConnectedApp(slug!, {
+                name: grantName.trim(),
+                resolvable_domains: [],
+                agents: [],
+              })
+              setGrantName('')
+            })
+          }}
+          className="rounded-lg border border-border bg-card p-4 space-y-3"
+        >
+          <h2 className="text-sm font-medium text-foreground">
+            Let a site someone else registered act for us
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            A site is one identity and can serve several workspaces. If another workspace
+            already registered it, name it here rather than registering a second one —
+            then pick which of your agents it may offer. Its URLs and keys stay theirs.
+          </p>
+          <label className="block space-y-1">
+            <span className="text-xs text-foreground-secondary">Site name</span>
+            <Input
+              value={grantName}
+              onChange={(e) => setGrantName(e.target.value)}
+              placeholder="connect-labs"
+              required
+            />
+          </label>
+          <Button type="submit" size="sm" disabled={busy || !grantName.trim()}>
+            Grant
+          </Button>
+        </form>
+      )}
 
       {isOwner && (
         <form onSubmit={onConnect} className="rounded-lg border border-border bg-card p-4 space-y-3">

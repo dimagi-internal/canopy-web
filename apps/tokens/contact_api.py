@@ -73,6 +73,14 @@ contact_token_router = Router(auth=None, tags=["contact"])
 
 class ContactTokenIn(Schema):
     assertion: str
+    #: WHICH tenant this token is for, named by an agent the site may offer.
+    #:
+    #: A site can serve several canopy tenants, and a visitor's contact belongs
+    #: to exactly one of them (the same human dealt with by two workspaces is
+    #: deliberately two contacts), so the tenant has to be said rather than
+    #: inferred. Omitted = the tenant that registered the site, which is what
+    #: every integration written before this meant.
+    agent_slug: str = ""
 
 
 class ContactTokenOut(Schema):
@@ -159,15 +167,15 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
               reason=exc.code, detail="signed assertion")
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
-    if app.workspace_id is None:
-        raise HttpError(
-            409,
-            f"{app.name!r} is not owned by a workspace, so there is no tenant to "
-            "record its visitors in. Reconnect it from Connected sites.",
-        )
+    try:
+        workspace, grant = _tenant_for(app, payload.agent_slug)
+    except HttpError:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="not_granted", detail=f"agent={payload.agent_slug!r}")
+        raise
 
     contact = contact_services.record_embed_visitor(
-        workspace=app.workspace,
+        workspace=workspace,
         app=app,
         external_id=str(claims.get("sub") or ""),
         email=str(claims.get("email") or ""),
@@ -182,7 +190,10 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     if contact is None:
         raise HttpError(400, "the assertion does not identify a visitor")
 
-    user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
+    user = contact_services.resolve_arrival(
+        app=app, contact=contact, claims=claims,
+        resolvable_domains=grant.resolvable_domains or [],
+    )
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
         # the same short-lived revocable row canopy's own widget mints. Never a
@@ -278,6 +289,45 @@ class ContactSendIn(Schema):
     #: user. Only sources a caller may name; `email` and `slack` are channels
     #: canopy attests itself.
     origin: str = ""
+
+
+def _tenant_for(app, agent_slug: str):
+    """Which tenant this token is for, and that tenant's grant.
+
+    Named by an AGENT, because that is the thing a host already knows when it
+    mounts a widget and the only thing that identifies a tenant unambiguously —
+    an agent belongs to exactly one workspace. The site must be granted by that
+    tenant AND allowed to offer that agent: the first is the tenant saying "this
+    site may act for us", the second "and it may offer this".
+
+    Fails closed and says which of the two is missing, because "not authorized"
+    with no reason sends an integrator to re-read their key configuration.
+    """
+    from apps.agents.models import Agent
+
+    from .embed_apps import tenant_grant
+
+    slug = (agent_slug or "").strip()
+    if slug:
+        agent = Agent.objects.filter(slug=slug).select_related("workspace").first()
+        # Same answer for "no such agent" and "not offered here": a site must
+        # not be able to discover another tenant's agents by guessing slugs.
+        if agent is None or not app.allowed_agents.filter(agent=agent).exists():
+            raise HttpError(403, f"not_granted: {app.name!r} does not offer an agent "
+                                 f"named {slug!r}")
+        workspace = agent.workspace
+    else:
+        if app.workspace_id is None:
+            raise HttpError(
+                409,
+                f"{app.name!r} is not owned by a workspace, so there is no tenant to "
+                "record its visitors in. Reconnect it from Connected sites.",
+            )
+        workspace = app.workspace
+    grant = tenant_grant(app, workspace.slug if hasattr(workspace, "slug") else workspace)
+    if grant is None:
+        raise HttpError(403, f"not_granted: {workspace} has not authorized {app.name!r}")
+    return workspace, grant
 
 
 def _session_or_404(request: HttpRequest, session_id):
