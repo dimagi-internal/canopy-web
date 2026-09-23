@@ -1,7 +1,7 @@
 """Django Ninja router for /api/inbound — the push doorbell and its configuration.
 
 The doorbell (``POST /gmail/{workspace}/``) is ``auth=None`` and self-enforcing,
-following ``POST /api/auth/token-exchange``'s precedent: an unauthenticated
+following ``POST /api/auth/contact-token``'s precedent: an unauthenticated
 endpoint that verifies a credential itself and is explicitly allowlisted in
 ``apps/common/middleware.py``.
 

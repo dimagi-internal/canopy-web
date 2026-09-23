@@ -3,7 +3,7 @@
 `allowed_frame_origins` is the only thing standing between an
 `X-Frame-Options`-exempt page and being frameable by any site on the internet,
 so it must not be edited by hand in a prod shell — the same argument as
-`grant_app_provisioning`, with a worse failure: a typo here does not break a
+`grant_app_agent`, with a worse failure: a typo here does not break a
 grant, it silently fails to protect one.
 
 The value is validated before it is stored (`is_valid_frame_origin`), so the

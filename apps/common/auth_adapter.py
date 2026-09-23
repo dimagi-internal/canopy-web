@@ -148,10 +148,16 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     @staticmethod
     def _connect_jit_identity(request, sociallogin, email):
         """Merge a JIT-provisioned delegated-identity user (bare `User` + a
-        verified allauth `EmailAddress`, minted by
-        `apps.tokens.exchange_api.token_exchange`) with a later real Google
-        login for the same human, instead of letting allauth's own
-        duplicate-email path fork or block a second account.
+        verified allauth `EmailAddress`) with a later real Google login for the
+        same human, instead of letting allauth's own duplicate-email path fork
+        or block a second account.
+
+        Nothing mints these any more — `/api/auth/token-exchange`, which created
+        a user as a side effect of a host asserting an email, went on 2026-09-22
+        and arrival never creates an account. This path stays because the ROWS
+        it made are still in the database, and the first real Google login for
+        one of those people still has to land on their existing user rather
+        than fork a second.
 
         Safe specifically because, by this point: (1) the domain allowlist
         check above has already passed — this is a Dimagi Google account, not

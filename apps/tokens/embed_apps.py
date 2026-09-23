@@ -13,11 +13,13 @@ therefore an act inside a tenant rather than a global one, which is what makes
 "who may change this later" answerable at all — `created_by` alone would strand
 an app the moment that person moved on.
 
-**What the surface deliberately will not do.** It does not grant provisioning
-(`provision_workspace`), which lets a credential add users to a tenant. That is
-a different and larger power than embedding, it has never been needed by a
-widget, and a form is the wrong place to hand it out. Nothing here can set it,
-so an app registered this way can only ever be embedded.
+**What the surface deliberately will not do.** It does not let a site speak for
+canopy's users by email domain. A site vouches for a visitor with a signed
+assertion, and canopy decides who that is: an account they already have at one
+of `resolvable_domains` (a grant bounded to the setting owner's own domain), or
+a contact — never a new account, and never a membership. The provisioning grant
+this paragraph used to describe went with `/api/auth/token-exchange`
+(2026-09-22), so an app registered here can only ever be embedded.
 """
 
 from __future__ import annotations

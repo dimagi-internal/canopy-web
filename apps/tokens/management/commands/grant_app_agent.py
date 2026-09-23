@@ -3,7 +3,7 @@
 `AppCredentialAgent` is what `GET /api/embed/agents` intersects with the
 caller's own memberships, so without this command the only way to populate it
 is a hand-typed `.create()` in a prod shell — the same gap
-`grant_app_provisioning` exists to close for `provision_workspace`, and with
+`grant_app_frame_origin` exists to close for `allowed_frame_origins`, and with
 the same hazard: one mistyped slug silently offers the wrong agent to a host's
 whole user base.
 
@@ -54,7 +54,7 @@ class Command(BaseCommand):
             if not rows:
                 self.stdout.write(
                     f"{name!r} may offer NO agents — /api/embed/agents returns [] for "
-                    "every caller (fail-closed, same as an empty allowed_delegation_domains)."
+                    "every caller (fail-closed, same as an app with no frame origins)."
                 )
                 return
             self.stdout.write(f"{name!r} may offer:")

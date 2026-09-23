@@ -64,9 +64,9 @@ def ensure_member(
     """get_or_create — CREATE-ONLY: an existing member's role is never raised
     or lowered by this call, in either direction. `provisioned_by_app` (an
     `apps.tokens.models.AppCredential`) is recorded ONLY on create, so it
-    marks provenance for a token-exchange-provisioned grant specifically —
+    marks provenance for an app-provisioned grant specifically —
     never retroactively attached to a pre-existing organic membership.
-    Returns `(membership, created)` so a caller (e.g. token-exchange) can
+    Returns `(membership, created)` so a caller can
     tell whether it actually granted something worth logging."""
     m, created = WorkspaceMembership.objects.get_or_create(
         workspace=ws, user=user,
