@@ -1317,6 +1317,74 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/sessions/{session_id}/page-state": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * What I am looking at
+         * @description Replaces the declaration wholesale, exactly as the user route does.
+         *
+         *     A state over the server's cap is refused with `too_large`: send the
+         *     selection (ids, filters) and the tool that resolves it, not the rows.
+         */
+        readonly put: operations["apps_tokens_contact_api_declare_page_state"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/page-actions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * What my page can do
+         * @description Replaces the declaration wholesale — merging would leave the agent able
+         *     to call into a page the visitor has left.
+         */
+        readonly put: operations["apps_tokens_contact_api_declare_page_actions"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/page-actions/{action_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * My page reporting an action's outcome
+         * @description Posted by the page after it runs the callback.
+         *
+         *     Scoped to the contact's own session and then to that session's actions, so
+         *     one page cannot resolve another's — the same two gates as the user route,
+         *     with contact ownership standing where membership stands there.
+         */
+        readonly post: operations["apps_tokens_contact_api_resolve_page_action"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/contact/sessions/{session_id}/stop": {
         readonly parameters: {
             readonly query?: never;
@@ -7076,6 +7144,122 @@ export interface components {
             readonly has_more_before: boolean;
         };
         /**
+         * PageStateOut
+         * @description The stored view, with the server-assigned `version` folded in.
+         *
+         *     An empty `state` means no page is attached OR the page declares nothing.
+         *     Those are the same to a reader and deliberately so; neither is "the screen
+         *     is blank".
+         */
+        readonly PageStateOut: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Version
+             * @default 0
+             */
+            readonly version: number;
+        };
+        /**
+         * PageStateIn
+         * @description What the attached page currently shows.
+         *
+         *     Replaces any previous declaration wholesale. Bounded on the server: a page
+         *     that sends the rows it displays rather than the selection of them is
+         *     refused, because the agent re-reads those rows itself under the caller's own
+         *     permissions.
+         */
+        readonly PageStateIn: {
+            /**
+             * State
+             * @default {}
+             */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * PageActionSpec
+         * @description One thing the attached page says it can do.
+         *
+         *     `parameters` is JSON-Schema, written by the HOST and passed through
+         *     uninterpreted — canopy is not the party that knows what a host's action
+         *     means. It is what lets an agent call `dismissInsights` knowing it takes
+         *     `{ids: number[]}`, rather than being told in prose.
+         *
+         *     May also be sent as `inputSchema`, which is MCP's name for the same field;
+         *     it is read back under `parameters` either way.
+         */
+        readonly PageActionSpec: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Parameters
+             * @default {}
+             */
+            readonly parameters: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * PageActionsDeclareIn
+         * @description What the page can do, replacing any previous declaration.
+         *
+         *     Wholesale, never merged: a page has one current set of capabilities, and an
+         *     action left over from a page the user navigated away from is one the agent
+         *     would call into nothing.
+         */
+        readonly PageActionsDeclareIn: {
+            /**
+             * Actions
+             * @default []
+             */
+            readonly actions: readonly components["schemas"]["PageActionSpec"][];
+        };
+        /** PageActionOut */
+        readonly PageActionOut: {
+            /** Id */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /** Result */
+            readonly result?: unknown | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /**
+         * PageActionResultIn
+         * @description The page reporting back.
+         *
+         *     `error` non-empty means the host's callback refused or threw. A refusal is
+         *     a FAILED action carrying its reason, never a quiet success — an agent that
+         *     cannot tell those apart continues as though the page changed.
+         */
+        readonly PageActionResultIn: {
+            /** Result */
+            readonly result?: unknown | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /**
          * InitiatorOut
          * @description Who asked for this turn, and how that was established.
          */
@@ -12265,89 +12449,6 @@ export interface components {
             readonly message_id?: string | null;
         };
         /**
-         * PageActionSpec
-         * @description One thing the attached page says it can do.
-         *
-         *     `parameters` is JSON-Schema, written by the HOST and passed through
-         *     uninterpreted — canopy is not the party that knows what a host's action
-         *     means. It is what lets an agent call `dismissInsights` knowing it takes
-         *     `{ids: number[]}`, rather than being told in prose.
-         *
-         *     May also be sent as `inputSchema`, which is MCP's name for the same field;
-         *     it is read back under `parameters` either way.
-         */
-        readonly PageActionSpec: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Description
-             * @default
-             */
-            readonly description: string;
-            /**
-             * Parameters
-             * @default {}
-             */
-            readonly parameters: {
-                readonly [key: string]: unknown;
-            };
-        };
-        /**
-         * PageActionsDeclareIn
-         * @description What the page can do, replacing any previous declaration.
-         *
-         *     Wholesale, never merged: a page has one current set of capabilities, and an
-         *     action left over from a page the user navigated away from is one the agent
-         *     would call into nothing.
-         */
-        readonly PageActionsDeclareIn: {
-            /**
-             * Actions
-             * @default []
-             */
-            readonly actions: readonly components["schemas"]["PageActionSpec"][];
-        };
-        /**
-         * PageStateOut
-         * @description The stored view, with the server-assigned `version` folded in.
-         *
-         *     An empty `state` means no page is attached OR the page declares nothing.
-         *     Those are the same to a reader and deliberately so; neither is "the screen
-         *     is blank".
-         */
-        readonly PageStateOut: {
-            /**
-             * State
-             * @default {}
-             */
-            readonly state: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Version
-             * @default 0
-             */
-            readonly version: number;
-        };
-        /**
-         * PageStateIn
-         * @description What the attached page currently shows.
-         *
-         *     Replaces any previous declaration wholesale. Bounded on the server: a page
-         *     that sends the rows it displays rather than the selection of them is
-         *     refused, because the agent re-reads those rows itself under the caller's own
-         *     permissions.
-         */
-        readonly PageStateIn: {
-            /**
-             * State
-             * @default {}
-             */
-            readonly state: {
-                readonly [key: string]: unknown;
-            };
-        };
-        /**
          * RunAgentInputOut
          * @description What canopy took from the input, so a client can see what was honoured.
          */
@@ -12429,22 +12530,6 @@ export interface components {
              */
             readonly resume: readonly unknown[];
         };
-        /** PageActionOut */
-        readonly PageActionOut: {
-            /** Id */
-            readonly id: string;
-            /** Name */
-            readonly name: string;
-            /** Status */
-            readonly status: string;
-            /** Result */
-            readonly result?: unknown | null;
-            /**
-             * Error
-             * @default
-             */
-            readonly error: string;
-        };
         /** PageActionInvokeIn */
         readonly PageActionInvokeIn: {
             /** Name */
@@ -12456,23 +12541,6 @@ export interface components {
             readonly args: {
                 readonly [key: string]: unknown;
             };
-        };
-        /**
-         * PageActionResultIn
-         * @description The page reporting back.
-         *
-         *     `error` non-empty means the host's callback refused or threw. A refusal is
-         *     a FAILED action carrying its reason, never a quiet success — an agent that
-         *     cannot tell those apart continues as though the page changed.
-         */
-        readonly PageActionResultIn: {
-            /** Result */
-            readonly result?: unknown | null;
-            /**
-             * Error
-             * @default
-             */
-            readonly error: string;
         };
         /**
          * ContactOut
@@ -14611,6 +14679,85 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_declare_page_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageStateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageStateOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_declare_page_actions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageActionsDeclareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_contact_api_resolve_page_action: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly action_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PageActionResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PageActionOut"];
                 };
             };
         };

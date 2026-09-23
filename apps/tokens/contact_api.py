@@ -19,7 +19,15 @@ import logging
 from django.http import HttpRequest
 from ninja import Router, Schema
 
-from apps.canopy_sessions.schemas import MessagePageOut
+from apps.canopy_sessions.schemas import (
+    MessagePageOut,
+    PageActionOut,
+    PageActionResultIn,
+    PageActionsDeclareIn,
+    PageActionSpec,
+    PageStateIn,
+    PageStateOut,
+)
 from apps.harness.schemas import TurnOut
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
@@ -441,6 +449,87 @@ def detach(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import services as session_services
 
     return {"streaming": session_services.detach_session(_session_or_404(request, session_id))}
+
+
+# --- the page this contact is looking at --------------------------------------------
+# The same two declarations a signed-in user's page makes, over the contact's OWN
+# session only.
+#
+# These were missing rather than withheld, and the gap was load-bearing: the
+# widget skipped both for a contact because "`/api/contact/` is their entire
+# surface and neither declaration is on it", so an embedded agent could hold a
+# conversation with a visitor and never learn what that visitor was looking at.
+# A host could only get page state by having its visitors resolve to canopy
+# ACCOUNTS — which needs a verified email on a domain the site may resolve, an
+# existing canopy user, and a workspace membership. That made a page-aware panel
+# a privilege of staff on their own products, for no reason a boundary asked for.
+#
+# Nothing here widens the boundary: the prefix is unchanged, the session is
+# resolved by the same `_session_or_404`, and page state is strictly less
+# sensitive than the message history a contact can already read. The agent's own
+# read is unaffected — `page_visible_q` matches a contact's session through its
+# AGENT leg, since such a session deliberately has no `created_by`.
+
+
+@contact_router.put("/sessions/{session_id}/page-state", response=PageStateOut,
+                    summary="What I am looking at")
+def declare_page_state(request: HttpRequest, session_id: str,
+                       payload: PageStateIn) -> PageStateOut:
+    """Replaces the declaration wholesale, exactly as the user route does.
+
+    A state over the server's cap is refused with `too_large`: send the
+    selection (ids, filters) and the tool that resolves it, not the rows.
+    """
+    from apps.canopy_sessions import page_state
+
+    session = _session_or_404(request, session_id)
+    try:
+        stored = page_state.set_page_state(session, payload.state)
+    except page_state.PageStateError as exc:
+        # 422 as on the user route: well-formed request, unacceptable CONTENT.
+        raise HttpError(422, f"{exc.code}: {exc.message}")
+    return PageStateOut(state=stored, version=int(stored.get("version") or 0))
+
+
+@contact_router.put("/sessions/{session_id}/page-actions", response=list[PageActionSpec],
+                    summary="What my page can do")
+def declare_page_actions(request: HttpRequest, session_id: str,
+                         payload: PageActionsDeclareIn) -> list[PageActionSpec]:
+    """Replaces the declaration wholesale — merging would leave the agent able
+    to call into a page the visitor has left."""
+    from apps.canopy_sessions import page_actions
+
+    session = _session_or_404(request, session_id)
+    page_actions.set_declared_actions(session, [a.dict() for a in payload.actions])
+    return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
+
+
+@contact_router.post("/sessions/{session_id}/page-actions/{action_id}/result",
+                     response=PageActionOut,
+                     summary="My page reporting an action's outcome")
+def resolve_page_action(request: HttpRequest, session_id: str, action_id: str,
+                        payload: PageActionResultIn) -> PageActionOut:
+    """Posted by the page after it runs the callback.
+
+    Scoped to the contact's own session and then to that session's actions, so
+    one page cannot resolve another's — the same two gates as the user route,
+    with contact ownership standing where membership stands there.
+    """
+    import uuid as _uuid
+
+    from apps.canopy_sessions import page_actions
+
+    session = _session_or_404(request, session_id)
+    try:
+        pk = _uuid.UUID(str(action_id))
+    except ValueError:
+        raise HttpError(404, "no such page action on this session")
+    action = session.page_actions.filter(pk=pk).first()
+    if action is None:
+        raise HttpError(404, "no such page action on this session")
+    action = page_actions.resolve(action, result=payload.result, error=payload.error)
+    return PageActionOut(id=str(action.id), name=action.name, status=action.status,
+                         result=action.result, error=action.error)
 
 
 # --- a host's work FOR a contact (ace-web's runs) ------------------------------------

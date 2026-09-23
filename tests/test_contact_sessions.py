@@ -236,3 +236,141 @@ def test_the_contact_routes_refuse_a_request_with_no_token_at_all():
 
     assert r.status_code == 401
     assert not Session.objects.exists()
+
+
+# --- the page the contact is looking at ---------------------------------------
+# A contact could hold a conversation but never say what was on their screen,
+# because neither declaration route existed under `/api/contact/`. The agent's
+# own read was never the obstacle: `page_visible_q` matches a contact's session
+# through its AGENT leg, since such a session has no `created_by`.
+
+
+def _started(c, hdr):
+    r = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+               content_type="application/json", **hdr)
+    assert r.status_code == 200, r.content
+    return r.json()["id"]
+
+
+def test_a_contact_declares_what_they_are_looking_at():
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = _started(c, hdr)
+
+    state = {"resource": "labs-marketplace://orgs", "backing_tool": "marketplace_orgs_get",
+             "visible_ids": ["acme-health", "beta-care"]}
+    r = c.put(f"/api/contact/sessions/{sid}/page-state", data={"state": state},
+              content_type="application/json", **hdr)
+
+    assert r.status_code == 200, r.content
+    assert r.json()["state"]["resource"] == "labs-marketplace://orgs"
+    assert r.json()["version"] == 1
+    assert Session.objects.get(pk=sid).page_state["visible_ids"] == ["acme-health", "beta-care"]
+
+
+def test_the_agent_can_read_a_contacts_page():
+    """The point of the whole feature: the panel is useless if the declaration
+    lands somewhere the agent cannot see."""
+    from apps.canopy_sessions.page_access import sessions_with_page_for
+
+    _owner, _ws, _app, priv, offered, _private = _world()
+    agent_user = User.objects.create_user("echo-bot", "echo@dimagi-ai.com", "pw")
+    offered.user = agent_user
+    offered.save(update_fields=["user"])
+
+    c, hdr = Client(), _contact_headers(priv)
+    sid = _started(c, hdr)
+    c.put(f"/api/contact/sessions/{sid}/page-state",
+          data={"state": {"resource": "labs-marketplace://orgs"}},
+          content_type="application/json", **hdr)
+
+    seen = list(sessions_with_page_for(agent_user))
+    assert [str(s.id) for s in seen] == [sid]
+
+
+def test_one_contact_cannot_declare_a_page_on_anothers_session():
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c = Client()
+    mine, theirs = _contact_headers(priv, sub="u-42"), _contact_headers(priv, sub="u-99")
+    victim = _started(c, theirs)
+
+    r = c.put(f"/api/contact/sessions/{victim}/page-state",
+              data={"state": {"resource": "x://"}},
+              content_type="application/json", **mine)
+
+    assert r.status_code == 404
+    assert Session.objects.get(pk=victim).page_state in ({}, None)
+
+
+def test_a_contacts_oversized_page_state_is_refused_like_a_users():
+    """The 8 KiB cap is a design guard — send the selection, not the rows — and
+    it must not be reachable-around by arriving as a contact."""
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = _started(c, hdr)
+
+    r = c.put(f"/api/contact/sessions/{sid}/page-state",
+              data={"state": {"rows": ["x" * 200 for _ in range(60)]}},
+              content_type="application/json", **hdr)
+
+    assert r.status_code == 422, r.content
+    assert "too_large" in r.json()["detail"]
+
+
+def test_a_contact_declares_and_resolves_a_page_action():
+    from apps.canopy_sessions.models import PageAction
+
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = _started(c, hdr)
+
+    declared = c.put(
+        f"/api/contact/sessions/{sid}/page-actions",
+        data={"actions": [{"name": "scrollToOrg", "description": "Scroll to an org",
+                           "parameters": {"type": "object",
+                                          "properties": {"slug": {"type": "string"}},
+                                          "required": ["slug"]}}]},
+        content_type="application/json", **hdr,
+    )
+    assert declared.status_code == 200, declared.content
+    assert [a["name"] for a in declared.json()] == ["scrollToOrg"]
+
+    action = PageAction.objects.create(session=Session.objects.get(pk=sid),
+                                       name="scrollToOrg", args={"slug": "acme-health"})
+    resolved = c.post(f"/api/contact/sessions/{sid}/page-actions/{action.id}/result",
+                      data={"result": {"ok": True}}, content_type="application/json", **hdr)
+
+    assert resolved.status_code == 200, resolved.content
+    assert resolved.json()["status"] == PageAction.DONE
+
+
+def test_a_contact_cannot_resolve_an_action_on_anothers_session():
+    from apps.canopy_sessions.models import PageAction
+
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c = Client()
+    mine, theirs = _contact_headers(priv, sub="u-42"), _contact_headers(priv, sub="u-99")
+    victim = _started(c, theirs)
+    action = PageAction.objects.create(session=Session.objects.get(pk=victim),
+                                       name="scrollToOrg", args={})
+
+    r = c.post(f"/api/contact/sessions/{victim}/page-actions/{action.id}/result",
+               data={"result": {"ok": True}}, content_type="application/json", **mine)
+
+    assert r.status_code == 404
+    action.refresh_from_db()
+    assert action.status == PageAction.PENDING
+
+
+def test_a_member_cannot_declare_a_page_through_the_contact_routes():
+    """The mirrored routes must stay contact-only, exactly as the rest do."""
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = _started(c, hdr)
+
+    member = Client()
+    member.force_login(User.objects.get(username="boss"))
+    r = member.put(f"/api/contact/sessions/{sid}/page-state",
+                   data={"state": {"resource": "x://"}}, content_type="application/json")
+
+    assert r.status_code in (401, 403), r.content
