@@ -489,9 +489,9 @@ if v:
 # Agent-<Slug> and nothing else by design, so it cannot reach the shared gog
 # OAuth clients — see ensure_client_creds. All four are blank-safe; a
 # deployment that serves none behaves exactly as it did before this existed.
-agent_vault_config() {  # <slug> -> "<vault>\t<token>\t<shared-vault>\t<shared-token>"
+agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>"
   local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
-  [[ -n "$base" && -n "$tok" ]] || { printf '\t\t\t\n'; return 0; }
+  [[ -n "$base" && -n "$tok" ]] || { printf '\x1f\x1f\x1f\n'; return 0; }
   local body
   # A control plane we could not ASK is not the same as an agent nobody has
   # registered, and since there is no fallback the difference decides what a
@@ -499,7 +499,7 @@ agent_vault_config() {  # <slug> -> "<vault>\t<token>\t<shared-vault>\t<shared-t
   if ! body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
           "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)"; then
     warn "$slug: could not reach canopy-web for its vault config — treating as unregistered this pass"
-    printf '\t\t\t\n'; return 0
+    printf '\x1f\x1f\x1f\n'; return 0
   fi
   BODY="$body" python3 -c '
 import json, os
@@ -507,9 +507,14 @@ try:
     d = json.loads(os.environ["BODY"])
 except Exception:
     d = {}
-print("%s\t%s\t%s\t%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
-                           d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or ""))
-' 2>/dev/null || printf '\t\t\t\n'
+# Unit separator (\x1f), never a tab. Tab is IFS WHITESPACE, so read COLLAPSES
+# leading empty fields: an agent with no vault would receive the TENANT vault and
+# key in the agent slots, which is a cross-level fallback carrying the wrong
+# tier credential. Seen on cloud-ec2-1 2026-09-22 as
+# "op inject from Canopy-Shared failed: Agent-Hal isnt a vault in this account".
+print("%s\x1f%s\x1f%s\x1f%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
+                               d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or ""))
+' 2>/dev/null || printf '\x1f\x1f\x1f\n'
 }
 
 FAILED_AGENTS=()
@@ -875,7 +880,7 @@ refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <sha
           # token minted under a client the table doesn't know — every token from
           # canopy-web's browser mint — would import and then fail to refresh,
           # with the client file for a DIFFERENT app sitting right next to it.
-          ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token"
+          ensure_client_creds "$tclient" "$vault" "$slug" "$shared_vault" "$shared_token" "$agent_token"
         fi
         upsert_account_client "$account" "$tclient"
         # Record WHICH client this token belongs to, for two consumers that both
@@ -1039,7 +1044,7 @@ bootstrap_one_agent() {
   # here and in the readiness report.
   local vault op_token shared_vault shared_token cfg
   cfg="$(agent_vault_config "$slug")"
-  IFS=$'\t' read -r vault op_token shared_vault shared_token <<<"$cfg"
+  IFS=$'\x1f' read -r vault op_token shared_vault shared_token <<<"$cfg"
   if [[ -n "$vault" && -n "$op_token" ]]; then
     ok "$slug: agent vault $vault (key from canopy-web)"
   else
@@ -1085,9 +1090,9 @@ bootstrap_one_agent() {
   # The gog OAuth-client credential FILE — see ensure_client_creds. Materialized
   # from the FALLBACK client name here, because the token that names the real one
   # has not been fetched yet; the call is repeated after the import below.
-  ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token"
+  ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token" "$op_token"
 
-  refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token"
+  refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
   verify_mailbox "$slug" "$account" "$client"
   verify_turn_client "$slug" "$account"
 
