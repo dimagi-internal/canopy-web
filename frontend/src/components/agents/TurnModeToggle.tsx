@@ -9,12 +9,21 @@ const MODES: { mode: TurnMode; label: string; blurb: string }[] = [
 // The board-side autonomy switch. Turn mode is operational STATE, not repo
 // config: the fleet turn procedure reads it at preflight, and this toggle is
 // the one place a human flips it (the agent's own repo publish can't).
+//
+// It is the AGENT'S mode — the "Everything else" row of the routing table — and a
+// routing rule may override it for its own work (spec 2026-09-23). `compact`
+// is that table cell: no blurb, since the table states what the modes mean once.
+// `onChange` lets the table show what a rule that says nothing inherits.
 export function TurnModeToggle({
   agentSlug,
   initialMode,
+  compact = false,
+  onChange,
 }: {
   agentSlug: string
   initialMode: TurnMode
+  compact?: boolean
+  onChange?: (mode: TurnMode) => void
 }) {
   const [mode, setMode] = useState<TurnMode>(initialMode)
   const [busy, setBusy] = useState(false)
@@ -26,10 +35,12 @@ export function TurnModeToggle({
     setError(null)
     const prev = mode
     setMode(next)
+    onChange?.(next)
     try {
       await setAgentTurnMode(agentSlug, next)
     } catch (e: unknown) {
       setMode(prev)
+      onChange?.(prev)
       setError(e instanceof Error ? e.message : 'Failed to set turn mode')
     } finally {
       setBusy(false)
@@ -50,7 +61,9 @@ export function TurnModeToggle({
             disabled={busy}
             onClick={() => void flip(m.mode)}
             data-testid={`turn-mode-${m.mode}`}
-            className={`rounded px-3 py-1 text-[12px] font-medium transition-colors disabled:opacity-60 ${
+            className={`rounded font-medium transition-colors disabled:opacity-60 ${
+              compact ? 'px-2 py-0.5 text-[11px]' : 'px-3 py-1 text-[12px]'
+            } ${
               mode === m.mode
                 ? 'bg-primary text-primary-foreground'
                 : 'text-muted-foreground hover:text-foreground'
@@ -60,7 +73,7 @@ export function TurnModeToggle({
           </button>
         ))}
       </div>
-      {active && <p className="mt-1 text-[11px] text-muted-foreground">{active.blurb}</p>}
+      {active && !compact && <p className="mt-1 text-[11px] text-muted-foreground">{active.blurb}</p>}
       {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
     </div>
   )

@@ -464,6 +464,9 @@ class TurnOut(Schema):
     claimed_by_name: str | None
     enqueued_by_email: str | None
     initiator: InitiatorOut
+    # manual | auto, decided at claim (apps/harness/turn_mode.py); "" until then.
+    turn_mode: str = ""
+    turn_mode_basis: str = ""
     session_id: str
     result_note: str
     created_at: dt.datetime

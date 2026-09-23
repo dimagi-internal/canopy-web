@@ -23,6 +23,8 @@ export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
 // picker and the rule rows both key on it, so there is no hand-kept copy.
 export type RoutableSource = Schemas['AgentRunnerRuleIn']['source']
+// A rule's mode: '' (defer to the row below), 'manual' or 'auto'.
+export type RuleTurnMode = NonNullable<Schemas['AgentRunnerRuleIn']['turn_mode']>
 
 // The two runtime autonomy postures, straight off the request schema so the
 // toggle can't drift from the server's accepted values.
@@ -419,7 +421,13 @@ export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRule
 
 export async function putAgentRunnerRules(
   slug: string,
-  rules: readonly { source: string; actor: string; runnerIds: readonly string[]; strict: boolean }[],
+  rules: readonly {
+    source: string
+    actor: string
+    runnerIds: readonly string[]
+    strict: boolean
+    turnMode: RuleTurnMode
+  }[],
 ): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },
@@ -444,6 +452,8 @@ export async function putAgentRunnerRules(
           enabled: true,
         })),
         strict: r.strict,
+        // '' = the rule says nothing about mode; the next row down decides.
+        turn_mode: r.turnMode,
       })),
     },
   })

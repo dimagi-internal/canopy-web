@@ -136,7 +136,20 @@ def build(turn) -> dict:
         # what `canopy caller tier` reads instead of an allowlist in the repo.
         "granted_by": _granted_by(turn, agent),
         "capability": _profile(agent, turn.capability),
+        # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
+        # `canopy agent mode --caller <path>` reads in preference to the agent-wide
+        # switch, so a rule like "email from beth → auto" reaches the turn
+        # procedure without the agent asking canopy a second question. null for a
+        # turn with no agent.
+        "turn_mode": _turn_mode(turn),
     }
+
+
+def _turn_mode(turn) -> dict | None:
+    from .turn_mode import for_turn
+
+    resolved = for_turn(turn)
+    return None if resolved is None else {"mode": resolved.mode, "basis": resolved.basis}
 
 
 def _granted_by(turn, agent) -> str:

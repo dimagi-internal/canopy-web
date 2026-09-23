@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { RunnerSourceRules } from '@/components/agents/RunnerSourceRules'
 
-// The routing-matrix row: which RUNNERS (not kinds) this agent will route to, in
+// The DEFAULT order — the "Everything else" row of the routing table
+// (AgentRouting.tsx), rendered as that row's runners cell: which RUNNERS (not kinds) this agent will route to, in
 // rank order. Supersedes RunnerOrder's kind-based `runner_preference` — a rank is
 // now a specific paired runner, not a class of runner. Every mutation (reorder,
 // toggle, add) computes the full ordered rows list and PUTs it optimistically
@@ -91,9 +91,18 @@ export function buildOptimisticRows(
   })
 }
 
-export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Element {
+export function RunnerAssignments({
+  agentSlug,
+  fleet: fleetProp,
+}: {
+  agentSlug: string
+  // The routing table already holds the fleet (its rules need it too); passing
+  // it saves a second fetch. Standalone callers leave it out.
+  fleet?: readonly RunnerOut[]
+}): JSX.Element {
   const [rows, setRows] = useState<AgentRunnerOut[] | null>(null)
-  const [fleet, setFleet] = useState<RunnerOut[]>([])
+  const [fetchedFleet, setFleet] = useState<readonly RunnerOut[]>([])
+  const fleet = fleetProp ?? fetchedFleet
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -122,11 +131,11 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
     setRows(null)
     rowsRef.current = []
     setError(null)
-    Promise.all([getAgentRunners(agentSlug), listRunners()])
+    Promise.all([getAgentRunners(agentSlug), fleetProp ? Promise.resolve(null) : listRunners()])
       .then(([r, f]) => {
         if (cancelled) return
         applyRows(r)
-        setFleet(f)
+        if (f) setFleet(f)
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -136,6 +145,9 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
     return () => {
       cancelled = true
     }
+    // fleetProp is read once, to decide whether to fetch — deliberately not a
+    // dependency, or every fleet refresh upstream would reload the list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentSlug])
 
   const assignedIds = useMemo(() => new Set((rows ?? []).map((r) => r.runner_id)), [rows])
@@ -190,9 +202,6 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
 
   return (
     <div className="flex flex-col gap-2" data-testid={`runner-assignments-${agentSlug}`}>
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        Default order
-      </span>
       <div className="flex flex-wrap items-center gap-1.5">
       {rows.length === 0 && (
         <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
@@ -203,7 +212,7 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
       {rows.map((r, i) => (
         <span
           key={r.runner_id}
-          className={`flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-1 ${
+          className={`flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-1 ${
             r.enabled ? '' : 'opacity-50'
           }`}
           data-testid={`runner-chip-${r.runner_id}`}
@@ -214,7 +223,8 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
             title={r.enabled ? dotTitle(r) : 'disabled'}
           />
           <span
-            className={`max-w-[10rem] truncate text-[12px] ${r.enabled ? 'text-foreground' : 'text-muted-foreground'}`}
+            className={`min-w-0 max-w-[10rem] truncate text-[12px] ${r.enabled ? 'text-foreground' : 'text-muted-foreground'}`}
+            title={r.runner_name}
           >
             {r.runner_name}
           </span>
@@ -300,9 +310,6 @@ export function RunnerAssignments({ agentSlug }: { agentSlug: string }): JSX.Ele
 
         {error && <span className="text-[11px] text-destructive">{error}</span>}
       </div>
-
-      {/* The exceptions to the order above — one rule per source. */}
-      <RunnerSourceRules agentSlug={agentSlug} fleet={fleet} />
     </div>
   )
 }

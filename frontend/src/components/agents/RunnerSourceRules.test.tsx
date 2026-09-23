@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
-  availableSources,
   groupRules,
+  hasRule,
+  inheritedMode,
   nextRulesForActor,
   nextRulesForAdd,
+  nextRulesForMode,
   nextRulesForRemove,
   nextRulesForRunnerAdd,
   nextRulesForRunnerMove,
@@ -18,8 +20,8 @@ import {
 // "any actor", which is exactly what a source rule meant before actors existed —
 // so every pre-actor rule is just a rule of length one with an empty actor.
 const rules: RuleRow[] = [
-  { source: 'ace_web', actor: '', runnerIds: ['r-cloud'], strict: true },
-  { source: 'email', actor: '', runnerIds: ['r-laptop'], strict: false },
+  { source: 'ace_web', actor: '', runnerIds: ['r-cloud'], strict: true, turnMode: '' },
+  { source: 'email', actor: '', runnerIds: ['r-laptop'], strict: false, turnMode: '' },
 ]
 
 const K = (source: string, actor = '') => ruleKey({ source, actor })
@@ -31,7 +33,7 @@ describe('rule list transforms', () => {
     const next = nextRulesForAdd(rules, 'canopy_scheduler', 'r-cloud')
     expect(next).toHaveLength(3)
     expect(next[2]).toEqual({
-      source: 'canopy_scheduler', actor: '', runnerIds: ['r-cloud'], strict: false,
+      source: 'canopy_scheduler', actor: '', runnerIds: ['r-cloud'], strict: false, turnMode: '',
     })
   })
 
@@ -42,8 +44,8 @@ describe('rule list transforms', () => {
 
   it('removes by (source, actor), not by source alone', () => {
     const two: RuleRow[] = [
-      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-laptop'], strict: true },
-      { source: 'email', actor: 'stewari@dimagi.com', runnerIds: ['r-cloud'], strict: true },
+      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-laptop'], strict: true, turnMode: '' },
+      { source: 'email', actor: 'stewari@dimagi.com', runnerIds: ['r-cloud'], strict: true, turnMode: '' },
     ]
     const next = nextRulesForRemove(two, K('email', 'jj@dimagi.com'))
     expect(next.map((r) => r.actor)).toEqual(['stewari@dimagi.com'])
@@ -76,26 +78,43 @@ describe('actors', () => {
     expect(next.filter((r) => r.source === 'email')).toHaveLength(2)
   })
 
-  it('offers a source again once its rules all name an actor', () => {
-    // Only the catch-all (actor: '') consumes a source; a source with only
-    // actor-specific rules still needs to be addable for everyone else.
-    const specific: RuleRow[] = [
-      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-laptop'], strict: true },
+  it('knows when (source, actor) is already a rule — the add form refuses it', () => {
+    expect(hasRule(rules, 'email', '')).toBe(true)
+    expect(hasRule(rules, 'email', 'stewari@dimagi.com')).toBe(false)
+  })
+
+  it('compares the sender loosely, as the server normalizes it', () => {
+    const named: RuleRow[] = [
+      { source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r'], strict: false, turnMode: '' },
     ]
-    expect(availableSources(specific)).toContain('email')
+    expect(hasRule(named, 'email', ' Beth@Dimagi.com ')).toBe(true)
+  })
+})
+
+describe('mode', () => {
+  it('adds a rule with a sender and a mode in one step', () => {
+    // "Beth's email -> cloud, auto" is one decision, so the add form takes all of it.
+    const next = nextRulesForAdd(rules, 'email', 'r-cloud', { actor: 'beth@dimagi.com', turnMode: 'auto' })
+    expect(next[2]).toEqual({
+      source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false, turnMode: 'auto',
+    })
   })
 
-  it('stops offering a source that already has a catch-all rule', () => {
-    expect(availableSources(rules)).not.toContain('ace_web')
-    expect(availableSources(rules)).not.toContain('email')
-    expect(availableSources(rules)).toContain('canopy_scheduler')
+  it('sets the mode on one rule only', () => {
+    const next = nextRulesForMode(rules, K('email'), 'manual')
+    expect(next[1].turnMode).toBe('manual')
+    expect(next[0]).toEqual(rules[0])
   })
 
-  it('offers nothing once every source has a catch-all rule', () => {
-    const all = availableSources([]).map((s) => ({
-      source: s, actor: '', runnerIds: ['r'], strict: false,
-    }))
-    expect(availableSources(all)).toEqual([])
+  it('a named rule that says nothing inherits its source rule, then the agent', () => {
+    const withAnyone = [{ source: 'email', actor: '', turnMode: 'auto' as const }]
+    expect(inheritedMode({ source: 'email', actor: 'beth@dimagi.com' }, withAnyone, 'manual')).toBe('auto')
+    expect(inheritedMode({ source: 'email', actor: 'beth@dimagi.com' }, [], 'manual')).toBe('manual')
+  })
+
+  it('an anyone rule inherits straight from the agent', () => {
+    const withAnyone = [{ source: 'email', actor: '', turnMode: 'auto' as const }]
+    expect(inheritedMode({ source: 'email', actor: '' }, withAnyone, 'manual')).toBe('manual')
   })
 })
 
@@ -104,7 +123,7 @@ describe('a rule names several runners', () => {
   // ONE machine, alternated as each runs out of tokens. "My work, never cloud"
   // therefore names two runners whose live one rotates — unsayable with one.
   const boxes: RuleRow[] = [
-    { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-acedimagi'], strict: true },
+    { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-acedimagi'], strict: true, turnMode: '' },
   ]
 
   it('appends a runner to a rule', () => {
@@ -153,6 +172,14 @@ describe('groupRules', () => {
       kind: 'cloud', strict: false, online: true, ready: true, enabled: true, queued_count: 0 },
   ] as unknown as AgentRunnerRuleOut[]
 
+  it('reads each rule\'s mode off its rows', () => {
+    const grouped = groupRules([
+      { source: 'email', actor: 'beth@dimagi.com', rank: 0, runner_id: 'r', turn_mode: 'auto' },
+      { source: 'slack', actor: '', rank: 0, runner_id: 'r', turn_mode: 'bogus' },
+    ] as unknown as AgentRunnerRuleOut[])
+    expect(grouped.map((g) => g.turnMode)).toEqual(['auto', ''])
+  })
+
   it('groups rows into rules and orders runners by rank', () => {
     const grouped = groupRules(flat)
     expect(grouped).toHaveLength(2)
@@ -184,7 +211,7 @@ describe('groupRules', () => {
   it('a fall-through rule never reads as parked — it degrades instead', () => {
     const soft = flat
       .filter((r) => r.actor === 'jj@dimagi.com')
-      .map((r) => ({ ...r, online: false, strict: false })) as unknown as AgentRunnerRuleOut[]
+      .map((r) => ({ ...r, online: false, strict: false, turnMode: '' })) as unknown as AgentRunnerRuleOut[]
     expect(groupRules(soft)[0].parked).toBe(false)
   })
 })

@@ -493,6 +493,16 @@ class Turn(models.Model):
         related_name="turns_initiated",
     )
     initiator_agent = models.CharField(max_length=64, blank=True, default="")
+    # THE MODE THIS TURN RUNS IN (manual | auto), decided once at CLAIM by
+    # `apps/harness/turn_mode.py` — a routing rule's mode where one matches, else
+    # the agent's own `turn_mode`. "" until claimed, and always "" for a project
+    # turn (no agent, no mode). Stamped rather than derived because the agent
+    # reads it mid-turn, and a rule edited while the turn runs must not flip the
+    # posture of work already under way. `turn_mode_basis` says WHY, in words the
+    # agent repeats in its opening line: "agent", "rule email/beth@x.org", or a
+    # withheld rule ("rule email/beth@x.org: auto withheld, message not verified").
+    turn_mode = models.CharField(max_length=8, blank=True, default="")
+    turn_mode_basis = models.CharField(max_length=320, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     # ---- the report half (was apps.agents.AgentTurn, merged here 2026-08-11) ----
@@ -1109,6 +1119,14 @@ class RunnerAssignment(models.Model):
     # waits rather than degrading, which is the point for a source whose work can
     # only happen on one box (mailbox credentials, local files).
     strict = models.BooleanField(default=False)
+    # THE MODE RULE (spec 2026-09-23). Only meaningful on a source row, and
+    # rule-level like `strict` (written to every row of the rule). "" = the rule
+    # says nothing about mode, so the next rung decides: an actor rule defers to
+    # the source rule, which defers to `Agent.turn_mode`. "manual" or "auto"
+    # overrides. Resolved at claim by `apps/harness/turn_mode.py`, which withholds
+    # an `auto` that names a person unless THIS message is verified — routing on a
+    # forged From: only picks a box; auto on one would let a forger act unreviewed.
+    turn_mode = models.CharField(max_length=8, blank=True, default="")
 
     class Meta:
         ordering = ["agent_id", "rank"]

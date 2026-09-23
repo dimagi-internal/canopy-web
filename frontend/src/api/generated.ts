@@ -7317,6 +7317,16 @@ export interface components {
             /** Enqueued By Email */
             readonly enqueued_by_email: string | null;
             readonly initiator: components["schemas"]["InitiatorOut"];
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Turn Mode Basis
+             * @default
+             */
+            readonly turn_mode_basis: string;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -8860,6 +8870,11 @@ export interface components {
              * @default 0
              */
             readonly queued_count: number;
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
         };
         /**
          * AgentRunnerRuleIn
@@ -8898,6 +8913,12 @@ export interface components {
              * @default false
              */
             readonly strict: boolean;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
         };
         /**
          * AgentRunnerRulesIn
@@ -11504,6 +11525,16 @@ export interface components {
             /** Enqueued By Email */
             readonly enqueued_by_email: string | null;
             readonly initiator: components["schemas"]["InitiatorOut"];
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Turn Mode Basis
+             * @default
+             */
+            readonly turn_mode_basis: string;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
