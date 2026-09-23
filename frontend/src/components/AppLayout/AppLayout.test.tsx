@@ -76,4 +76,21 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
 
     expect(await screen.findByText('+ Workspace')).toBeTruthy()
   })
+
+  it('with several workspaces, CREATE is the picker\'s last option, not a second control', async () => {
+    // The top bar on a phone had no room for both: "+ Workspace" broke onto two
+    // lines between the picker and the avatar.
+    listWorkspaces.mockResolvedValue([
+      { slug: 'dimagi', display_name: 'Dimagi' },
+      { slug: 'connect', display_name: 'Connect' },
+    ] as WorkspaceOut[])
+    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
+
+    renderAs('authenticated')
+
+    const picker = (await screen.findByLabelText('Workspace')) as HTMLSelectElement
+    const options = [...picker.options].map((o) => o.text)
+    expect(options.at(-1)).toBe('+ New workspace…')
+    expect(screen.queryByText('+ Workspace')).toBeNull()
+  })
 })

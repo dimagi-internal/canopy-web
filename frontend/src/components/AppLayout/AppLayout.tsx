@@ -191,26 +191,34 @@ function WorkspaceSwitcher() {
   // left a one-workspace user with no path to a second and a zero-workspace user
   // with no path at all — and the first fix of it left a five-workspace user
   // with no path to a sixth.
-  return (
-    <div className="flex items-center gap-2">
-      {workspaces.length > 1 ? (
-        <select
-          aria-label="Workspace"
-          className="min-h-11 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
-          value={active ?? ''}
-          onChange={(e) => navigate(`/w/${e.target.value}/agents`)}
-        >
-          {workspaces.map((w) => (
-            <option key={w.slug} value={w.slug}>
-              {w.display_name}
-            </option>
-          ))}
-        </select>
-      ) : null}
-      <NewWorkspaceLink />
-    </div>
-  )
+  //
+  // With a switcher, CREATE is its last option rather than a second control
+  // beside it: the top bar on a phone had no room for both, and "+ Workspace"
+  // broke onto two lines between the picker and the avatar.
+  if (workspaces.length > 1) {
+    return (
+      <select
+        aria-label="Workspace"
+        className="min-h-11 max-w-40 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
+        value={active ?? ''}
+        onChange={(e) =>
+          navigate(e.target.value === NEW_WORKSPACE ? '/new-workspace' : `/w/${e.target.value}/agents`)
+        }
+      >
+        {workspaces.map((w) => (
+          <option key={w.slug} value={w.slug}>
+            {w.display_name}
+          </option>
+        ))}
+        <option value={NEW_WORKSPACE}>+ New workspace…</option>
+      </select>
+    )
+  }
+  return <NewWorkspaceLink />
 }
+
+// Not a legal workspace slug (slugs are [a-z0-9-]), so it cannot collide with one.
+const NEW_WORKSPACE = '__new__'
 
 /** The one affordance that must never be conditional on how many workspaces
  *  you already have. Routes to the first-run screen, which owns the form. */
@@ -218,7 +226,7 @@ function NewWorkspaceLink() {
   return (
     <Link
       to="/new-workspace"
-      className="text-xs text-muted-foreground hover:text-foreground"
+      className="whitespace-nowrap text-xs text-muted-foreground hover:text-foreground"
     >
       + Workspace
     </Link>

@@ -34,8 +34,7 @@ import {
   closeIntent,
   closeResultMessage,
 } from '@/components/chat/closeAction'
-import { ShareToSlack } from '@/components/chat/ShareToSlack'
-import { ChatPeople } from '@/components/chat/ChatPeople'
+import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -696,10 +695,10 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Wraps. The header grew a control at a time (notify, People, Share to
-          Slack, Close, Reset) inside a row that could not wrap, and on a phone
-          it ran 145px past the screen, so the whole page scrolled sideways. */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background px-4 py-2">
+      {/* The header is for READING: the title and whether the agent is working.
+          Actions live in ChatSessionMenu. Five buttons here once ran 145px past
+          a phone screen and scrolled the whole page sideways. */}
+      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
         <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h1>
         {/* Live agent activity beats the server's liveness fields when a hook has
             reported. `meta.running` derives from the runner's session report —
@@ -734,59 +733,28 @@ export function ChatPage() {
           </span>
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {meta && (
-            <button
-              type="button"
-              data-testid="notify-every-completion"
-              aria-pressed={meta.notify_every_completion}
-              onClick={() => void toggleNotify()}
-              title={
-                meta.notify_every_completion
-                  ? 'Notifying on every reply — click to only notify once this chat goes quiet'
-                  : 'Notify me on every reply (otherwise: once this chat goes quiet)'
-              }
-              className={
-                meta.notify_every_completion
-                  ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-[12px] text-primary hover:bg-primary/20'
-                  : 'rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted'
-              }
-            >
-              {meta.notify_every_completion ? '🔔 Every reply' : '🔕 Every reply'}
-            </button>
-          )}
-          {id && meta && <ChatPeople sessionId={id} myRole={meta.my_role ?? null} />}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
+          {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
           {id && (
-            <ShareToSlack
-              disabledReason={disabledReason}
+            <ChatSessionMenu
+              sessionId={id}
+              myRole={meta?.my_role ?? null}
+              notifyEveryCompletion={meta ? meta.notify_every_completion : undefined}
+              onToggleNotify={() => void toggleNotify()}
+              shareDisabledReason={disabledReason}
               onShare={async (command) => {
                 // Sent over REST like any message; `noteLocalSend` is what shows
                 // the line and the working state until the transcript echoes it.
                 await sendMessage(id, command, `share-${Date.now()}`)
                 socket.noteLocalSend(command)
               }}
+              onReset={() => void resetFromTranscript()}
+              resetting={resetting}
+              onClose={() => void closeThisSession()}
+              closing={closing}
             />
           )}
-          {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
-          <button
-            type="button"
-            onClick={() => void closeThisSession()}
-            disabled={closing}
-            title="Close this session — deletes its emdash task. The transcript is kept."
-            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
-          >
-            {closing ? 'Closing…' : 'Close session'}
-          </button>
-          {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
-          <button
-            type="button"
-            onClick={() => void resetFromTranscript()}
-            disabled={resetting}
-            title="Drop canopy's copy and rebuild this conversation from the runner's transcript"
-            className="rounded-md border border-border bg-card px-2 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
-          >
-            {resetting ? 'Resetting…' : 'Reset from transcript'}
-          </button>
         </div>
       </div>
       <div className="min-h-0 flex-1">
