@@ -10100,6 +10100,11 @@ export interface components {
             readonly routing: string;
             /** Grace Minutes */
             readonly grace_minutes: number;
+            /**
+             * Always Run
+             * @default false
+             */
+            readonly always_run: boolean;
             /** Notify */
             readonly notify: readonly string[];
             /** Last Slot */
@@ -10195,6 +10200,11 @@ export interface components {
              */
             readonly grace_minutes: number;
             /**
+             * Always Run
+             * @default false
+             */
+            readonly always_run: boolean;
+            /**
              * Notify
              * @default [
              *       "inbox"
@@ -10240,6 +10250,8 @@ export interface components {
             readonly routing?: string | null;
             /** Grace Minutes */
             readonly grace_minutes?: number | null;
+            /** Always Run */
+            readonly always_run?: boolean | null;
             /** Notify */
             readonly notify?: readonly string[] | null;
         };
