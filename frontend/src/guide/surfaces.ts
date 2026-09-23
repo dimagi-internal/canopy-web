@@ -146,6 +146,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ["Turn on the agent panel on canopy's own pages", 'Connect another site by URL', 'Choose which agents a site may offer', 'Issue a new secret', 'Disconnect a site'],
   },
   {
+    path: '/w/:workspace/settings/secrets',
+    title: 'Secrets',
+    audience: 'Workspace owner',
+    what: "Where this workspace's secrets live, stated whole: 1Password holds the secrets, a service account opens a vault, and canopy-web stores the service account so a runner can fetch it. This page owns the SHARED vault every agent here reads (the Google OAuth clients, the GitHub token); an agent's own vault is on that agent, under Overview → Credentials, and a box's own login is on the runner.",
+    actions: ["Name the workspace's shared vault", 'Store or rotate its service account', "Jump to an agent's own vault"],
+  },
+  {
     path: '/w/:workspace/settings/inbound',
     title: 'Inbound push',
     audience: 'Workspace owner setting up email-triggered agents',

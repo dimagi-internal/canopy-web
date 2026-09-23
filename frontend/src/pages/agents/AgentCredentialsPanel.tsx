@@ -27,7 +27,7 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // Overview (it used to be its own rail entry, which is why people could not
 // find settings that sat one click away from each other).
 
-export function AgentCredentialsPanel({ agent }: { agent: { slug: string } }) {
+export function AgentCredentialsPanel({ agent }: { agent: { slug: string; workspace?: string | null } }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -196,7 +196,7 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string } }) {
             {headline(rows)}
           </p>
 
-          <AgentVaultSection slug={agent.slug} />
+          <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
 
           {declaresMailbox(rows) && (
             <section className="mb-5" data-testid="needs-you">

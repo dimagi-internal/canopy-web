@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+
 import { getAgentVault, setAgentVault } from '@/api/agents'
 
 // The 1Password half of the credentials screen.
@@ -15,7 +17,7 @@ import { getAgentVault, setAgentVault } from '@/api/agents'
 // makes canopy-web worth attacking for every agent's secrets at once, where this
 // bounds a compromise to the one agent whose key was taken.
 
-export function AgentVaultSection({ slug }: { slug: string }) {
+export function AgentVaultSection({ slug, workspace }: { slug: string; workspace?: string | null }) {
   const [vault, setVault] = useState('')
   const [keySet, setKeySet] = useState(false)
   const [declared, setDeclared] = useState(0)
@@ -67,8 +69,24 @@ export function AgentVaultSection({ slug }: { slug: string }) {
   return (
     <section className="mb-5" data-testid="agent-vault">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        1Password
+        1Password — this agent&rsquo;s own vault
       </h3>
+      {/* The other half of the model. Both levels were configurable but only
+          this one was reachable from the app, so "where does this secret live"
+          had a visible answer and an invisible one. */}
+      <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
+        Secrets only this agent uses. What every agent in the workspace shares — the Google OAuth
+        clients, the GitHub token — lives in the workspace&rsquo;s shared vault instead
+        {workspace ? (
+          <>
+            {' '}(
+            <Link to={`/w/${workspace}/settings/secrets`} className="text-primary" data-testid="shared-vault-link">
+              Settings → Secrets
+            </Link>
+            ).
+          </>
+        ) : '.'}
+      </p>
       <div className="rounded-lg border border-border bg-card px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-[12px] text-muted-foreground" htmlFor="vault-name">

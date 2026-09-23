@@ -12,6 +12,7 @@ export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
+export type SharedVaultOut = components['schemas']['SharedVaultOut']
 
 // Every call below needs the HTTP status (404 for non-member, 403 for an
 // invite-accept email mismatch, 410 for a dead invite) — not just a message —
@@ -168,4 +169,38 @@ export async function createWorkspace(
     return { error: detail || 'Could not create the workspace.' }
   }
   return { slug: (res.data as unknown as WorkspaceOut).slug }
+}
+
+
+// --- the tenant's shared 1Password vault -------------------------------------
+// The TENANT half of the two-level credential model: this vault holds what every
+// agent in the workspace shares (the gog OAuth clients, the fleet GitHub token),
+// and canopy-web holds a service-account key scoped to it. An AGENT's own vault
+// and key live on the agent (see AgentVaultSection) — a key that read both would
+// undo the split that bounds a compromise to one agent.
+//
+// Owner-only on the server; the key is write-only and never comes back.
+export async function getSharedVault(slug: string): Promise<SharedVaultOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/shared-vault', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load the shared vault'))
+  }
+  return res.data as unknown as SharedVaultOut
+}
+
+export async function setSharedVault(
+  slug: string, body: { vault?: string; service_key?: string },
+): Promise<SharedVaultOut> {
+  const res = await apiV2.PUT('/api/workspaces/{slug}/shared-vault', {
+    params: { path: { slug } },
+    body,
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to save the shared vault'))
+  }
+  return res.data as unknown as SharedVaultOut
 }

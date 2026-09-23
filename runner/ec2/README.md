@@ -92,9 +92,17 @@ WARN: hal: NOT registered in canopy-web — no agent vault/key. Register it: PUT
 WARN: hal: no vault registered in canopy-web — keeping any existing ~/.hal/.env, which may be stale
 ```
 
-**To register one** (the key is a 1Password service account scoped to that one
-vault, minted in 1Password, then handed to canopy-web — it is never typed on the
-box):
+**Register both in the UI** — that is what it is for:
+
+| level | where |
+|---|---|
+| tenant | **`/w/<ws>/settings/secrets`** — the workspace's shared vault + its service account |
+| agent | the agent's **Overview → Credentials** — its own vault + its own service account |
+| the box itself | **`/supervisor` → Runners → the box** — its Claude login and GitHub token (no 1Password key; it is handed the two above, per agent) |
+
+Or by API, if you prefer (the key is a 1Password service account scoped to that
+one vault, minted in 1Password, then handed to canopy-web — it is never typed on
+the box):
 
 ```bash
 curl -X PUT "$CANOPY/api/agents/hal/vault" -H "Authorization: Bearer $PAT" \
