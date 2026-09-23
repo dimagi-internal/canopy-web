@@ -134,3 +134,31 @@ def test_list_and_by_id_agree_for_every_session_shape():
     for label, s in shapes.items():
         gettable = c.get(f"/api/canopy-sessions/{s.id}").status_code == 200
         assert gettable is (str(s.id) in listed), f"list/by-id disagree on {label}"
+
+
+def _agent_thread(ws, owner, slug="hal"):
+    """An agent's own work with no creator and no binding — an email thread or
+    an alarm the agent picked up (`origin=runner`, `created_by=None`)."""
+    from apps.agents.models import Agent
+
+    agent = Agent.objects.create(slug=slug, name=slug.title(), owner=owner, workspace=ws)
+    return Session.objects.create(workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER,
+                                  title="ALARM: cpu high")
+
+
+def test_the_agent_owner_can_read_the_agent_s_own_thread():
+    """The tap on a push for this session used to land on "No Session matches the
+    given query": readable by nobody, while its owner was the one notified."""
+    owner, _other, ws = _ws_with_two_members()
+    s = _agent_thread(ws, owner)
+    c = _client(owner)
+    assert c.get(f"/api/canopy-sessions/{s.id}").status_code == 200
+    listed = c.get("/api/canopy-sessions/?state=all").json()
+    assert str(s.id) in {r["id"] for r in listed}
+
+
+def test_an_agent_thread_is_not_opened_to_the_whole_tenant():
+    """Leg 4 is the OWNER, not the tenant — narrower than a runner-discovered session."""
+    owner, other, ws = _ws_with_two_members()
+    s = _agent_thread(ws, owner)
+    assert _client(other).get(f"/api/canopy-sessions/{s.id}").status_code == 404
