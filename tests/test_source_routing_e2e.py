@@ -244,7 +244,9 @@ def test_a_scheduled_turn_matches_no_actor_rule(fleet):
          "runners": _runners_of([fleet["cloud"]]), "strict": True},
     ])
     fired = _queue(fleet["echo"], Turn.ORIGIN_CANOPY_SCHEDULER, "k-sched",
-                   origin_ref={"schedule_id": 1, "slot": "2026-09-05T00:00:00Z"})
+                   # A fresh slot: an hours-old one is skipped as too late
+                   # (skip_late_scheduled_turns) before routing is consulted.
+                   origin_ref={"schedule_id": 1, "slot": timezone.now().isoformat()})
 
     assert services.claim_next_turn(fleet["laptop"]) is None
     assert services.claim_next_turn(fleet["cloud"]).id == fired.id

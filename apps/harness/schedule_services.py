@@ -145,6 +145,7 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
         "enabled": schedule.enabled,
         "routing": schedule.routing,
         "grace_minutes": schedule.grace_minutes,
+        "always_run": schedule.always_run,
         "notify": schedule.notify,
         "last_slot": schedule.last_slot,
         "fire_after": schedule.last_slot or schedule.created_at,

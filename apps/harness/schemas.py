@@ -624,6 +624,7 @@ class ScheduleIn(Schema):
     enabled: bool = True
     routing: str = "prefer_local"
     grace_minutes: int = 120
+    always_run: bool = False
     notify: list[str] = ["inbox"]
 
     @field_validator("cron")
@@ -655,6 +656,7 @@ class SchedulePatch(Schema):
     enabled: bool | None = None
     routing: str | None = None
     grace_minutes: int | None = None
+    always_run: bool | None = None
     notify: list[str] | None = None
 
     @field_validator("cron")
@@ -678,6 +680,7 @@ class ScheduleOut(Schema):
     enabled: bool
     routing: str
     grace_minutes: int
+    always_run: bool = False
     notify: list[str]
     last_slot: dt.datetime | None = None
     # The anchor the runner MUST pass as due_slot(after=...). Server-computed as

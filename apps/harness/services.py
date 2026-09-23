@@ -965,6 +965,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
     # its agent for the very claim we are about to make.
     release_stale_occurrence_turns_all()
+    skip_late_scheduled_turns()
     projects = runner.project_names()
     session_capable = runner.session_capable()
     has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()
@@ -1736,10 +1737,9 @@ def release_stale_occurrence_turns(schedule, *, now: dt.datetime | None = None) 
     created_at) because both are statements about *holding*, which is what
     grace_minutes bounds:
       - a QUEUED turn holds nothing (the index does not cover it), so releasing
-        it could not unwedge anything — it would only destroy work still owed
-        (laptop offline over a weekend must not retire Friday's slot). Retiring
-        a stale queued occurrence is supersede_open_turns' job, at the right
-        moment.
+        it could not unwedge anything. Retiring a stale queued occurrence is
+        supersede_open_turns' job (a newer slot) or skip_late_scheduled_turns'
+        (a slot too late to be worth running).
       - created_at measures *owed* time, so a turn queued longer than grace would
         be born past-grace and get aborted on its first sweep after being claimed
         — killing live human work in the function meant to protect it.
@@ -1756,6 +1756,67 @@ def release_stale_occurrence_turns(schedule, *, now: dt.datetime | None = None) 
             result_note=f"released after {schedule.grace_minutes}m unattended",
         )
         _raise_schedule_nag(schedule, turn)
+        count += 1
+    return count
+
+
+#: How late past its slot a scheduled turn may still be claimed. Past it, the slot
+#: is skipped as MISSED rather than run, unless its schedule is `always_run`.
+LATE_SLOT_WINDOW_MINUTES = 30
+
+
+def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
+    """Retire QUEUED slot turns that could not start within LATE_SLOT_WINDOW_MINUTES
+    of their slot. Runs lazily on the claim tick, like the grace release.
+
+    WHY. No-backfill already collapses a long outage to one slot per schedule, but
+    it still fires that one however stale it is: on 2026-09-23 a laptop reopened at
+    19:21Z fired all five schedules at once, for slots from 14:00Z to 18:00Z. A
+    morning briefing or a chief-of-staff sweep five hours late is noise, not work
+    owed. The next slot fires on time as usual.
+
+    Anchored on the SLOT, not created_at, so it covers both ways of being late:
+    fired late (runner offline) and fired on time but queued behind a busy agent.
+    Manual "Run now" turns carry no slot and are never touched; `always_run`
+    schedules opt out. MISSED with no nag: skipping is the designed outcome, not
+    an unattended turn that needs a human.
+    """
+    now = now or timezone.now()
+    cutoff = now - dt.timedelta(minutes=LATE_SLOT_WINDOW_MINUTES)
+    # Manual is filtered in Python, not with .exclude(origin_ref__manual=True): a
+    # slot turn has no "manual" key, the negated JSON lookup evaluates to NULL for
+    # it, and SQL would silently exclude every row this function exists to find.
+    queued = [
+        t for t in Turn.objects.filter(
+            status=Turn.QUEUED, origin=Turn.ORIGIN_CANOPY_SCHEDULER
+        ).only("id", "origin_ref", "status")
+        if not t.origin_ref.get("manual")
+    ]
+    if not queued:
+        return 0
+    always = set(
+        AgentSchedule.objects.filter(
+            id__in={t.origin_ref.get("schedule_id") for t in queued}, always_run=True
+        ).values_list("id", flat=True)
+    )
+    count = 0
+    for turn in queued:
+        if turn.origin_ref.get("schedule_id") in always:
+            continue
+        try:
+            slot = dt.datetime.fromisoformat(turn.origin_ref.get("slot", ""))
+        except (TypeError, ValueError):
+            continue
+        if slot.tzinfo is None:
+            slot = slot.replace(tzinfo=dt.UTC)
+        if slot >= cutoff:
+            continue
+        late = int((now - slot).total_seconds() // 60)
+        finish_turn(
+            turn, status=Turn.MISSED, allow_queued=True,
+            result_note=f"skipped: not started within {LATE_SLOT_WINDOW_MINUTES}m of "
+            f"its slot ({late}m late); the next slot fires on schedule",
+        )
         count += 1
     return count
 

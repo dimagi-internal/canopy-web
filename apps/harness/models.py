@@ -784,6 +784,12 @@ class AgentSchedule(models.Model):
         "released as MISSED. Guards one_executing_turn_per_agent: an abandoned "
         "session would otherwise wedge the agent indefinitely.",
     )
+    always_run = models.BooleanField(
+        default=False,
+        help_text="Run a slot however late it is claimed. Off: a slot not claimed "
+        "within LATE_SLOT_WINDOW_MINUTES of its time is skipped as MISSED, so a "
+        "laptop reopened after a day away does not fire every schedule at once.",
+    )
     notify = models.JSONField(
         default=_default_notify, blank=True,
         help_text='Channel ids resolved through the notify registry, e.g. ["inbox"].',
