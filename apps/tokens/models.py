@@ -218,6 +218,25 @@ class AppCredential(models.Model):
     #: (`embed_apps._clean_resolvable`), and used only on a SIGNED assertion.
     #: Empty (the default) means every visitor is a contact.
     resolvable_domains = models.JSONField(default=list, blank=True)
+    #: Where this site PUBLISHES its public keys, so canopy can follow a
+    #: rotation instead of being re-pasted into.
+    #:
+    #: The preferred half of `public_keys` below, and the reason connecting a
+    #: system is a URL rather than a key: a site rotates by publishing the new
+    #: key beside the old and switching its signer, and canopy picks it up by
+    #: `kid` with no change here. A pasted PEM has to be replaced by hand on
+    #: the day it rotates, which is how rotation stops happening at all.
+    #:
+    #: Canopy fetches this, so it is an outbound request to an
+    #: operator-supplied URL: https only, never into private address space,
+    #: no redirects, bounded, cached and fail-closed. See `apps/tokens/jwks.py`.
+    jwks_url = models.URLField(
+        blank=True,
+        default="",
+        max_length=500,
+        help_text="HTTPS URL serving this site's JWKS. Preferred over pasting a key: "
+        "canopy follows a rotation on its own.",
+    )
     #: PEM public keys this app signs its visitor assertions with.
     #:
     #: A LIST because rotation has to be possible without a flag day: publish

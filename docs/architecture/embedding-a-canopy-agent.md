@@ -110,7 +110,7 @@ Generate a key pair on your side (Ed25519 is the simplest):
 
 ```bash
 openssl genpkey -algorithm ed25519 -out canopy-signing.pem
-openssl pkey -in canopy-signing.pem -pubout      # paste THIS into Signing key
+openssl pkey -in canopy-signing.pem -pubout
 ```
 
 The **private** key goes in your secret store and stays on your server. It lets
@@ -118,10 +118,36 @@ its holder vouch for visitors to your site — treat it like a database password
 and never send it to a browser. The public half is not secret; it is what canopy
 checks signatures against.
 
-To rotate: paste the new public key alongside the old one, deploy the new
-private key, then remove the old public key. Editing the site never changes
-anything else, so you can add URLs and agents freely without breaking a
-deployment.
+### Give canopy a URL, not a key
+
+**Publish a JWKS and paste its URL into "Where your site publishes its keys".**
+It is the ordinary document every OIDC provider already serves, and most
+languages have a one-liner for it:
+
+```json
+{ "keys": [ { "kty": "OKP", "crv": "Ed25519", "x": "…", "use": "sig",
+              "alg": "EdDSA", "kid": "2026-09-a" } ] }
+```
+
+Then **rotation costs you nothing here**: publish the new key beside the old,
+switch what you sign with, and drop the old one a day later. Canopy follows by
+`kid` — including refetching the moment it meets a `kid` it has not seen, so
+there is no window where your new key is refused. Nobody has to remember to
+come back to canopy, which is the point: a key that can only be rotated by
+somebody re-pasting it is a key that never gets rotated.
+
+Requirements, all of which canopy tells you at the moment you save rather than
+at the next failed assertion: **https**, reachable from the public internet (a
+VPC-internal or localhost URL is refused — canopy would otherwise be fetching
+inside its own network), no redirects, and under 64 KiB.
+
+**Pasting a key still works** and is a perfectly good answer if you have no
+JWKS to publish — that is what the "…or paste a signing key" box is. It behaves
+identically; the only difference is that each rotation means coming back here.
+Paste several during one, and all of them verify until you remove the old.
+
+Whichever you use, editing the site never changes anything else, so you can add
+URLs and agents freely without breaking a deployment.
 
 ---
 

@@ -35,6 +35,9 @@ export async function connectApp(
     agents: string[]
     public_keys: string[]
     show_on_canopy_pages: boolean
+    /** Where the site publishes its keys. Preferred over `public_keys`: canopy
+     *  follows a rotation instead of needing a new paste. */
+    jwks_url: string
   },
 ): Promise<ConnectedAppCreated> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -51,6 +54,7 @@ export async function updateConnectedApp(
     origins?: string[]
     agents?: string[]
     public_keys?: string[]
+    jwks_url?: string
     show_on_canopy_pages?: boolean
     resolvable_domains?: string[]
   },

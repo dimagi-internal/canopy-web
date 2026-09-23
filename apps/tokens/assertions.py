@@ -105,7 +105,27 @@ def verify(token: str, *, app) -> dict:
     """
     import jwt
 
-    keys = [k for k in (app.public_keys or []) if isinstance(k, str) and k.strip()]
+    keys: list = [k.strip() for k in (app.public_keys or [])
+                  if isinstance(k, str) and k.strip()]
+    # A published JWKS is the preferred half of this: the site rotates on its
+    # own and canopy follows, where a pasted PEM has to be re-pasted by hand.
+    # Both are accepted at once so a site can move from one to the other
+    # without a flag day — and `kid`, when the assertion carries one, is what
+    # makes two live keys unambiguous.
+    if getattr(app, "jwks_url", ""):
+        from . import jwks as jwks_mod
+
+        try:
+            kid = str((jwt.get_unverified_header(token) or {}).get("kid") or "")
+        except Exception:  # noqa: BLE001 - a header we cannot read is a bad token
+            kid = ""
+        try:
+            keys = keys + jwks_mod.keys_for(app.jwks_url, kid=kid)
+        except jwks_mod.JwksError as exc:
+            raise AssertionError_(
+                "keys_unreachable",
+                f"could not read {app.name!r}'s published keys: {exc}",
+            ) from exc
     if not keys:
         raise AssertionError_(
             "no_key",
@@ -117,7 +137,7 @@ def verify(token: str, *, app) -> dict:
         try:
             claims = jwt.decode(
                 token,
-                key.strip(),
+                key,
                 # OURS, not the token's. This one argument is the difference
                 # between a verifier and a forgery oracle.
                 algorithms=ALLOWED_ALGORITHMS,

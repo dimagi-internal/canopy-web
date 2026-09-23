@@ -34,6 +34,7 @@ _STATUS = {
     "bad_name": 422,
     "bad_origin": 422,
     "bad_key": 422,
+    "bad_jwks_url": 422,
     "already_shown": 409,
     "unknown_agent": 422,
 }
@@ -63,6 +64,9 @@ class ConnectedAppOut(Schema):
     #: tell which key they are about to retire.
     public_keys: list[str]
     signs_assertions: bool
+    #: Where the site publishes its keys, if it does. `signs_assertions` is
+    #: true for either door — a published JWKS or a pasted key.
+    jwks_url: str
     shows_on_canopy_pages: bool
     created_at: str
     last_used_at: str | None
@@ -84,11 +88,13 @@ class ConnectIn(Schema):
     origins: list[str] = []
     agents: list[str] = []
     public_keys: list[str] = []
+    jwks_url: str = ""
     show_on_canopy_pages: bool = False
 
 
 class UpdateIn(Schema):
     origins: list[str] | None = None
+    jwks_url: str | None = None
     agents: list[str] | None = None
     public_keys: list[str] | None = None
     show_on_canopy_pages: bool | None = None
@@ -105,7 +111,8 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         origins=app.frame_origins(),
         resolvable_domains=list(app.resolvable_domains or []),
         public_keys=list(app.public_keys or []),
-        signs_assertions=bool(app.public_keys),
+        jwks_url=app.jwks_url or "",
+        signs_assertions=bool(app.public_keys) or bool(app.jwks_url),
         agents=[
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
@@ -159,7 +166,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
         raw, app = embed_apps.register(
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, agents=payload.agents,
-            public_keys=payload.public_keys,
+            public_keys=payload.public_keys, jwks_url=payload.jwks_url,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -183,7 +190,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
         embed_apps.update(
             user=request.user, app=app, origins=payload.origins,
             agents=payload.agents, public_keys=payload.public_keys,
-            resolvable_domains=payload.resolvable_domains,
+            resolvable_domains=payload.resolvable_domains, jwks_url=payload.jwks_url,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
