@@ -4700,6 +4700,51 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/participants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who has been given this chat
+         * @description Everyone explicitly in this conversation, with their role.
+         */
+        readonly get: operations["apps_canopy_sessions_api_list_participants"];
+        readonly put?: never;
+        /**
+         * Give a teammate this chat
+         * @description Owner only. The teammate must already be a member of the chat's
+         *     workspace; adding someone again changes their role.
+         */
+        readonly post: operations["apps_canopy_sessions_api_add_participant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/participants/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Take a chat away from someone
+         * @description The owner can remove anyone but themselves; anyone can remove themselves.
+         */
+        readonly delete: operations["apps_canopy_sessions_api_remove_participant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/send": {
         readonly parameters: {
             readonly query?: never;
@@ -4926,8 +4971,8 @@ export interface paths {
          *     runner downloading into the agent's workspace (which authenticates with a
          *     PAT, resolved upstream into request.user like any other caller).
          *
-         *     Gated on session membership, not on who uploaded it — a session is
-         *     multiplayer, so a teammate must be able to see what was shared in it.
+         *     Gated on who can read the session, not on who uploaded it — a session is
+         *     multiplayer, so a teammate who can read it must see what was shared in it.
          */
         readonly get: operations["apps_canopy_sessions_api_attachment_content"];
         readonly put?: never;
@@ -8132,6 +8177,8 @@ export interface components {
             readonly turn_status?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** My Role */
+            readonly my_role?: string | null;
             /**
              * Has More Before
              * @default false
@@ -12041,6 +12088,36 @@ export interface components {
         readonly SessionNotifyIn: {
             /** Every Completion */
             readonly every_completion: boolean;
+        };
+        /**
+         * ParticipantOut
+         * @description Someone explicitly given this chat. The creator is its owner.
+         */
+        readonly ParticipantOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Role */
+            readonly role: string;
+            /** Joined At */
+            readonly joined_at?: string | null;
+        };
+        /**
+         * ParticipantAddIn
+         * @description Give a teammate this chat. They must already be in its workspace.
+         */
+        readonly ParticipantAddIn: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Role
+             * @default editor
+             * @enum {string}
+             */
+            readonly role: "editor" | "viewer";
         };
         /** SendOut */
         readonly SendOut: {
@@ -19226,6 +19303,77 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_list_participants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_add_participant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ParticipantAddIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_api_remove_participant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
                 };
             };
         };

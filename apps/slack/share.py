@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.db.models import Q
 
-from apps.canopy_sessions.access import visible_session_q
+from apps.canopy_sessions.access import readable_sessions
 from apps.canopy_sessions.models import Session
 from apps.workspaces import services as wsvc
 
@@ -75,13 +75,11 @@ def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
 
     Called from inside a Claude Code process, which knows its own identity
     (its Claude session id, its emdash task) but not canopy's. Every candidate
-    is filtered through the caller's workspaces and `visible_session_q` first,
+    is filtered through the session read rule (`access.readable_sessions`) first,
     so no identifier can reach a session the caller could not open anyway.
     Raises `Ambiguous` when the identifiers match more than one.
     """
-    slugs = wsvc.user_workspace_slugs(user)
-    visible = Session.objects.filter(visible_session_q(user), workspace_id__in=slugs) \
-        .select_related("agent").distinct()
+    visible = readable_sessions(user).select_related("agent")
     if session_id:
         try:
             return visible.filter(pk=session_id).first()

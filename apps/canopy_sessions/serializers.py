@@ -75,12 +75,26 @@ def participant_dto(sp: SessionParticipant) -> dict:
     }
 
 
+def participant_dto_for(user, role: str) -> dict:
+    """A roster entry for someone reading WITHOUT a participant row."""
+    display = (user.get_full_name() or "").strip() or user.email
+    return {
+        "user_id": user.pk,
+        "email": user.email,
+        "display_name": display,
+        "role": role,
+        "joined_at": None,
+        "last_seen_at": None,
+    }
+
+
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft, messages) -> dict:
     """The canonical `session.state` snapshot payload."""
     return {
         "messages": [message_dto(m) for m in messages],
         "active_draft": draft_dto(draft),
-        "participants": [participant_dto(p) for p in participants],
+        # Already DTOs: the socket merges rowless readers in (`_snapshot`).
+        "participants": [p if isinstance(p, dict) else participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),
         "current_user_id": current_user_id,
         # The dialog the agent is waiting on, if any. In the SNAPSHOT and not

@@ -17,7 +17,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.realtime.groups import session_group
 
-from . import agui, attach, drafts, participants, presence, serializers, stream_map
+from . import access, agui, attach, drafts, presence, serializers, stream_map
 from . import services as chat_services
 from .models import Message, Session, SessionParticipant
 
@@ -109,16 +109,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(await self._snapshot())
             return
 
-        if not await database_sync_to_async(participants.can_access)(session, user):
+        # The same authority REST uses (`access`). No auto-join: opening a chat
+        # is not a grant, and a role comes from the rule, not from a row this
+        # connection wrote.
+        role = await database_sync_to_async(access.role_for)(user, session)
+        if role is None:
             await self.close(code=4003)
             return
         self.session = session
         self.user = user
         self.contact = None
         self.read_only = False
-        # can_access auto-joins a workspace member as editor, so a role always
-        # exists by now; default to editor defensively.
-        self.role = await database_sync_to_async(participants.role_for)(session, user) or SessionParticipant.EDITOR
+        self.role = role
         self.group = session_group(session.id)
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
@@ -456,12 +458,16 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     # -- helpers --
 
-    @staticmethod
-    def _participant_dto(session, user):
+    def _participant_dto(self, session, user):
         """The joining user as the same DTO the snapshot uses, so a client can
-        append it to `participants` without a second shape to reconcile."""
-        sp = participants.ensure_participant(session, user)
-        return serializers.participant_dto(sp)
+        append it to `participants` without a second shape to reconcile.
+
+        Read, never written: this used to `ensure_participant`, which made
+        merely connecting a durable access grant."""
+        row = session.participants.select_related("user").filter(user=user).first()
+        if row is not None:
+            return serializers.participant_dto(row)
+        return serializers.participant_dto_for(user, self.role)
 
     async def _broadcast(self, message):
         await self.channel_layer.group_send(self.group, message)
@@ -484,7 +490,23 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _snapshot(self):
-        parts = list(self.session.participants.select_related("user").all())
+        parts = [serializers.participant_dto(p)
+                 for p in self.session.participants.select_related("user").all()]
+        # Someone reading through a leg other than a participant row (a
+        # runner-discovered session, their agent's thread) has no row, and no
+        # longer gets one by connecting. They still belong on the roster while
+        # they are here — the presence row renders participants ∩ present.
+        have = {p["user_id"] for p in parts}
+        present = set(presence.present_ids(self.session.id))
+        if self.user is not None:
+            present.add(self.user.id)
+        missing = present - have
+        if missing:
+            from django.contrib.auth import get_user_model
+
+            for u in get_user_model().objects.filter(pk__in=missing):
+                parts.append(serializers.participant_dto_for(
+                    u, access.role_for(u, self.session) or SessionParticipant.VIEWER))
         draft = drafts.active_draft(self.session)
         # Tail-first: the connect snapshot ships the last N messages (the same
         # SESSION_TAIL_DEFAULT the REST load uses), never the head. Scroll-back

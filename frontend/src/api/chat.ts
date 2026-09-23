@@ -304,3 +304,27 @@ export function answerMenu(
     },
   );
 }
+
+export type Participant = components["schemas"]["ParticipantOut"];
+
+/** Everyone explicitly given this chat. */
+export function listParticipants(id: string): Promise<Participant[]> {
+  return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants`);
+}
+
+/** Owner only: give a workspace teammate this chat, or change their role. */
+export function addParticipant(id: string, email: string, role: "editor" | "viewer"): Promise<Participant[]> {
+  return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+/** Owner removes someone; anyone can remove themselves. */
+export function removeParticipant(id: string, userId: number): Promise<Participant[]> {
+  return request<Participant[]>(
+    `/api/canopy-sessions/${encodeURIComponent(id)}/participants/${userId}`,
+    { method: "DELETE" },
+  );
+}

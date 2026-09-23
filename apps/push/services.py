@@ -185,19 +185,14 @@ QUESTION_BODY_MAX = 140
 def can_open(user, session) -> bool:
     """Whether `user` can open the chat a push would link them to.
 
-    The same two gates the chat's REST read applies (`_session_or_404`): the
-    tenant, then who within it. A push whose tap lands on "No Session matches
-    the given query" is worse than no push — it says something needs you and
-    then refuses to show you what (2026-09-23).
+    The session read rule itself (`canopy_sessions.access.can_read`). A push
+    whose tap lands on "No Session matches the given query" is worse than no
+    push — it says something needs you and then refuses to show you what
+    (2026-09-23).
     """
-    from apps.canopy_sessions.access import visible_session_q
-    from apps.workspaces import services as wsvc
+    from apps.canopy_sessions.access import can_read
 
-    if user is None or session is None:
-        return False
-    if session.workspace_id not in wsvc.user_workspace_slugs(user):
-        return False
-    return Session.objects.filter(visible_session_q(user), pk=session.pk).exists()
+    return can_read(user, session)
 
 
 def _question_audience(session):

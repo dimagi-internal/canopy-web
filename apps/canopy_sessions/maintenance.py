@@ -53,7 +53,7 @@ def _scoped(qs, workspace_slugs):
     return qs.filter(session__workspace__slug__in=workspace_slugs)
 
 
-def noise_queryset(*, workspace_slugs, session_id=None):
+def noise_queryset(*, workspace_slugs, session_id=None, user=None):
     """Stored USER rows whose text is harness output.
 
     `istartswith` mirrors `is_system_noise`: prefix-anchored, so a human quoting a
@@ -68,6 +68,12 @@ def noise_queryset(*, workspace_slugs, session_id=None):
     qs = Message.objects.filter(predicate, role=Message.USER)
     if session_id is not None:
         qs = qs.filter(session_id=session_id)
+    if user is not None:
+        # A caller's "your sessions" means the sessions THEY can read
+        # (`access`), not every conversation in their workspaces.
+        from .access import readable_sessions
+
+        qs = qs.filter(session__in=readable_sessions(user).values("pk"))
     return _scoped(qs, workspace_slugs)
 
 
@@ -90,24 +96,25 @@ def _report(qs, sample: int) -> dict:
     }
 
 
-def audit_noise(*, workspace_slugs, session_id=None, sample: int = 5) -> dict:
+def audit_noise(*, workspace_slugs, session_id=None, sample: int = 5, user=None) -> dict:
     """What harness output is stored as user messages. Read-only.
 
     Returns {"matched", "sessions", "sample": [...]}. Run this before `purge_noise`
     — "how much of my chat history does this touch" is a question worth answering
     before the delete, not after.
     """
-    return _report(noise_queryset(workspace_slugs=workspace_slugs, session_id=session_id), sample)
+    return _report(noise_queryset(workspace_slugs=workspace_slugs, session_id=session_id, user=user), sample)
 
 
-def purge_noise(*, workspace_slugs, session_id=None, sample: int = 5, apply: bool = False) -> dict:
+def purge_noise(*, workspace_slugs, session_id=None, sample: int = 5, apply: bool = False,
+                user=None) -> dict:
     """Delete the rows `audit_noise` reports. DRY RUN unless `apply=True`.
 
     Returns the audit report plus {"applied": bool, "deleted": int}. The sample is
     captured BEFORE the delete, so the result records what went rather than
     describing an empty table afterwards.
     """
-    qs = noise_queryset(workspace_slugs=workspace_slugs, session_id=session_id)
+    qs = noise_queryset(workspace_slugs=workspace_slugs, session_id=session_id, user=user)
     report = _report(qs, sample)
     if not apply:
         return {**report, "applied": False, "deleted": 0}

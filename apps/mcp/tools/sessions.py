@@ -28,6 +28,19 @@ from apps.mcp.server import mcp
 from apps.workspaces import services as wsvc
 
 
+async def _user(user_id):
+    """The caller, for the session read rule. No caller -> a user that matches
+    nothing, so an unauthenticated call still sees NOTHING (fails closed)."""
+    from django.contrib.auth import get_user_model
+    from django.contrib.auth.models import AnonymousUser
+
+    if user_id is None:
+        return AnonymousUser()
+    user = await sync_to_async(get_user_model().objects.filter(pk=user_id).first,
+                               thread_sensitive=True)()
+    return user or AnonymousUser()
+
+
 @mcp.tool
 async def audit_session_noise(
     session_id: str | None = None,
@@ -53,6 +66,7 @@ async def audit_session_noise(
     try:
         report = await sync_to_async(maintenance.audit_noise, thread_sensitive=True)(
             workspace_slugs=slugs, session_id=session_id, sample=sample,
+            user=await _user(user_id),
         )
     except Exception as exc:  # noqa: BLE001
         await write_audit(
@@ -108,6 +122,7 @@ async def purge_session_noise(
     try:
         report = await sync_to_async(maintenance.purge_noise, thread_sensitive=True)(
             workspace_slugs=slugs, session_id=session_id, sample=sample, apply=apply,
+            user=await _user(user_id),
         )
     except Exception as exc:  # noqa: BLE001
         await write_audit(
