@@ -180,14 +180,25 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         </p>
       )}
 
+      {/* ALWAYS, and above the declaration-dependent half. Which vault this agent
+          reads and the service account that opens it are facts about the agent,
+          not about its runtime.yaml — and they were rendered inside the
+          "declares some secrets" branch, so the form was hidden on exactly the
+          agents nobody had registered yet (ada/echo/eva/hal, all declared: 0,
+          2026-09-23: "I don't even see where the 1pass service account goes").
+          ace showed it only because it declares 45 refs. */}
+      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
+
       {rows.length === 0 ? (
         // Zero refs is UNDECLARED, not provisioned — the state every agent is in
         // before someone writes a runtime.yaml. Saying "ready" would assert that
         // a box can run it, which nobody has established.
         <p className="text-[13px] text-muted-foreground" data-testid="agent-credentials-undeclared">
-          This agent declares no secrets. Shape lives in its repo’s{' '}
+          This agent declares no secrets of its own yet. What it needs is listed in its repo’s{' '}
           <code className="font-mono text-[12px]">runtime.yaml</code> and reaches canopy-web as the
-          registry’s secret refs — until it declares some, there is nothing to provision here.
+          registry’s secret refs. Setting the vault above is still worth doing: a runner reads this
+          agent’s <code className="font-mono text-[12px]">.env.tpl</code> from it when it provisions
+          the agent, whether or not anything is declared here.
         </p>
       ) : (
         <>
@@ -195,8 +206,6 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
           <p className="mb-4 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
             {headline(rows)}
           </p>
-
-          <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
 
           {declaresMailbox(rows) && (
             <section className="mb-5" data-testid="needs-you">
