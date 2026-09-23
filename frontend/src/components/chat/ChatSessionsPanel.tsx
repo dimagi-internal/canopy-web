@@ -18,7 +18,7 @@ import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
-import { closeIntent, closeResultMessage } from './closeAction'
+import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
 import {
   onlineSessionCapableRunners,
   parkedReason,
@@ -94,6 +94,8 @@ export function ChatSessionsPanel({
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [closingId, setClosingId] = useState<string | null>(null)
+  // Closes relayed to a runner and not yet confirmed: session id -> when.
+  const [pendingClose, setPendingClose] = useState<Record<string, number>>({})
   const [closeError, setCloseError] = useState<string | null>(null)
 
   // "Run on" picker state: a target (agent or project) picked from the New
@@ -149,9 +151,10 @@ export function ChatSessionsPanel({
   }, [agents])
 
   // The row is NOT removed here. `closing: true` means the close was relayed
-  // and the emdash task is still the truth — the row leaves on the next
-  // `supervisor.sessions` push, once the runner's report has actually retired
-  // it. Removing it optimistically would be a lie whenever the delete failed.
+  // and the emdash task is still the truth: the row leaves once the runner's
+  // report has actually retired it. Removing it optimistically would be a lie
+  // whenever the delete failed. So it is MARKED instead ("Closing…") and the
+  // list re-checks every 2s until it goes (see settleClosing).
   const onClose = useCallback(
     async (s: ChatSession) => {
       const intent = closeIntent(s)
@@ -168,10 +171,7 @@ export function ChatSessionsPanel({
         const result = await closeSession(s.id)
         const message = closeResultMessage(result, s)
         if (message) setCloseError(message)
-        // The panel has no extracted reload — its load lives inline in a
-        // useEffect and a 20s interval refresh. Re-fetch with the SAME state
-        // the effects use so a closed row leaves without waiting out the
-        // interval.
+        else if (result.closing) setPendingClose((prev) => ({ ...prev, [s.id]: Date.now() }))
         else setSessions(await listSessions(showArchived ? 'all' : 'active'))
       } catch {
         setCloseError('Couldn’t close this session')
@@ -181,6 +181,32 @@ export function ChatSessionsPanel({
     },
     [showArchived],
   )
+
+  // Watch the relayed closes through to the end, quickly, rather than leaving
+  // them to the 20s refresh.
+  const waitingOnCloses = Object.keys(pendingClose).length > 0
+  useEffect(() => {
+    if (!waitingOnCloses) return
+    const state: SessionState = showArchived ? 'all' : 'active'
+    const tick = window.setInterval(() => {
+      listSessions(state)
+        .then((listed) => {
+          setSessions(listed)
+          setPendingClose((prev) => {
+            const { pending, stuck } = settleClosing(prev, listed, Date.now())
+            if (stuck.length > 0) {
+              const names = listed.filter((x) => stuck.includes(x.id)).map((x) => x.title?.trim() || 'A chat')
+              setCloseError(
+                `${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} still open: its runner has not confirmed the close. Try again, or close it in emdash.`,
+              )
+            }
+            return pending
+          })
+        })
+        .catch(() => { /* keep waiting; the next tick retries */ })
+    }, 2_000)
+    return () => window.clearInterval(tick)
+  }, [waitingOnCloses, showArchived])
 
   const startChat = useCallback(
     (agent: AgentOut, runnerId?: string) => {
@@ -485,7 +511,7 @@ export function ChatSessionsPanel({
                     to={`/w/${s.workspace}/chat/${s.id}`}
                     data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
                     className={`flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
-                      parkedWhy ? ' opacity-60' : ''
+                      parkedWhy || s.id in pendingClose ? ' opacity-60' : ''
                     }`}
                   >
                     <div className="min-w-0">
@@ -552,11 +578,15 @@ export function ChatSessionsPanel({
                         ? intent.why
                         : 'Close this session (deletes its emdash task)'
                     }
-                    disabled={intent.kind === 'blocked' || closingId === s.id}
+                    disabled={intent.kind === 'blocked' || closingId === s.id || s.id in pendingClose}
                     onClick={() => void onClose(s)}
-                    className="shrink-0 px-3 text-muted-foreground hover:text-destructive disabled:opacity-40"
+                    className={
+                      s.id in pendingClose
+                        ? 'shrink-0 px-3 text-[12px] italic text-muted-foreground'
+                        : 'shrink-0 px-3 text-muted-foreground hover:text-destructive disabled:opacity-40'
+                    }
                   >
-                    {closingId === s.id ? '…' : '×'}
+                    {s.id in pendingClose ? 'Closing…' : closingId === s.id ? '…' : '×'}
                   </button>
                 </div>
               </li>
