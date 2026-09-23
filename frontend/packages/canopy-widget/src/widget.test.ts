@@ -263,6 +263,66 @@ describe('the credential path', () => {
     expect(init_.headers['X-CSRFToken']).toBeUndefined()
   })
 
+  it('sends a csrfToken the host supplied, when no cookie is readable at all', async () => {
+    // THE bug this option exists for. A Django host with
+    // `CSRF_COOKIE_HTTPONLY = True` (connect-labs) hides the cookie from
+    // `document.cookie` at every name, so `csrfCookieName` cannot rescue it:
+    // the header is absent, the mint 403s, and the widget silently never
+    // starts. Such a host renders the token into the page instead.
+    document.cookie = 'csrftoken=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+
+    const { fromFrame } = widgetHarness({ csrfToken: 'from-the-dom' })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const [, init_] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(init_.headers['X-CSRFToken']).toBe('from-the-dom')
+  })
+
+  it('re-reads a csrfToken provider on every mint, so a rotated token is not stale', async () => {
+    // Django rotates the CSRF token on login. A value captured once at `init`
+    // would then be wrong for every mint after that, which fails as a 403 long
+    // after the call that caused it.
+    let current = 'first'
+    const { fromFrame } = widgetHarness({ csrfToken: () => current })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    current = 'rotated'
+    await fromFrame({ source: SOURCE, type: 'token-request', id: 'r1' })
+
+    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[0][1].headers['X-CSRFToken']).toBe('first')
+    expect(calls[1][1].headers['X-CSRFToken']).toBe('rotated')
+  })
+
+  it('prefers the supplied csrfToken over a cookie that happens to be readable', async () => {
+    // A host passing this has said the cookie is not the source of truth.
+    // Falling back to one that merely exists could send another tenant's token.
+    document.cookie = 'csrftoken=stale-cookie'
+
+    const { fromFrame } = widgetHarness({ csrfToken: () => 'from-the-dom' })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const [, init_] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(init_.headers['X-CSRFToken']).toBe('from-the-dom')
+  })
+
+  it('mints without the header when the provider throws or finds nothing', async () => {
+    // A selector that matches nothing throws on `.value`. The mint's own 403
+    // names the problem; an exception escaping here would instead look like the
+    // widget failing to start for no stated reason.
+    document.cookie = 'csrftoken=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+
+    const { fromFrame } = widgetHarness({
+      csrfToken: () => {
+        throw new Error('no such element')
+      },
+    })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    const [, init_] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(init_.headers['X-CSRFToken']).toBeUndefined()
+    expect(init_.method).toBe('POST')
+  })
+
   it('answers a refresh request with a fresh mint, keyed by id', async () => {
     const { fromFrame, sent } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'token-request', id: 'r1' })

@@ -93,6 +93,27 @@ export interface CanopyWidgetOptions {
    *  `csrftoken_canopy`). With the wrong name the header is simply absent, the
    *  mint 403s, and the widget shows an unexplained failure to start. */
   csrfCookieName?: string
+  /** The host's CSRF token itself, when JavaScript cannot read it from a
+   *  cookie. Wins over `csrfCookieName`.
+   *
+   *  A Django host that sets `CSRF_COOKIE_HTTPONLY = True` — connect-labs does
+   *  — hides the cookie from `document.cookie` entirely, so the cookie route
+   *  cannot work there at ANY name. Django itself treats the DOM as a
+   *  first-class source of the token (`django/middleware/csrf.py`: "depending
+   *  on whether the client obtained the token from the DOM or the cookie"), and
+   *  such a host renders it into the page instead:
+   *
+   *      csrfToken: () => document.querySelector('[name=csrfmiddlewaretoken]').value
+   *
+   *  Pass a FUNCTION rather than a string wherever the value can change within
+   *  a page's life — Django rotates the token on login, and a string captured
+   *  at `init` would then be stale for every later mint. A string is accepted
+   *  for the simple case.
+   *
+   *  This also covers a host whose scheme is not Django's at all: anything that
+   *  can produce the value its own backend expects in `X-CSRFToken` can send
+   *  it from here. */
+  csrfToken?: string | (() => string | null | undefined)
   /** Where a dragged launcher position is remembered. Defaults to
    *  `localStorage`; pass `null` to have the bubble start in its corner every
    *  time. */
@@ -241,10 +262,28 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     return body.token
   }
 
-  /** Django's CSRF cookie, if the host uses one. Read rather than required, so
-   *  a host with a different scheme (or none, for a `@csrf_exempt` mint) is not
-   *  forced into ours. */
+  /** The host's CSRF token, if it has one. Read rather than required, so a host
+   *  with a different scheme (or none, for a `@csrf_exempt` mint) is not forced
+   *  into ours.
+   *
+   *  `csrfToken` is consulted first and wins, because a host that passes it has
+   *  said the cookie is not readable — falling back to the cookie there would
+   *  send nothing while looking like it tried. It is read on every mint, not
+   *  captured once, so a rotated token (Django rotates on login) is picked up.
+   *  A throwing provider is treated as "no token" rather than being allowed to
+   *  break the mint: the 403 that follows names the real problem, an exception
+   *  here would not. */
   function csrfHeader(): Record<string, string> {
+    const supplied = options.csrfToken
+    if (supplied !== undefined) {
+      let token: string | null | undefined
+      try {
+        token = typeof supplied === 'function' ? supplied() : supplied
+      } catch {
+        token = null
+      }
+      return token ? { 'X-CSRFToken': token } : {}
+    }
     if (typeof document === 'undefined') return {}
     const token = readCookie(document.cookie, options.csrfCookieName || 'csrftoken')
     return token ? { 'X-CSRFToken': token } : {}
