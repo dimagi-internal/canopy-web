@@ -23,6 +23,7 @@ read this secret" unanswerable.
 """
 from __future__ import annotations
 
+import pathlib
 import shlex
 import subprocess
 
@@ -129,3 +130,31 @@ def test_the_refusal_reaches_the_report_not_just_the_log(tmp_path):
     out, _ = _run(tmp_path, "canopy-web")
     detail = [l for l in out.splitlines() if l.startswith("DETAIL=")][0]
     assert "shared vault" in detail and ("no vault" in detail or "no key" in detail)
+
+
+def test_an_unregistered_agent_never_inherits_the_tenants_vault(tmp_path):
+    """The field-splitting trap, pinned.
+
+    `agent_vault_config` returns four fields. They were TAB separated, and tab is
+    IFS *whitespace*, so `read` collapses leading empties: an agent with no vault
+    got the TENANT's vault and the TENANT's key in the agent slots. That is a
+    cross-level fallback carrying the wrong tier's credential, and it is what
+    ada/echo/hal hit on cloud-ec2-1 (2026-09-22) — "op inject from Canopy-Shared
+    failed: Agent-Hal isn't a vault in this account".
+    """
+    script = '''
+set -uo pipefail
+cfg="$(printf '%s\\x1f%s\\x1f%s\\x1f%s' "" "" "Canopy-Shared" "SHARED-KEY")"
+IFS=$'\\x1f' read -r vault op_token shared_vault shared_token <<<"$cfg"
+echo "vault=[$vault] key=[$op_token] shared=[$shared_vault] sharedkey=[$shared_token]"
+'''
+    out = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=30).stdout
+    assert "vault=[] key=[] shared=[Canopy-Shared] sharedkey=[SHARED-KEY]" in out
+
+
+def test_the_config_reader_uses_a_non_whitespace_separator(tmp_path):
+    """Belt and braces on the file itself: a tab here silently reintroduces the
+    collapse above, and every test that passes fields explicitly would still pass."""
+    src = (pathlib.Path(__file__).resolve().parent.parent / "bootstrap_agents.sh").read_text()
+    reader = src.split("agent_vault_config()", 1)[1].split("\n}", 1)[0]
+    assert "\\x1f" in reader and "\\t" not in reader
