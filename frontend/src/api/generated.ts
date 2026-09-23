@@ -11526,6 +11526,19 @@ export interface components {
             };
             /** Mcp Token */
             readonly mcp_token?: string | null;
+            readonly on_behalf_of?: components["schemas"]["OnBehalfOut"] | null;
+        };
+        /**
+         * OnBehalfOut
+         * @description What a connected site needs to act as the caller for one conversation.
+         */
+        readonly OnBehalfOut: {
+            /** Assertion */
+            readonly assertion: string;
+            /** Audience */
+            readonly audience: string;
+            /** Subject */
+            readonly subject: string;
         };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {

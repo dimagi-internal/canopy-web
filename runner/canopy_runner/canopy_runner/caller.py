@@ -172,7 +172,16 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
            # owner's PAT. The session cannot read this file (profile_guard), so it
            # cannot lift the token; a missing one makes the helper send an invalid
            # header, never the PAT.
-           "mcp_token": turn.get("mcp_token") or None}
+           "mcp_token": turn.get("mcp_token") or None,
+           # And, when the caller came from a connected site, what that site
+           # needs to run this agent's calls as THEM rather than as the agent
+           # (canopy's on-behalf-of assertion). Same handling as the token
+           # above: the session cannot read this file, so it cannot lift it —
+           # the site's own headers helper does, and trades it for a
+           # credential of its own. Absent means the agent keeps using its own,
+           # which is where it was before any of this.
+           "on_behalf_of": turn.get("on_behalf_of") or None,
+           }
     try:
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)

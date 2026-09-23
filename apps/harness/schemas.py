@@ -530,6 +530,21 @@ class CallerContextOut(Schema):
     envelope: dict
 
 
+class OnBehalfOut(Schema):
+    """What a connected site needs to act as the caller for one conversation."""
+
+    #: The signed statement itself. Short-lived by design — the site trades it
+    #: for a credential of its own straight away.
+    assertion: str
+    #: WHICH site it is addressed to, so a runner holding several never offers
+    #: it to the wrong one. An assertion minted for one site is refused by
+    #: every other, but sending it there at all would leak it.
+    audience: str
+    #: That site's own id for the person, echoed so a log can say who this was
+    #: for without anyone decoding a token to find out.
+    subject: str
+
+
 class ClaimedTurnOut(TurnOut):
     """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
     the caller envelope, so the runner can hand it to the agent without a second
@@ -541,9 +556,23 @@ class ClaimedTurnOut(TurnOut):
     # place of the runner owner's PAT (harness.models.CallerToken). Null otherwise.
     mcp_token: str | None = None
 
+    # For a CONFINED turn whose caller arrived from a connected site: a short
+    # assertion that site can verify to run the agent's calls as that person
+    # (apps/tokens/onbehalf.py). The runner writes it into the session profile,
+    # where the site's MCP headers helper trades it for a token of its own.
+    #
+    # Null whenever there is nobody to vouch for — an email correspondent has no
+    # account at any site — and that null is the agent keeping its own
+    # credentials, which is where it was before any of this.
+    on_behalf_of: OnBehalfOut | None = None
+
     @staticmethod
     def resolve_mcp_token(obj) -> str | None:
         return getattr(obj, "mcp_token", None)
+
+    @staticmethod
+    def resolve_on_behalf_of(obj):
+        return getattr(obj, "on_behalf_of", None)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:
