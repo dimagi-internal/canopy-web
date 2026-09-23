@@ -78,6 +78,7 @@ describe('sending over HTTP', () => {
 
   it('without it, a user sends over the socket exactly as before', async () => {
     const hook = renderHook(() => useSessionSocket({ sessionId: 's1', wsUrl: () => 'wss://h/x' }))
+    act(() => hook.result.current.updateDraft('hello'))
     await act(async () => hook.result.current.sendChat())
     expect(FakeSocket.sent.some((f) => f.includes('chat.send'))).toBe(true)
   })

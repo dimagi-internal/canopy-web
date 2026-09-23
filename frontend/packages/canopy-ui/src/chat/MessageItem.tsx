@@ -136,6 +136,17 @@ export function MessageItem({
       {isError && message.role === "assistant" && (
         <ErrorFooter detail={message.error_detail} hasPartial={Boolean(text)} />
       )}
+      {/* Your own line, before canopy has confirmed it. Shown at once so a send
+          never looks like it vanished; flagged plainly if it did not go. */}
+      {message.role === "user" && isPending && (
+        <div className="mt-1 text-[11px] opacity-70" role="status">Sending…</div>
+      )}
+      {message.role === "user" && isError && (
+        <div className="mt-1 flex items-start gap-1 text-[11px] font-medium" role="alert">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{message.error_detail || "Not sent."}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -27,6 +27,25 @@ const UNBLOCKING_FRAMES = new Set([
   "chat.tool_result",
 ]);
 
+/**
+ * Every frame `sessionReducer` handles. The socket hook hands the reducer ONLY
+ * these, and gives anything else to `onUnknownEvent`, so a frame missing from
+ * here is a frame the reducer never sees. That happened: from #775
+ * (2026-09-13) the hook kept its own hand-written list, which lacked every
+ * `draft.*` and `presence.*` frame and `session.turn_status`. Your own line did
+ * not appear when you sent it (`draft.committed`), and the co-edited draft,
+ * the presence roster and the live turn status all went quiet, with no error.
+ * `sessionReducer.events.test.ts` fails if this and the switch below differ.
+ */
+export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
+  "session.state", "session.activity", "session.stop", "session.menu",
+  "session.turn_status", "session.error", "session.title_updated",
+  "chat.stream_start", "chat.user_message", "chat.delta", "chat.stream_complete",
+  "chat.stream_error", "chat.stream_cancelled", "chat.tool_use", "chat.tool_result",
+  "draft.updated", "draft.lock_changed", "draft.committed", "draft.discarded",
+  "presence.joined", "presence.left",
+]);
+
 export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState {
   if (frame.event === "chat.stream_start" || frame.event === "draft.committed") {
     // A new turn is starting, so the previous turn's stop outcome is history —
@@ -41,8 +60,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     prev = { ...prev, activity: "working", menu: undefined };
   }
   switch (frame.event) {
-    case "session.state":
-      return frame.data;
+    case "session.state": {
+      const messages = keepUnechoedSends(prev.messages, frame.data.messages);
+      return messages === frame.data.messages ? frame.data : { ...frame.data, messages };
+    }
 
     case "chat.stream_start": {
       // Upsert: if the assistant message already exists (rare — a runner that
@@ -153,6 +174,8 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                   // is the durable one, so the row sorts where a reload puts it.
                   turn_index: frame.data.turn_index,
                   plaintext: frame.data.plaintext,
+                  // The agent read it, so a pending or unconfirmed row is sent.
+                  ...(m.role === "user" ? { status: "complete" as const, error_detail: null } : {}),
                 }
               : m,
           ),
@@ -333,6 +356,15 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return prev;
 
     case "draft.committed": {
+      // The sender already shows its line (a pending row stamped with this
+      // client_id, see `withPendingSend`). Confirm it rather than add a second.
+      const cid = frame.data.client_id;
+      if (cid && prev.messages.some((m) => m.content?.client_id === cid)) {
+        return {
+          ...markSendDelivered(prev, cid, frame.data.user_message_id),
+          active_draft: prev.active_draft ? { ...prev.active_draft, body: "" } : prev.active_draft,
+        };
+      }
       // Insert the optimistic USER message from the draft body that's about
       // to be cleared. The assistant reply is NOT inserted here — canopy's
       // draft.committed carries no assistant id; `chat.stream_start` upserts
@@ -445,4 +477,90 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     default:
       return prev;
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// A send the SENDER is waiting to hear back about.
+//
+// Your line goes on screen the moment you press send, as "pending", stamped
+// with the send's client_id. It becomes "complete" on the server's receipt
+// (`draft.committed` carrying that id), or when an HTTP resend succeeds, or when
+// the transcript echoes it back. If none of those happen it becomes "error",
+// and the words stay on screen. Before this the composer cleared on send and
+// nothing showed the line until the agent read it, so a send lost on a dead
+// socket simply vanished (2026-09-23).
+// ---------------------------------------------------------------------------
+
+export function withPendingSend(
+  prev: SessionState,
+  { clientId, text }: { clientId: string; text: string },
+): SessionState {
+  const nowIso = new Date().toISOString();
+  const row: Message = {
+    id: `local:${clientId}`,
+    turn_index: prev.messages.reduce((acc, m) => Math.max(acc, m.turn_index), 0) + 1,
+    role: "user",
+    content: { text, client_id: clientId },
+    plaintext: text,
+    status: "pending",
+    error_detail: null,
+    started_at: null,
+    completed_at: null,
+    created_at: nowIso,
+  };
+  return { ...prev, messages: [...prev.messages, row] };
+}
+
+function updateSend(prev: SessionState, clientId: string, patch: Partial<Message>): SessionState {
+  let changed = false;
+  const messages = prev.messages.map((m) => {
+    if (m.content?.client_id !== clientId) return m;
+    changed = true;
+    return { ...m, ...patch };
+  });
+  return changed ? { ...prev, messages } : prev;
+}
+
+export function markSendDelivered(prev: SessionState, clientId: string, messageId?: string): SessionState {
+  return updateSend(prev, clientId, {
+    status: "complete",
+    error_detail: null,
+    completed_at: new Date().toISOString(),
+    ...(messageId ? { id: messageId } : {}),
+  });
+}
+
+export function markSendFailed(prev: SessionState, clientId: string, detail: string): SessionState {
+  // Only a row still waiting can fail: a late failure must not overturn a
+  // receipt or a transcript echo that already proved the send landed.
+  const row = prev.messages.find((m) => m.content?.client_id === clientId);
+  if (!row || row.status !== "pending") return prev;
+  return updateSend(prev, clientId, { status: "error", error_detail: detail });
+}
+
+/** Your own sends the snapshot does not hold yet, carried across it.
+ *
+ *  A snapshot REPLACES the message list, and in a transcript-sourced session
+ *  your line is not a server row until the agent has read it. That can be
+ *  minutes if a turn is still running, since a session runs one turn at a
+ *  time. So every reconnect in that window (a phone resuming, a flaky network)
+ *  took the line off screen, and it came back only when the agent read it. It
+ *  looked lost. A row is kept only while the snapshot lacks it: once the
+ *  transcript echo is in the snapshot (same words among its recent user rows),
+ *  the snapshot's copy wins.
+ */
+function keepUnechoedSends(previous: Message[], snapshot: Message[]): Message[] {
+  const mine = previous.filter(
+    (m) => m.role === "user" && typeof m.content?.client_id === "string" &&
+      !snapshot.some((s) => s.id === m.id),
+  );
+  if (mine.length === 0) return snapshot;
+  const recent = new Set(
+    snapshot.filter((m) => m.role === "user").slice(-12).map((m) => m.plaintext.trim()),
+  );
+  const carried = mine.filter((m) => !recent.has(m.plaintext.trim()));
+  if (carried.length === 0) return snapshot;
+  const top = snapshot.reduce((acc, m) => Math.max(acc, m.turn_index), 0);
+  return [...snapshot, ...carried.map((m, i) => ({ ...m, turn_index: top + 1 + i }))];
 }

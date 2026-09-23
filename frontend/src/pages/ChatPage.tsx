@@ -151,7 +151,17 @@ export function ChatPage() {
   // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
   // back into the same `WsEvent`s the reducer has always consumed, and
   // `agui.test.ts` proves the reducer reaches identical state either way.
-  const socket = useSessionSocket({ sessionId: id, wsUrl, protocol: 'ag-ui' })
+  const socket = useSessionSocket({
+    sessionId: id,
+    wsUrl,
+    protocol: 'ag-ui',
+    // A socket send with no receipt is resent here, under the same client_id,
+    // so it cannot become a second turn (see canopy-ui's sendChat).
+    resendOverHttp: useCallback(
+      (text: string, clientId: string) => sendMessage(id, text, clientId),
+      [id],
+    ),
+  })
 
   // Session meta + scroll-back cursor seed.
   useEffect(() => {
