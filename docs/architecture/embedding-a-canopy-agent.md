@@ -244,6 +244,32 @@ collides with its siblings — pass the real name as `csrfCookieName` in step 4.
 Leave it wrong and the header is simply absent: the mint 403s and the widget
 never starts, with nothing on the page to say why.
 
+**If JavaScript cannot read your CSRF cookie at all, pass the token instead.**
+`CSRF_COOKIE_HTTPONLY = True` (connect-labs sets it) hides the cookie from
+`document.cookie` at *every* name, so no `csrfCookieName` can rescue it. Django
+treats the DOM as a first-class source of the token — its own middleware says
+"depending on whether the client obtained the token from the DOM or the cookie"
+— so render it into the page and hand it over:
+
+```js
+canopy.init({
+  // …
+  csrfToken: () => document.querySelector('[name=csrfmiddlewaretoken]').value,
+})
+```
+
+Pass a **function**, not a string, wherever the value can change within a page's
+life: Django rotates the token on login, and a string captured at `init` is then
+stale for every later mint. It is read afresh on each one. `csrfToken` wins over
+`csrfCookieName`, and anything that can produce the value your backend expects
+works here — the scheme does not have to be Django's.
+
+Do **not** reach for `CSRF_COOKIE_HTTPONLY = False` to make the cookie route
+work. Django's own docs note the setting buys little (CSRF defends cross-origin;
+an attacker who can read cookies from JS already has XSS), so it is a defensible
+change — but it weakens a global setting to accommodate one widget, and this
+option exists precisely so you do not have to.
+
 ---
 
 ## 4. Add the script tag
@@ -260,6 +286,8 @@ never starts, with nothing on the page to say why.
     // dismissible: false,             // default true — see below
     // Only if your CSRF cookie is not named `csrftoken`:
     // csrfCookieName: 'csrftoken_labs',
+    // Or, if JS cannot read the cookie at all (CSRF_COOKIE_HTTPONLY):
+    // csrfToken: () => document.querySelector('[name=csrfmiddlewaretoken]').value,
   })
 </script>
 ```
@@ -384,7 +412,7 @@ no launcher to reopen it with.
 **Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
 called when data your page shows has changed (§5a); `dismissible`, `storage`,
-`csrfCookieName` as above; plus `width`, `title`, `open: true`.
+`csrfCookieName`, `csrfToken` as above; plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `setPageState()`, `registerAction()`,
@@ -572,6 +600,7 @@ In a browser, on your page, signed in as an ordinary user:
 | Panel says "not configured correctly" | same cause — the shell rendered with no origins |
 | "No agent is available here yet" | no **Allowed agents** row, or this user is not a member of that agent's workspace |
 | A token error in the panel | your endpoint 403'd, 500'd, or returned no `token` |
+| The mint 403s and no `X-CSRFToken` was sent | your CSRF cookie is renamed (`csrfCookieName`) or unreadable from JS because it is `HttpOnly` (`csrfToken`) — §3 |
 | 404 on `/embed/chat` | app name mismatch, credential revoked, or no frame origins |
 | 503 on `/embed/widget.js` | canopy's frontend is not built |
 | Agent replies but knows nothing about the page | no `setPageState` call, or it ran after the first message was sent |
