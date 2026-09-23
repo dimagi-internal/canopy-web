@@ -143,6 +143,9 @@ class AgentRunnerRuleOut(StrictModel):
     ready: bool
     enabled: bool = True
     queued_count: int = 0
+    # manual | auto overrides the agent's turn mode for this rule's work; "" = the
+    # rule says nothing about mode. Rule-level, repeated on every row like strict.
+    turn_mode: str = ""
 
 
 class AgentRunnerRuleIn(StrictModel):
@@ -168,6 +171,10 @@ class AgentRunnerRuleIn(StrictModel):
     actor: str = ""
     runners: list[AgentRunnerRowIn] = Field(default_factory=list)
     strict: bool = False
+    # "" leaves the mode to the next rung (the source rule, then the agent). An
+    # `auto` on a rule that names a person applies only to a VERIFIED message
+    # from them — see apps/harness/turn_mode.py.
+    turn_mode: Literal["", "manual", "auto"] = ""
 
 
 class AgentRunnerRulesIn(StrictModel):

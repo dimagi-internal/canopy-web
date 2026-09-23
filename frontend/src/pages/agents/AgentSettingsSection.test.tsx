@@ -16,7 +16,7 @@ vi.mock('@/api/agents', async (orig) => ({
 }))
 // The settings controls each fetch their own state; what is under test here is
 // where they sit on the page, not their behaviour (they have their own tests).
-vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>runners-control</div> }))
+vi.mock('@/components/agents/AgentRouting', () => ({ AgentRouting: () => <div>routing-control</div> }))
 vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () => <div>owner-control</div> }))
 vi.mock('@/components/agents/AgentAdminsControl', () => ({ AgentAdminsControl: () => <div>admins-control</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
@@ -60,8 +60,8 @@ describe('AgentSettingsSection', () => {
     expect(where('Who operates it', 'Admins')).toBeTruthy()
     expect(where('Who can reach it', 'Callers')).toBeTruthy()
     expect(where('Who can reach it', 'Slack')).toBeTruthy()
-    expect(where('How it runs', 'Turn mode')).toBeTruthy()
-    expect(where('How it runs', 'Runners')).toBeTruthy()
+    // Turn mode and runners are one table now: a rule can set both.
+    expect(where('How it runs', 'Routing')).toBeTruthy()
 
     // Who may change each one is on the page, not discovered by an error.
     expect(within(screen.getByRole('region', { name: 'Who can reach it' }))

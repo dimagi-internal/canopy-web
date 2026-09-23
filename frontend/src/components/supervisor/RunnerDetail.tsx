@@ -1,7 +1,7 @@
 import { useState, type JSX } from 'react'
 import { pauseRunner, unpauseRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
-import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
@@ -95,7 +95,7 @@ export function RunnerDetail({
       </button>
       {expanded.has(a.slug) && (
         <div className="px-2 pb-2">
-          <RunnerAssignments agentSlug={a.slug} />
+          <AgentRouting agentSlug={a.slug} initialTurnMode={a.turn_mode} />
         </div>
       )}
     </div>

@@ -4,9 +4,8 @@ import { useLocation, useOutletContext } from 'react-router-dom'
 import { AgentAdminsControl } from '@/components/agents/AgentAdminsControl'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
-import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
-import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
@@ -25,7 +24,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 // Grouped by the QUESTION each answers, not by which API serves it:
 //   Who operates it   — owner, admins
 //   Who can reach it  — callers, Slack
-//   How it runs       — turn mode, runners
+//   How it runs       — routing: which runner, and which mode, per kind of work
 //   Credentials       — the keys, and the vault they are read from
 export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
@@ -125,22 +124,18 @@ export function AgentSettingsSection() {
       <Section
         id="running"
         title="How it runs"
-        description={`What ${agent.name} may do in a turn, and which machines execute it.`}
+        description={`Which machine runs each of ${agent.name}'s turns, and whether it may act without asking you first.`}
       >
-        <div className="divide-y divide-border rounded-lg border border-border bg-card">
+        <div className="rounded-lg border border-border bg-card">
+          {/* Turn mode and runners were two settings; a routing rule can now set
+              both ("Beth's email → cloud, auto"), so they are one table whose
+              last row is the agent's own defaults (spec 2026-09-23). */}
           <Setting
-            title="Turn mode"
+            title="Routing"
             who="Workspace editors and owners"
-            description={`How ${agent.name}'s turns handle outbound actions. Read at the start of every turn.`}
+            description="Add a rule to send one kind of work, or one person's work, to a different runner or mode."
           >
-            <TurnModeToggle agentSlug={agent.slug} initialMode={agent.turn_mode} />
-          </Setting>
-          <Setting
-            title="Runners"
-            who="Workspace editors and owners"
-            description={`Which runners execute ${agent.name}'s turns, in order. The top online and ready runner claims first.`}
-          >
-            <RunnerAssignments agentSlug={agent.slug} />
+            <AgentRouting agentSlug={agent.slug} initialTurnMode={agent.turn_mode} />
           </Setting>
         </div>
       </Section>

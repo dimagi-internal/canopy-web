@@ -670,6 +670,7 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
             # Every row of a rule repeats its RULE's count: the parked queue belongs
             # to the rule, not to one runner in it.
             queued_count=queued.get((row.source, row.actor), 0),
+            turn_mode=row.turn_mode,
         )
         for row in rows
     ]
@@ -744,6 +745,7 @@ def replace_agent_runner_rules(
             RunnerAssignment(
                 agent=agent, runner=by_id[row.runner_id], rank=rank,
                 source=r.source, actor=actor, strict=r.strict, enabled=row.enabled,
+                turn_mode=r.turn_mode,
             )
             for r, actor in zip(payload.rules, actors)
             for rank, row in enumerate(r.runners)

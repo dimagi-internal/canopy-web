@@ -1063,7 +1063,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .filter(tenant_q)
         # _assignment_allows reads turn.agent_id; the session leg's stickiness
         # check reads chat_session.agent_id + chat_session.runner_binding.
-        .select_related("agent", "chat_session", "chat_session__runner_binding")
+        .select_related("agent", "chat_session", "chat_session__runner_binding",
+                        "chat_session__agent")
         .order_by("created_at")
     )
     # Two-pass: materialize candidates above, then batch-load every candidate
@@ -1096,6 +1097,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                         runner, sess.agent_id, turn, defaults, priorities, now
                     ):
                         continue
+        # The mode is decided HERE, once, from the same rules that just routed
+        # the turn (apps/harness/turn_mode.py), and stamped so a rule edited
+        # mid-turn cannot flip the posture of work already under way.
+        from . import turn_mode as modes
+
+        mode = modes.for_turn(turn, priorities, fresh=True)
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
@@ -1106,6 +1113,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     claimed_by=runner,
                     claimed_at=now,
                     lease_expires_at=now + dt.timedelta(seconds=lease_seconds),
+                    turn_mode=mode.mode if mode else "",
+                    turn_mode_basis=mode.basis if mode else "",
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update
