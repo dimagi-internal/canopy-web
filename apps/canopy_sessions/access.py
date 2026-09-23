@@ -37,14 +37,20 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Three ways in, and no fourth:
+    Four ways in, and no fifth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
        means here, and its docstring already calls itself "the authority for
        access and role";
     3. it is a runner-discovered session that a runner is actually reporting,
-       which has no creator to belong to.
+       which has no creator to belong to;
+    4. it is a runner-origin session of an agent YOU own. An agent's own work
+       with no creator — an email thread, an alarm it picked up — belongs to
+       the person operating that agent. Without this leg such a session was
+       readable by nobody, while its owner was the one being pushed a link to
+       it: the tap landed on a 404 (2026-09-23, a hal alarm thread). Narrower
+       than leg 3 on purpose: the owner, not the tenant.
 
     Leg 3 keeps `runner_binding__isnull=False` alongside the origin check
     rather than dropping it: origin alone would newly expose runner-origin rows
@@ -71,6 +77,7 @@ def visible_session_q(user) -> Q:
         Q(created_by=user)
         | Q(participants__user=user)
         | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
+        | (Q(origin=Session.ORIGIN_RUNNER) & Q(agent__owner=user))
     )
 
 

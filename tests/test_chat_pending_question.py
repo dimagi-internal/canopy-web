@@ -390,3 +390,30 @@ def test_an_answer_to_a_dead_runner_is_still_refused(monkeypatch):
     )
     assert res.json() == {"ok": False, "reason": "unavailable"}
     assert not [m for _g, m in published if m.get("type") == "runner.menu_answer"]
+
+
+def test_a_push_only_goes_to_someone_who_can_open_the_chat(monkeypatch):
+    """The push is a LINK. An agent owner who could not read the session was
+    told it needed them and then shown "No Session matches the given query"
+    (2026-09-23). Whoever is picked must pass the chat's own read gate."""
+    from apps.agents.models import Agent
+    from apps.push import services as push_services
+
+    sent = _sent(monkeypatch)
+    jj = _user("jj")
+    ws = _ws("connect", jj)
+    outsider = _user("outsider")  # owns the agent, is not in the workspace
+    agent = Agent.objects.create(slug="hal", name="Hal", owner=outsider, workspace=ws)
+    session = Session.objects.create(workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER,
+                                     title="ALARM")
+    assert push_services.notify_session_question(session, MENU) == 0
+    assert sent == []
+
+    agent.owner = jj
+    agent.save(update_fields=["owner"])
+    session.refresh_from_db()
+    push_services.notify_session_question(session, MENU)
+    assert [u.username for u, _kw in sent] == ["jj"]
+    c = Client()
+    c.force_login(jj)
+    assert c.get(sent[0][1]["url"].replace("/w/connect/chat/", "/api/canopy-sessions/")).status_code == 200

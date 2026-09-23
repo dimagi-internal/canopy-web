@@ -182,24 +182,50 @@ def mark_dirty(agent_id: int) -> None:
 QUESTION_BODY_MAX = 140
 
 
+def can_open(user, session) -> bool:
+    """Whether `user` can open the chat a push would link them to.
+
+    The same two gates the chat's REST read applies (`_session_or_404`): the
+    tenant, then who within it. A push whose tap lands on "No Session matches
+    the given query" is worse than no push — it says something needs you and
+    then refuses to show you what (2026-09-23).
+    """
+    from apps.canopy_sessions.access import visible_session_q
+    from apps.workspaces import services as wsvc
+
+    if user is None or session is None:
+        return False
+    if session.workspace_id not in wsvc.user_workspace_slugs(user):
+        return False
+    return Session.objects.filter(visible_session_q(user), pk=session.pk).exists()
+
+
 def _question_audience(session):
     """Who should be told this session is waiting, or None.
 
-    The agent's owner when there is one; otherwise the human who PAIRED the
-    runner — the person whose laptop the session is actually sitting on. A
-    runner-discovered session (what `spark` was) has no agent, so without the
-    second leg the case that motivated this would notify nobody.
+    In order: whoever started the chat; the agent's owner; the human who PAIRED
+    the runner — the person whose laptop the session is actually sitting on. A
+    runner-discovered session (what `spark` was) has no creator and no agent,
+    so without the last leg the case that motivated this would notify nobody.
+
+    The first of those who can actually OPEN the session (`can_open`) — a
+    notification is a link, and one to a chat you cannot read is a dead end.
 
     Fails closed on None, the same way `runner.paired_by` gates tenancy: with
     nobody identifiable, we stay silent rather than broadcast a workspace.
     """
     agent = getattr(session, "agent", None)
-    owner = getattr(agent, "owner", None) if agent is not None else None
-    if owner is not None:
-        return owner
     binding = getattr(session, "runner_binding", None)
     runner = getattr(binding, "runner", None) if binding is not None else None
-    return getattr(runner, "paired_by", None) if runner is not None else None
+    candidates = (
+        getattr(session, "created_by", None),
+        getattr(agent, "owner", None) if agent is not None else None,
+        getattr(runner, "paired_by", None) if runner is not None else None,
+    )
+    for user in candidates:
+        if user is not None and can_open(user, session):
+            return user
+    return None
 
 
 def session_label(session, default: str = "An agent") -> str:
@@ -278,8 +304,15 @@ _OPEN = (Turn.QUEUED, Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
 
 
 def _finish_audience(turn: Turn):
-    """Who asked for this turn; else whoever a question on this session would go to."""
-    return turn.initiator_user or turn.enqueued_by or _question_audience(turn.chat_session)
+    """Who asked for this turn; else whoever a question on this session would go to.
+
+    Only someone who can open the chat — the push links there (`can_open`).
+    """
+    session = turn.chat_session
+    for user in (turn.initiator_user, turn.enqueued_by):
+        if user is not None and can_open(user, session):
+            return user
+    return _question_audience(session)
 
 
 def _finish_body(session: Session, turn: Turn) -> str:
