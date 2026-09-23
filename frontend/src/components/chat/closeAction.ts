@@ -68,3 +68,36 @@ export function closeDestination(historyIdx: unknown, workspace: string): -1 | s
  *  page that will never change. */
 export const CLOSE_POLL_MS = 2_000
 export const CLOSE_WAIT_MS = 45_000
+
+/** How long a relayed close may take before the list says it has not happened.
+ *  The runner drains closes on its poll tick and its next report retires the
+ *  session, which is normally ~10s. */
+export const CLOSE_CONFIRM_TIMEOUT_MS = 45_000
+
+/**
+ * Settle the closes the list is waiting on against a fresh listing.
+ *
+ * A relayed close (`closing: true`) leaves the row listed until the runner has
+ * deleted the emdash task and reported. The list used to re-fetch once, right
+ * away, find the row still there, and show it exactly as before: a close that
+ * worked looked like one that failed, so people tapped ✕ again (2026-09-23,
+ * `runner-config` closed twice, seven seconds apart). A row now stays marked
+ * "Closing…" until it leaves the listing (`done`), or until the timeout
+ * passes, when it is reported as `stuck` instead of silently kept.
+ */
+export function settleClosing(
+  pending: Record<string, number>,
+  listed: { id: string; status: string }[],
+  now: number,
+): { pending: Record<string, number>; done: string[]; stuck: string[] } {
+  const stillActive = new Set(listed.filter((s) => s.status === 'active').map((s) => s.id))
+  const next: Record<string, number> = {}
+  const done: string[] = []
+  const stuck: string[] = []
+  for (const [id, since] of Object.entries(pending)) {
+    if (!stillActive.has(id)) done.push(id)
+    else if (now - since > CLOSE_CONFIRM_TIMEOUT_MS) stuck.push(id)
+    else next[id] = since
+  }
+  return { pending: next, done, stuck }
+}

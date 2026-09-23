@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { closeDestination, closeIntent, closeResultMessage } from './closeAction'
+import {
+  CLOSE_CONFIRM_TIMEOUT_MS,
+  closeDestination,
+  closeIntent,
+  closeResultMessage,
+  settleClosing,
+} from './closeAction'
 
 const base = {
   status: 'active',
@@ -64,5 +70,25 @@ describe('closeDestination', () => {
   it('falls back to the chat list when the chat was opened directly', () => {
     expect(closeDestination(0, 'dimagi')).toBe('/w/dimagi/chat')
     expect(closeDestination(undefined, 'dimagi')).toBe('/w/dimagi/chat')
+  })
+})
+
+describe('settleClosing — a relayed close is watched to the end', () => {
+  const active = (id: string) => ({ id, status: 'active' })
+
+  it('keeps waiting while the runner has not retired the session yet', () => {
+    const r = settleClosing({ a: 1_000 }, [active('a')], 5_000)
+    expect(r).toEqual({ pending: { a: 1_000 }, done: [], stuck: [] })
+  })
+
+  it('is done once the session leaves the listing, or is no longer active', () => {
+    expect(settleClosing({ a: 1_000 }, [], 5_000).done).toEqual(['a'])
+    expect(settleClosing({ a: 1_000 }, [{ id: 'a', status: 'archived' }], 5_000).done).toEqual(['a'])
+  })
+
+  it('says so, rather than waiting forever, when the runner never confirms', () => {
+    const r = settleClosing({ a: 0 }, [active('a')], CLOSE_CONFIRM_TIMEOUT_MS + 1)
+    expect(r.stuck).toEqual(['a'])
+    expect(r.pending).toEqual({})
   })
 })
