@@ -10,6 +10,7 @@ import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
+import { WorkRedirect } from './pages/agents/WorkRedirect'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
@@ -57,22 +58,11 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 const InboxSection = lazySection(() =>
   import('./pages/agents/InboxSection').then((m) => ({ default: m.InboxSection })),
 )
-const AgentOverviewSection = lazySection(() =>
-  import('./pages/agents/AgentOverviewSection').then((m) => ({ default: m.AgentOverviewSection })),
-)
-const AgentProjectsSection = lazySection(() =>
-  import('./pages/agents/AgentProjectsSection').then((m) => ({
-    default: m.AgentProjectsSection,
-  })),
-)
-const AgentTasksSection = lazySection(() =>
-  import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
+const AgentWorkSection = lazySection(() =>
+  import('./pages/agents/AgentWorkSection').then((m) => ({ default: m.AgentWorkSection })),
 )
 const AgentTurnsSection = lazySection(() =>
   import('./pages/agents/AgentTurnsSection').then((m) => ({ default: m.AgentTurnsSection })),
-)
-const ItemsSection = lazySection(() =>
-  import('./pages/agents/ItemsSection').then((m) => ({ default: m.ItemsSection })),
 )
 const SchedulesSection = lazySection(() =>
   import('./pages/agents/SchedulesSection').then((m) => ({ default: m.SchedulesSection })),
@@ -283,19 +273,26 @@ export const routeTable: RouteObject[] = [
         path: '/w/:workspace/agents/:slug',
         element: <AgentWorkspacePage />,
         children: [
-          { index: true, element: <Navigate to="inbox" replace /> },
+          // Work is where an agent opens: what it is doing, not what it is.
+          { index: true, element: <Navigate to="work" replace /> },
+          { path: 'work', element: <LazySection><AgentWorkSection /></LazySection> },
           { path: 'inbox', element: <LazySection><InboxSection /></LazySection> },
           // Legacy path from before the rename; keep the old link working.
           { path: 'needs-you', element: <Navigate to="../inbox" replace /> },
-          { path: 'overview', element: <LazySection><AgentOverviewSection /></LazySection> },
-          { path: 'projects', element: <LazySection><AgentProjectsSection /></LazySection> },
-          { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
+          // Tasks, Items and Projects were three renderings of ONE table (an
+          // item has been a property of a task since #873) and Overview was a
+          // dashboard over the same rows. They are Work now — grouping and
+          // settled-visibility are query params on it, so an old link lands on
+          // the same view rather than a page that no longer exists.
+          { path: 'overview', element: <Navigate to="../work" replace /> },
+          { path: 'projects', element: <Navigate to="../work?by=project" replace /> },
+          { path: 'tasks', element: <Navigate to="../work" replace /> },
+          { path: 'items', element: <WorkRedirect /> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
-          { path: 'items', element: <LazySection><ItemsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'syncs', element: <LazySection><AgentSyncsSection /></LazySection> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
-          // Credentials is a section of Overview now. Old links (and bookmarks)
+          // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },
           { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },

@@ -10,6 +10,7 @@ import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
+import { CountStat } from '@/components/agents/cards'
 import { WorkbenchSubHeader } from 'canopy-ui'
 
 // EVERYTHING THAT CONFIGURES AN AGENT, on one page of its own.
@@ -50,6 +51,21 @@ export function AgentSettingsSection() {
           </a>
         ))}
       </nav>
+
+      {/* Persona + counts opened Overview. Overview is gone (Work is the
+          landing page now) and this is where "what IS this agent" belongs. */}
+      <Section id="about" title="About" description={`What ${agent.name} is, and how much it has done.`}>
+        {agent.persona && <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>}
+        {agent.description && (
+          <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
+        )}
+        <div className="mt-4 flex flex-wrap gap-6">
+          <CountStat value={agent.task_count} label="Tasks" />
+          <CountStat value={agent.sync_count} label="Syncs" />
+          <CountStat value={agent.work_product_count} label="Work" />
+          <CountStat value={agent.skill_count} label="Skills" />
+        </div>
+      </Section>
 
       <Section
         id="operators"
@@ -141,6 +157,7 @@ export function AgentSettingsSection() {
 }
 
 const SECTIONS: { id: string; title: string }[] = [
+  { id: 'about', title: 'About' },
   { id: 'operators', title: 'Who operates it' },
   { id: 'reach', title: 'Who can reach it' },
   { id: 'running', title: 'How it runs' },

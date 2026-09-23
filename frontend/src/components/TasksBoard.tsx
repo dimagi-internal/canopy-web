@@ -5,6 +5,7 @@ import {
   type AgentCommandOut,
   type AgentTaskOut,
 } from '@/api/agents'
+import { decideItem, type ItemDecision } from '@/api/items'
 
 // ── "Who has the ball" model ───────────────────────────────────────────────
 // The board is organized by whose court the next action sits in, not by equal
@@ -102,6 +103,53 @@ function EchoWorking(): JSX.Element {
 }
 
 // The "ball is in a human's court" affordance: an amber waiting chip.
+// THE ASK, on the card.
+//
+// An item stopped being its own model on 2026-09-20 (#871/#873): the ask moved
+// onto the task, the rows were migrated, and `/items/` became a view of tasks.
+// The board was never told — it read none of `ask_kind`/`ask_state`, so a task
+// blocking on a human decision rendered as ordinary work in flight and could
+// only be decided on Inbox or Items. That is the exact failure the merge was
+// meant to end, left in place because the UI half never shipped.
+function AskOnCard({ task, onChanged }: { task: AgentTaskOut; onChanged?: () => void }): JSX.Element | null {
+  const [busy, setBusy] = useState<ItemDecision | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const kind = (task.ask_kind || '').trim()
+  if (!kind || task.ask_state !== 'open') return null
+
+  const decide = (decision: ItemDecision) => {
+    setBusy(decision)
+    setError(null)
+    decideItem(task.uuid, decision)
+      .then(() => onChanged?.())
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'could not record that'))
+      .finally(() => setBusy(null))
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-warning/30 bg-warning/5 p-2" data-testid={`ask-${task.ext_id}`}>
+      <span className="inline-flex items-center gap-1 rounded border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+        asks you · {kind}
+      </span>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {(['implement', 'skip', 'defer'] as const).map((d) => (
+          <button
+            key={d}
+            type="button"
+            disabled={busy !== null}
+            onClick={() => decide(d)}
+            data-testid={`ask-${d}-${task.ext_id}`}
+            className="min-h-8 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-muted disabled:opacity-40"
+          >
+            {busy === d ? '…' : d}
+          </button>
+        ))}
+      </div>
+      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+    </div>
+  )
+}
+
 function WaitingChip({ who }: { who: string }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1 rounded border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
@@ -401,6 +449,8 @@ export function TaskCard({
           {echo ? <EchoWorking /> : <WaitingChip who={task.assigned.trim()} />}
         </div>
       )}
+
+      <AskOnCard task={task} onChanged={onChanged} />
 
       {/* Secondary line: the outcome, only when it differs from the headline. */}
       {showOutcome && (
