@@ -41,6 +41,6 @@ def test_registering_grants_nothing_on_its_own():
     cred = AppCredential.objects.get(name="connect-labs")
     assert cred.frame_origins() == []
     assert list(cred.public_keys or []) == []
-    assert list(cred.resolvable_domains or []) == []
+    assert cred.tenant_grants.count() == 0, "and no tenant has granted it yet"
     assert cred.allowed_agents.count() == 0
     assert cred.workspace_id is None

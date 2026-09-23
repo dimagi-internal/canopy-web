@@ -196,28 +196,15 @@ class AppCredential(models.Model):
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
     #:
     #: A JSONField rather than a related table (the v2 spec left this open):
-    #: it is the same kind of thing as `resolvable_domains` below — a short,
-    #: admin-managed allowlist of opaque strings that nothing joins against —
-    #: and splitting one of the pair into a table would make two shapes for one
-    #: idea. Revisit if an app ever needs enough origins to want paging or
-    #: per-origin metadata.
+    #: a short, admin-managed allowlist of opaque strings that nothing joins
+    #: against, so a table would be a second shape for one idea. Revisit if an
+    #: app ever needs enough origins to want paging or per-origin metadata.
     #:
     #: Empty means the embed shell is NOT SERVED (404), not "any origin".
     #: `frame_origins()` is the only reader, and it sanitises, because an
     #: XFO-exempt page with a permissive or malformed `frame-ancestors` is
     #: frameable by anyone.
     allowed_frame_origins = models.JSONField(default=list, blank=True)
-    #: Email domains whose EXISTING canopy users this site may bring in as
-    #: themselves (who-is-asking §2, "arrival"). A visitor the site signs an
-    #: assertion for, with `email_verified: true` at one of these domains, who
-    #: already has a canopy account with that verified address, arrives as that
-    #: user — their own ACL — instead of as a contact.
-    #:
-    #: Never creates an account (D1): no existing user, no resolution. Bounded
-    #: when set to a domain the setting owner is in AND canopy admits at login
-    #: (`embed_apps._clean_resolvable`), and used only on a SIGNED assertion.
-    #: Empty (the default) means every visitor is a contact.
-    resolvable_domains = models.JSONField(default=list, blank=True)
     #: Where this site PUBLISHES its public keys, so canopy can follow a
     #: rotation instead of being re-pasted into.
     #:
@@ -314,6 +301,55 @@ class AppCredential(models.Model):
         set-shuffled.
         """
         return [o for o in (self.allowed_frame_origins or []) if is_valid_frame_origin(o)]
+
+
+class AppCredentialTenant(models.Model):
+    """One tenant's grant to a connected site: "this site may act for us."
+
+    A site is ONE identity in the world — one name, one key, one `iss` — and it
+    may serve several canopy tenants. Those are different statements, and
+    conflating them is what `AppCredential.workspace` alone used to do: the row
+    that identified the site also decided whose agents it could offer and where
+    its visitors were recorded, so a site serving two tenants had to be
+    registered twice under two names, and pick which name to sign with.
+
+    Now the site is registered once and each tenant grants it separately. That
+    keeps the authority where it belongs — **an owner of THIS workspace decides
+    whether this site may act for it**, and can revoke that without touching
+    the site's identity or any other tenant's grant — and it is why a grant is
+    a row rather than a flag: it records who authorized it and when.
+
+    A visitor's contact is still per tenant (see `apps/contacts/models.py`: the
+    same human dealt with by two workspaces is deliberately two contacts), so a
+    host serving two tenants mints one token per tenant. That is not a
+    workaround; those genuinely are two different people-records.
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE,
+                            related_name="tenant_grants")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="granted_sites")
+    #: Domains whose EXISTING canopy users this site may bring in as themselves,
+    #: granted on THIS tenant's authority.
+    #:
+    #: Per tenant rather than per site because it is a grant somebody makes, and
+    #: the person making it can only speak for their own domain
+    #: (`embed_apps._clean_resolvable`). Site-wide, one tenant's owner would be
+    #: widening what the site can do everywhere else it is granted.
+    resolvable_domains = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "app_credential_tenants"
+        constraints = [
+            models.UniqueConstraint(fields=["app", "workspace"],
+                                    name="one_grant_per_site_per_tenant"),
+        ]
+
+    def __str__(self):
+        return f"{self.app_id} @ {self.workspace_id}"
 
 
 class AppCredentialAgent(models.Model):

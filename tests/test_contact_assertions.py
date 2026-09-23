@@ -24,7 +24,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.contacts.models import Contact
 from apps.tokens import assertions
-from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
+from apps.tokens.models import AppCredential, AppCredentialTenant, AppCredentialAgent, ContactToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -63,6 +63,9 @@ def _setup(name="connect-labs", with_key=True):
     priv, pub = _keypair()
     app.public_keys = [pub] if with_key else []
     app.save(update_fields=["workspace", "public_keys"])
+    # The grant a real registration makes: a site acts for a tenant because
+    # that tenant's owner said so, not because the row names a workspace.
+    AppCredentialTenant.objects.create(app=app, workspace=ws, created_by=owner)
     AppCredentialAgent.objects.create(app=app, agent=agent)
     return app, priv, ws
 

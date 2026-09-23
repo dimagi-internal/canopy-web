@@ -3314,6 +3314,56 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/connected-apps/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Let a site another workspace registered act for this one
+         * @description Authorize an already-registered site to act for this workspace.
+         *
+         *     A site is one identity in the world and may serve several tenants; this is
+         *     how the second and every later tenant says yes, without touching the site's
+         *     keys, its origins, or any other tenant's grant. The site must already
+         *     exist — registering one is a different act, and typing a name that happens
+         *     to be free would silently create an identity nobody controls.
+         */
+        readonly post: operations["apps_tokens_connected_apps_api_grant_site"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/grant": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop letting a site act for this workspace
+         * @description Withdraw this workspace's grant.
+         *
+         *     Its agents stop being offered here and no visitor is recorded here again.
+         *     The site keeps working for every other tenant that granted it — which is
+         *     the reason a grant is a row of its own rather than a column on the site.
+         */
+        readonly delete: operations["apps_tokens_connected_apps_api_revoke_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -7365,6 +7415,11 @@ export interface components {
         readonly ContactTokenIn: {
             /** Assertion */
             readonly assertion: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
         };
         /**
          * ReviewListItemOut
@@ -10828,6 +10883,16 @@ export interface components {
             readonly signs_assertions: boolean;
             /** Jwks Url */
             readonly jwks_url: string;
+            /**
+             * Administered Here
+             * @default true
+             */
+            readonly administered_here: boolean;
+            /**
+             * Agent Workspaces
+             * @default []
+             */
+            readonly agent_workspaces: readonly string[];
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */
@@ -10868,6 +10933,11 @@ export interface components {
              */
             readonly jwks_url: string;
             /**
+             * Resolvable Domains
+             * @default []
+             */
+            readonly resolvable_domains: readonly string[];
+            /**
              * Show On Canopy Pages
              * @default false
              */
@@ -10892,6 +10962,24 @@ export interface components {
         readonly SecretOut: {
             /** Secret */
             readonly secret: string;
+        };
+        /**
+         * GrantIn
+         * @description Which site, named the way a host names it.
+         */
+        readonly GrantIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Resolvable Domains
+             * @default []
+             */
+            readonly resolvable_domains: readonly string[];
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
@@ -17865,6 +17953,53 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["SecretOut"];
                 };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_grant_site: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GrantIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_revoke_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

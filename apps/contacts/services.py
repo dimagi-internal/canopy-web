@@ -145,17 +145,19 @@ def for_workspace(workspace_slug: str):
 
 
 @transaction.atomic
-def resolve_arrival(*, app, contact: Contact, claims: dict):
+def resolve_arrival(*, app, contact: Contact, claims: dict, resolvable_domains=None):
     """The existing canopy USER a widget visitor is, or None — never a new one.
     (Issued a DelegatedToken with assurance `host_signed`.)
 
     Who-is-asking §2 (D1: no dynamic user creation). In order:
 
       1. The contact is already linked to a user (`promote_to_user`): that user.
-      2. The site signed `email_verified: true` for an address at one of ITS
-         `resolvable_domains`, and exactly one active canopy user already holds
-         that address as a VERIFIED allauth email: link the contact and return
-         that user.
+      2. The site signed `email_verified: true` for an address at one of the
+         domains THIS TENANT granted it (`resolvable_domains` on the tenant's
+         own grant — a site serving several tenants is trusted separately by
+         each, and one tenant's owner cannot widen what it may do elsewhere),
+         and exactly one active canopy user already holds that address as a
+         VERIFIED allauth email: link the contact and return that user.
       3. Otherwise None — the visitor is a contact, as before.
 
     Either way the user must be a member of the site's workspace; a canopy
@@ -176,7 +178,7 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
         email = _normalize(str(claims.get("email") or ""))
         domain = email.rpartition("@")[2]
         if (email and claims.get("email_verified") is True
-                and domain in {d.lower() for d in (app.resolvable_domains or [])}):
+                and domain in {d.lower() for d in (resolvable_domains or [])}):
             ids = list(EmailAddress.objects.filter(email__iexact=email, verified=True)
                        .values_list("user_id", flat=True).distinct()[:2])
             if len(ids) == 1:
