@@ -1151,7 +1151,8 @@ export interface paths {
          * @description The host-side token endpoint every embedder needs — for the host that is
          *     canopy itself.
          *
-         *     Issued DIRECTLY rather than through `POST /api/auth/token-exchange`. A
+         *     Issued DIRECTLY, for canopy's OWN signed-in user rather than for a visitor a
+         *     host vouches for at `POST /api/auth/contact-token`. A
          *     third-party host must exchange because it holds a secret and canopy has to
          *     verify the assertion; here the two are one process, so there is no
          *     assertion to verify and no reason for canopy to hold a credential in order
