@@ -45,6 +45,13 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace/slack',
   '/w/:workspace/agents/:slug/needs-you',
   '/w/:workspace/agents/:slug/credentials',
+  // Overview, Projects, Tasks and Items became Work: the last three were three
+  // renderings of one table, and Overview was a dashboard over the same rows.
+  // Grouping and settled-visibility are query params on Work now.
+  '/w/:workspace/agents/:slug/overview',
+  '/w/:workspace/agents/:slug/projects',
+  '/w/:workspace/agents/:slug/tasks',
+  '/w/:workspace/agents/:slug/items',
   '/w/:workspace/agents/:slug',
 ])
 

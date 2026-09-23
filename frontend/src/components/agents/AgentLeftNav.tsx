@@ -37,13 +37,16 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
   const items: NavItem[] = [
     // Inbox = OPEN items, decidable in place. Items = the full ledger incl.
     // decided/dismissed + batch sittings (?batch=) — browse/history, no badge.
+    // Work FIRST, and the landing page: what the agent is doing.
+    //
+    // It replaced Overview, Projects, Tasks and Items. The last three were three
+    // renderings of one table (an item has been a property of a task since
+    // #873) and Overview was a dashboard over the same rows with the settings
+    // buried in it — so the rail offered four doors onto the same work and none
+    // of them was obviously the way in. Grouping and settled-visibility are
+    // query params on Work now, not destinations.
+    { to: 'work', label: 'Work' },
     { to: 'inbox', label: 'Inbox', count: waiting },
-    { to: 'overview', label: 'Overview' },
-    // Projects before Tasks: a task belongs to a project, and the question
-    // "what is this agent working on" is answered a level up.
-    { to: 'projects', label: 'Projects' },
-    { to: 'tasks', label: 'Tasks' },
-    { to: 'items', label: 'Items' },
     { to: 'turns', label: 'Turns' },
     { to: 'schedules', label: 'Schedules' },
     { to: 'syncs', label: 'Syncs' },
