@@ -564,6 +564,20 @@ class ClaimedTurnOut(TurnOut):
     # Null whenever there is nobody to vouch for — an email correspondent has no
     # account at any site — and that null is the agent keeping its own
     # credentials, which is where it was before any of this.
+    #
+    # **NOTHING CONSUMES THIS TODAY, AND THAT IS THE PRODUCT DECISION, not an
+    # unfinished wire** (2026-09-23). Every call an agent makes into a host —
+    # Connect, Drive, ace-web — runs as THE AGENT. Running them as the caller
+    # would not hand a contact more, it would give the agent LESS than it needs:
+    # reading Connect as a contact with no rights to the program config or the
+    # run state breaks the machinery rather than securing it.
+    #
+    # The real question is per-OPERATION — a caller's own data read as them, the
+    # agent's machinery done as the agent — so the eventual switch belongs
+    # beside the tool list in the agent's declared interface, where what a
+    # caller may ask for is already written down and visible. Do not wire a
+    # host's headers helper to prefer this field until that exists: it would
+    # silently answer a question nobody has asked yet.
     on_behalf_of: OnBehalfOut | None = None
 
     @staticmethod

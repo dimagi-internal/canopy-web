@@ -790,6 +790,16 @@ changes who you run the call as.
 Until you verify it, nothing changes: the agent keeps calling you with its own
 credential, and the paragraph above still applies.
 
+**Canopy's own agents do not use this yet, deliberately.** An agent's calls into
+a host run as the agent, because running them as the visitor gives the agent
+less than it needs — a contact has no rights to the machinery an agent works
+on, so scoping every call to them breaks the agent rather than securing it. The
+useful version of this is per-operation (the visitor's own data read as them,
+the agent's own work done as itself), and that distinction has to be declared
+somewhere a person can see it before it is worth switching on. If you verify
+assertions on your side, you are ready for that day; you are not waiting on
+anything of ours to start.
+
 ---
 
 ## 9. Reference: known limits
