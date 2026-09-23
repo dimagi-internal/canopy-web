@@ -50,8 +50,12 @@ def _verified(turn) -> bool:
     if kind == who.USER:
         return grade in _VERIFIED_USER
     if kind == who.CONTACT:
-        # Tier 3: the signature is tied to the identity the reader sees — DMARC
-        # alignment for mail, a signed assertion from a framed origin for a widget.
+        # Tier 3: the signature is tied to the identity the reader sees, which
+        # for a contact means DMARC-aligned (or domain-signed) MAIL and nothing
+        # else. A visitor from an embedded site tops out at tier 2 by design and
+        # is therefore never verified here — the host vouches for them, and
+        # canopy checks the host's signature, not the human. Gate an embedded
+        # agent's interface on `contact`, never `contact:verified`.
         rank = Contact.AUTH_RANK.get(grade, 0)
         return rank >= Contact.AUTH_RANK[Contact.TIER_SIGNED_ALIGNED]
     # canopy itself, or another agent: nobody outside asserted anything.

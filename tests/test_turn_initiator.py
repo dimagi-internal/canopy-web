@@ -294,3 +294,72 @@ def test_every_production_caller_says_who_asked():
     the enqueue route passes `initiator=None` explicitly, which is still a
     decision someone made rather than an omission."""
     assert _calls_missing_initiator() == []
+
+
+# --- an embedded site's visitor tops out at tier 2 ----------------------------
+# Not an accident to be fixed later: the mint grades `app_signed` deliberately,
+# "because it proves the SITE said this, not that the human is who the site
+# thinks". These pin the ceiling, and that nothing claims otherwise — a tier-3
+# grade nobody can earn made `contact:verified` read as "this visitor failed"
+# when it meant "this rule can never pass".
+
+
+def test_no_grade_above_tier_2_exists_for_an_embedded_site():
+    """Every tier-3 grade on the ladder is a MAIL grade."""
+    from apps.contacts.models import Contact
+
+    top = {g for g, rank in Contact.AUTH_RANK.items()
+           if rank >= Contact.AUTH_RANK[Contact.TIER_SIGNED_ALIGNED]}
+
+    assert top == {Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED}, (
+        f"the top of the ladder changed: {top}. A grade an embedded site could "
+        "hold up here needs canopy to verify the PERSON, which it does not do — "
+        "it verifies the host's signature. See tokens/contact_api.py."
+    )
+    assert all(g in dict(Contact.AUTH_CHOICES) for g in Contact.AUTH_RANK), (
+        "a ranked grade is missing from AUTH_CHOICES"
+    )
+    assert set(dict(Contact.AUTH_CHOICES)) == set(Contact.AUTH_RANK), (
+        "AUTH_CHOICES and AUTH_RANK disagree, so some grade is either unrankable "
+        "or unstorable"
+    )
+
+
+@pytest.mark.django_db
+def test_an_embedded_visitor_is_never_verified():
+    """So `contact:verified` cannot admit one, and the rule that reads the grade
+    agrees with the mint that writes it."""
+    from types import SimpleNamespace
+
+    from apps.contacts.models import Contact
+    from apps.harness.caller_context import _verified
+
+    owner = User.objects.create_user("o2", "o2@dimagi.com", "pw")
+    workspace = Workspace.objects.create(slug="w9", display_name="W9", created_by=owner)
+    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
+    contact = Contact.objects.create(workspace=workspace, app=app, external_id="42",
+                                     email="visitor@partner.org",
+                                     auth_result=Contact.AUTH_APP_SIGNED,
+                                     last_auth_result=Contact.AUTH_APP_SIGNED)
+
+    turn = SimpleNamespace(initiator_kind=who.CONTACT,
+                           initiator_assurance=contact.last_auth_result)
+    assert _verified(turn) is False
+
+    # And a contact graded by MAIL still is, so this is a ceiling on the embed
+    # channel rather than on contacts.
+    mailed = SimpleNamespace(initiator_kind=who.CONTACT,
+                             initiator_assurance=Contact.AUTH_DMARC)
+    assert _verified(mailed) is True
+
+
+def test_a_grade_that_is_no_longer_on_the_ladder_reads_as_unverified():
+    """The fail-closed direction, for a value stored before a grade was dropped."""
+    from types import SimpleNamespace
+
+    from apps.harness.caller_context import _verified
+
+    turn = SimpleNamespace(initiator_kind=who.CONTACT,
+                           initiator_assurance="app_signed_origin")
+
+    assert _verified(turn) is False
