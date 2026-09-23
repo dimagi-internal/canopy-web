@@ -4,11 +4,29 @@ import { fromAgui, resetAguiState } from "./agui";
 import type { Draft, Message, SessionState, WsEvent } from "./protocol";
 import { shouldSyncDraftLive } from "./drafts";
 import { prependHistory } from "./history";
-import { sessionReducer } from "./sessionReducer";
+import {
+  REDUCER_EVENTS,
+  markSendDelivered,
+  markSendFailed,
+  sessionReducer,
+  withPendingSend,
+} from "./sessionReducer";
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
 const DRAFT_UPDATE_DEBOUNCE_MS = 150;
+/** How long a socket send may go without the server's receipt before the page
+ *  resends it over HTTP. Short on purpose: the receipt normally arrives within
+ *  a round trip, and a missing one means the socket is dead (a phone resuming
+ *  from the background can hold one that still reads OPEN). */
+const SEND_RECEIPT_TIMEOUT_MS = 4_000;
+const NOT_SENT =
+  "Not sent: the connection dropped before canopy got it. Your words are kept here, so copy them and send again.";
+
+function newClientId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  return c?.randomUUID ? c.randomUUID() : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
 
 const INITIAL_STATE: SessionState = {
   messages: [],
@@ -68,6 +86,14 @@ export interface UseSessionSocketOptions {
    * without a second send path in every host. Omit for a user (the default).
    */
   sendOverHttp?: (text: string) => Promise<unknown>;
+  /**
+   * The HTTP route for a USER's send, used only when a socket send gets no
+   * receipt (see `SEND_RECEIPT_TIMEOUT_MS`). Must pass `clientId` through as the
+   * send's `client_id`: the server derives the turn's idempotency key from it,
+   * so a socket frame that did arrive late and this resend make ONE turn.
+   * Without it a send on a dead socket is marked "not sent" instead.
+   */
+  resendOverHttp?: (text: string, clientId: string) => Promise<unknown>;
 }
 
 /**
@@ -123,20 +149,10 @@ export interface UseSessionSocketResult {
   lastError: string | null;
 }
 
-/**
- * Frames `sessionReducer` understands. Anything else is handed to
- * `onUnknownEvent` rather than dropped — the reducer ignores what it does not
- * recognise, which silently swallows an app-specific frame and leaves the
- * container wondering why its feature never fires.
- *
- * Keep in step with sessionReducer's own switch.
- */
-const KNOWN_EVENTS = new Set([
-  "chat.delta", "chat.stream_cancelled", "chat.stream_complete",
-  "chat.stream_error", "chat.stream_start", "chat.tool_result",
-  "chat.tool_use", "chat.user_message", "session.activity", "session.error",
-  "session.menu", "session.state", "session.stop", "session.title_updated",
-]);
+// Frames the reducer handles: its own list, so the two cannot drift (see
+// `REDUCER_EVENTS`). Anything else goes to `onUnknownEvent` rather than being
+// dropped.
+const KNOWN_EVENTS = REDUCER_EVENTS;
 
 export function useSessionSocket({
   sessionId,
@@ -145,6 +161,7 @@ export function useSessionSocket({
   onUnknownEvent,
   protocol = "canopy",
   sendOverHttp,
+  resendOverHttp,
 }: UseSessionSocketOptions): UseSessionSocketResult {
   // The local draft a read-only principal types into (see `sendOverHttp`).
   const [localDraft, setLocalDraft] = useState<Draft | null>(null);
@@ -176,6 +193,10 @@ export function useSessionSocket({
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
+  // Sends awaiting the server's receipt: client_id -> {text, timer}.
+  const unconfirmedRef = useRef(new Map<string, { text: string; timer: number | null }>());
+  const resendRef = useRef(resendOverHttp);
+  resendRef.current = resendOverHttp;
 
   useEffect(() => {
     stateRef.current = state;
@@ -193,7 +214,7 @@ export function useSessionSocket({
     const ws = socketRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(frame));
-      return;
+      return true;
     }
     // Queue chat.stop so a stop clicked while the socket is reconnecting
     // is delivered on next OPEN instead of silently dropped. Draft updates
@@ -202,6 +223,29 @@ export function useSessionSocket({
     if (frame.action === "chat.stop") {
       pendingFramesRef.current.push(frame);
     }
+    return false;
+  }, []);
+
+  // A send that got no receipt: resend it over HTTP under the same client_id,
+  // or, with no HTTP route, say plainly that it did not go. Never silent.
+  const rescueSend = useCallback((clientId: string) => {
+    const entry = unconfirmedRef.current.get(clientId);
+    if (!entry) return; // the receipt got here first
+    if (entry.timer != null) window.clearTimeout(entry.timer);
+    unconfirmedRef.current.delete(clientId);
+    const resend = resendRef.current;
+    if (!resend) {
+      setAwaitingReply(false);
+      setState((prev) => markSendFailed(prev, clientId, NOT_SENT));
+      return;
+    }
+    resend(entry.text, clientId).then(
+      () => setState((prev) => markSendDelivered(prev, clientId)),
+      () => {
+        setAwaitingReply(false);
+        setState((prev) => markSendFailed(prev, clientId, NOT_SENT));
+      },
+    );
   }, []);
 
   const applyEvent = useCallback((frame: WsEvent) => {
@@ -215,6 +259,12 @@ export function useSessionSocket({
       frame.event === "session.error"
     ) {
       setAwaitingReply(false);
+    }
+    // The server's receipt for one of OUR sends: stop waiting on it.
+    if (frame.event === "draft.committed" && frame.data.client_id) {
+      const entry = unconfirmedRef.current.get(frame.data.client_id);
+      if (entry?.timer != null) window.clearTimeout(entry.timer);
+      unconfirmedRef.current.delete(frame.data.client_id);
     }
     // Side-effect events: handle BEFORE setState so React strict-mode's
     // double-invocation of the updater doesn't double-fire the effect.
@@ -311,6 +361,8 @@ export function useSessionSocket({
 
     ws.onclose = () => {
       setConnected(false);
+      // A send still waiting for its receipt will not get one on this socket.
+      for (const clientId of [...unconfirmedRef.current.keys()]) rescueSend(clientId);
       if (heartbeatTimerRef.current != null) {
         window.clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
@@ -326,7 +378,7 @@ export function useSessionSocket({
     ws.onerror = () => {
       // onclose will fire next; nothing to do here.
     };
-  }, [applyEvent, send, sessionId, wsUrl]);
+  }, [applyEvent, rescueSend, send, sessionId, wsUrl]);
 
   useEffect(() => {
     closedByUserRef.current = false;
@@ -345,29 +397,32 @@ export function useSessionSocket({
   }, [connect]);
 
   const sendChat = useCallback(() => {
-    // Flush the local body BEFORE committing. `chat.send` commits the SERVER's
-    // draft, so this is the moment the body has to exist there — and when
-    // live sync is off (single-player) it is the ONLY time it is sent.
-    //
-    // Unconditional on purpose: keying this off a pending debounce timer meant
-    // nothing was flushed when there was no timer, which is now the normal case.
+    // The text goes IN the send, with a client_id, rather than relying on an
+    // earlier draft.update having reached the server. That frame and this one
+    // could both vanish into a socket that reads OPEN but is dead (a phone
+    // resuming from the background), and the composer had already cleared, so
+    // the prompt was simply lost (2026-09-23). Now the line shows at once as
+    // pending, the server's receipt (draft.committed + client_id) confirms it,
+    // and without one it is resent over HTTP under the same id.
     if (draftDebounceRef.current != null) {
       window.clearTimeout(draftDebounceRef.current);
       draftDebounceRef.current = null;
     }
-    if (pendingDraftBodyRef.current != null && stateRef.current.active_draft) {
-      send({
-        action: "draft.update",
-        data: {
-          version: stateRef.current.active_draft.version,
-          body: pendingDraftBodyRef.current,
-        },
-      });
-    }
+    const body = (pendingDraftBodyRef.current ?? stateRef.current.active_draft?.body ?? "").trim();
     pendingDraftBodyRef.current = null;
+    if (!body) return;
+    const clientId = newClientId();
     setAwaitingReply(true);
-    send({ action: "chat.send", data: {} });
-  }, [send]);
+    setState((prev) => withPendingSend(prev, { clientId, text: body }));
+    unconfirmedRef.current.set(clientId, { text: body, timer: null });
+    const sent = send({ action: "chat.send", data: { client_id: clientId, text: body } });
+    if (!sent) {
+      rescueSend(clientId);
+      return;
+    }
+    const entry = unconfirmedRef.current.get(clientId);
+    if (entry) entry.timer = window.setTimeout(() => rescueSend(clientId), SEND_RECEIPT_TIMEOUT_MS);
+  }, [send, rescueSend]);
 
   const stopChat = useCallback(
     (messageId: string | null) => {

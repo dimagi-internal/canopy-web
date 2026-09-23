@@ -193,7 +193,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         elif action == "draft.discard":
             await self._draft_discard()
         elif action == "chat.send":
-            await self._chat_send()
+            await self._chat_send(data if isinstance(data, dict) else {})
 
     # -- actions --
     async def _error(self, code, message="", detail=None):
@@ -244,16 +244,30 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self._broadcast({"type": "draft.discarded", "draft_id": str(draft.pk)})
         await self._broadcast_draft(draft)
 
-    async def _chat_send(self):
-        # Any editor may send the shared draft (commit ignores lock/version). Broadcast
-        # draft.committed + the cleared draft FIRST so co-editors' UI resets even if
-        # execution below is a no-op / races a concurrent turn.
-        user_message_id = await database_sync_to_async(self._commit_and_send)()
+    async def _chat_send(self, data=None):
+        # `text` + `client_id` make a send self-contained and retryable. Without
+        # them the send depended on an earlier `draft.update` frame having
+        # landed, and a phone resuming from the background can hold a socket
+        # that reads OPEN but is dead: the frames vanished and the prompt was
+        # lost (2026-09-23). With them the client can resend over HTTP under the
+        # SAME client_id, and the turn's idempotency key (built from it) makes
+        # the retry a no-op if this frame did arrive after all. A frame without
+        # them (an older client) commits the server draft, as before.
+        data = data or {}
+        text = data.get("text") if isinstance(data.get("text"), str) else None
+        client_id = str(data.get("client_id") or "")[:100]
+        user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
         draft = await database_sync_to_async(drafts.active_draft)(self.session)
         if user_message_id is not None:
+            # Any editor may send the shared draft (commit ignores lock/version).
+            # Broadcast draft.committed + the cleared draft FIRST so co-editors'
+            # UI resets even if execution below is a no-op / races a concurrent
+            # turn. `client_id` is the sender's receipt: it is how the sender
+            # knows THIS send landed, and how the reducer avoids inserting a
+            # second copy of a line it already shows.
             await self._broadcast({
                 "type": "draft.committed", "draft_id": str(draft.pk),
-                "user_message_id": user_message_id,
+                "user_message_id": user_message_id, "client_id": client_id,
             })
         await self._broadcast_draft(draft)
         # turn events fan out to the session group automatically (realtime signal).
@@ -283,12 +297,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         })
 
     # -- sync DB helpers --
-    def _commit_and_send(self):
-        text = drafts.commit_active_draft(self.session)
+    def _commit_and_send(self, text=None, client_id=""):
+        committed = drafts.commit_active_draft(self.session)
+        # The text the sender SAW is the one to send. The server draft is only a
+        # copy it may or may not have received.
+        text = committed if text is None else text
         if not text.strip():
             return None
         msg, turn = chat_services.send_message(
-            session=self.session, text=text, user=self.user,
+            session=self.session, text=text, user=self.user, client_id=client_id,
             initiator=who.for_scope(self.scope, via="chat"),
         )
         chat_services.maybe_execute_inline(turn)
@@ -379,7 +396,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def draft_committed(self, message):
         await self.send_json({
             "event": "draft.committed",
-            "data": {"draft_id": message["draft_id"], "user_message_id": message["user_message_id"]},
+            "data": {"draft_id": message["draft_id"], "user_message_id": message["user_message_id"],
+                     "client_id": message.get("client_id", "")},
         })
 
     async def draft_discarded(self, message):

@@ -251,7 +251,9 @@ export type WsEvent =
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }
   | { event: "draft.updated"; data: Draft }
   | { event: "draft.lock_changed"; data: { draft_id: string; holder_user_id: number | null; expires_at: number | null } }
-  | { event: "draft.committed"; data: { draft_id: string; user_message_id: string } }
+  // `client_id` is the sender's receipt for a send that carried one (see
+  // useSessionSocket.sendChat); absent from older servers.
+  | { event: "draft.committed"; data: { draft_id: string; user_message_id: string; client_id?: string } }
   | { event: "draft.discarded"; data: { draft_id: string } }
   // `participant` carries WHO joined, so a client can add them to its
   // participant list. Without it a first-time joiner has an id and no name,

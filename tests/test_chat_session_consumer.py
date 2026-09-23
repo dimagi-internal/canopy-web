@@ -586,3 +586,40 @@ async def test_presence_joined_names_the_person_who_joined():
 
     await a.disconnect()
     await b.disconnect()
+
+
+async def test_a_send_carries_its_text_and_a_resend_is_the_same_turn():
+    """A phone resuming from the background can hold a socket that reads OPEN
+    but is dead, so a send whose text lived only in an earlier `draft.update`
+    was simply lost (2026-09-23). The send now carries its own text and a
+    client_id, the receipt echoes that id, and an HTTP resend under the same id
+    is the SAME turn, never a second."""
+    from django.test import Client
+
+    owner, _t, session = await database_sync_to_async(_seed)()
+    await database_sync_to_async(
+        lambda: Turn.objects.create(  # keep it queued: a turn is already running
+            chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="pre", status=Turn.RUNNING
+        )
+    )()
+    a = await _connect(session, owner)
+    assert (await a.connect())[0]
+    # No draft.update at all: the text rides in the send.
+    await a.send_json_to({"action": "chat.send", "data": {"text": "ship it", "client_id": "cid-1"}})
+    receipt = await _recv_match(a, lambda f: f.get("event") == "draft.committed")
+    assert receipt["data"]["client_id"] == "cid-1"
+
+    def resend_over_http():
+        c = Client()
+        c.force_login(owner)
+        return c.post(f"/api/canopy-sessions/{session.id}/send",
+                      {"text": "ship it", "client_id": "cid-1"}, content_type="application/json")
+
+    resp = await database_sync_to_async(resend_over_http)()
+    assert resp.status_code in (200, 201), resp.content
+    prompts = await database_sync_to_async(
+        lambda: list(Turn.objects.filter(chat_session=session).exclude(idempotency_key="pre")
+                     .values_list("prompt", flat=True))
+    )()
+    assert prompts == ["ship it"]
+    await a.disconnect()
