@@ -37,7 +37,7 @@ function Tooltip({ label, children, delay = 300, side = "top", sideOffset = 6 }:
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger delay={delay} render={children} />
       <TooltipPrimitive.Portal>
-        <TooltipPrimitive.Positioner side={side} sideOffset={sideOffset}>
+        <TooltipPrimitive.Positioner className="z-50" side={side} sideOffset={sideOffset}>
           <TooltipPrimitive.Popup
             className={cn(
               "z-50 max-w-xs rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md",

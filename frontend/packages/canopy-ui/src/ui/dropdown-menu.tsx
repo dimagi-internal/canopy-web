@@ -21,14 +21,26 @@ function DropdownMenuTrigger({
   )
 }
 
+// The z-index goes on the POSITIONER, not only the popup. Base UI's positioner
+// is the element that is actually placed, and it forms its own stacking
+// context, so a `z-50` on the popup inside it is ranked only against the
+// positioner's own children. The menu then painted UNDER any positioned
+// z-index on the page (the chat's sticky `z-10` tool-call bar) and those items
+// could not be tapped (2026-09-23, the chat session menu on a phone).
+const POSITIONER_Z = "z-50"
+
 function DropdownMenuContent({
   className,
   sideOffset = 4,
+  align,
   ...props
-}: React.ComponentProps<typeof Menu.Popup> & { sideOffset?: number; align?: string }) {
+}: React.ComponentProps<typeof Menu.Popup> & {
+  sideOffset?: number
+  align?: "start" | "center" | "end"
+}) {
   return (
     <Menu.Portal>
-      <Menu.Positioner sideOffset={sideOffset}>
+      <Menu.Positioner className={POSITIONER_Z} sideOffset={sideOffset} align={align}>
         <Menu.Popup
           data-slot="dropdown-menu-content"
           className={cn(
@@ -191,7 +203,7 @@ function DropdownMenuSubContent({
 }: React.ComponentProps<typeof Menu.Popup>) {
   return (
     <Menu.Portal>
-      <Menu.Positioner>
+      <Menu.Positioner className={POSITIONER_Z}>
         <Menu.Popup
           data-slot="dropdown-menu-sub-content"
           className={cn(
