@@ -27,12 +27,25 @@ def test_creator_is_owner():
     assert participants.role_for(session, owner) == SessionParticipant.OWNER
 
 
-def test_workspace_member_auto_joins_as_editor():
+def test_a_workspace_member_is_not_in_someone_elses_chat():
+    """Being in the workspace is the tenant gate, not a grant to every chat in
+    it. The socket used to auto-join any member as an editor, which turned one
+    connection into durable access to a conversation REST hid from them."""
     owner, ws, session = _ctx()
     teammate = User.objects.create_user("t", "t@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
+    assert participants.can_access(session, teammate) is False
+    assert participants.role_for(session, teammate) is None
+    assert not SessionParticipant.objects.filter(session=session, user=teammate).exists()
+
+
+def test_a_shared_teammate_gets_the_role_they_were_given():
+    owner, ws, session = _ctx()
+    teammate = User.objects.create_user("t", "t@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
+    participants.ensure_participant(session, teammate, SessionParticipant.VIEWER)
     assert participants.can_access(session, teammate) is True
-    assert participants.role_for(session, teammate) == SessionParticipant.EDITOR
+    assert participants.role_for(session, teammate) == SessionParticipant.VIEWER
 
 
 def test_non_member_denied():

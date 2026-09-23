@@ -56,6 +56,8 @@ from .schemas import (
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
+    ParticipantAddIn,
+    ParticipantOut,
     SessionNotifyIn,
     SessionOut,
     StreamStateOut,
@@ -150,26 +152,23 @@ def _visible_slugs(request: HttpRequest) -> set[str]:
     return {pinned} if pinned else set(wsvc.user_workspace_slugs(request.user))
 
 
-def _session_or_404(request: HttpRequest, session_id: uuid.UUID) -> Session:
-    # Two gates, in order: the tenant, then who within it. The second used to be
-    # missing entirely, so a co-tenant with a UUID could read any conversation
-    # in the workspace — including one the LIST correctly hid from them. Both
-    # now read the same predicate (`access.visible_session_q`), and
-    # tests/test_session_by_id_access.py asserts they agree.
+def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool = False) -> Session:
+    # One authority (`access`): the tenant, then who within it — the same rule
+    # the list, the chat socket and attachments apply. `write=True` also needs
+    # an owner/editor role; a viewer gets 403, since they can already see it.
     session = get_object_or_404(
-        Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
-        .annotate(_last_msg_at=Max("messages__created_at"))
-        .filter(access.visible_session_q(request.user))
-        .distinct(),
+        access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request))
+        .select_related("agent", "runner_binding", "runner_binding__runner")
+        .annotate(_last_msg_at=Max("messages__created_at")),
         pk=session_id,
     )
-    if session.workspace_id not in _visible_slugs(request):
-        raise HttpError(404, "session not found")  # wrong tenant / non-member
+    if write and not access.can_write(request.user, session):
+        raise HttpError(403, "you can read this session but not act in it")
     return session
 
 
 def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dict:
-    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
     if session.status != status:
         session.status = status
         session.save(update_fields=["status", "updated_at"])
@@ -245,15 +244,10 @@ def list_sessions(
 
     slugs = _visible_slugs(request)
     rows = (
-        Session.objects.select_related("agent", "runner_binding", "runner_binding__runner")
-        .filter(workspace_id__in=slugs)
-        # Same predicate the by-id read uses — see apps/canopy_sessions/access.py
-        # for why this is not `runner_binding__isnull=False` any more (a WEB
-        # session gets a binding as soon as a runner picks it up, which used to
-        # hand it to every co-tenant). `.distinct()` because the participant leg
-        # joins a reverse FK.
-        .filter(access.visible_session_q(request.user))
-        .distinct()
+        # The same authority every other session surface reads — see
+        # apps/canopy_sessions/access.py.
+        access.readable_sessions(request.user, workspace_slugs=slugs)
+        .select_related("agent", "runner_binding", "runner_binding__runner")
     )
     # Embedder filters (Task 9): an embedder (e.g. ace-web) narrows the shared
     # session list to the sessions it cares about, keyed on the opaque
@@ -348,11 +342,14 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     report re-creates any whose task is still open. Chats a human started are
     never pruned.
     """
-    rows = (
-        Session.objects.select_related("runner_binding", "runner_binding__runner")
-        .filter(workspace_id__in=_visible_slugs(request))
+    # Only sessions you may act in. Scoping by workspace alone let a co-tenant
+    # reset — and with `prune_ghosts`, delete — conversations they cannot read.
+    readable = access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request))
+    rows = [
+        s for s in readable.select_related("runner_binding", "runner_binding__runner")
         .order_by("created_at")
-    )
+        if access.can_write(request.user, s)
+    ]
     return services.reset_sessions(
         rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
     )
@@ -373,6 +370,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     # the socket can never disagree about whether an agent is waiting.
     data["menu"] = serializers.pending_menu(session)
     data["turn_status"] = status_feed.status_for_session(session)
+    data["my_role"] = access.role_for(request.user, session)
     return data
 
 
@@ -424,7 +422,7 @@ def reset_session(request: HttpRequest, session_id: uuid.UUID, dry_run: bool = F
     `runner_unreachable` (its box is offline — try again when it's back). Turns
     and their event ledger are never touched; nothing can rebuild those.
     """
-    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
     return services.reset_session(session, dry_run=dry_run)
 
 
@@ -441,16 +439,65 @@ def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: Ses
     """`every_completion: true` pushes a notification each time a turn in this
     session finishes. Off (the default), one notification is sent once the session
     has been quiet for your chosen number of minutes."""
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     if session.notify_every_completion != payload.every_completion:
         session.notify_every_completion = payload.every_completion
         session.save(update_fields=["notify_every_completion", "updated_at"])
     return _out(session)
 
 
+def _participants(session: Session) -> list[dict]:
+    rows = session.participants.select_related("user").order_by("created_at")
+    return [serializers.participant_dto(p) for p in rows]
+
+
+@router.get("/{session_id}/participants", response=list[ParticipantOut],
+            summary="Who has been given this chat")
+def list_participants(request: HttpRequest, session_id: uuid.UUID):
+    """Everyone explicitly in this conversation, with their role."""
+    return _participants(_session_or_404(request, session_id))
+
+
+@router.post("/{session_id}/participants", response=list[ParticipantOut],
+             summary="Give a teammate this chat")
+def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: ParticipantAddIn):
+    """Owner only. The teammate must already be a member of the chat's
+    workspace; adding someone again changes their role."""
+    from django.contrib.auth import get_user_model
+
+    from .models import SessionParticipant
+
+    session = _session_or_404(request, session_id)
+    if not access.can_share(request.user, session):
+        raise HttpError(403, "only the chat's owner can share it")
+    target = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
+    if target is None or not wsvc.is_member(target, session.workspace_id):
+        raise HttpError(404, "nobody with that email is in this workspace")
+    if target.pk == session.created_by_id:
+        raise HttpError(409, "that person owns this chat")
+    SessionParticipant.objects.update_or_create(
+        session=session, user=target, defaults={"role": payload.role})
+    return _participants(session)
+
+
+@router.delete("/{session_id}/participants/{user_id}", response=list[ParticipantOut],
+               summary="Take a chat away from someone")
+def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int):
+    """The owner can remove anyone but themselves; anyone can remove themselves."""
+    from .models import SessionParticipant
+
+    session = _session_or_404(request, session_id)
+    if user_id == session.created_by_id:
+        raise HttpError(409, "the chat's owner cannot be removed")
+    if user_id != request.user.pk and not access.can_share(request.user, session):
+        raise HttpError(403, "only the chat's owner can remove someone else")
+    SessionParticipant.objects.filter(session=session, user_id=user_id).delete()
+    return _participants(session)
+
+
 @router.post("/{session_id}/send", response=SendOut, summary="Send a message")
 def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
     try:
@@ -474,7 +521,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
 def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     # The chat banner's after-the-fact directed-placement decision (vs. `runner_id`
     # on create / `placement` on send, which only apply to a turn at enqueue time).
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     try:
         turn = services.place_queued_turn(session=session, placement=payload.placement)
     except LookupError as exc:
@@ -503,7 +550,7 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     succeed once the source box is idle, which is a state conflict rather than a
     bad body. Stop the session (`POST /{id}/stop`) and retry.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     try:
         binding, turn = services.transfer_session(
             session=session, placement=payload.runner, brief=payload.brief,
@@ -539,7 +586,7 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
     runner can go offline in between — both ordinary, neither a client error.
     Same shape `reset` uses for the same reason.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     outcome = services.answer_menu(session=session, option=payload.option,
                                    selections=payload.selections,
                                    texts=payload.texts)
@@ -560,7 +607,7 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
     There is deliberately no `unbound` refusal: a session with no binding has
     nothing on a box, which is the second branch rather than an error.
     """
-    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
     outcome = services.close_session(session=session)
     ok = outcome in ("closing", "closed")
     return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
@@ -568,7 +615,7 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
 
 @router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")
 def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     # Shared with close_session's unreported branch — a closed session must not be
     # woken by a turn that was still queued, and the "all non-terminal turns, and
     # not via any()" reasoning belongs in one place.
@@ -607,7 +654,7 @@ def upload_attachment(
     still typing, so the message it belongs to does not exist yet. Sending binds
     it. That ordering is also what lets the UI show a thumbnail before send.
     """
-    session = _session_or_404(request, session_id)   # membership gate: non-member -> 404
+    session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
@@ -650,14 +697,17 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     runner downloading into the agent's workspace (which authenticates with a
     PAT, resolved upstream into request.user like any other caller).
 
-    Gated on session membership, not on who uploaded it — a session is
-    multiplayer, so a teammate must be able to see what was shared in it.
+    Gated on who can read the session, not on who uploaded it — a session is
+    multiplayer, so a teammate who can read it must see what was shared in it.
     """
     attachment = get_object_or_404(
         Attachment.objects.select_related("session"), pk=attachment_id
     )
-    if attachment.session.workspace_id not in _visible_slugs(request):
-        raise HttpError(404, "attachment not found")  # wrong tenant / non-member
+    # The session's own read rule: a teammate who can read the chat can see
+    # what was shared in it; a co-tenant who cannot read it cannot either.
+    if attachment.session.workspace_id not in _visible_slugs(request) or not access.can_read(
+            request.user, attachment.session):
+        raise HttpError(404, "attachment not found")
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
@@ -680,8 +730,11 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
     attachment = get_object_or_404(
         Attachment.objects.select_related("session"), pk=attachment_id
     )
-    if attachment.session.workspace_id not in _visible_slugs(request):
+    if attachment.session.workspace_id not in _visible_slugs(request) or not access.can_read(
+            request.user, attachment.session):
         raise HttpError(404, "attachment not found")
+    if not access.can_write(request.user, attachment.session):
+        raise HttpError(403, "you can read this session but not act in it")
     if attachment.message_id is not None:
         raise HttpError(409, "this attachment has already been sent")
     if attachment_storage.is_configured():
@@ -710,7 +763,7 @@ def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
     Replaces the declaration wholesale — see `set_declared_actions` for why
     merging would leave the agent able to call into a page the user has left.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     page_actions.set_declared_actions(
         session, [a.dict() for a in payload.actions]
     )
@@ -736,7 +789,7 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
     rejected with `too_large`: send the selection (ids, filters) and the tool
     that resolves it, not the rows themselves.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     try:
         stored = page_state.set_page_state(session, payload.state)
     except page_state.PageStateError as exc:
@@ -760,7 +813,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
     A `state` larger than the server's cap is rejected with `too_large`: send
     the selection (ids, filters) and the tool that resolves it, not the rows.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
 
     # Actions first, then state — the same order the widget uses, and for the
     # same reason: whichever lands last, the agent must never see a page that
@@ -798,7 +851,7 @@ def invoke_page_action(request: HttpRequest, session_id: uuid.UUID,
     (`no_page`, `unknown_action`, `bad_arguments`, `timeout`, `refused`) — a
     caller must never be able to read "the tab was closed" as "done".
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     try:
         action = page_actions.request_action(
             session=session, name=payload.name, args=payload.args, user=request.user
@@ -820,7 +873,7 @@ def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: 
     Membership-gated like every other by-id read, and scoped to the session, so
     one page cannot resolve another's action.
     """
-    session = _session_or_404(request, session_id)
+    session = _session_or_404(request, session_id, write=True)
     action = session.page_actions.filter(pk=action_id).first()
     if action is None:
         raise HttpError(404, "no such page action on this session")

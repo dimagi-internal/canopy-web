@@ -35,6 +35,7 @@ import {
   closeResultMessage,
 } from '@/components/chat/closeAction'
 import { ShareToSlack } from '@/components/chat/ShareToSlack'
+import { ChatPeople } from '@/components/chat/ChatPeople'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -289,12 +290,17 @@ export function ChatPage() {
   }, [pendingAnswer, socket.state.activity, socket.state.menu, menuHidden, answerClock])
 
   // The composer refuses rather than queueing — see sendBlockReason.
-  const disabledReason = sendBlockReason({
-    runnerName: meta?.runner_name,
-    boundOffline,
-    paused: boundPaused,
-    blockedOnMenu: menuBlocksComposer(visibleMenu),
-  })
+  // A viewer was given this chat to read (canopy_sessions.access); the server
+  // refuses their send with a 403, so say so here instead of letting it bounce.
+  const disabledReason =
+    meta?.my_role === 'viewer'
+      ? "You were given this chat as a viewer, so you can read it but not send."
+      : sendBlockReason({
+          runnerName: meta?.runner_name,
+          boundOffline,
+          paused: boundPaused,
+          blockedOnMenu: menuBlocksComposer(visibleMenu),
+        })
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -746,6 +752,7 @@ export function ChatPage() {
               {meta.notify_every_completion ? '🔔 Every reply' : '🔕 Every reply'}
             </button>
           )}
+          {id && meta && <ChatPeople sessionId={id} myRole={meta.my_role ?? null} />}
           {id && (
             <ShareToSlack
               disabledReason={disabledReason}

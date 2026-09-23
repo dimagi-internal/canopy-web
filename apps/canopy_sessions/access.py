@@ -1,4 +1,29 @@
-"""Who may see a session — ONE predicate, used by both the list and by-id reads.
+"""Who may see, and who may act in, a chat session. THE authority.
+
+Every surface asks here: the REST list and by-id reads, every REST write, the
+chat socket, attachments, the bulk/maintenance tools, and the push that links
+to a chat. Nothing else decides. `tests/test_session_acl.py` pins that the
+socket and REST agree for every session shape, and that nothing but an
+explicit action creates a `SessionParticipant` row.
+
+The rule, whole:
+
+* **Tenant first.** You must be a member of the session's workspace. Always —
+  a participant removed from the workspace loses the session with it, the
+  same as every other tenant surface in canopy.
+* **Then one of four legs** (`visible_session_q`): you created it; you were
+  made a participant; it is a runner-discovered emdash session (tenant-visible
+  by design); or it is your agent's own thread.
+* **Writing** (sending, answering, stopping, archiving, page actions,
+  attachments) needs a role of owner or editor. A `viewer` participant reads.
+* **Sharing** — adding or removing a participant — is the OWNER's: the
+  creator, or for an agent's own thread the agent's owner. Only someone
+  already in the workspace can be added; anyone may remove themselves.
+
+A contact is a different principal with a disjoint predicate
+(`contact_session_q`) and never reaches these helpers.
+
+History — why one module:
 
 It lives in its own module because the two used to be written by hand at two
 sites and disagreed, in both directions:
@@ -11,6 +36,12 @@ sites and disagreed, in both directions:
   moment a runner picks it up, so a private chat silently became co-tenant
   readable as soon as it started running. `origin` is the property that
   actually distinguishes "nobody in-app created this" from "someone did".
+* **the socket had a third rule.** `participants.can_access` admitted ANY
+  workspace member and auto-joined them as an editor, so one socket open turned
+  a chat REST hid from you into a durable participant grant — and REST then
+  honoured it. It also made the chat page 404 on its first REST read and work
+  on reload (2026-09-23), because the socket, opened in parallel, granted what
+  REST had just refused.
 
 This is the same shape of guard `apps/harness/services.py` uses for
 claim-vs-schedule after those two hand-written predicates drifted
@@ -28,7 +59,7 @@ from __future__ import annotations
 
 from django.db.models import Q
 
-from .models import Session
+from .models import Session, SessionParticipant
 
 
 def visible_session_q(user) -> Q:
@@ -96,3 +127,65 @@ def contact_session_q(contact) -> Q:
     grant the Contact model exists to withhold.
     """
     return Q(contact=contact)
+
+
+_WRITE_ROLES = frozenset({SessionParticipant.OWNER, SessionParticipant.EDITOR})
+
+
+def _tenant_slugs(user) -> set:
+    from apps.workspaces import services as wsvc
+
+    return set(wsvc.user_workspace_slugs(user))
+
+
+def readable_sessions(user, *, workspace_slugs=None):
+    """Every session `user` may read — the tenant gate AND the four legs.
+
+    `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
+    never widen past the caller's own workspaces.
+    """
+    if not getattr(user, "is_authenticated", False):
+        return Session.objects.none()
+    slugs = _tenant_slugs(user)
+    if workspace_slugs is not None:
+        slugs &= set(workspace_slugs)
+    return (Session.objects.filter(workspace_id__in=slugs)
+            .filter(visible_session_q(user)).distinct())
+
+
+def can_read(user, session) -> bool:
+    if session is None or not getattr(user, "is_authenticated", False):
+        return False
+    return readable_sessions(user).filter(pk=session.pk).exists()
+
+
+def role_for(user, session) -> str | None:
+    """The caller's EFFECTIVE role in this session, or None if they cannot read it.
+
+    An explicit participant row wins (that is how someone is made a viewer).
+    Otherwise the creator is the owner and every other leg is an editor: a
+    runner-discovered session and an agent's own thread are both meant to be
+    worked in, not only watched.
+    """
+    if not can_read(user, session):
+        return None
+    row = (SessionParticipant.objects.filter(session=session, user=user)
+           .values_list("role", flat=True).first())
+    if row:
+        return row
+    if session.created_by_id == user.pk:
+        return SessionParticipant.OWNER
+    # An agent's own thread has no creator; the agent's owner stands in for one
+    # (leg 4), so there is somebody who can share it.
+    if session.created_by_id is None and session.agent_id and session.agent.owner_id == user.pk:
+        return SessionParticipant.OWNER
+    return SessionParticipant.EDITOR
+
+
+def can_share(user, session) -> bool:
+    """Only an owner decides who else is in the conversation."""
+    return role_for(user, session) == SessionParticipant.OWNER
+
+
+def can_write(user, session) -> bool:
+    return role_for(user, session) in _WRITE_ROLES

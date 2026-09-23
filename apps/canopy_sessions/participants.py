@@ -1,9 +1,14 @@
-"""Session membership + access. A workspace member auto-joins as editor on first
-touch (like ace-web); the creator is the owner (set in create_session)."""
+"""Session participation. Access itself is decided in `access.py` — nowhere else.
+
+A `SessionParticipant` row is an EXPLICIT grant: the creator (as owner, in
+`create_session`) and a member who joins a Slack thread they can already read
+(`apps.slack.services`). Opening a chat never creates one — it used to, which
+let any co-tenant turn a private conversation into a durable grant by
+connecting a socket to its id. `tests/test_session_acl.py` pins the callers.
+"""
 from __future__ import annotations
 
-from apps.workspaces import services as wsvc
-
+from . import access
 from .models import Session, SessionParticipant
 
 
@@ -15,23 +20,10 @@ def ensure_participant(session: Session, user, role: str = SessionParticipant.ED
 
 
 def can_access(session: Session, user) -> bool:
-    if not getattr(user, "is_authenticated", False):
-        return False
-    # A durable participant keeps access even if later removed from the workspace:
-    # session membership is an explicit, standalone grant (you were added to THIS
-    # conversation), not a projection of workspace membership. Off-boarding a user
-    # from the workspace does not auto-revoke sessions they already joined — remove
-    # the SessionParticipant row to revoke. (The REST surface re-checks tenant each
-    # request; this socket-side gate intentionally honors the durable grant.)
-    if SessionParticipant.objects.filter(session=session, user=user).exists():
-        return True
-    # A workspace member is granted access and auto-joined as an editor.
-    if session.workspace_id in wsvc.user_workspace_slugs(user):
-        ensure_participant(session, user, SessionParticipant.EDITOR)
-        return True
-    return False
+    """Read access — `access.can_read`, under the name the socket used."""
+    return access.can_read(user, session)
 
 
 def role_for(session: Session, user) -> str | None:
-    row = SessionParticipant.objects.filter(session=session, user=user).only("role").first()
-    return row.role if row else None
+    """Effective role — `access.role_for`."""
+    return access.role_for(user, session)

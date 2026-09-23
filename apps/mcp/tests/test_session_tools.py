@@ -52,8 +52,10 @@ def _workspace(slug, user, *, member=True):
 
 
 def _session_with(ws, rows):
+    # The caller's own session: these tools act on sessions you can READ
+    # (`canopy_sessions.access`), not on everything in your workspaces.
     session = Session.objects.create(
-        workspace=ws, origin=Session.ORIGIN_RUNNER, title="s"
+        workspace=ws, created_by=ws.created_by, origin=Session.ORIGIN_WEB, title="s"
     )
     for i, (role, text) in enumerate(rows):
         Message.objects.create(session=session, turn_index=i, role=role, plaintext=text)

@@ -30,6 +30,9 @@ def _seed():
     WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=owner)
     session = chat.create_session(workspace=ws, created_by=owner, agent=agent)
+    # Shared explicitly. Being in the workspace no longer puts you in someone
+    # else's chat (canopy_sessions.access) — the owner has to give it to you.
+    SessionParticipant.objects.create(session=session, user=teammate, role=SessionParticipant.EDITOR)
     return owner, teammate, session
 
 
@@ -550,7 +553,19 @@ async def test_presence_joined_names_the_person_who_joined():
     await a.receive_json_from(timeout=2)   # own session.state
     await a.receive_json_from(timeout=2)   # own presence.joined
 
-    # The teammate has never touched this session — no SessionParticipant row.
+    # A reader with NO participant row: a runner-discovered session, which the
+    # whole tenant may read. Connecting must not create one (that was the
+    # auto-join the ACL removed) — and they must still be on the roster.
+    def _discovered():
+        from apps.canopy_sessions.models import RunnerBinding, Session
+        from apps.harness.models import Runner
+
+        SessionParticipant.objects.filter(session=session, user=teammate).delete()
+        Session.objects.filter(pk=session.pk).update(origin=Session.ORIGIN_RUNNER, created_by=None)
+        runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", paired_by=owner)
+        RunnerBinding.objects.create(session=session, runner=runner, session_key="k")
+
+    await database_sync_to_async(_discovered)()
     assert not await database_sync_to_async(
         SessionParticipant.objects.filter(session=session, user=teammate).exists
     )()
@@ -565,6 +580,9 @@ async def test_presence_joined_names_the_person_who_joined():
     assert who is not None, "the joiner must be carried, or nobody can render them"
     assert who["user_id"] == teammate.id
     assert who["display_name"], "a nameless participant cannot be rendered"
+    assert not await database_sync_to_async(
+        SessionParticipant.objects.filter(session=session, user=teammate).exists
+    )(), "connecting is not a grant"
 
     await a.disconnect()
     await b.disconnect()

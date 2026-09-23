@@ -1,6 +1,8 @@
 """Pydantic schemas for /api/canopy-sessions."""
 from __future__ import annotations
 
+from typing import Literal
+
 import datetime as dt
 import uuid
 
@@ -161,6 +163,10 @@ class SessionDetailOut(SessionOut):
     # reads over REST, still has to be able to tell "queued behind an offline
     # runner" from "working on it". Null when nothing has been asked yet.
     turn_status: dict | None = None
+    # Your role here (owner / editor / viewer), from the one ACL
+    # (canopy_sessions.access). The page reads it to decide whether to offer
+    # sharing and the composer — the server enforces both regardless.
+    my_role: str | None = None
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.
@@ -175,6 +181,21 @@ class SendOut(Schema):
 
 class SessionNotifyIn(Schema):
     every_completion: bool
+
+
+class ParticipantOut(Schema):
+    """Someone explicitly given this chat. The creator is its owner."""
+    user_id: int
+    email: str
+    display_name: str
+    role: str
+    joined_at: str | None = None
+
+
+class ParticipantAddIn(Schema):
+    """Give a teammate this chat. They must already be in its workspace."""
+    email: str
+    role: Literal["editor", "viewer"] = "editor"
 
 
 class StreamStateOut(Schema):

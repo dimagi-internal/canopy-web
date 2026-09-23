@@ -165,12 +165,14 @@ def test_content_streams_the_bytes_inline():
 
 
 def test_a_teammate_can_read_what_was_shared_in_the_session():
-    """Gated on session membership, not on who uploaded — a session is
-    multiplayer, so the other person must see the screenshot."""
+    """Gated on who can read the session, not on who uploaded — a session is
+    multiplayer, so the person it was shared with must see the screenshot."""
     user, ws, session, _c = _ctx()
     row = _make(session, user)
     mate = User.objects.create_user("mate", "mate@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=mate, workspace=ws, role=WorkspaceMembership.EDITOR)
+    from apps.canopy_sessions.models import SessionParticipant
+    SessionParticipant.objects.create(session=session, user=mate, role=SessionParticipant.EDITOR)
     mate_client = Client()
     mate_client.force_login(mate)
 
