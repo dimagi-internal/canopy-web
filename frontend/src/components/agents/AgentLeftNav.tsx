@@ -50,6 +50,10 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     { to: 'work-products', label: 'Work products' },
     { to: 'skills', label: 'Skills' },
     { to: 'history', label: 'History' },
+    // Last, and its own entry: every control that CONFIGURES the agent — owner,
+    // admins, callers, turn mode, Slack, runners, credentials. They were
+    // sections of Overview, a page named after a dashboard.
+    { to: 'settings', label: 'Settings' },
   ]
 
   const header = (

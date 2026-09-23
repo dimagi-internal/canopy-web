@@ -77,6 +77,9 @@ const ItemsSection = lazySection(() =>
 const SchedulesSection = lazySection(() =>
   import('./pages/agents/SchedulesSection').then((m) => ({ default: m.SchedulesSection })),
 )
+const AgentSettingsSection = lazySection(() =>
+  import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
+)
 const AgentSyncsSection = lazySection(() =>
   import('./pages/agents/AgentSyncsSection').then((m) => ({ default: m.AgentSyncsSection })),
 )
@@ -291,6 +294,7 @@ export const routeTable: RouteObject[] = [
           { path: 'items', element: <LazySection><ItemsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'syncs', element: <LazySection><AgentSyncsSection /></LazySection> },
+          { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Overview now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },

@@ -29,7 +29,7 @@ describe('guideGroups', () => {
     // /w/:workspace/agents — so without cluster-first assignment every rail
     // section would land in Fleet and this group would be empty.
     const rail = guideGroups().find((g) => g.label === 'Agent workspace')
-    expect(rail?.surfaces.length).toBe(11)  // Credentials folded into Overview; + Projects
+    expect(rail?.surfaces.length).toBe(12)  // + Settings (the agent's config, off Overview)
     const fleet = guideGroups().find((g) => g.label === 'Fleet')
     expect(fleet?.surfaces.map((s) => s.path)).toContain('/w/:workspace/agents')
     expect(fleet?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/agents/:slug/inbox')

@@ -77,11 +77,13 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
         # authority for the OAuth redirect_uri, so the round trip starts and ends
         # against the same base rather than two derivations that can disagree.
         root = settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
-        # Credentials is a section of the Overview page now; the fragment lands
-        # the person on it rather than at the top of a long page.
+        # Credentials is a section of the agent's SETTINGS page (it moved off
+        # Overview with the rest of the agent's configuration, 2026-09-23); the
+        # fragment lands the person on it rather than at the top of the page.
+        # `/credentials` still redirects here too, so an older link survives.
         if agent is None:
             return HttpResponseRedirect(f"{root}/?google={status}")
-        path = f"/w/{agent.workspace.slug}/agents/{agent.slug}/overview"
+        path = f"/w/{agent.workspace.slug}/agents/{agent.slug}/settings"
         return HttpResponseRedirect(f"{root}{path}?google={status}#credentials")
 
     if not state:
