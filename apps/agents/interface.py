@@ -21,9 +21,36 @@ runs in its capability's profile, where everything not listed is denied:
         read_paths: ["{cwd}/**"]
     callers_default: none
 
+**A page can pick the door.** A capability may name the resources it serves,
+and a conversation held on a page that declared one of them runs there instead
+of in `ask`:
+
+    capabilities:
+      marketplace:
+        callers: [contact]
+        pages: ["labs-marketplace://*"]   # what the PAGE declared it is showing
+        tools: [Skill, "mcp__*canopy-web__current_page",
+                "mcp__*connect_labs__marketplace_*"]
+
+This exists because an embedded page already publishes a contract — `setPageState`
+says what it is showing and which tool resolves those rows — and until now nothing
+could answer it. Every free-form channel collapsed to `ask`, so an agent embedded
+in a page had one door shared with its email, and the only way to give the page
+what it needed was to give an email stranger the same thing. That is the wrong
+trade in both directions: the page's conversation is under-equipped and the
+mailbox is over-exposed.
+
+It cannot widen anything on the host's word. The page supplies only the resource
+it is showing; every tool in the profile was chosen by the agent's owner. A host
+that lies about its resource reaches exactly the tools that owner already decided
+to expose to that page — and it had to be an allowlisted app, framing from a
+registered origin, to open a conversation at all.
+
 **Opt-in per agent.** An agent that has published no interface behaves exactly
 as before: every turn runs in its full profile. Publishing one is what turns
-the caller path on, so an agent is never half-restricted by accident.
+the caller path on, so an agent is never half-restricted by accident. A
+capability with no `pages` is never selected this way, so an existing interface
+behaves exactly as it did.
 
 Caller classes: `member` (a workspace member who is not an admin), `contact`
 (someone canopy knows who is not a member), `unknown` (nobody established who).
@@ -55,8 +82,10 @@ from apps.harness import initiator as who
 
 VERSION = 1
 
-#: What free-form channels (email, chat, Slack, the widget) invoke. Named
-#: capabilities are for callers that ask for something specific.
+#: The fallback door for a free-form channel (email, chat, Slack, a widget on a
+#: page that declared nothing). Named capabilities are for callers that ask for
+#: something specific, or for a page whose declared resource matches one's
+#: `pages` — see `_page_capability`.
 ASK = "ask"
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
@@ -128,7 +157,7 @@ def parse(doc) -> dict:
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
-                          "input"}
+                          "input", "pages"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -153,9 +182,69 @@ def parse(doc) -> dict:
             "tools": _strings(cap.get("tools"), "tools", name),
             "bash": _strings(cap.get("bash"), "bash", name),
             "read_paths": _strings(cap.get("read_paths"), "read_paths", name),
+            "pages": _pages(cap.get("pages"), name),
         }
     full = _classes(doc.get("full"), "full")
     return {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
+
+
+def _pages(value, cap: str) -> list[str]:
+    """Resource patterns a capability serves, e.g. `labs-marketplace://*`.
+
+    An embedded page already declares what it is showing (`setPageState`), and
+    that declaration is server-stored and server-versioned. This is how an agent
+    ANSWERS it: the page says which room it is in, the owner says what is in that
+    room. A `*` is the only wildcard, matched with `fnmatch`, and a bare `*` is
+    refused — "any page at all" is what leaving `pages` off already means, and
+    spelling it as a pattern reads like a narrowing while being the opposite.
+    """
+    out = _strings(value, "pages", cap)
+    for pattern in out:
+        if pattern == "*":
+            raise InterfaceError(
+                f"{cap}.pages: '*' matches every page, which is what omitting "
+                "`pages` does — name the resources this capability is for")
+        if "://" not in pattern:
+            raise InterfaceError(
+                f"{cap}.pages: {pattern!r} is not a resource pattern — it needs a "
+                "scheme, as the page's own `resource` does (e.g. stock://*)")
+    return out
+
+
+def _declared_resource(turn) -> str:
+    """What the page attached to this turn's conversation says it is showing."""
+    session = getattr(turn, "chat_session", None)
+    state = getattr(session, "page_state", None) or {} if session is not None else {}
+    resource = state.get("resource")
+    return resource if isinstance(resource, str) else ""
+
+
+def _page_capability(turn, iface: dict, classes: set[str]) -> str | None:
+    """The capability whose `pages` match what this turn's page declared.
+
+    Checked before falling back to `ask`, so a conversation held on a page the
+    agent has declared a door for gets THAT door, and every other channel is
+    unaffected. Names are tried in order for determinism; a capability the
+    caller's class is not listed for is skipped rather than refusing outright,
+    because `ask` may still admit them.
+
+    This cannot widen anything on the host's word: the page supplies only the
+    resource it is showing, and every tool in the profile was chosen by the
+    agent's owner. A host that lies about its resource reaches the tools that
+    owner already decided to expose to that page.
+    """
+    from fnmatch import fnmatchcase
+
+    resource = _declared_resource(turn)
+    if not resource:
+        return None
+    for name, cap in (iface.get("capabilities") or {}).items():
+        patterns = cap.get("pages") or []
+        if not patterns or not (classes & set(cap.get("callers") or [])):
+            continue
+        if any(fnmatchcase(resource, pattern) for pattern in patterns):
+            return name
+    return None
 
 
 def _classes(value, where: str) -> list[str]:
@@ -227,7 +316,7 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     classes = caller_classes(turn, rel)
     if full_rule(classes, iface):
         return FULL
-    name = requested or ASK
+    name = requested or _page_capability(turn, iface, classes) or ASK
     cap = iface["capabilities"].get(name)
     if cap and classes & set(cap.get("callers") or []):
         return name
@@ -289,7 +378,7 @@ def profile(agent, capability: str) -> dict | None:
         return None
     cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
     cap = cap or {"description": "", "callers": [], "entry": None,
-                  "tools": [], "bash": [], "read_paths": [], "input": {}}
+                  "tools": [], "bash": [], "read_paths": [], "input": {}, "pages": []}
     return {"name": capability, **{k: cap.get(k) for k in
                                    ("description", "entry", "tools", "bash", "read_paths",
                                     "input")}}

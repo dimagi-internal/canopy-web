@@ -284,3 +284,114 @@ def test_a_stuck_callers_turn_says_why(w, claimable):
     rows = services.unclaimable_queued_turns(w["op"])
     assert [r["turn_id"] for r in rows] == [str(t.pk)]
     assert "confine" in rows[0]["reason"] and rows[0]["kind"] == "config"
+
+
+# --- a page can pick the door --------------------------------------------------
+# The gap this closes: every free-form channel collapsed to `ask`, so an agent
+# embedded in a page shared one door with its mailbox. Equipping the page meant
+# equipping an email stranger identically.
+
+PAGED = {"capabilities": {
+    "ask": IFACE["capabilities"]["ask"],
+    "marketplace": {
+        "description": "Ask about the organisations on this page.",
+        "callers": ["contact", "member"],
+        "pages": ["labs-marketplace://*"],
+        "tools": ["Skill", "mcp__*connect_labs__marketplace_*"],
+        "read_paths": ["{cwd}/**"],
+    },
+}, "callers_default": "none"}
+
+
+def _on_page(agent, user, key, resource):
+    """A chat turn whose conversation has declared a page, as the widget does."""
+    from apps.canopy_sessions import page_state
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=agent.workspace, agent=agent, created_by=user)
+    if resource:
+        page_state.set_page_state(session, {"resource": resource, "visible_ids": ["a", "b"]})
+        session.refresh_from_db()
+    # A turn targets exactly one of agent / project / session; a widget's turn
+    # is bound to the CONVERSATION, which is how the page reaches it at all.
+    t, _ = services.enqueue_turn(
+        origin=Turn.ORIGIN_API, idempotency_key=key, session=session,
+        initiator=who.for_user(user, via="widget:connect-labs", assurance=who.SESSION))
+    return t
+
+
+def test_a_conversation_on_a_declared_page_runs_in_that_capability(w):
+    _publish(w["agent"], PAGED)
+    t = _on_page(w["agent"], w["ed"], "p1", "labs-marketplace://orgs")
+    assert t.capability == "marketplace"
+
+
+def test_the_same_caller_elsewhere_still_gets_ask(w):
+    """The page selects a door; it does not change the agent for everyone."""
+    _publish(w["agent"], PAGED)
+    assert _as_user(w["agent"], w["ed"], "p2").capability == ASK
+    assert _email(w["agent"], "p3", headers=DMARC).capability == ASK
+
+
+def test_a_page_that_declared_nothing_gets_ask(w):
+    _publish(w["agent"], PAGED)
+    assert _on_page(w["agent"], w["ed"], "p4", "").capability == ASK
+
+
+def test_an_unmatched_resource_gets_ask(w):
+    _publish(w["agent"], PAGED)
+    t = _on_page(w["agent"], w["ed"], "p5", "stock://on-hand")
+    assert t.capability == ASK
+
+
+def test_a_page_capability_a_caller_is_not_offered_is_skipped_not_fatal(w):
+    """`ask` may still admit them, so a page door they cannot open must not
+    refuse the turn outright."""
+    doc = {"capabilities": {
+        "ask": IFACE["capabilities"]["ask"],
+        "marketplace": {**PAGED["capabilities"]["marketplace"], "callers": ["contact"]},
+    }, "callers_default": "none"}
+    _publish(w["agent"], doc)
+    t = _on_page(w["agent"], w["ed"], "p6", "labs-marketplace://orgs")
+    assert t.capability == ASK
+
+
+def test_the_owner_is_unaffected_by_a_page(w):
+    _publish(w["agent"], PAGED)
+    assert _on_page(w["agent"], w["op"], "p7", "labs-marketplace://orgs").capability == FULL
+
+
+def test_the_page_cannot_widen_what_the_capability_grants(w):
+    """The security property. The page supplies the resource; the OWNER supplies
+    the tools. A page declaring a resource reaches exactly the profile its owner
+    wrote for that resource — never a tool nobody listed."""
+    _publish(w["agent"], PAGED)
+    t = _on_page(w["agent"], w["ed"], "p8", "labs-marketplace://orgs")
+    profile = caller_context.build(t)
+    assert profile["profile"] == "restricted"
+    assert profile["capability"]["tools"] == ["Skill", "mcp__*connect_labs__marketplace_*"]
+    assert profile["capability"]["bash"] == []
+
+
+def test_an_existing_interface_is_unchanged_by_the_feature(w):
+    """No `pages` anywhere means selection behaves exactly as before."""
+    _publish(w["agent"])  # the original IFACE, no pages
+    t = _on_page(w["agent"], w["ed"], "p9", "labs-marketplace://orgs")
+    assert t.capability == ASK
+
+
+@pytest.mark.parametrize("pattern, msg", [
+    ("*", "matches every page"),
+    ("labs-marketplace", "not a resource pattern"),
+])
+def test_a_pages_pattern_that_says_everything_is_refused(pattern, msg):
+    doc = {"capabilities": {"m": {"callers": ["contact"], "pages": [pattern]}},
+           "callers_default": "none"}
+    with pytest.raises(InterfaceError, match=msg):
+        parse(doc)
+
+
+def test_pages_survives_a_round_trip_through_parse():
+    out = parse(PAGED)
+    assert out["capabilities"]["marketplace"]["pages"] == ["labs-marketplace://*"]
+    assert out["capabilities"]["ask"]["pages"] == []
