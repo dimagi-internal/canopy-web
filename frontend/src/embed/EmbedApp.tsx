@@ -79,23 +79,34 @@ function renderMarkdown(text: string) {
 async function declarePage(
   client: { rest: { json: (path: string, init?: RequestInit) => Promise<unknown> } },
   link: HostLink,
-  sid: string,
+  base: string,
 ): Promise<void> {
   const state = link.pageState()
   await Promise.allSettled([
-    client.rest.json(`/api/canopy-sessions/${sid}/page-actions`, {
+    client.rest.json(`${base}/page-actions`, {
       method: 'PUT',
       body: JSON.stringify({ actions: link.actions() }),
     }),
     // Only if the host has actually spoken — pushing `{}` for a host that does
     // not use the state channel would declare the user's screen blank.
     state
-      ? client.rest.json(`/api/canopy-sessions/${sid}/page-state`, {
+      ? client.rest.json(`${base}/page-state`, {
           method: 'PUT',
           body: JSON.stringify({ state }),
         })
       : Promise.resolve(),
   ])
+}
+
+/** Where this principal's session lives.
+ *
+ *  A contact reaches `/api/contact/` and nothing else, so every by-session call
+ *  has to pick. Derived in one place because the two paths diverging per
+ *  call-site is what left contacts silently without page state.
+ */
+function sessionBase(isContact: boolean, sid: string): string {
+  const id = encodeURIComponent(sid)
+  return isContact ? `/api/contact/sessions/${id}` : `/api/canopy-sessions/${id}`
 }
 
 export function EmbedApp({ link, app }: Props) {
@@ -265,14 +276,14 @@ export function EmbedApp({ link, app }: Props) {
       // tries it by hand, and the case it fails is the one that matters most —
       // "close the ones I'm looking at" as the OPENING message.
       //
-      // Contacts are excluded: `/api/contact/` is their entire surface and
-      // neither declaration is on it (test_contact_surface_is_bounded).
-      if (!isContact) await declarePage(client, link, created.id)
+      // Both principals declare. Contacts used to be skipped because neither
+      // route was on `/api/contact/`; both are now, so an embedded agent learns
+      // what its visitor is looking at whether or not that visitor happens to
+      // hold a canopy account.
+      const base = sessionBase(isContact, created.id)
+      await declarePage(client, link, base)
 
-      const sendPath = isContact
-        ? `/api/contact/sessions/${encodeURIComponent(created.id)}/send`
-        : `/api/canopy-sessions/${encodeURIComponent(created.id)}/send`
-      await client.rest.json(sendPath, {
+      await client.rest.json(`${base}/send`, {
         method: 'POST',
         body: JSON.stringify({ text: body }),
       })
@@ -334,7 +345,7 @@ export function EmbedApp({ link, app }: Props) {
       client={client}
       link={link}
       contextPreamble={pendingContext}
-      readOnlySocket={principal?.kind === 'contact'}
+      isContact={principal?.kind === 'contact'}
     />
   )
 }
@@ -456,7 +467,7 @@ function EmbedChat({
   client,
   link,
   contextPreamble,
-  readOnlySocket = false,
+  isContact = false,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. */
@@ -464,10 +475,19 @@ function EmbedChat({
   client: CanopyClient
   link: HostLink
   contextPreamble: React.MutableRefObject<string | null>
-  /** A contact's socket LISTENS. Presence and the co-edited draft are keyed on
-   *  a user id they do not have, so the composer is local and the send goes
-   *  over HTTP — see apps/canopy_sessions/consumers.py. */
-  readOnlySocket?: boolean
+  /** Whether this visitor is a contact rather than a signed-in canopy user.
+   *
+   *  ONE name for one fact, because it decides several things at once and they
+   *  must not be able to disagree: which prefix every by-session call uses
+   *  (`/api/contact/` is a contact's entire surface), and that the socket
+   *  LISTENS — presence and the co-edited draft are keyed on a user id they do
+   *  not have, so the composer is local and the send goes over HTTP (see
+   *  apps/canopy_sessions/consumers.py).
+   *
+   *  It was `readOnlySocket`, named for the second consequence only. That is
+   *  part of why a contact silently went without page state: the prop that knew
+   *  the answer did not look like it was about routing. */
+  isContact?: boolean
 }) {
   const wsUrl = useCallback(
     () => client.sessionSocketUrl(sessionId) ?? '',
@@ -500,14 +520,14 @@ function EmbedChat({
           body = { error: error instanceof Error ? error.message : 'the page refused the action' }
         }
         await client.rest
-          .json(`/api/canopy-sessions/${sessionId}/page-actions/${action.id}/result`, {
+          .json(`${sessionBase(isContact, sessionId)}/page-actions/${action.id}/result`, {
             method: 'POST',
             body: JSON.stringify(body),
           })
           .catch(() => undefined)
       })()
     },
-    [client, link, sessionId],
+    [client, link, sessionId, isContact],
   )
 
   // AG-UI on the wire. `session.page_action` and `page.invalidate` still reach
@@ -524,16 +544,16 @@ function EmbedChat({
       const context = contextPreamble.current
       contextPreamble.current = null
       const body = context ? `${typed}\n\n${context}` : typed
-      return client.rest.json(`/api/contact/sessions/${encodeURIComponent(sessionId)}/send`, {
+      return client.rest.json(`${sessionBase(isContact, sessionId)}/send`, {
         method: 'POST',
         body: JSON.stringify({ text: body }),
       })
     },
-    [client, sessionId, contextPreamble],
+    [client, sessionId, contextPreamble, isContact],
   )
   const socket = useSessionSocket({
     sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui',
-    sendOverHttp: readOnlySocket ? sendOverHttp : undefined,
+    sendOverHttp: isContact ? sendOverHttp : undefined,
   })
   const menu = socket.state.menu ?? null
 
@@ -653,8 +673,8 @@ function EmbedChat({
           state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={readOnlySocket ? socket.sendChat : onSend}
-          onStop={readOnlySocket ? () => undefined : socket.stopChat}
+          onSend={isContact ? socket.sendChat : onSend}
+          onStop={isContact ? () => undefined : socket.stopChat}
           // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
           // for a contact, which tracked the HTTP request and so cleared the
           // instant the POST returned — an indicator for ~200ms, then silence
@@ -662,8 +682,8 @@ function EmbedChat({
           // frame (or the server's settled status) lowers it.
           awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
-          onTakeOver={readOnlySocket ? () => undefined : socket.takeOverDraft}
-          onDiscard={readOnlySocket ? () => socket.updateDraft('') : socket.discardDraft}
+          onTakeOver={isContact ? () => undefined : socket.takeOverDraft}
+          onDiscard={isContact ? () => socket.updateDraft('') : socket.discardDraft}
           draftPersistKey={sessionId}
           // A parsed dialog is drawn WHERE the composer would be, so a send
           // bounces as COMPOSER_NOT_VISIBLE. Same rule and same helper as
@@ -687,7 +707,7 @@ function EmbedChat({
             // Contacts are excluded: `/api/contact/` is their whole surface
             // and answer-menu is not on it, so a dialog they cannot answer is
             // shown as words rather than as buttons that would 403.
-            menu && !readOnlySocket ? (
+            menu && !isContact ? (
               <MenuPrompt
                 menu={menu}
                 busy={answering}

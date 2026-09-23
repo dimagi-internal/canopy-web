@@ -239,6 +239,13 @@ site. They cannot reach the workspace, its other agents, or anyone else's
 threads, and recording them grants nothing: `/api/contact/` is the entire
 surface a contact token reaches.
 
+**Either way, §5's page state works.** A contact declares theirs on that same
+prefix, so nothing in this guide is a privilege of visitors who happen to hold a
+canopy account — do not reach for `resolvable_domains` to make the panel
+page-aware. (It was, until 2026-09-23: the two declaration routes existed only
+under `/api/canopy-sessions/`, so the widget skipped them for a contact and the
+agent never learned what the visitor was looking at.)
+
 Your ids live in your own namespace — `(your app, your id)` — so they cannot
 collide with a canopy user or with another site's people. That is why this is a
 smaller grant than the email-domain vouching it replaced, which reached into
