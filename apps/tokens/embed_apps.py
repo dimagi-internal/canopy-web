@@ -212,9 +212,25 @@ def set_agents(app: AppCredential, slugs: list[str]) -> None:
         AppCredentialAgent.objects.get_or_create(app=app, agent=found[slug])
 
 
+def _clean_jwks_url(url) -> str:
+    """A site's published-keys URL, checked before it is stored.
+
+    Checked HERE rather than only at fetch time so the person who typed it sees
+    the reason — a staging URL inside a VPC, or a plain-http one — instead of
+    assertions quietly failing later for a reason nothing points back here.
+    """
+    from . import jwks as jwks_mod
+
+    try:
+        return jwks_mod.validate_url(url if isinstance(url, str) else "")
+    except jwks_mod.JwksError as exc:
+        raise EmbedAppError("bad_jwks_url", str(exc)) from exc
+
+
 def register(*, user, workspace_slug: str, name: str, origins: list[str],
              agents: list[str] | None = None,
              public_keys: list[str] | None = None,
+             jwks_url: str | None = None,
              ) -> tuple[str, AppCredential]:
     """Register an app and return `(raw secret, row)`. The secret is shown once."""
     require_owner(user, workspace_slug)
@@ -240,13 +256,14 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     app.workspace_id = workspace_slug
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
-    app.save(update_fields=["workspace", "allowed_frame_origins", "public_keys"])
+    app.jwks_url = _clean_jwks_url(jwks_url or "")
+    app.save(update_fields=["workspace", "allowed_frame_origins", "public_keys", "jwks_url"])
     set_agents(app, agents or [])
     return raw, app
 
 
 def update(*, user, app: AppCredential, origins=None, agents=None,
-           public_keys=None, resolvable_domains=None) -> AppCredential:
+           public_keys=None, resolvable_domains=None, jwks_url=None) -> AppCredential:
     """Change what an already-registered app may do. Every field is optional."""
     fields: list[str] = []
     if resolvable_domains is not None:
@@ -264,6 +281,9 @@ def update(*, user, app: AppCredential, origins=None, agents=None,
     if public_keys is not None:
         app.public_keys = _clean_keys(public_keys)
         fields.append("public_keys")
+    if jwks_url is not None:
+        app.jwks_url = _clean_jwks_url(jwks_url)
+        fields.append("jwks_url")
     if fields:
         app.save(update_fields=fields)
     if agents is not None:

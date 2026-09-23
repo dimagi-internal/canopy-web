@@ -206,6 +206,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [showHere, setShowHere] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [signingKey, setSigningKey] = useState('')
+  const [jwksUrl, setJwksUrl] = useState('')
 
   const reload = useCallback(async () => {
     if (!slug) return
@@ -256,6 +257,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
         show_on_canopy_pages: showHere,
         agents: picked,
         public_keys: parseKeys(signingKey),
+        jwks_url: jwksUrl.trim(),
       })
       setSecret(created.secret)
       setName('')
@@ -401,7 +403,25 @@ export function ConnectedAppsPage(): JSX.Element | null {
 
           <label className="block space-y-1">
             <span className="text-xs text-foreground-secondary">
-              Signing key (optional)
+              Where your site publishes its keys (recommended)
+            </span>
+            <input
+              value={jwksUrl}
+              onChange={(e) => setJwksUrl(e.target.value)}
+              placeholder="https://your-site.example.com/.well-known/jwks.json"
+              className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
+            />
+            <span className="block text-xs text-muted-foreground">
+              The usual JWKS document, the same one an OIDC provider serves. Give us this
+              and you never send us a key: rotate by publishing the new one beside the old
+              and switching what you sign with, and canopy follows on its own. Must be
+              https and reachable from the internet.
+            </span>
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-xs text-foreground-secondary">
+              …or paste a signing key (optional)
             </span>
             <textarea
               value={signingKey}
@@ -412,10 +432,10 @@ export function ConnectedAppsPage(): JSX.Element | null {
             />
             <span className="block text-xs text-muted-foreground">
               The <strong>public</strong> half only — keep the private key on your own
-              server. With one registered, your site vouches for each visitor by signing
-              a short-lived statement about them instead of holding a shared secret that
-              could speak for anyone. Paste several during a rotation; all of them
-              verify until you remove the old one.
+              server. Use this when you have no JWKS to publish; it works the same, but
+              every rotation means coming back here to paste the new key, which is how
+              rotation quietly stops happening. Paste several during one; all of them
+              verify until you remove the old.
             </span>
           </label>
 

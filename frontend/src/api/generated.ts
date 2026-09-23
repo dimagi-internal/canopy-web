@@ -10561,6 +10561,8 @@ export interface components {
             readonly public_keys: readonly string[];
             /** Signs Assertions */
             readonly signs_assertions: boolean;
+            /** Jwks Url */
+            readonly jwks_url: string;
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */
@@ -10596,6 +10598,11 @@ export interface components {
              */
             readonly public_keys: readonly string[];
             /**
+             * Jwks Url
+             * @default
+             */
+            readonly jwks_url: string;
+            /**
              * Show On Canopy Pages
              * @default false
              */
@@ -10605,6 +10612,8 @@ export interface components {
         readonly UpdateIn: {
             /** Origins */
             readonly origins?: readonly string[] | null;
+            /** Jwks Url */
+            readonly jwks_url?: string | null;
             /** Agents */
             readonly agents?: readonly string[] | null;
             /** Public Keys */

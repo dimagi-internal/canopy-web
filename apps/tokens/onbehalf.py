@@ -34,6 +34,7 @@ to run as), and no caller at all (a turn the agent gave itself).
 """
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -54,6 +55,19 @@ ALGORITHM = "EdDSA"
 #: right now, so a longer life buys nothing and lengthens the window in which a
 #: copy taken from a log is still spendable.
 TTL_SECONDS = 120
+
+
+def _retired_keys() -> list[str]:
+    """Public keys canopy has signed with recently, still published.
+
+    Rotation without this is an outage you schedule: the moment canopy starts
+    signing with a new key, every assertion already in flight — and every host
+    whose JWKS cache has not expired — is verifying against the old one. So the
+    old PUBLIC half stays published for a window after the switch, then goes.
+    Public halves only; they verify, they cannot sign.
+    """
+    raw = getattr(settings, "ONBEHALF_RETIRED_PUBLIC_KEYS", "") or ""
+    return [k.strip() for k in raw.split("|") if k.strip() and k.strip() != "PLACEHOLDER"]
 
 
 def _configured_key() -> str:
@@ -92,8 +106,47 @@ def issuer() -> str:
     return audience()
 
 
+def _thumbprint(jwk: dict) -> str:
+    """RFC 7638 thumbprint — the key's `kid`, derived FROM the key.
+
+    A fixed string ("canopy-on-behalf-of") was the bug: two different keys would
+    carry the same `kid`, so a host could not tell them apart and rotation had
+    nothing to select on. A thumbprint changes when the key does, needs no
+    configuration, and is the same value any other library computes.
+    """
+    import base64
+    import hashlib
+
+    # Only the members RFC 7638 defines for this key type, lexicographic, no
+    # whitespace — the canonical form is the whole point of a thumbprint.
+    canonical = json.dumps({"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"]},
+                           separators=(",", ":"), sort_keys=True).encode()
+    digest = hashlib.sha256(canonical).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def _jwk_for(public_key) -> dict:
+    from jwt.algorithms import OKPAlgorithm
+
+    jwk = OKPAlgorithm.to_jwk(public_key, as_dict=True)
+    jwk.update({"use": "sig", "alg": ALGORITHM})
+    jwk["kid"] = _thumbprint(jwk)
+    return jwk
+
+
+def _load_public(pem: str):
+    from cryptography.hazmat.primitives import serialization
+
+    return serialization.load_pem_public_key(pem.encode())
+
+
+def active_kid() -> str:
+    """The `kid` canopy stamps on what it signs right now."""
+    return public_jwk()["kid"]
+
+
 def public_jwk() -> dict:
-    """The public half, as a JWK a host can verify with.
+    """The public half of the ACTIVE signing key, as a JWK.
 
     Derived from the private key rather than configured separately: two settings
     that must agree is a way to publish a key that verifies nothing, and the
@@ -102,12 +155,24 @@ def public_jwk() -> dict:
     """
     from cryptography.hazmat.primitives import serialization
 
-    from jwt.algorithms import OKPAlgorithm
-
     key = serialization.load_pem_private_key(_private_key().encode(), password=None)
-    jwk = OKPAlgorithm.to_jwk(key.public_key(), as_dict=True)
-    jwk.update({"use": "sig", "alg": ALGORITHM, "kid": "canopy-on-behalf-of"})
-    return jwk
+    return _jwk_for(key.public_key())
+
+
+def published_jwks() -> list[dict]:
+    """Every key a host should currently accept: the active one, then any
+    retired public halves still inside their rollover window."""
+    out = [public_jwk()]
+    seen = {out[0]["kid"]}
+    for pem in _retired_keys():
+        try:
+            jwk = _jwk_for(_load_public(pem))
+        except Exception:  # noqa: BLE001 - a bad retired key must not break the live one
+            continue
+        if jwk["kid"] not in seen:
+            seen.add(jwk["kid"])
+            out.append(jwk)
+    return out
 
 
 def public_jwk_pem() -> str:
@@ -170,7 +235,7 @@ def mint(turn, *, agent_slug: str) -> dict:
         "act": {"sub": f"agent:{agent_slug}"},
     }
     token = jwt.encode(claims, _private_key(), algorithm=ALGORITHM,
-                       headers={"kid": "canopy-on-behalf-of"})
+                       headers={"kid": active_kid()})
     return {
         "assertion": token,
         "audience": aud,

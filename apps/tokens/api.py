@@ -174,4 +174,4 @@ def onbehalf_jwks(request: HttpRequest) -> dict:
 
     if not onbehalf.configured():
         return {"keys": []}
-    return {"keys": [onbehalf.public_jwk()]}
+    return {"keys": onbehalf.published_jwks()}
