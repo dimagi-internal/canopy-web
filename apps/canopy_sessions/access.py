@@ -13,11 +13,11 @@ The rule, whole:
   same as every other tenant surface in canopy.
 * **Then one of four legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered emdash session (tenant-visible
-  by design); or it is your agent's own thread.
+  by design); or it is the own thread of an agent you run.
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
-  creator, or for an agent's own thread the agent's owner. Only someone
+  creator, or for an agent's own thread the agent's admins. Only someone
   already in the workspace can be added; anyone may remove themselves.
 
 A contact is a different principal with a disjoint predicate
@@ -76,12 +76,15 @@ def visible_session_q(user) -> Q:
        access and role";
     3. it is a runner-discovered session that a runner is actually reporting,
        which has no creator to belong to;
-    4. it is a runner-origin session of an agent YOU own. An agent's own work
-       with no creator — an email thread, an alarm it picked up — belongs to
-       the person operating that agent. Without this leg such a session was
-       readable by nobody, while its owner was the one being pushed a link to
-       it: the tap landed on a 404 (2026-09-23, a hal alarm thread). Narrower
-       than leg 3 on purpose: the owner, not the tenant.
+    4. it is a runner-origin session of an agent YOU RUN, meaning an admin in
+       `Agent.is_admin`'s sense: its owner, an owner of its workspace, or an
+       explicit `AgentAdmin`. An agent's own work with no creator (an email
+       thread, an alarm it picked up) belongs to the people operating that
+       agent. Without this leg such a session was readable by nobody, and a
+       push for it tapped through to a 404 (2026-09-23, a hal alarm thread).
+       "Owner" alone was not enough: on labs every agent's `owner` is null, so
+       it matched no one. Narrower than leg 3 on purpose: the agent's admins,
+       not the whole tenant.
 
     Leg 3 keeps `runner_binding__isnull=False` alongside the origin check
     rather than dropping it: origin alone would newly expose runner-origin rows
@@ -108,8 +111,27 @@ def visible_session_q(user) -> Q:
         Q(created_by=user)
         | Q(participants__user=user)
         | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
-        | (Q(origin=Session.ORIGIN_RUNNER) & Q(agent__owner=user))
+        | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
     )
+
+
+def _agent_admin_q(user) -> Q:
+    """Sessions whose agent `user` is an admin of. The same three ways in as
+    `Agent.is_admin`; `tests/test_session_acl.py` checks the two agree.
+
+    The workspace-owner leg asks `workspaces.services`, the one module allowed
+    to answer "what is this user's role here?". The explicit-grant leg needs
+    no membership check of its own, because every caller of this predicate
+    applies the tenant gate first."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    from apps.workspaces import services as wsvc
+
+    owned = [slug for slug in wsvc.user_workspace_slugs(user)
+             if wsvc.member_role(user, slug) == wsvc.WorkspaceMembership.OWNER]
+    return (Q(agent__owner=user)
+            | Q(agent__admin_grants__user=user)
+            | Q(agent__isnull=False, agent__workspace_id__in=owned))
 
 
 def contact_session_q(contact) -> Q:
@@ -163,7 +185,7 @@ def role_for(user, session) -> str | None:
     """The caller's EFFECTIVE role in this session, or None if they cannot read it.
 
     The HIGHER of two sources. The first is what the rule gives you: the creator
-    is the owner, the agent's owner owns the agent's own thread, and every other
+    is the owner, the agent's admins own the agent's own thread, and every other
     leg is an editor, because a runner-discovered session and an agent's thread
     are meant to be worked in, not only watched. The second is an explicit
     participant row, which is how someone is made a viewer or an editor of
@@ -178,9 +200,9 @@ def role_for(user, session) -> str | None:
            .values_list("role", flat=True).first())
     if session.created_by_id == user.pk:
         derived = SessionParticipant.OWNER
-    # An agent's own thread has no creator; the agent's owner stands in for one
+    # An agent's own thread has no creator; the agent's admins stand in for one
     # (leg 4), so there is somebody who can share it.
-    elif session.created_by_id is None and session.agent_id and session.agent.owner_id == user.pk:
+    elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
         derived = SessionParticipant.OWNER
     elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
         derived = SessionParticipant.EDITOR  # runner-discovered: tenant-visible, workable
