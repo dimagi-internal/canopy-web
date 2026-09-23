@@ -323,6 +323,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Scrub the timeline or play it back', 'Open a group, skill or commit', 'Sync from GitHub'],
   },
   {
+    path: '/w/:workspace/agents/:slug/settings',
+    title: 'Agent settings',
+    audience: "The agent's owner and admins (some controls are workspace-owner only)",
+    what: "Everything that configures this agent, grouped by the question it answers: who operates it (owner, admins), who can reach it (callers, Slack), how it runs (turn mode, runners and their source rules), and its credentials — the secrets it needs plus the 1Password vault and service account they are read from. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
+    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish what callers may ask for', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', "Set or rotate a secret", "Point the agent at its 1Password vault"],
+  },
+  {
     path: '/w/:workspace/ddd',
     title: 'DDD narratives',
     audience: 'Anyone building or reviewing a demo',

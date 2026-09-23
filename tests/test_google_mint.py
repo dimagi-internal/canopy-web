@@ -329,7 +329,7 @@ def test_the_return_trip_keeps_the_deployment_path_prefix(fleet, monkeypatch, se
 
     assert res["Location"] == (
         "https://labs.connect.dimagi.com/canopy"
-        "/w/connect/agents/ace/overview?google=ok#credentials"
+        "/w/connect/agents/ace/settings?google=ok#credentials"
     )
 
 

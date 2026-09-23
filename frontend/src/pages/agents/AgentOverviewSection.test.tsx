@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/agents', async (orig) => ({
@@ -30,48 +30,26 @@ vi.mock('react-router-dom', async (orig) => ({
 }))
 
 const { AgentOverviewSection } = await import('./AgentOverviewSection')
-const { CredentialsRedirect } = await import('./CredentialsRedirect')
 
 afterEach(() => cleanup())
 
-function Where() {
-  const l = useLocation()
-  return <div data-testid="where">{l.pathname + l.search + l.hash}</div>
-}
-
 describe('AgentOverviewSection', () => {
-  it('holds every setting and the credentials, each in a titled section', async () => {
+  it('is a dashboard again: no settings, no credentials, and it says where they went', () => {
     render(
       <MemoryRouter initialEntries={['/w/connect/agents/hal/overview']}>
         <Routes><Route path="/w/:workspace/agents/:slug/overview" element={<AgentOverviewSection />} /></Routes>
       </MemoryRouter>,
     )
-    for (const title of ['About', 'Take a turn', 'Activity', 'Settings', 'Credentials']) {
+    for (const title of ['About', 'Take a turn', 'Activity']) {
       expect(screen.getByRole('heading', { level: 2, name: title })).toBeTruthy()
-      expect(screen.getByRole('link', { name: title }).getAttribute('href')).toMatch(/^#/)
     }
-    const settings = screen.getByRole('region', { name: 'Settings' })
-    for (const name of ['Owner', 'Turn mode', 'Slack', 'Runners']) {
-      expect(within(settings).getByRole('heading', { level: 3, name })).toBeTruthy()
-    }
-    // Who may change each one is on the page, not discovered by an error.
-    expect(within(settings).getByText('Workspace owners')).toBeTruthy()
-
-    const credentials = screen.getByRole('region', { name: 'Credentials' })
-    expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()
-  })
-
-  it('sends the old Credentials address to its section, keeping the query', () => {
-    render(
-      <MemoryRouter initialEntries={['/w/connect/agents/hal/credentials?google=ok']}>
-        <Routes>
-          <Route path="/w/:workspace/agents/:slug">
-            <Route path="credentials" element={<CredentialsRedirect />} />
-            <Route path="overview" element={<Where />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
-    )
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/hal/overview?google=ok#credentials')
+    expect(screen.queryByRole('region', { name: 'Settings' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Credentials' })).toBeNull()
+    // A page that silently loses what you came for is worse than the long page
+    // it replaced, so it points at where the controls live now.
+    const moved = screen.getByTestId('settings-moved')
+    expect(moved.textContent).toContain('credentials')
+    expect(within(moved).getByRole('link', { name: 'Settings' }).getAttribute('href'))
+      .toContain('settings')
   })
 })
