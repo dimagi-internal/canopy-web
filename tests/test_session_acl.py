@@ -222,3 +222,27 @@ def test_a_participant_row_never_demotes_what_the_rule_gives():
     SessionParticipant.objects.create(session=s["discovered"], user=people["mate"],
                                       role=SessionParticipant.VIEWER)
     assert access.role_for(people["mate"], s["discovered"]) == SessionParticipant.EDITOR
+
+
+def test_an_agent_thread_belongs_to_whoever_runs_the_agent():
+    """On labs every agent's `owner` is null, so "the agent's owner" matched
+    nobody and Hal's alarm thread was readable only through an old auto-join
+    row. Leg 4 is `Agent.is_admin`: the owner, a workspace owner, an explicit
+    AgentAdmin. A plain co-tenant is still out."""
+    from apps.agents.models import AgentAdmin
+
+    people, s, ws = _world()
+    thread = s["agent_thread"]
+    Agent.objects.filter(pk=thread.agent_id).update(owner=None)
+    thread.refresh_from_db()
+    admin = _user("admin")
+    _member(admin, ws)
+    AgentAdmin.objects.create(agent=thread.agent, user=admin)
+
+    for user in (people["owner"], admin, people["mate"], people["outsider"]):
+        agent = Agent.objects.get(pk=thread.agent_id)
+        # The ACL and the agent's own definition of "runs it" never disagree.
+        assert access.can_read(user, thread) is agent.is_admin(user), user.username
+    assert access.role_for(people["owner"], thread) == SessionParticipant.OWNER  # workspace owner
+    assert access.role_for(admin, thread) == SessionParticipant.OWNER
+    assert access.role_for(people["mate"], thread) is None
