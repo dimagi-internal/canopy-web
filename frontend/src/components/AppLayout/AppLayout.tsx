@@ -289,9 +289,29 @@ function AppShell() {
     )
   }
 
+  // Full-bleed surfaces own their scroll: the shell is exactly one screen
+  // tall and the page scrolls inside it. Everything else flows and the
+  // document scrolls.
+  const fullBleed =
+    location.pathname.startsWith('/ddd') ||
+    location.pathname.startsWith('/review') ||
+    location.pathname.startsWith('/timeline') ||
+    // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
+    // like DDD; the bare /agents LIST stays in the standard container.
+    /^\/agents\/[^/]+/.test(location.pathname) ||
+    // The standalone live chat (/w/:ws/chat/:id) is a full-height surface —
+    // the composer must sit at the viewport bottom with the list scrolling
+    // above it, not flow inside the padded max-w container.
+    /\/chat\/[^/]+/.test(location.pathname)
+
   return (
-    <div className="min-h-screen bg-background text-foreground-secondary">
-      <header className="border-b border-border bg-background relative">
+    <div
+      className={clsx(
+        'bg-background text-foreground-secondary',
+        fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-screen',
+      )}
+    >
+      <header className="shrink-0 border-b border-border bg-background relative">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           {isAuthed ? (
             <Link to="/" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0">Canopy<span className="text-primary">.</span></Link>
@@ -376,7 +396,10 @@ function AppShell() {
               aria-hidden="true"
               tabIndex={-1}
               onClick={() => setMobileOpen(false)}
-              className="md:hidden fixed inset-0 top-[53px] z-30 bg-background/40 cursor-default"
+              // Hung off the header (`top-full`), not a fixed `top-[53px]`: the
+              // header is 69px on a phone, so the constant left a strip of the
+              // header covered by the backdrop.
+              className="md:hidden absolute left-0 right-0 top-full h-dvh z-30 bg-background/40 cursor-default"
             />
             {/* One flat scrolling list under section headers — deliberately
                 not an accordion. The desktop grouping survives as labels, but
@@ -384,7 +407,7 @@ function AppShell() {
                 a phone. */}
             <nav
               aria-label="Main"
-              className="md:hidden absolute left-0 right-0 top-full z-40 border-b border-border bg-background px-3 py-2 shadow-lg flex flex-col gap-1 max-h-[calc(100vh-53px)] overflow-y-auto"
+              className="md:hidden absolute left-0 right-0 top-full z-40 border-b border-border bg-background px-3 py-2 shadow-lg flex flex-col gap-1 max-h-[calc(100dvh-69px)] overflow-y-auto"
             >
               {navGroups.map((group) => (
                 <div key={group.label} className="flex flex-col gap-0.5 pb-1">
@@ -402,19 +425,15 @@ function AppShell() {
           </>
         )}
       </header>
-      {location.pathname.startsWith('/ddd') ||
-      location.pathname.startsWith('/review') ||
-      location.pathname.startsWith('/timeline') ||
-      // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
-      // like DDD; the bare /agents LIST stays in the standard container.
-      /^\/agents\/[^/]+/.test(location.pathname) ||
-      // The standalone live chat (/w/:ws/chat/:id) is a full-height surface —
-      // the composer must sit at the viewport bottom with the list scrolling
-      // above it, not flow inside the padded max-w container.
-      /\/chat\/[^/]+/.test(location.pathname) ? (
+      {fullBleed ? (
         // DDD (and the narrative editor at /review) is a full-bleed workspace:
         // persistent left rail + wide main. The page owns its own scroll.
-        <main className="h-[calc(100vh-53px)]"><Outlet /></main>
+        // `flex-1 min-h-0` under an `h-dvh` column, NOT `h-[calc(100vh-53px)]`.
+        // 53px was the DESKTOP header. On a phone the 44px tap targets make it
+        // 69px, so every full-bleed page was 16px taller than the screen and
+        // scrolled past its own bottom. `dvh` also follows the mobile URL bar,
+        // which `vh` does not.
+        <main className="min-h-0 flex-1"><Outlet /></main>
       ) : (
         // `px-6` unconditionally, on top of the `p-6` several pages set for
         // themselves, spent 96px of a 375px screen on padding — a quarter of the

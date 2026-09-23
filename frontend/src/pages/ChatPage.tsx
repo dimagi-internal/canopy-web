@@ -696,8 +696,11 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
-        <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
+      {/* Wraps. The header grew a control at a time (notify, People, Share to
+          Slack, Close, Reset) inside a row that could not wrap, and on a phone
+          it ran 145px past the screen, so the whole page scrolled sideways. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background px-4 py-2">
+        <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h1>
         {/* Live agent activity beats the server's liveness fields when a hook has
             reported. `meta.running` derives from the runner's session report —
             emdash's own last_interacted_at, on a report cycle with a 120s window
@@ -731,7 +734,7 @@ export function ChatPage() {
           </span>
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {meta && (
             <button
               type="button"
