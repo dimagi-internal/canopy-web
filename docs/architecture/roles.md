@@ -47,13 +47,14 @@ Four ways, and the fourth is the only one you do not do yourself:
   becomes transitively delegable — create a workspace, mint invites, and each new invitee
   clears the login gate too. `/api/me/` reports `can_create_workspace` so the UI never
   offers a button that 403s.
-- **App-credential provisioning.** An owner configures an `AppCredential`
-  (`apps/tokens/models.py`) with a `provision_workspace` and `provision_role`; exchanging a
-  token on it enrols the resolved user there. This is the machine door — it exists so a
-  trusted integration can admit its own users — and it is deliberately *not* a way a caller
-  can let themselves in: the workspace comes **only** from the credential's server-side row,
-  never from the request, an owner set it up on purpose, and every grant it makes is audited.
-  A credential with no `provision_workspace` grants nothing at all.
+- **App-credential provisioning — GONE (2026-09-22).** An `AppCredential` used to carry a
+  `provision_workspace`/`provision_role`, and exchanging a token on it enrolled the resolved
+  user there. The whole door went with `/api/auth/token-exchange`: a connected site now
+  vouches for a visitor with a *signed assertion*, and canopy resolves them to an account
+  they already have or to a **contact** — which is not a membership and grants nothing
+  (`apps/contacts/`). **No machine door into a workspace remains.** Existing rows keep
+  `WorkspaceMembership.provisioned_by_app` as provenance of how they were created; nothing
+  writes it any more.
 
 `tests/test_no_implicit_enrolment.py` asserts these four are the only callers of
 `ensure_member` outside the workspaces app, so a fifth cannot appear quietly.

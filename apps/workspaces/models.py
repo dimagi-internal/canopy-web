@@ -154,9 +154,11 @@ class WorkspaceMembership(models.Model):
         blank=True,
         related_name="+",
     )
-    # Provenance for a row created by an AppCredential's token-exchange
-    # provisioning grant (apps.tokens.models.AppCredential.provision_workspace)
-    # rather than an organic human join/invite. Null for every other row.
+    # Provenance for a row an AppCredential's provisioning grant created, rather
+    # than an organic human join/invite. Null for every other row. NOTHING WRITES
+    # THIS ANY MORE: the grant went with `/api/auth/token-exchange` (2026-09-22),
+    # and the column is kept because it records how existing rows came to be —
+    # dropping it would erase that, which is the one thing it is for.
     # A string ref ("tokens.AppCredential") avoids a hard Python import from
     # workspaces -> tokens (tokens already imports workspaces for
     # WorkspaceMembership's role constants, so a direct import back would be
