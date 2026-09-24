@@ -348,6 +348,45 @@ describe('the page is declared BEFORE the turn is queued', () => {
     expect(seq.indexOf(first)).toBeLessThan(seq.indexOf(second))
   }
 
+  it('folds the DECLARED page state into the first message', async () => {
+    // The guide promises two paths "and the redundancy is the point": the state
+    // rides the first message AND the agent can re-read it with `current_page`.
+    // Only the legacy `provideContext` snapshot ever rode, so a host that had
+    // moved to `setPageState` — as the guide tells them to — sent nothing with
+    // the opening question. Measured on connect-labs: asked "what am I looking
+    // at?", the agent answered "I can't see your screen" and made no tool call,
+    // because its MCP tools arrive deferred and nothing prompted it to look.
+    render(<EmbedApp link={withPage()} app="canopy-web" />)
+
+    await say('what am I looking at?')
+
+    await waitFor(() => expect(order()).toContain('send'))
+    const sent = calls.find((c) => c.url.includes('/send'))
+    const body = JSON.parse(String(sent!.init?.body))
+    expect(body.text).toContain('what am I looking at?')
+    expect(body.text).toContain('Context from the page I am on')
+    expect(body.text).toContain('list_insights')
+  })
+
+  it('reads the declared state at send time, not at mount', async () => {
+    // `setPageState` pushes on every change, so a filter applied after the panel
+    // opened must be what the agent is told about.
+    let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_insights' }
+    const link = fakeLink({
+      waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+      pageState: () => state,
+    })
+    render(<EmbedApp link={link} app="canopy-web" />)
+    state = { visible_ids: [7, 8, 9], backing_tool: 'list_insights' }
+
+    await say('and now?')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    const body = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init?.body))
+    expect(body.text).toContain('7')
+    expect(body.text).not.toContain('"visible_ids": [\n    1\n  ]')
+  })
+
   it('declares what is on screen before sending', async () => {
     render(<EmbedApp link={withPage()} app="canopy-web" />)
 

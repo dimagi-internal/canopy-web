@@ -538,7 +538,12 @@ Two paths, deliberately, and the redundancy is the point:
 
 Path 1 exists because path 2 can be unavailable: MCP servers connect
 asynchronously, and a conversation starts a fresh agent process, so the first
-turn can race that connection. Measured live on 2026-09-16 — the agent replied
+turn can race that connection. **It is also not something the agent has to think
+of** — an agent whose MCP tools arrive deferred will not go looking for
+`current_page` unprompted, which is how connect-labs' first live attempt ended
+with "I can't see your screen" and no tool call at all (fixed 2026-09-23: until
+then only the legacy `provideContext` snapshot rode the first message, so a host
+following this page's advice sent nothing with it). Measured live on 2026-09-16 — the agent replied
 "the canopy-web MCP server is still connecting, its tools aren't loaded" and was
 blind to twenty rows it had been sent. The first turn carries the user's actual
 question, so it must not be the one that depends on the flakiest link.

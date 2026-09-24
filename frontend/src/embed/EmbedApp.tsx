@@ -238,7 +238,22 @@ export function EmbedApp({ link, app }: Props) {
       // task from the prompt's opening words, so leading with the context
       // produced tasks called `c-context-from-the-page-i-am-on-…` that nobody
       // could recognise as their own question.
-      const context = pendingContext.current
+      //
+      // The DECLARED page state is what rides, read at send time so it is what
+      // the screen says now rather than what it said at mount. `provideContext`
+      // is the fallback for a host still on the old model.
+      //
+      // Until 2026-09-23 only the legacy snapshot rode here, so a host that had
+      // moved to `setPageState` — as the guide tells them to — sent nothing with
+      // the first message and the agent's only route to the page was
+      // `current_page`. That is the path the guide itself says can be
+      // unavailable: MCP servers connect asynchronously, and an agent whose MCP
+      // tools arrive deferred will not go looking for one unprompted. Measured
+      // on connect-labs: asked "what am I looking at?", the agent answered "I
+      // can't see your screen" and made no tool call at all.
+      const declared = link.pageState()
+      const context = buildPageContextBlock((declared ?? {}) as Record<string, unknown>)
+        ?? pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
       pendingContext.current = null
 
