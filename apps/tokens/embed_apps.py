@@ -303,8 +303,9 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
              public_keys: list[str] | None = None,
              jwks_url: str | None = None,
              resolvable_domains: list[str] | None = None,
-             ) -> tuple[str, AppCredential]:
-    """Register an app and return `(raw secret, row)`. The secret is shown once."""
+             ) -> AppCredential:
+    """Register a site in this workspace. It holds no secret: the site proves
+    itself by signing, against the keys at `jwks_url` (or pasted)."""
     require_owner(user, workspace_slug)
 
     name = (name or "").strip()
@@ -332,7 +333,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     # Validated BEFORE the row exists, so a refusal leaves nothing half-made.
     cleaned_domains = _clean_resolvable(user, resolvable_domains or [])
 
-    raw, app = AppCredential.create_credential(name=name, created_by=user,
+    app = AppCredential.create_credential(name=name, created_by=user,
                                                workspace=workspace_slug)
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
@@ -341,7 +342,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url",
                             "resolvable_domains"])
     set_agents(app, agents or [])
-    return raw, app
+    return app
 
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
@@ -369,23 +370,6 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
     if agents is not None:
         set_agents(app, agents)
     return app
-
-
-def rotate(app: AppCredential) -> str:
-    """Issue a new secret for an app, invalidating the old one immediately.
-
-    The point of a rotate button is that the previous value stops working —
-    someone reaches for it because the old one leaked. So this replaces the
-    hash in place rather than creating a second credential, and any delegated
-    token already minted keeps its own (short) life.
-    """
-    import hashlib
-    import secrets
-
-    raw = secrets.token_urlsafe(32)
-    app.token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    app.save(update_fields=["token_hash"])
-    return raw
 
 
 def revoke(app: AppCredential) -> AppCredential:

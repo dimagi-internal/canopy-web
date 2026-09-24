@@ -151,7 +151,7 @@ def test_a_chat_message_through_a_hosts_widget_names_the_host(ctx):
     from apps.tokens.models import AppCredentialAgent
 
     owner, workspace, agent = ctx
-    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=workspace)
+    app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=workspace)
     AppCredentialAgent.objects.create(app=app, agent=agent)
     raw, _tok = DelegatedToken.issue(app=app, user=owner, ttl_seconds=600)
     client = _bearer_client(raw)
@@ -173,7 +173,7 @@ def test_a_widget_contact_is_the_contact_with_its_own_grade(ctx):
     from apps.contacts.models import Contact
 
     owner, workspace, _agent = ctx
-    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner,
+    app = AppCredential.create_credential(name="connect-labs", created_by=owner,
                                                    workspace=workspace)
     contact = Contact.objects.create(workspace=workspace, app=app, external_id="42",
                                      email="visitor@partner.org",
@@ -338,7 +338,7 @@ def test_an_embedded_visitor_is_never_verified():
 
     owner = User.objects.create_user("o2", "o2@dimagi.com", "pw")
     workspace = Workspace.objects.create(slug="w9", display_name="W9", created_by=owner)
-    _secret, app = AppCredential.create_credential(name="connect-labs", created_by=owner,
+    app = AppCredential.create_credential(name="connect-labs", created_by=owner,
                                                    workspace=workspace)
     contact = Contact.objects.create(workspace=workspace, app=app, external_id="42",
                                      email="visitor@partner.org",

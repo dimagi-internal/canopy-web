@@ -53,7 +53,7 @@ def test_returns_only_agents_the_app_is_allowed_to_target():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     allowed, not_allowed = _agent("labs-helper", ws), _agent("secret-agent", ws)
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=allowed)
 
     body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
@@ -69,7 +69,7 @@ def test_excludes_an_allowlisted_agent_the_user_cannot_reach():
     _ws("mine", user)
     theirs = Workspace.objects.create(slug="theirs", display_name="Theirs", created_by=user)
     stranger = _agent("stranger", theirs)  # user has NO membership in `theirs`
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=stranger)
 
     body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
@@ -82,8 +82,8 @@ def test_one_apps_allowlist_is_invisible_to_another_app():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     a_agent, b_agent = _agent("a-only", ws), _agent("b-only", ws)
-    _r1, app_a = _app("app-a")
-    _r2, app_b = _app("app-b")
+    app_a = _app("app-a")
+    app_b = _app("app-b")
     AppCredentialAgent.objects.create(app=app_a, agent=a_agent)
     AppCredentialAgent.objects.create(app=app_b, agent=b_agent)
 
@@ -109,7 +109,7 @@ def test_an_app_with_no_allowlist_offers_nothing():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
 
     body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
     assert body == []
@@ -119,7 +119,7 @@ def test_revoked_app_credential_offers_nothing():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     agent = _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=agent)
     headers = _bearer(app, user)
     from django.utils import timezone
@@ -140,8 +140,8 @@ def test_the_same_agent_may_be_offered_by_two_apps():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     shared = _agent("shared", ws)
-    _r1, app_a = _app("app-a")
-    _r2, app_b = _app("app-b")
+    app_a = _app("app-a")
+    app_b = _app("app-b")
     AppCredentialAgent.objects.create(app=app_a, agent=shared)
     AppCredentialAgent.objects.create(app=app_b, agent=shared)
 
@@ -154,7 +154,7 @@ def test_rows_are_unique_per_app_and_agent():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     agent = _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=agent)
 
     from django.db import IntegrityError, transaction
@@ -167,7 +167,7 @@ def test_payload_carries_what_a_picker_needs():
     ws = _ws("w1", user)
     Agent.objects.create(slug="labs-helper", name="Labs Helper", workspace=ws,
                          description="Knows connect-labs", avatar_url="https://x/a.png")
-    _raw, app = _app("connect-labs")
+    app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=Agent.objects.get(slug="labs-helper"))
 
     row = Client().get("/api/embed/agents", **_bearer(app, user)).json()[0]
@@ -195,7 +195,7 @@ def test_grant_command_is_idempotent():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs", ws)
+    app = _app("connect-labs", ws)
 
     assert "may now offer" in _run("--name", "connect-labs", "--agent", "labs-helper")
     assert "already offers" in _run("--name", "connect-labs", "--agent", "labs-helper")
@@ -206,7 +206,7 @@ def test_grant_command_revokes_and_reports_when_there_was_nothing_to_revoke():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs", ws)
+    app = _app("connect-labs", ws)
     _run("--name", "connect-labs", "--agent", "labs-helper")
 
     assert "may no longer offer" in _run("--name", "connect-labs", "--agent", "labs-helper", "--revoke")

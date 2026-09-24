@@ -34,7 +34,6 @@ def world():
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=connect)   # same tenant, not offered
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=ceo)         # other tenant
     site = AppCredential.create_credential(name="ace-web", created_by=me, workspace=connect)
-    site = site[1] if isinstance(site, tuple) else site
     AppCredentialAgent.objects.create(app=site, agent=ace)
     raw, _ = DelegatedToken.issue(app=site, user=me, ttl_seconds=600)
     return {"me": me, "ace": ace, "echo": echo, "eva": eva, "site": site,
