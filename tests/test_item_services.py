@@ -1,9 +1,16 @@
-"""Item state machine: open -> decided (dispatching) | dismissed. One way only."""
+"""An ask's state machine: open -> decided (dispatching) | dismissed. One way only.
+
+The verbs live on `apps.agents.services` (`raise_asks` / `decide_ask` /
+`dismiss_ask`) because an ask is a property of a task, not a model of its own —
+`harness.services` carried forwarders under the old names for one release after
+#873 and they are gone with the `Item` table.
+"""
 from __future__ import annotations
 
 import pytest
 
 from apps.agents.models import Agent
+from apps.agents import services as agent_services
 from apps.harness import services
 from apps.agents.models import AgentTask
 from apps.harness.models import Turn
@@ -39,7 +46,7 @@ def _item(ada, **kw):
 def test_implement_decides_and_dispatches(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
-    item, turns = services.decide_item(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+    item, turns = agent_services.decide_ask(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     assert item.ask_state == "decided"
     assert item.decision == AgentTask.IMPLEMENT
@@ -52,7 +59,7 @@ def test_implement_decides_and_dispatches(ada):
 def test_skip_decides_and_dispatches_nothing(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
-    item, turns = services.decide_item(item, decision=AgentTask.SKIP, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+    item, turns = agent_services.decide_ask(item, decision=AgentTask.SKIP, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     assert item.ask_state == "decided"
     assert turns == []
@@ -63,7 +70,7 @@ def test_skip_decides_and_dispatches_nothing(ada):
 def test_defer_decides_and_dispatches_nothing(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
-    item, turns = services.decide_item(item, decision=AgentTask.DEFER, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+    item, turns = agent_services.decide_ask(item, decision=AgentTask.DEFER, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     assert item.decision == AgentTask.DEFER
     assert Turn.objects.count() == 0
@@ -71,10 +78,10 @@ def test_defer_decides_and_dispatches_nothing(ada):
 
 def test_deciding_twice_raises_rather_than_dispatching_again(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
-    services.decide_item(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+    agent_services.decide_ask(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     with pytest.raises(services.AlreadyDecidedError):
-        services.decide_item(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+        agent_services.decide_ask(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     assert Turn.objects.count() == 1
 
@@ -83,9 +90,9 @@ def test_a_question_requires_an_answer(ada):
     item = _item(ada, ask_kind=AgentTask.ASK_QUESTION, title="which repo?")
 
     with pytest.raises(ValueError, match="answer"):
-        services.decide_item(item, decision="", comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+        agent_services.decide_ask(item, decision="", comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
-    item, _ = services.decide_item(item, decision="", comment="canopy-web", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+    item, _ = agent_services.decide_ask(item, decision="", comment="canopy-web", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
     assert item.ask_state == "decided"
     assert item.comment == "canopy-web"
 
@@ -97,7 +104,7 @@ def test_answering_a_question_dispatches_its_work(ada):
     item = _item(ada, ask_kind=AgentTask.ASK_QUESTION, title="add a weekday schedule for hal?",
                  dispatch=[{"prompt": "/ada:turn — add hal's schedule"}])
 
-    item, turns = services.decide_item(
+    item, turns = agent_services.decide_ask(
         item, decision="", comment="Yeah let's do that", by="jj@dimagi.com",
         actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
@@ -110,7 +117,7 @@ def test_answering_a_question_dispatches_its_work(ada):
 def test_an_answer_with_nothing_to_route_is_only_recorded(ada):
     item = _item(ada, ask_kind=AgentTask.ASK_QUESTION, title="which repo?")
 
-    item, turns = services.decide_item(
+    item, turns = agent_services.decide_ask(
         item, decision="", comment="canopy-web", by="jj@dimagi.com",
         actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
@@ -125,7 +132,7 @@ def test_the_answer_rides_along_into_the_dispatched_prompt(ada):
     item = _item(ada, ask_kind=AgentTask.ASK_QUESTION, title="investigate ace's closes?",
                  dispatch=[{"prompt": "/ace:turn — investigate"}])
 
-    _item_, turns = services.decide_item(
+    _item_, turns = agent_services.decide_ask(
         item, decision="", comment="Yes, but dispatch it to hal", by="jj@dimagi.com",
         actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
@@ -136,7 +143,7 @@ def test_the_answer_rides_along_into_the_dispatched_prompt(ada):
 def test_an_implement_comment_rides_along_too(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
-    _item_, turns = services.decide_item(
+    _item_, turns = agent_services.decide_ask(
         item, decision=AgentTask.IMPLEMENT, comment="only the retry, skip the backoff",
         by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
@@ -152,7 +159,7 @@ def test_a_dispatch_free_decision_leaves_the_prompt_alone(ada):
     """
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
 
-    _item_, turns = services.decide_item(
+    _item_, turns = agent_services.decide_ask(
         item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com",
         actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
@@ -167,7 +174,7 @@ def test_a_failing_dispatch_rolls_an_ANSWER_back_too(ada):
                  dispatch=[{"target_agent": "ghost", "prompt": "/ghost:turn"}])
 
     with pytest.raises(ValueError, match="ghost"):
-        services.decide_item(item, decision="", comment="go", by="jj@dimagi.com",
+        agent_services.decide_ask(item, decision="", comment="go", by="jj@dimagi.com",
                              actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     item.refresh_from_db()
@@ -179,7 +186,7 @@ def test_a_review_rejects_a_decision_outside_the_closed_set(ada):
     item = _item(ada)
 
     with pytest.raises(ValueError, match="decision"):
-        services.decide_item(item, decision="yolo", comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+        agent_services.decide_ask(item, decision="yolo", comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
 
 def test_a_failing_dispatch_rolls_the_decision_back(ada):
@@ -189,7 +196,7 @@ def test_a_failing_dispatch_rolls_the_decision_back(ada):
     item = _item(ada, dispatch=[{"target_agent": "ghost", "prompt": "/ghost:turn"}])
 
     with pytest.raises(ValueError, match="ghost"):
-        services.decide_item(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+        agent_services.decide_ask(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     item.refresh_from_db()
     assert item.ask_state == "open"
@@ -205,7 +212,7 @@ def test_a_partly_bad_dispatch_enqueues_nothing(ada):
     ])
 
     with pytest.raises(ValueError):
-        services.decide_item(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
+        agent_services.decide_ask(item, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG})
 
     item.refresh_from_db()
     assert item.ask_state == "open"
@@ -215,7 +222,7 @@ def test_a_partly_bad_dispatch_enqueues_nothing(ada):
 def test_dismiss_never_dispatches_even_with_a_decision_set(ada):
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}], decision=AgentTask.IMPLEMENT)
 
-    item = services.dismiss_item(item, by="jj@dimagi.com")
+    item = agent_services.dismiss_ask(item, by="jj@dimagi.com")
 
     assert item.ask_state == "dismissed"
     assert Turn.objects.count() == 0
@@ -225,7 +232,7 @@ def test_dismiss_records_an_optional_reason(ada):
     # A producer retracting its own erroneous item records WHY; the reason lands on
     # the item's comment so the board shows it instead of a bare dismissed row.
     item = _item(ada)
-    item = services.dismiss_item(item, by="ada@dimagi-ai.com",
+    item = agent_services.dismiss_ask(item, by="ada@dimagi-ai.com",
                                  comment="retracted: already shipped in origin/main")
     assert item.ask_state == "dismissed"
     assert item.comment == "retracted: already shipped in origin/main"
@@ -234,7 +241,7 @@ def test_dismiss_records_an_optional_reason(ada):
 def test_dismiss_reason_is_optional(ada):
     # Backward-compatible: an empty-body dismiss (no comment) leaves comment untouched.
     item = _item(ada)
-    item = services.dismiss_item(item, by="jj@dimagi.com")
+    item = agent_services.dismiss_ask(item, by="jj@dimagi.com")
     assert item.ask_state == "dismissed"
     assert item.comment == ""
 
@@ -243,13 +250,13 @@ def test_dismiss_refuses_an_already_decided_item(ada):
     # Dismissing a decided-and-dispatched item would erase who approved it while its
     # turns keep running. Dismiss guards on state exactly like decide does.
     item = _item(ada, dispatch=[{"prompt": "/ada:conduct"}])
-    item, _turns = services.decide_item(
+    item, _turns = agent_services.decide_ask(
         item, decision=AgentTask.IMPLEMENT, comment="", by="approver@dimagi.com", actor_workspace_slugs={wsvc.DEFAULT_WORKSPACE_SLUG}
     )
     assert item.ask_state == "decided"
 
     with pytest.raises(services.AlreadyDecidedError):
-        services.dismiss_item(item, by="dismisser@dimagi.com")
+        agent_services.dismiss_ask(item, by="dismisser@dimagi.com")
 
     item.refresh_from_db()
     assert item.ask_state == "decided"  # unchanged
@@ -259,10 +266,10 @@ def test_dismiss_refuses_an_already_decided_item(ada):
 
 def test_dismiss_twice_is_a_conflict_not_a_silent_rewrite(ada):
     item = _item(ada)
-    services.dismiss_item(item, by="first@dimagi.com")
+    agent_services.dismiss_ask(item, by="first@dimagi.com")
 
     with pytest.raises(services.AlreadyDecidedError):
-        services.dismiss_item(item, by="second@dimagi.com")
+        agent_services.dismiss_ask(item, by="second@dimagi.com")
 
     item.refresh_from_db()
     assert item.decided_by == "first@dimagi.com"
@@ -271,8 +278,8 @@ def test_dismiss_twice_is_a_conflict_not_a_silent_rewrite(ada):
 def test_create_items_is_idempotent_per_key(ada):
     payload = [{"kind": "review", "title": "a", "origin": "audit", "idempotency_key": "dupe"}]
 
-    first = services.create_items(agent=ada, payloads=payload)
-    second = services.create_items(agent=ada, payloads=payload)
+    first = agent_services.raise_asks(agent=ada, payloads=payload)
+    second = agent_services.raise_asks(agent=ada, payloads=payload)
 
     assert [i.id for i in first] == [i.id for i in second]
     assert AgentTask.objects.count() == 1

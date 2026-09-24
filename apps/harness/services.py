@@ -2632,36 +2632,11 @@ def list_visible_sessions(user) -> list[SessionView]:
 from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-export; see above)
 
 
-# The three Item verbs now live on tasks (`apps.agents.services.raise_asks` /
-# `decide_ask` / `dismiss_ask`), because an Item IS a task with an ask. These
-# names stay as thin forwarders for one release: the schedule nag, the items
-# routes and Ada's plugin all called them, and a rename is not worth a fleet
-# outage. `AlreadyDecidedError` is re-exported for the same reason.
-
-
-def create_items(*, agent, payloads: list[dict]) -> list:
-    from apps.agents import services as agent_services
-
-    mapped = []
-    for p in payloads:
-        p = dict(p)
-        p.setdefault("ask_kind", p.pop("kind", "review") or "review")
-        p.setdefault("ask_body", p.pop("body", "") or "")
-        mapped.append(p)
-    return agent_services.raise_asks(agent=agent, payloads=mapped)
-
-
-def decide_item(item, **kwargs):
-    from apps.agents import services as agent_services
-
-    return agent_services.decide_ask(item, **kwargs)
-
-
-def dismiss_item(item, **kwargs):
-    from apps.agents import services as agent_services
-
-    return agent_services.dismiss_ask(item, **kwargs)
-
+# The three Item verbs live on tasks (`apps.agents.services.raise_asks` /
+# `decide_ask` / `dismiss_ask`), because an ask IS a task's property. The thin
+# forwarders that carried the fleet across the #873 rename are gone; nothing in
+# this repo called them, and the routes the fleet actually calls (`/api/items/`)
+# never went through them.
 
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
                           claude_api_key=None, github_token=None,

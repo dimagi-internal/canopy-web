@@ -1,7 +1,7 @@
 """The push trigger. The fleet's waiting set is a COUNT (open items per agent)
 with no single "the fleet needs you now" event, so we snapshot the count per agent
-and push only when it INCREASES. Items are the sole producer now — this file pins
-the send/coalesce/prune mechanics on that producer. (That an Item change marks its
+and push only when it INCREASES. Tasks are the sole producer now — this file pins
+the send/coalesce/prune mechanics on that producer. (That a task change marks its
 agent dirty at all is pinned separately in test_push_items.py.)"""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
-from apps.harness import services as hsvc
+from apps.agents import services as agent_services
 from apps.agents.models import AgentTask
 from apps.harness.models import Turn
 from apps.push.models import AgentWaitingSnapshot, PushSubscription
@@ -101,7 +101,7 @@ def test_clearing_an_item_does_not_push(agent, sub):
     is the fastest way to make someone turn notifications off."""
     item = _item(agent, "i1")
     with patch("apps.push.services._send_one") as send:
-        hsvc.dismiss_item(item, by="jj@dimagi.com")
+        agent_services.dismiss_ask(item, by="jj@dimagi.com")
     assert send.call_count == 0
     assert AgentWaitingSnapshot.objects.get(agent=agent).waiting_count == 0
 
@@ -109,7 +109,7 @@ def test_clearing_an_item_does_not_push(agent, sub):
 def test_an_unchanged_count_does_not_push(agent, sub):
     _item(agent, "i1")
     item2 = _item(agent, "i2")
-    hsvc.dismiss_item(item2, by="jj@dimagi.com")  # count now 1
+    agent_services.dismiss_ask(item2, by="jj@dimagi.com")  # count now 1
     with patch("apps.push.services._send_one") as send:
         # touch a decided item — no change to the OPEN count
         item2.comment = "noted"
@@ -121,7 +121,7 @@ def test_a_batch_of_items_pushes_once_per_agent_not_once_per_row(agent, sub):
     """THE storm case: a fleet audit raises many items in one call. create_items
     wraps the batch in one transaction, so on_commit coalesces to a single push."""
     with patch("apps.push.services._send_one") as send:
-        hsvc.create_items(
+        agent_services.raise_asks(
             agent=agent,
             payloads=[{"title": f"a{i}", "idempotency_key": f"a{i}"} for i in range(10)],
         )

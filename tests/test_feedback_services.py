@@ -80,11 +80,11 @@ def test_resolve_without_a_note_keeps_the_existing_one():
 def test_ingest_creates_no_work():
     """The whole point: feedback is inert until a turn reads it.
 
-    If this fails because someone wired feedback to raise an Item, remove the
+    If this fails because someone wired feedback to raise an ask, remove the
     wiring — auto-promotion is the design decision this app exists to refuse.
     """
-    from apps.harness.models import Item
+    from apps.agents.models import AgentTask
 
-    before = Item.objects.count()
+    before = AgentTask.objects.count()
     services.ingest([_item()])
-    assert Item.objects.count() == before
+    assert AgentTask.objects.count() == before
