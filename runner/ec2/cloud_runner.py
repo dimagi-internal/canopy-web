@@ -54,7 +54,7 @@ Config comes from the environment (see runner/ec2/README.md):
                      runner/ec2/update_runner.sh; see spec 2026-07-30.
 `claude` authenticates from CLAUDE_CODE_OAUTH_TOKEN (a dedicated setup-token from
 Secrets Manager, staged into the service env by cloud-init). AGENT_SLUGS /
-AGENT_REPO_ORG / GITHUB_TOKEN / OP_SERVICE_ACCOUNT_TOKEN are consumed by
+AGENT_REPO_ORG / GITHUB_TOKEN are consumed by
 bootstrap_agents.sh (see runner/ec2/README.md), not this file directly.
 """
 from __future__ import annotations
@@ -745,7 +745,6 @@ _TURN_ENV = threading.local()
 #: or revoked key from living on this box longer than a few minutes.
 _AGENT_OP: dict[str, tuple[float, str]] = {}
 _AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
-_BOX_OP_TOKEN_PRESENT = False
 
 
 def _agent_op_token(slug: str) -> str:
@@ -2186,19 +2185,15 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
                 _log("warn: only ONE Claude credential is set — a usage cap will stop "
                      "every agent on this box with nothing to fail over to "
                      "(`canopy runner credential` adds a fallback)")
-            # DELIBERATELY NOT into os.environ. Every turn's env is built from
-            # this process's, so a box-wide 1Password key here is inherited by
-            # every agent — a key that reads other agents' vaults, which is the
-            # per-agent boundary undone (Agent.op_vault exists so a compromise is
-            # bounded to one agent). An agent turn gets ITS OWN key, resolved per
-            # slug in `_agent_env`; bootstrap likewise reads each vault with the
-            # key for that vault. Kept only so a human can see it was delivered.
-            if cred.get("op_sa_token"):
-                globals()["_BOX_OP_TOKEN_PRESENT"] = True
+            # There is no box-wide 1Password key any more, and canopy-web no
+            # longer serves one. A key here would be staged into this process's
+            # environment, which every turn inherits — one credential reading
+            # EVERY agent's vault, handed to each of them. A turn gets its own
+            # agent's key (`_agent_env`), and bootstrap reads each vault with
+            # the key for that vault.
             if cred.get("github_token"):
                 _stage_github_token(cred["github_token"])
             _log("staged credential bundle from canopy-web (claude"
-                 f"{'+op' if cred.get('op_sa_token') else ''}"
                  f"{'+github' if cred.get('github_token') else ''})")
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")

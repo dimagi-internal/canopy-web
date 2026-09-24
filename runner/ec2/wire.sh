@@ -123,19 +123,13 @@ echo ">> staging credential bundle"
 CLAUDE_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
   secretsmanager get-secret-value --secret-id canopy/cloud-runner/claude-oauth-token \
   --query SecretString --output text)
-OP_SA_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
-  secretsmanager get-secret-value --secret-id canopy/cloud-runner/op-service-account-token \
-  --query SecretString --output text 2>/dev/null) || OP_SA_TOKEN=""
 GITHUB_TOKEN=$(op read "op://${SHARED_VAULT}/github-token/credential" 2>/dev/null) || GITHUB_TOKEN=""
 
-[[ -n "$OP_SA_TOKEN" ]] || echo "   (no op-service-account-token secret — bootstrap_agents.sh's \`canopy provision\` / gmail-token steps will skip)"
 [[ -n "$GITHUB_TOKEN" ]] || echo "   (no ${SHARED_VAULT}/github-token in 1Password — private per-agent clones will fail)"
 
-CLAUDE_TOKEN="$CLAUDE_TOKEN" OP_SA_TOKEN="$OP_SA_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" python3 -c "
+CLAUDE_TOKEN="$CLAUDE_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" python3 -c "
 import json, os
 body = {'claude_token': os.environ['CLAUDE_TOKEN']}
-if os.environ.get('OP_SA_TOKEN'):
-    body['op_sa_token'] = os.environ['OP_SA_TOKEN']
 if os.environ.get('GITHUB_TOKEN'):
     body['github_token'] = os.environ['GITHUB_TOKEN']
 json.dump(body, open('$TMP/cred.json', 'w'))

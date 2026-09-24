@@ -169,7 +169,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
         <p className="mt-1 max-w-2xl text-[12px] text-muted-foreground">
           An agent&rsquo;s own secrets — its canopy token, its mailbox token, anything only it uses —
           live in its own vault with its own service account, so a leaked key reaches one agent
-          rather than all of them. Set those on each agent, under Overview → Credentials.
+          rather than all of them. Set those on each agent, under Settings → Credentials.
         </p>
         {withVault.length === 0 ? (
           <p className="mt-2 text-[12px] text-muted-foreground">No agents in this workspace yet.</p>
@@ -198,7 +198,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
           A box has its own credentials — its Claude login and the GitHub token it clones with. Those
           are neither of the above: they belong to the machine, not to a tenant or an agent, and are
           set on the runner (Supervisor → Runners → the box). A runner holds no 1Password key of its
-          own; it is handed the two above, per agent, as it provisions one.
+          own — it is handed the two above, per agent, as it provisions one.
         </p>
       </section>
     </div>

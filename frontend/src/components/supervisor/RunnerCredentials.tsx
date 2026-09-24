@@ -30,7 +30,6 @@ export type SlotKey =
   | 'claude_token_secondary'
   | 'claude_api_key'
   | 'github_token'
-  | 'op_sa_token'
 
 export interface Slot {
   key: SlotKey
@@ -66,12 +65,6 @@ export const SLOTS: readonly Slot[] = [
     statusKey: 'has_github_token',
     label: 'GitHub token',
     hint: 'Read-only; clones the private agent repos at bootstrap.',
-  },
-  {
-    key: 'op_sa_token',
-    statusKey: 'has_op_sa_token',
-    label: '1Password service account',
-    hint: "Resolves each agent's secrets. Without it, bootstrap skips provisioning and the box comes up unable to act as any agent.",
   },
 ]
 

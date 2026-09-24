@@ -831,8 +831,14 @@ class RunnerCredential(models.Model):
     login) and never read this. A cloud runner boots knowing only its canopy-pat,
     then fetches this bundle over HTTPS authed by that PAT (owner == paired_by, the
     same gate as heartbeat/claim) and stages it into its environment: the runner's
-    Claude login, a read-only GitHub token (to clone private agent repos), and the
-    1Password service-account token (so the reconciler can resolve agent secrets).
+    Claude login, and a read-only GitHub token to clone private agent repos.
+
+    NO 1PASSWORD KEY. There was one — a box-wide service-account token — and it
+    was staged into the runner's own environment, which every turn inherits: one
+    credential that reads EVERY agent's vault, handed to each of them. The key
+    that opens an agent's vault belongs to that agent (`Agent.op_sa_token_enc`)
+    and the tenant's to the workspace (`Workspace.shared_op_sa_token_enc`); the
+    box is handed the right one per agent, at bootstrap, and holds none itself.
 
     Stored encrypted at rest (Fernet — see apps/common/encryption.py); the columns
     hold ciphertext. One row per runner (unique login per runner, the mapping the
@@ -850,7 +856,6 @@ class RunnerCredential(models.Model):
     claude_token_secondary_enc = models.TextField(blank=True, default="")
     claude_api_key_enc = models.TextField(blank=True, default="")
     github_token_enc = models.TextField(blank=True, default="")
-    op_sa_token_enc = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"

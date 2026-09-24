@@ -416,7 +416,6 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
         claude_token_secondary=payload.claude_token_secondary,
         claude_api_key=payload.claude_api_key,
         github_token=payload.github_token,
-        op_sa_token=payload.op_sa_token,
         updated_by=request.user,
     )
     return services.runner_credential_status(runner)

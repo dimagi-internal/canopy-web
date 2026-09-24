@@ -99,7 +99,7 @@ export const USER_ROLES: UserRole[] = [
       'Members and invites, Slack, inbound email, connected sites, secrets — one settings '
       + 'page for the workspace. Secrets has the SHARED vault every agent here reads (the '
       + 'Google OAuth clients, the GitHub token); an agent\'s OWN vault sits on the agent, '
-      + 'under Overview → Credentials. Both are owner-only: they are the keys a runner '
+      + 'under Settings → Credentials. Both are owner-only: they are the keys a runner '
       + 'resolves everything else from. 1Password holds the secrets; canopy-web holds the '
       + 'service accounts that open them.',
   },
