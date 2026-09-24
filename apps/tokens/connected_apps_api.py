@@ -54,9 +54,6 @@ class ConnectedAppOut(Schema):
     id: int
     name: str
     origins: list[str]
-    #: Domains whose EXISTING canopy users this site's visitors arrive as
-    #: (who-is-asking §2). Empty: every visitor is a contact.
-    resolvable_domains: list[str] = []
     agents: list[ConnectedAgentOut]
     #: Registered PEM public keys. Returned in full — they are public by
     #: definition, and showing only a count would leave an operator unable to
@@ -78,7 +75,6 @@ class ConnectIn(Schema):
     agents: list[str] = []
     public_keys: list[str] = []
     jwks_url: str = ""
-    resolvable_domains: list[str] = []
     show_on_canopy_pages: bool = False
 
 
@@ -88,7 +84,6 @@ class UpdateIn(Schema):
     agents: list[str] | None = None
     public_keys: list[str] | None = None
     show_on_canopy_pages: bool | None = None
-    resolvable_domains: list[str] | None = None
 
 
 def _out(app: AppCredential) -> ConnectedAppOut:
@@ -99,7 +94,6 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         # Echoing the raw column would show a rejected origin as though it were
         # in force, which is the confusion `frame_origins()` exists to prevent.
         origins=app.frame_origins(),
-        resolvable_domains=list(app.resolvable_domains or []),
         public_keys=list(app.public_keys or []),
         jwks_url=app.jwks_url or "",
         signs_assertions=bool(app.public_keys) or bool(app.jwks_url),
@@ -157,7 +151,6 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, agents=payload.agents,
             public_keys=payload.public_keys, jwks_url=payload.jwks_url,
-            resolvable_domains=payload.resolvable_domains or None,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -181,7 +174,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
         embed_apps.update(
             user=request.user, app=app, workspace_slug=slug, origins=payload.origins,
             agents=payload.agents, public_keys=payload.public_keys,
-            resolvable_domains=payload.resolvable_domains, jwks_url=payload.jwks_url,
+            jwks_url=payload.jwks_url,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
@@ -195,7 +188,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     # What it is NOW, not what was asked for: a partial payload leaves the rest
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
-          detail=f"origins={app.frame_origins()} resolvable={app.resolvable_domains} "
+          detail=f"origins={app.frame_origins()} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
 

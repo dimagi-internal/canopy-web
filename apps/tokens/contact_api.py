@@ -191,10 +191,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     if contact is None:
         raise HttpError(400, "the assertion does not identify a visitor")
 
-    user = contact_services.resolve_arrival(
-        app=app, contact=contact, claims=claims,
-        resolvable_domains=app.resolvable_domains or [],
-    )
+    user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
         # the same short-lived revocable row canopy's own widget mints. Never a

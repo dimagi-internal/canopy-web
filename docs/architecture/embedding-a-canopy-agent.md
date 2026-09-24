@@ -287,8 +287,8 @@ surface a contact token reaches.
 
 **Either way, §5's page state works.** A contact declares theirs on that same
 prefix, so nothing in this guide is a privilege of visitors who happen to hold a
-canopy account — do not reach for `resolvable_domains` to make the panel
-page-aware. (It was, until 2026-09-23: the two declaration routes existed only
+canopy account — do not try to make visitors arrive as users just to make the
+panel page-aware. (It was, until 2026-09-23: the two declaration routes existed only
 under `/api/canopy-sessions/`, so the widget skipped them for a contact and the
 agent never learned what the visitor was looking at.)
 

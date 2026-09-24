@@ -37,8 +37,6 @@ export async function connectApp(
     /** Where the site publishes its keys. Preferred over `public_keys`: canopy
      *  follows a rotation instead of needing a new paste. */
     jwks_url: string
-    /** Domains this tenant lets the site resolve to existing canopy users. */
-    resolvable_domains: string[]
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -57,7 +55,6 @@ export async function updateConnectedApp(
     public_keys?: string[]
     jwks_url?: string
     show_on_canopy_pages?: boolean
-    resolvable_domains?: string[]
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.PATCH('/api/workspaces/{slug}/connected-apps/{app_id}', {

@@ -45,6 +45,5 @@ def test_registering_grants_nothing_on_its_own():
     cred = AppCredential.objects.get(name="connect-labs")
     assert cred.frame_origins() == []
     assert list(cred.public_keys or []) == []
-    assert cred.resolvable_domains == []
     assert cred.allowed_agents.count() == 0
     assert cred.workspace_id == "site-host", "it belongs to the tenant named, and only that"

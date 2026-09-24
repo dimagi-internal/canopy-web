@@ -54,65 +54,6 @@ export function currentOrigin(): string {
   return typeof window === 'undefined' ? '' : window.location.origin
 }
 
-// Which domains' EXISTING canopy users arrive as themselves (who-is-asking §2)
-// rather than as contacts. Only on a signed assertion, never creates an account;
-// the server refuses a domain that is not the owner's own or not admitted.
-export function ArrivalDomains({
-  value,
-  editable,
-  signs,
-  onSave,
-}: {
-  value: string[]
-  editable: boolean
-  signs: boolean
-  onSave: (domains: string[]) => void
-}): JSX.Element {
-  const [draft, setDraft] = useState<string | null>(null)
-  const label = value.length ? value.join(', ') : 'none — every visitor is a contact'
-  return (
-    <div className="text-xs">
-      <span className="text-foreground-secondary">Visitors with a canopy account arrive as themselves: </span>
-      {draft === null ? (
-        <>
-          <span data-testid="arrival-domains" className="text-foreground">{label}</span>
-          {editable && (
-            <button type="button" className="ml-2 underline text-muted-foreground" onClick={() => setDraft(value.join(', '))}>
-              Change
-            </button>
-          )}
-          {!signs && value.length > 0 && (
-            <span className="ml-2 text-warning">— the site signs no assertions yet, so nobody resolves</span>
-          )}
-        </>
-      ) : (
-        <span className="inline-flex flex-wrap items-center gap-2">
-          <Input
-            aria-label="Arrival domains"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="dimagi.com"
-            className="h-7 w-56 text-xs"
-          />
-          <button
-            type="button"
-            className="underline text-primary"
-            onClick={() => {
-              onSave(draft.split(/[\s,]+/).map((d) => d.trim()).filter(Boolean))
-              setDraft(null)
-            }}
-          >
-            Save
-          </button>
-          <button type="button" className="underline text-muted-foreground" onClick={() => setDraft(null)}>
-            Cancel
-          </button>
-        </span>
-      )}
-    </div>
-  )
-}
-
 function AgentPicker({
   agents,
   selected,
@@ -216,11 +157,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
       await connectApp(slug!, {
         name: name.trim(),
         origins: parseOrigins(origins),
-        // No domain is typed here. A site vouches for a visitor with a signing
-        // key; resolving one to their canopy account is a separate grant, and
-        // the server bounds it to the acting owner's own domain.
         show_on_canopy_pages: showHere,
-        resolvable_domains: [],
         agents: picked,
         public_keys: parseKeys(signingKey),
         jwks_url: jwksUrl.trim(),
@@ -257,10 +194,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
           <p className="text-sm text-muted-foreground">Loading…</p>
         )}
         {apps?.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No sites connected yet. canopy's own pages are one of them — connect a
-            site below and tick the box.
-          </p>
+          <p className="text-sm text-muted-foreground">No sites connected yet.</p>
         )}
         {apps
           ?.map((app) => (
@@ -281,30 +215,18 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   )}
                 </div>
                 {isOwner && !app.revoked && (
-                  <div className="flex shrink-0 gap-2">
-                    {/* This workspace's own registration. Another workspace
-                        using the same system registered it separately. */}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void run(() => disconnectApp(slug, app.id))}
-                    >
-                      Stop using this site
-                    </Button>
-                  </div>
+                  // This workspace's own registration. Another workspace using
+                  // the same system registered it separately.
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void run(() => disconnectApp(slug, app.id))}
+                  >
+                    Disconnect
+                  </Button>
                 )}
               </div>
-              {!app.revoked && (
-                <ArrivalDomains
-                  value={[...(app.resolvable_domains ?? [])]}
-                  editable={isOwner}
-                  signs={app.signs_assertions}
-                  onSave={(domains) =>
-                    void run(() => updateConnectedApp(slug, app.id, { resolvable_domains: domains }))
-                  }
-                />
-              )}
               {!app.revoked && (
                 <AgentPicker
                   agents={agents}
@@ -331,8 +253,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
               required
             />
             <span className="block text-xs text-muted-foreground">
-              Letters, digits, hyphens. Your site passes this to{' '}
-              <code>canopy.init</code>, so it has to match exactly.
+              Letters, digits and hyphens. Your site passes it to <code>canopy.init</code>.
             </span>
           </label>
 
@@ -346,9 +267,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
               className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-xs text-foreground"
             />
             <span className="block text-xs text-muted-foreground">
-              One per line. Include every environment — staging and local too. Scheme,
-              host and port only; no path, no wildcard. This list is what stops any
-              other site framing your agent, so leaving it empty serves nothing at all.
+              One per line, including staging and local. No paths.
             </span>
           </label>
 
@@ -358,9 +277,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
           </div>
 
           <label className="block space-y-1">
-            <span className="text-xs text-foreground-secondary">
-              Where your site publishes its keys (recommended)
-            </span>
+            <span className="text-xs text-foreground-secondary">Signing keys URL (JWKS)</span>
             <input
               value={jwksUrl}
               onChange={(e) => setJwksUrl(e.target.value)}
@@ -368,17 +285,12 @@ export function ConnectedAppsPage(): JSX.Element | null {
               className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
             />
             <span className="block text-xs text-muted-foreground">
-              The usual JWKS document, the same one an OIDC provider serves. Give us this
-              and you never send us a key: rotate by publishing the new one beside the old
-              and switching what you sign with, and canopy follows on its own. Must be
-              https and reachable from the internet.
+              Public https. canopy picks up key changes on its own.
             </span>
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs text-foreground-secondary">
-              …or paste a signing key (optional)
-            </span>
+            <span className="text-xs text-foreground-secondary">…or paste a public key</span>
             <textarea
               value={signingKey}
               onChange={(e) => setSigningKey(e.target.value)}
@@ -387,11 +299,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
               className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
             />
             <span className="block text-xs text-muted-foreground">
-              The <strong>public</strong> half only — keep the private key on your own
-              server. Use this when you have no JWKS to publish; it works the same, but
-              every rotation means coming back here to paste the new key, which is how
-              rotation quietly stops happening. Paste several during one; all of them
-              verify until you remove the old.
+              Only if you have no JWKS URL. Never the private key.
             </span>
           </label>
 
@@ -407,11 +315,9 @@ export function ConnectedAppsPage(): JSX.Element | null {
               className="mt-1"
             />
             <span className="text-xs text-foreground-secondary">
-              Show this panel on canopy's own pages.
+              Also show the agent panel on canopy's own pages
               <span className="block text-muted-foreground">
-                For asking an agent about the canopy page you are looking at. Adds{' '}
-                {currentOrigin()} to the URLs above, since the panel cannot load
-                without it. Only one site at a time.
+                Adds {currentOrigin()} to the URLs. One site at a time.
               </span>
             </span>
           </label>
