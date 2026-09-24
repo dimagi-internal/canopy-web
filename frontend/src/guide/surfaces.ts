@@ -274,17 +274,10 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Run a schedule now', 'Pause or edit a schedule', 'Create a new schedule'],
   },
   {
-    path: '/w/:workspace/agents/:slug/syncs',
-    title: 'Agent syncs',
-    audience: 'The person(s) who own this agent',
-    what: "The agent's sync log — its periodic check-ins (e.g. a manager sync) recorded as cards.",
-    actions: ['Browse past syncs'],
-  },
-  {
     path: '/w/:workspace/agents/:slug/work-products',
     title: 'Agent work products',
     audience: 'The person(s) who own this agent, or anyone consuming its output',
-    what: "The agent's produced deliverables — the artifacts it has shipped, as cards.",
+    what: "What this agent produced: its deliverables, and below them its STATUS REPORTS — the periodic reviews it writes about its own work, with its own grades. Those were a rail entry called Syncs, a word that could mean a data sync or a repo sync and said nothing about a self-review; `/syncs` lands on the Status reports section here.",
     actions: ['Browse work products'],
   },
   {
@@ -295,7 +288,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Browse the agent\'s skill catalog'],
   },
   {
-    path: '/w/:workspace/agents/:slug/history',
+    path: '/w/:workspace/agents/:slug/skills/history',
     title: 'Agent skill history',
     audience: 'The person(s) who own this agent',
     what: "How each skill in the agent's repository changed over time, read from its git history. Drill from all skills, to a group, to one skill, to one commit.",

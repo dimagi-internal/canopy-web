@@ -52,6 +52,10 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace/agents/:slug/projects',
   '/w/:workspace/agents/:slug/tasks',
   '/w/:workspace/agents/:slug/items',
+  // Syncs are Status reports (a section of Work products); History is a view of
+  // Skills. Neither was a name that said what it held.
+  '/w/:workspace/agents/:slug/syncs',
+  '/w/:workspace/agents/:slug/history',
   '/w/:workspace/agents/:slug',
 ])
 
