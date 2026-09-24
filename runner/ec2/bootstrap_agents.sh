@@ -484,14 +484,16 @@ if v:
 # only plaintext gate in the system — bearer-only, caller must pair a live runner
 # this agent routes to, every read audited. A second route would be a second gate
 # to keep correct.
-# Four fields, not two: this agent's own vault+key, and its TENANT's shared
-# vault+key. The shared pair is separate because a per-agent key reads
+# Five fields: this agent's own vault+key, its TENANT's shared vault+key, and
+# the agent OWNER's GitHub token for this agent (an AgentDelegation — the owner's
+# identity lent to this agent, not the agent's own), used below for this agent's
+# private clones and nothing else. The shared pair is separate because a per-agent key reads
 # Agent-<Slug> and nothing else by design, so it cannot reach the shared gog
 # OAuth clients — see ensure_client_creds. All four are blank-safe; a
 # deployment that serves none behaves exactly as it did before this existed.
-agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>"
+agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>\x1f<github-token>"
   local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
-  [[ -n "$base" && -n "$tok" ]] || { printf '\x1f\x1f\x1f\n'; return 0; }
+  [[ -n "$base" && -n "$tok" ]] || { printf '\x1f\x1f\x1f\x1f\n'; return 0; }
   local body
   # A control plane we could not ASK is not the same as an agent nobody has
   # registered, and since there is no fallback the difference decides what a
@@ -499,7 +501,7 @@ agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<sh
   if ! body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
           "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)"; then
     warn "$slug: could not reach canopy-web for its vault config — treating as unregistered this pass"
-    printf '\x1f\x1f\x1f\n'; return 0
+    printf '\x1f\x1f\x1f\x1f\n'; return 0
   fi
   BODY="$body" python3 -c '
 import json, os
@@ -512,9 +514,10 @@ except Exception:
 # key in the agent slots, which is a cross-level fallback carrying the wrong
 # tier credential. Seen on cloud-ec2-1 2026-09-22 as
 # "op inject from Canopy-Shared failed: Agent-Hal isnt a vault in this account".
-print("%s\x1f%s\x1f%s\x1f%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
-                               d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or ""))
-' 2>/dev/null || printf '\x1f\x1f\x1f\n'
+print("%s\x1f%s\x1f%s\x1f%s\x1f%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
+                               d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or "",
+                               d.get("github_token") or ""))
+' 2>/dev/null || printf '\x1f\x1f\x1f\x1f\n'
 }
 
 FAILED_AGENTS=()
@@ -567,12 +570,11 @@ install_gog() {
   trap "rm -rf '$tmp'" RETURN
 
   if command -v gh >/dev/null 2>&1; then
-    # `gh release download` with no tag pulls the LATEST release; a token is
-    # optional for a public repo but avoids the unauthenticated 60/hr rate limit.
-    # Fall back to the inherited GH_TOKEN: cloud_runner now exports it when it
-    # stages the credential bundle, and a bare `GH_TOKEN="${GITHUB_TOKEN:-}"`
-    # would BLANK that inherited value for this one call.
-    if ! GH_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}" gh release download -R steipete/gogcli \
+    # `gh release download` with no tag pulls the LATEST release. The repo is
+    # public; `gh` still wants a login, and this box holds none any more (GitHub
+    # is per turn), so this usually falls through to the curl path below, which
+    # needs no token.
+    if ! gh release download -R steipete/gogcli \
         --pattern 'gogcli_*_linux_amd64.tar.gz' --dir "$tmp" --clobber 2>&1; then
       warn "gh release download failed; falling back to the GitHub API + curl"
     fi
@@ -665,12 +667,24 @@ PY
 }
 
 # ── Step 3: per-agent clone + provision + gmail token ───────────────────────────
+# There is no box-wide GitHub credential. A clone uses CLONE_GH_TOKEN — set per
+# agent to that agent's owner's token (agent_vault_config's fifth field) and
+# cleared after — through a helper that lives only on this one git command. With
+# it blank, a public repo still clones and a private one fails with GitHub's own
+# error, which says what is actually wrong.
+_clone_git() {
+  GH_TOKEN="${CLONE_GH_TOKEN:-}" git \
+    -c credential.https://github.com.helper= \
+    -c 'credential.https://github.com.helper=!f() { test "$1" = get || exit 0; [ -n "$GH_TOKEN" ] || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+    "$@"
+}
+
 clone_or_pull() {  # url dest
   local url="$1" dest="$2"
   if [[ -d "$dest/.git" ]]; then
-    git -C "$dest" pull --ff-only
+    _clone_git -C "$dest" pull --ff-only
   else
-    git clone --depth 1 "$url" "$dest"
+    _clone_git clone --depth 1 "$url" "$dest"
   fi
 }
 
@@ -727,9 +741,10 @@ install_agent_plugin() {
 # `note` naming any follow-up a human still has to do.
 #
 # Cloned, then added as a DIRECTORY source — the same shape as an agent's own
-# plugin, and for the same two reasons: these repos are private, so this reuses the
-# git credential store already staged for the agent clones rather than needing the
-# marketplace to authenticate; and the clone IS the marketplace, so the `git pull`
+# plugin, and for the same two reasons: these repos may be private, so this reuses
+# the agent owner's token already in hand for the agent's own clone (CLONE_GH_TOKEN)
+# rather than needing the marketplace to authenticate — which is why that token
+# must also reach the repos its plugins come from; and the clone IS the marketplace, so the `git pull`
 # on a later run is also how the dependency updates. No second copy to keep in sync.
 install_required_plugins() {
   local slug="$1" dest="$2"
@@ -1042,9 +1057,14 @@ bootstrap_one_agent() {
   # the box-wide key, so an agent nobody had registered looked configured, and
   # "which identity read this secret" had no answer. Unregistered now says so,
   # here and in the readiness report.
-  local vault op_token shared_vault shared_token cfg
+  local vault op_token shared_vault shared_token github_token cfg
   cfg="$(agent_vault_config "$slug")"
-  IFS=$'\x1f' read -r vault op_token shared_vault shared_token <<<"$cfg"
+  IFS=$'\x1f' read -r vault op_token shared_vault shared_token github_token <<<"$cfg"
+  if [[ -n "$github_token" ]]; then
+    ok "$slug: GitHub token lent by its owner (from canopy-web)"
+  else
+    warn "$slug: its owner has lent it no GitHub token — private clones fail and it cannot ship. Set one at the agent's Settings → Credentials → GitHub"
+  fi
   if [[ -n "$vault" && -n "$op_token" ]]; then
     ok "$slug: agent vault $vault (key from canopy-web)"
   else
@@ -1072,8 +1092,10 @@ bootstrap_one_agent() {
   fi
 
   local repo_url; repo_url="$(agent_repo_url "$slug")"
+  CLONE_GH_TOKEN="$github_token"
   if ! clone_or_pull "${repo_url%.git}.git" "$dest"; then
-    fail "$slug: clone/pull of ${AGENT_REPO_ORG}/${slug} failed (private repo — is the staged GitHub token valid?)"
+    CLONE_GH_TOKEN=""
+    fail "$slug: clone/pull of ${repo_url} failed (private repo — can its owner's GitHub token see it?)"
     FAILED_AGENTS+=("$slug")
     return
   fi
@@ -1083,6 +1105,7 @@ bootstrap_one_agent() {
 
   install_agent_plugin "$slug" "$dest"
   install_required_plugins "$slug" "$dest"
+  CLONE_GH_TOKEN=""
   # The agent's own installer may read 1Password. It gets THIS agent's key and
   # no other — nothing on this box carries a key that spans agents any more.
   OP_SERVICE_ACCOUNT_TOKEN="$op_token" run_agent_provisioner "$slug" "$dest"

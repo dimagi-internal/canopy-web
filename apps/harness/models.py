@@ -831,7 +831,14 @@ class RunnerCredential(models.Model):
     login) and never read this. A cloud runner boots knowing only its canopy-pat,
     then fetches this bundle over HTTPS authed by that PAT (owner == paired_by, the
     same gate as heartbeat/claim) and stages it into its environment: the runner's
-    Claude login, and a read-only GitHub token to clone private agent repos.
+    Claude login, and nothing else.
+
+    NO GITHUB TOKEN. There was one — a shared fine-grained PAT, staged box-wide
+    (`GH_TOKEN` in the runner's environment plus a global `~/.git-credentials`),
+    so every agent on the box pushed as whoever made it, with whatever it could
+    do; it could push branches and could not open pull requests (#747). GitHub is
+    now the agent OWNER's identity lent to that one agent (`AgentDelegation`),
+    handed to one turn at a time.
 
     NO 1PASSWORD KEY. There was one — a box-wide service-account token — and it
     was staged into the runner's own environment, which every turn inherits: one
@@ -855,7 +862,6 @@ class RunnerCredential(models.Model):
     claude_token_enc = models.TextField(blank=True, default="")
     claude_token_secondary_enc = models.TextField(blank=True, default="")
     claude_api_key_enc = models.TextField(blank=True, default="")
-    github_token_enc = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"

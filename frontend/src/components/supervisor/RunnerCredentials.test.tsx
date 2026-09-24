@@ -16,7 +16,6 @@ const NONE: CredentialStatus = {
   has_claude_token: false,
   has_claude_token_secondary: false,
   has_claude_api_key: false,
-  has_github_token: false,
   updated_at: null,
 }
 const ONE_CLAUDE: CredentialStatus = { ...NONE, has_claude_token: true }
@@ -29,7 +28,6 @@ describe('slot catalogue', () => {
       'claude_api_key',
       'claude_token',
       'claude_token_secondary',
-      'github_token',
     ])
   })
 
@@ -48,7 +46,7 @@ describe('nextPayload', () => {
   })
 
   it('drops blank and whitespace-only entries rather than clobbering', () => {
-    expect(nextPayload({ claude_token: '', github_token: '   ', claude_api_key: 'sk-x' })).toEqual({
+    expect(nextPayload({ claude_token: '', claude_token_secondary: '   ', claude_api_key: 'sk-x' })).toEqual({
       claude_api_key: 'sk-x',
     })
   })
@@ -98,7 +96,7 @@ describe('credentialSummary', () => {
 
   it('reports which non-Claude slots are unset', () => {
     const s = credentialSummary(ONE_CLAUDE)
-    expect(s.unset).toContain('github_token')
+    expect(s.unset).toContain('claude_api_key')
     expect(s.unset).not.toContain('claude_token')
   })
 })

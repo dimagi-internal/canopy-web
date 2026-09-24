@@ -13,7 +13,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
-from . import services, skill_history
+from . import delegations, services, skill_history
 from .models import AgentTaskCommand
 from .schemas import (
     AgentInterfaceIn,
@@ -22,6 +22,8 @@ from .schemas import (
     AgentAdminOut,
     AgentCommandApplyIn,
     AgentCredentialsIn,
+    AgentGitHubIn,
+    AgentGitHubOut,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
     AgentDetailOut,
@@ -1105,9 +1107,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         )
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
         pass
+    delegation = delegations.delegation_for(agent)
     return AgentCredentialsResolveOut(
         values=values, op_vault=vault, op_sa_token=op_token,
         shared_op_vault=shared_vault, shared_op_sa_token=shared_token,
+        github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
     )
 
 
@@ -1130,6 +1134,54 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )
+
+
+# ---- GitHub: the owner's identity, lent to this agent -------------------------
+# The owner pastes a fine-grained token here; a runner is handed it one turn at a
+# time. See apps/agents/delegations.py for the rule and AgentDelegation for why it
+# is not a vault item.
+
+@router.get("/{slug}/github", response=AgentGitHubOut,
+            summary="How this agent acts on GitHub (masked — never the token)")
+def get_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
+    """Whose GitHub identity this agent's pull requests use, when that token
+    expires, and whether it can open a pull request on the agent's repo."""
+    agent = _get_agent_or_404(request, slug)
+    return AgentGitHubOut(**delegations.status(agent))
+
+
+@router.put("/{slug}/github", response=AgentGitHubOut,
+            summary="Lend this agent your GitHub identity (owner only, write-only)")
+def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
+    """Store the owner's fine-grained GitHub token for this agent.
+
+    Checked before it is stored: GitHub must accept it, and it must be able to
+    open a pull request on the agent's own repo. A token that fails is refused
+    with the reason, never saved."""
+    agent = _get_agent_or_404(request, slug)
+    try:
+        delegations.set_github(agent, request.user, payload.token)
+    except delegations.DelegationError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return AgentGitHubOut(**delegations.status(agent))
+
+
+@router.post("/{slug}/github/check", response=AgentGitHubOut,
+             summary="Re-check this agent's GitHub token against GitHub")
+def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
+    agent = _get_agent_or_404(request, slug)
+    delegations.check_github(agent)
+    return AgentGitHubOut(**delegations.status(agent))
+
+
+@router.delete("/{slug}/github", response=AgentGitHubOut,
+               summary="Withdraw your GitHub identity from this agent")
+def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
+    """Removes the CALLER's own delegation — nobody can withdraw someone
+    else's, and an agent admin who is not its owner has none to withdraw."""
+    agent = _get_agent_or_404(request, slug)
+    delegations.clear_github(agent, request.user)
+    return AgentGitHubOut(**delegations.status(agent))
 
 
 # Registered AFTER the literal `status`/`resolve` paths on purpose: Django

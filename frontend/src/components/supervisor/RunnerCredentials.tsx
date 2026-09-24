@@ -29,7 +29,6 @@ export type SlotKey =
   | 'claude_token'
   | 'claude_token_secondary'
   | 'claude_api_key'
-  | 'github_token'
 
 export interface Slot {
   key: SlotKey
@@ -60,13 +59,10 @@ export const SLOTS: readonly Slot[] = [
     label: 'Claude API key (last resort)',
     hint: 'Metered, deliberately — falling back this far should notify a human rather than quietly spend money.',
   },
-  {
-    key: 'github_token',
-    statusKey: 'has_github_token',
-    label: 'GitHub token',
-    hint: 'Read-only; clones the private agent repos at bootstrap.',
-  },
 ]
+// No GitHub slot: a box holds no GitHub credential. Each agent's turns get its
+// owner's token for that agent, one turn at a time — set on the agent's own
+// Settings → Credentials → GitHub.
 
 /** Only the slots actually typed into, trimmed. Blank means "leave alone", never
  *  "clear" — the write schema is non-clobbering and "" would overwrite. */

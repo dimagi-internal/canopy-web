@@ -10,6 +10,7 @@ import {
 import { headline, sections } from '@/pages/agents/agentCredentials'
 import { relativeAge } from '@/lib/relativeAge'
 import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
+import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
@@ -188,6 +189,7 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
           2026-09-23: "I don't even see where the 1pass service account goes").
           ace showed it only because it declares 45 refs. */}
       <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
+      <AgentGitHubSection slug={agent.slug} />
 
       {rows.length === 0 ? (
         // Zero refs is UNDECLARED, not provisioned — the state every agent is in

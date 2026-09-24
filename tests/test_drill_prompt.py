@@ -18,11 +18,19 @@ from __future__ import annotations
 
 import re
 
-from apps.harness.services import DRILL_PROMPT
+from apps.harness.services import DRILL_PROMPT, _drill_github_check
+
+
+class _Eva:
+    slug = "eva"
+    repo_url = "https://github.com/dimagi-internal/eva"
 
 
 def _prompt() -> str:
-    return DRILL_PROMPT.format(agent_slug="eva", report_url="https://example.test/report")
+    # With the real GitHub step in it: that step is a POST, so every read-only
+    # assertion below has to hold with it present, not just without it.
+    return DRILL_PROMPT.format(agent_slug="eva", report_url="https://example.test/report",
+                               github_check=_drill_github_check(_Eva()))
 
 
 def test_the_report_is_named_as_exempt_from_the_read_only_rule():

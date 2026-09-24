@@ -54,6 +54,8 @@ from .schemas import (
     RunnerMintResultIn,
     RunnerMintUrlIn,
     RunnerDrillOut,
+    RunnerGitHubReadinessOut,
+    TurnGitHubTokenOut,
     RunnerIn,
     RunnerOut,
     ScheduleFireIn,
@@ -428,8 +430,8 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
              summary="Set a cloud runner's credential bundle (owner only)")
 def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialIn):
     """Store the per-runner secrets a cloud runner fetches at startup — its Claude
-    login (plus the secondary subscription and API key it fails over to), a
-    read-only GitHub token, the 1Password SA token. Owner-gated exactly
+    login (plus the secondary subscription and API key it fails over to).
+    Owner-gated exactly
     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
     at rest; the response is masked (booleans, never values)."""
     runner = _runner_admin_or_404(request, runner_id)
@@ -438,7 +440,6 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
         claude_token=payload.claude_token,
         claude_token_secondary=payload.claude_token_secondary,
         claude_api_key=payload.claude_api_key,
-        github_token=payload.github_token,
         updated_by=request.user,
     )
     return services.runner_credential_status(runner)
@@ -467,6 +468,91 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     runner. Laptop/emdash runners never call this (they use ambient auth)."""
     runner = _runner_or_404(request, runner_id)
     return RunnerCredentialOut(**services.get_runner_credential(runner))
+
+
+@router.post("/runners/{runner_id}/turns/{turn_id}/github-token",
+             response=TurnGitHubTokenOut,
+             summary="One claimed turn's GitHub credential (its agent owner's)")
+def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
+    """The GitHub token and git identity for ONE turn this runner is executing:
+    the turn's agent owner's token for that agent. canopy decides whose — the
+    runner only names the turn. Refused (409, with the reason) when the owner
+    has lent none or it has expired; there is no shared fallback."""
+    from apps.agents import delegations
+
+    runner = _runner_or_404(request, runner_id)
+    # Only a turn this runner holds right now. A finished turn, or one another
+    # box claimed, gets the same 404 as one that does not exist.
+    turn = (
+        Turn.objects.select_related("agent__owner", "chat_session__agent__owner",
+                                    "initiator_user", "initiator_contact")
+        .filter(pk=turn_id, claimed_by=runner, status__in=services.EXECUTING)
+        .first()
+    )
+    if turn is None:
+        raise HttpError(404, "turn not found")
+    try:
+        issued = delegations.github_token_for_turn(turn)
+    except delegations.DelegationError as exc:
+        raise ProblemError(409, "No GitHub identity for this turn", detail=str(exc)) from exc
+    agent = delegations.turn_agent(turn)
+    try:
+        from apps.events import services as events
+
+        events.record(
+            [{
+                "source": "agents.delegations",
+                "kind": "agent.github.issued",
+                "level": "info",
+                "key": f"{agent.slug}:{turn.pk}",
+                "summary": f"{agent.slug}: GitHub token issued to {runner.name} for one turn",
+                "payload": {"agent": agent.slug, "turn": str(turn.pk),
+                            "runner": str(runner.pk), "as": issued["github_login"]},
+            }],
+            workspace=agent.workspace,
+        )
+    except Exception:  # noqa: BLE001 - an audit hiccup must not deny a turn its token
+        pass
+    return issued
+
+
+@router.get("/runners/{runner_id}/github-readiness",
+            response=list[RunnerGitHubReadinessOut],
+            summary="Can each agent this runner serves open a pull request?")
+def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
+    """Checked live against GitHub, per agent routed to this runner. A box calls
+    this when it boots so a missing, expired or under-scoped token is a health
+    check going red, not a 403 in the middle of a turn."""
+    from apps.agents import delegations
+
+    runner = _runner_or_404(request, runner_id)
+    agents = (
+        Agent.objects.filter(runner_assignments__runner=runner)
+        .select_related("owner").distinct().order_by("slug")
+    )
+    out = []
+    for agent in agents:
+        delegations.check_github(agent)
+        st = delegations.status(agent)
+        if not st["set"]:
+            status, detail = "fail", (
+                f"owner {st['owner_email'] or '(none)'} has not lent {agent.slug} a GitHub "
+                f"token — /agents/{agent.slug}/settings → Credentials → GitHub")
+        elif st["expired"]:
+            status, detail = "fail", f"token expired {st['expires_at']:%Y-%m-%d}"
+        elif st["error"]:
+            status, detail = "fail", st["error"]
+        elif any(not c["ok"] for c in st["checks"]):
+            bad = next(c for c in st["checks"] if not c["ok"])
+            status, detail = "fail", f"{bad['repo']}: {bad['detail']}"
+        elif st["expiring_soon"]:
+            status, detail = "warn", f"token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
+        else:
+            status, detail = "ok", f"acts as @{st['login']}" + (
+                f", can open pull requests on {st['repo']}" if st["repo"] else "")
+        out.append({"agent_slug": agent.slug, "status": status, "detail": detail,
+                    "login": st.get("login", ""), "expires_at": st.get("expires_at")})
+    return out
 
 
 @router.post("/runners/{runner_id}/mint", response=RunnerMintOut,

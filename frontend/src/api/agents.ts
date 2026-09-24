@@ -414,6 +414,55 @@ export async function setAgentVault(slug: string, body: { vault?: string; servic
   return unwrap(res, 'setAgentVault')
 }
 
+// ---- GitHub: the owner's identity, lent to one agent ------------------------
+
+export type AgentGitHubCheck = { repo: string; ok: boolean; detail: string }
+export type AgentGitHub = Omit<components['schemas']['AgentGitHubOut'], 'checks'> & {
+  checks: AgentGitHubCheck[]
+}
+// What openapi-fetch actually hands back: the array degraded to ArrayLike.
+type AgentGitHubWire = Omit<AgentGitHub, 'checks'> & { checks?: ArrayLike<AgentGitHubCheck> | null }
+type GitHubRes = { data?: AgentGitHubWire; error?: unknown }
+
+// Copied across the boundary for the readonly-array reason above.
+function toGitHub(w: AgentGitHubWire): AgentGitHub {
+  return { ...w, checks: Array.from(w.checks ?? [], (c) => ({ ...c, detail: c.detail ?? '' })) }
+}
+
+/** A refusal's own words. The server says exactly what is wrong with a pasted
+ *  token (wrong resource owner, repo not selected, no pull-request permission),
+ *  and that sentence is the most useful thing the screen can show. */
+function githubResult(res: GitHubRes, what: string): AgentGitHub {
+  if (res.error !== undefined || res.data === undefined) {
+    const detail = (res.error as { detail?: unknown } | undefined)?.detail
+    throw new Error(typeof detail === 'string' && detail ? detail : `${what} failed`)
+  }
+  return toGitHub(res.data)
+}
+
+export async function getAgentGitHub(slug: string): Promise<AgentGitHub> {
+  const res = await apiV2.GET('/api/agents/{slug}/github', { params: { path: { slug } } })
+  return githubResult(res as unknown as GitHubRes, 'Loading GitHub status')
+}
+
+export async function setAgentGitHub(slug: string, token: string): Promise<AgentGitHub> {
+  const res = await apiV2.PUT('/api/agents/{slug}/github', {
+    params: { path: { slug } },
+    body: { token },
+  })
+  return githubResult(res as unknown as GitHubRes, 'Saving the token')
+}
+
+export async function checkAgentGitHub(slug: string): Promise<AgentGitHub> {
+  const res = await apiV2.POST('/api/agents/{slug}/github/check', { params: { path: { slug } } })
+  return githubResult(res as unknown as GitHubRes, 'The check')
+}
+
+export async function deleteAgentGitHub(slug: string): Promise<AgentGitHub> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/github', { params: { path: { slug } } })
+  return githubResult(res as unknown as GitHubRes, 'Removing the token')
+}
+
 export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))
