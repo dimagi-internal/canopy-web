@@ -90,6 +90,9 @@ def record_inbound_sender(
         workspace=workspace,
         email=email,
         defaults={
+            # The same correspondent writing to agents in two tenants is two
+            # contacts and ONE person. Recorded now, while it is knowable.
+            "person": person_for(email=email),
             "display_name": (display_name or "").strip()[:200],
             "auth_result": grade,
             "last_auth_result": grade,
@@ -233,6 +236,11 @@ def record_embed_visitor(
         external_id=external_id,
         defaults={
             "source": Contact.SOURCE_EMBED,
+            # One site, several tenants: this visitor's record here and their
+            # record in another tenant are the same human, and `(app,
+            # external_id)` is the site's own name for them, so it is provable
+            # rather than a guess.
+            "person": person_for(app=app, external_id=external_id),
             "email": _normalize(email),
             "display_name": (display_name or "").strip()[:200],
             "auth_result": grade,
@@ -301,6 +309,10 @@ def record_slack_user(
         source=Contact.SOURCE_SLACK,
         external_id=f"{team_id}:{slack_user_id}"[:200],
         defaults={
+            # Deliberately no `person`: a Slack id is scoped to its workspace's
+            # Slack, not to the human, and matching on the address Slack
+            # reports would be believing an assertion rather than keying on an
+            # identity. A null here reads as "cannot tell", which is true.
             "email": _normalize(email),
             "display_name": (display_name or "").strip()[:200],
             "auth_result": grade,
@@ -346,3 +358,25 @@ def unblock(contact: Contact) -> Contact:
     contact.blocked_reason = ""
     contact.save(update_fields=["blocked_at", "blocked_reason", "last_seen_at"])
     return contact
+
+
+def person_for(*, app=None, external_id: str = "", email: str = ""):
+    """The `Person` behind this contact, creating it if canopy has not met them
+    before. `None` when there is nothing to key on.
+
+    The ONE place "are these the same person" is answered, so two callers
+    cannot answer it differently. Keyed on what the world already uses to name
+    them — a site's own id, or an address that IS the identity — never on an
+    address a site merely asserted.
+    """
+    from .models import Person
+
+    external_id = (external_id or "").strip()[:200]
+    if app is not None and external_id:
+        row, _ = Person.objects.get_or_create(app=app, external_id=external_id)
+        return row
+    address = _normalize(email)
+    if address:
+        row, _ = Person.objects.get_or_create(app=None, external_id="", email=address)
+        return row
+    return None
