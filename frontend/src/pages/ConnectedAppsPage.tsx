@@ -10,7 +10,6 @@ import {
   disconnectApp,
   grantConnectedApp,
   listConnectedApps,
-  revokeConnectedAppGrant,
   rotateSecret,
   updateConnectedApp,
   type ConnectedApp,
@@ -335,39 +334,28 @@ export function ConnectedAppsPage(): JSX.Element | null {
                 </div>
                 {isOwner && !app.revoked && (
                   <div className="flex shrink-0 gap-2">
-                    {app.administered_here ? (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() =>
-                            void run(async () => setSecret(await rotateSecret(slug, app.id)))
-                          }
-                        >
-                          New secret
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => void run(() => disconnectApp(slug, app.id))}
-                        >
-                          Disconnect
-                        </Button>
-                      </>
-                    ) : (
-                      // Withdrawing a grant is not disconnecting the site: it keeps
-                      // working for every other workspace that granted it.
+                    {app.administered_here && (
                       <Button
                         size="sm"
                         variant="ghost"
                         disabled={busy}
-                        onClick={() => void run(() => revokeConnectedAppGrant(slug, app.id))}
+                        onClick={() =>
+                          void run(async () => setSecret(await rotateSecret(slug, app.id)))
+                        }
                       >
-                        Stop acting for us
+                        New secret
                       </Button>
                     )}
+                    {/* One act, one meaning: THIS workspace stops using the site.
+                        Every other tenant that granted it is unaffected. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => void run(() => disconnectApp(slug, app.id))}
+                    >
+                      Stop using this site
+                    </Button>
                   </div>
                 )}
               </div>

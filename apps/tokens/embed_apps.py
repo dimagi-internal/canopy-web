@@ -398,10 +398,45 @@ def rotate(app: AppCredential) -> str:
 
 
 def revoke(app: AppCredential) -> AppCredential:
-    """Disconnect a site. Its embed shell 404s immediately."""
+    """Retire the SITE ITSELF, for everyone. Its embed shell 404s immediately
+    and `issuer_of` stops resolving its name, so nothing it signs verifies.
+
+    Almost never what a tenant means. One tenant leaving is `disconnect`, which
+    calls this only when the last grant is gone — a site nobody grants is
+    reachable by nobody, so retiring it takes nothing away. Left as the blunt
+    instrument for staff (`admin.py`) and for that last-grant case.
+    """
     if app.revoked_at is None:
         app.revoked_at = timezone.now()
         app.save(update_fields=["revoked_at"])
+    return app
+
+
+def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredential:
+    """This tenant stops using the site. **Every other tenant is unaffected.**
+
+    "Disconnect" on a tenant's page can only ever mean "we stop". It used to
+    mean "retire this site for everyone": `revoke` set `revoked_at` on the site
+    and `issuer_of` filters on it, so the workspace that happened to register a
+    shared site could end every other tenant's integration with one button,
+    and the button did not say so. That is the coupling this whole model exists
+    to remove — a grant one tenant makes must not be endable by another.
+
+    Two consequences follow, and both are about not stranding anyone:
+
+    * **Custody transfers.** If the leaver was maintaining the site's origins
+      and keys, the oldest remaining grant takes over. A site other tenants
+      still use must never be left with nobody able to correct its key.
+    * **The site is retired only when the last tenant leaves**, where retiring
+      it takes nothing from anybody.
+    """
+    revoke_tenant(user=user, app=app, workspace_slug=workspace_slug)
+    remaining = list(app.tenant_grants.order_by("created_at"))
+    if not remaining:
+        return revoke(app)
+    if app.workspace_id == workspace_slug:
+        app.workspace_id = remaining[0].workspace_id
+        app.save(update_fields=["workspace"])
     return app
 
 def self_app():

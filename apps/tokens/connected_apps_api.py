@@ -246,15 +246,27 @@ def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
 @connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},
                               summary="Disconnect a site")
 def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
-    """Revoked rather than deleted: the row is the audit trail of what was once
-    allowed to embed an agent, and its embed shell 404s from this moment."""
+    """THIS workspace stops using the site. Every other tenant is unaffected.
+
+    Withdrawn rather than deleted: the grant is the audit trail of what this
+    workspace once allowed. The site itself is retired only when the last
+    tenant leaves, at which point retiring it takes nothing from anybody.
+    """
     app = _app_or_404(request, slug, app_id)
-    embed_apps.revoke(app)
-    audit(event=EmbedAuditLog.DISCONNECT, request=request, app=app, actor=request.user)
+    try:
+        embed_apps.disconnect(user=request.user, app=app, workspace_slug=slug)
+    except embed_apps.EmbedAppError as exc:
+        raise _refuse(exc)
+    audit(event=EmbedAuditLog.DISCONNECT, request=request, app=app, actor=request.user,
+          detail=f"withdrawn by {slug}")
     return Status(204, None)
 
 
 # --- a site another workspace registered, granted by this one -----------------
+#
+# Withdrawing is `DELETE /connected-apps/{id}` — the same "we stop" as for a
+# site this workspace registered, because from a tenant's side they are one
+# act. There is deliberately no second endpoint for it.
 
 
 class GrantIn(Schema):
@@ -298,20 +310,3 @@ def grant_site(request: HttpRequest, slug: str, payload: GrantIn) -> Status:
     return Status(201, _out(app, slug))
 
 
-@connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}/grant", response={204: None},
-                              summary="Stop letting a site act for this workspace")
-def revoke_grant(request: HttpRequest, slug: str, app_id: int) -> tuple[int, None]:
-    """Withdraw this workspace's grant.
-
-    Its agents stop being offered here and no visitor is recorded here again.
-    The site keeps working for every other tenant that granted it — which is
-    the reason a grant is a row of its own rather than a column on the site.
-    """
-    app = _app_or_404(request, slug, app_id)
-    try:
-        embed_apps.revoke_tenant(user=request.user, app=app, workspace_slug=slug)
-    except embed_apps.EmbedAppError as exc:
-        raise _refuse(exc)
-    audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
-          detail=f"grant withdrawn by {slug}")
-    return 204, None

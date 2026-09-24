@@ -3283,8 +3283,11 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect a site
-         * @description Revoked rather than deleted: the row is the audit trail of what was once
-         *     allowed to embed an agent, and its embed shell 404s from this moment.
+         * @description THIS workspace stops using the site. Every other tenant is unaffected.
+         *
+         *     Withdrawn rather than deleted: the grant is the audit trail of what this
+         *     workspace once allowed. The site itself is retired only when the last
+         *     tenant leaves, at which point retiring it takes nothing from anybody.
          */
         readonly delete: operations["apps_tokens_connected_apps_api_disconnect_app"];
         readonly options?: never;
@@ -3335,30 +3338,6 @@ export interface paths {
          */
         readonly post: operations["apps_tokens_connected_apps_api_grant_site"];
         readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/grant": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /**
-         * Stop letting a site act for this workspace
-         * @description Withdraw this workspace's grant.
-         *
-         *     Its agents stop being offered here and no visitor is recorded here again.
-         *     The site keeps working for every other tenant that granted it — which is
-         *     the reason a grant is a row of its own rather than a column on the site.
-         */
-        readonly delete: operations["apps_tokens_connected_apps_api_revoke_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17967,27 +17946,6 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ConnectedAppOut"];
                 };
-            };
-        };
-    };
-    readonly apps_tokens_connected_apps_api_revoke_grant: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly app_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
