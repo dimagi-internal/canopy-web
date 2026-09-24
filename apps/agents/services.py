@@ -988,19 +988,28 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
     history of that would bury the answer under every prior boot."""
     from apps.agents.models import AgentBootstrapReport
 
+    fields = {
+        "client_creds_ok": bool(client_creds_ok),
+        "mailbox_ok": bool(mailbox_ok),
+        "gog_client": (gog_client or "").strip(),
+        "turn_client": (turn_client or "").strip(),
+        "detail": (detail or "").strip()[:2000],
+    }
+    # The tri-states are written ONLY when the box actually looked. "I did not
+    # check" is not an observation and must not overwrite one — the same rule
+    # the runner's `projects` follows, for the same reason.
+    #
+    # They were written as None instead, which erased the last real answer: the
+    # updater's credentials-only pass (every 30 minutes) does not run
+    # `op inject`, so minutes after a full bootstrap recorded `env_ok` for all
+    # five agents, every one of them read "not checked" (labs, 2026-09-24).
+    if turn_ready is not None:
+        fields["turn_ready"] = bool(turn_ready)
+    if env_ok is not None:
+        fields["env_ok"] = bool(env_ok)
+
     row, _ = AgentBootstrapReport.objects.update_or_create(
-        agent=agent, runner_name=runner_name.strip(),
-        defaults={
-            "client_creds_ok": bool(client_creds_ok),
-            "mailbox_ok": bool(mailbox_ok),
-            "gog_client": (gog_client or "").strip(),
-            # None is preserved, not coerced: a box that did not check must not
-            # report the agent as broken. Only a real observation flips it.
-            "turn_client": (turn_client or "").strip(),
-            "turn_ready": (None if turn_ready is None else bool(turn_ready)),
-            "env_ok": (None if env_ok is None else bool(env_ok)),
-            "detail": (detail or "").strip()[:2000],
-        },
+        agent=agent, runner_name=runner_name.strip(), defaults=fields,
     )
     return row
 

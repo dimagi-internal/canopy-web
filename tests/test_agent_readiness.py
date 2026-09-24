@@ -201,13 +201,60 @@ def test_a_later_report_can_clear_the_alarm(fleet):
     assert rows[0]["gog_client"] == "canopy"
 
 
-def test_env_ok_is_reported_and_null_means_unsaid(fleet):
+def test_env_ok_is_reported_and_unsaid_is_not_an_answer(fleet):
     """`op inject` failing keeps the box's OLD .env — the agent runs, on secrets
     that may be stale. Four agents sat in that state for two weeks on
-    cloud-ec2-1 (2026-09-22), visible only in journald."""
+    cloud-ec2-1 (2026-09-22), visible only in journald.
+
+    A report that does not mention it leaves the last real answer standing;
+    never-reported is what reads as unknown (see the pair of tests at the end
+    of this file)."""
     r = _post(fleet["user"], {**DEAD, "env_ok": False})
     assert r.status_code == 200, r.content
     assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is False
-    # A box that does not say leaves it unknown rather than broken.
+    _post(fleet["user"], DEAD)
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is False
+
+
+def test_never_reported_env_ok_is_unknown(fleet):
+    """The other half: with no observation ever, it is None — not False. An
+    agent nobody has provisioned is unknown, not broken."""
     _post(fleet["user"], DEAD)
     assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is None
+
+
+def test_a_pass_that_did_not_check_does_not_erase_what_did(fleet):
+    """"I did not check" is not an observation, so it must not overwrite one.
+
+    The updater's credentials-only pass (every 30 min) does not run `op inject`
+    and so reports no `env_ok`. It upserted the row anyway, writing None over
+    the real answer — so on labs, minutes after a full bootstrap had recorded
+    `env_ok` for all five agents, every one of them read "not checked"
+    (2026-09-24). Same hazard as `turn_ready`, and the same rule as the
+    runner's `projects`: absent leaves the stored value alone.
+    """
+    from apps.agents import services
+
+    agent = fleet["agent"]
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True,
+        env_ok=False, turn_ready=True, detail="op inject failed: no vault",
+    )
+    # The credentials-only shape: no env_ok, no turn_ready.
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True,
+    )
+    rows = fleet["client"].get("/api/agents/ace/readiness").json()
+    assert rows[0]["env_ok"] is False
+    assert rows[0]["turn_ready"] is True
+
+
+def test_a_real_observation_still_flips_it(fleet):
+    from apps.agents import services
+
+    agent = fleet["agent"]
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True, env_ok=False)
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True, env_ok=True)
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is True
