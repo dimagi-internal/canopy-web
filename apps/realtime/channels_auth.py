@@ -149,6 +149,29 @@ def _query_token_method(scope) -> str:
     return (token.assurance or "delegated") if token is not None else "delegated"
 
 
+@database_sync_to_async
+def _delegated_app(scope):
+    """The connected site behind a DELEGATED token on this socket, or None.
+
+    Read from the same two places a delegated token can ride — the bearer
+    header and `?token=` — and never from anything else the client controls.
+    """
+    from urllib.parse import parse_qs
+
+    from apps.tokens.models import DelegatedToken
+
+    raw = _header(scope, b"authorization")
+    candidates = []
+    if raw and raw.lower().startswith(b"bearer "):
+        candidates.append(raw[7:].decode("latin1").strip())
+    candidates += parse_qs((scope.get("query_string") or b"").decode("latin1")).get("token") or []
+    for value in candidates:
+        token = DelegatedToken.lookup(value) if value else None
+        if token is not None:
+            return token.app
+    return None
+
+
 class RealtimeAuthMiddleware:
     def __init__(self, app):
         self.app = app
@@ -166,9 +189,22 @@ class RealtimeAuthMiddleware:
         if user is None:
             user = await _user_from_query_token(scope)
             method = await _query_token_method(scope) if user is not None else ""
+        # `site ∩ user` (apps/tokens/delegation.py). When a site's delegated
+        # token is the identity, it opens only its own chat's stream; any other
+        # socket (presence, supervisor, turns, runner) is as if unauthenticated.
+        # The acting site rides on the scope so the chat consumer can hold it to
+        # the site's own agents, exactly as REST does.
+        delegated_app = None
+        if user is not None and method not in ("session", "pat"):
+            from apps.tokens import delegation
+
+            delegated_app = await _delegated_app(scope)
+            if not delegation.reaches_ws(scope.get("path", "")):
+                user, method = None, ""
         scope = dict(scope)
         scope["user"] = user or AnonymousUser()
         scope["auth_method"] = method
+        scope["delegated_app"] = delegated_app
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
         # `scope["user"]` stays anonymous for a contact, so any consumer that

@@ -39,11 +39,13 @@ class BearerTokenAuthMiddleware:
         self.get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        self._authenticate(request)
+        refused = self._authenticate(request)
+        if refused is not None:
+            return refused
         return self.get_response(request)
 
     @staticmethod
-    def _authenticate(request: HttpRequest) -> None:
+    def _authenticate(request: HttpRequest) -> HttpResponse | None:
         header = request.META.get("HTTP_AUTHORIZATION", "")
         raw = header[len("Bearer "):].strip() if header.startswith("Bearer ") else ""
         if not raw:
@@ -81,7 +83,23 @@ class BearerTokenAuthMiddleware:
 
         dtok = DelegatedToken.lookup(raw)
         if dtok is None or not dtok.user.is_active:
-            return
+            return None
+
+        # `site ∩ user` (apps/tokens/delegation.py): a site's token is not the
+        # user's whole canopy. Refused HERE, before any view, and loudly — a
+        # 401 would read as an expired token and send a host re-minting one
+        # that is equally refused. Only when the token IS the identity: with a
+        # canopy session already present the person at the browser is acting.
+        from apps.tokens import delegation
+
+        if not already_signed_in and not delegation.reaches(request.method, request.path_info):
+            from django.http import JsonResponse
+
+            detail = delegation.refusal(request.path_info)
+            return JsonResponse(
+                {"type": "about:blank", "title": detail, "status": 403, "detail": detail},
+                status=403, content_type="application/problem+json",
+            )
 
         # WHICH app is acting, for the surfaces whose answer depends on it
         # (`/api/embed/agents`). Kept here rather than re-resolved per view so

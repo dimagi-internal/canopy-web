@@ -18,7 +18,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.tokens.models import AppCredential, DelegatedToken
+from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -31,6 +31,8 @@ def _ctx(app_name="connect-labs"):
     agent = Agent.objects.create(slug="labs-helper", name="Labs Helper", workspace=ws)
     admin = User.objects.create_user(f"a-{app_name}", f"a-{app_name}@dimagi.com", "pw")
     app = AppCredential.create_credential(name=app_name, created_by=admin, workspace=ws)
+    # A site reaches only the agents it offers (apps/tokens/delegation.py).
+    AppCredentialAgent.objects.create(app=app, agent=agent)
     return user, ws, agent, app
 
 
@@ -127,6 +129,7 @@ def test_the_list_can_be_scoped_to_this_app():
         created_by=User.objects.create_user("a2", "a2@dimagi.com", "pw"),
         workspace=ws,
     )
+    AppCredentialAgent.objects.create(app=other_app, agent=agent)
     mine = _create(_bearer(app, user)).json()["id"]
     theirs = _create(_bearer(other_app, user)).json()["id"]
 

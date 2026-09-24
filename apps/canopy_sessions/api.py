@@ -152,12 +152,22 @@ def _visible_slugs(request: HttpRequest) -> set[str]:
     return {pinned} if pinned else set(wsvc.user_workspace_slugs(request.user))
 
 
+def _site_scoped(request: HttpRequest, qs):
+    """`site ∩ user`: when a connected site is acting, only its own agents'
+    sessions exist (apps/tokens/delegation.py). No-op for the person themself."""
+    from apps.tokens import delegation
+
+    offered = delegation.offered_for(request)
+    return qs if offered is None else qs.filter(agent_id__in=offered)
+
+
 def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool = False) -> Session:
     # One authority (`access`): the tenant, then who within it — the same rule
     # the list, the chat socket and attachments apply. `write=True` also needs
     # an owner/editor role; a viewer gets 403, since they can already see it.
     session = get_object_or_404(
-        access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request))
+        _site_scoped(request, access.readable_sessions(request.user,
+                                                       workspace_slugs=_visible_slugs(request)))
         .select_related("agent", "runner_binding", "runner_binding__runner")
         .annotate(_last_msg_at=Max("messages__created_at")),
         pk=session_id,
@@ -188,6 +198,13 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         agent = agent_services.get_agent(payload.agent_slug)
         if agent is None or agent.workspace_id != workspace.slug:
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
+    # A site acting for its visitor may open a chat only with an agent it
+    # offers — and never an agent-less (project) session, which no site offers.
+    from apps.tokens import delegation
+
+    offered = delegation.offered_for(request)
+    if offered is not None and (agent is None or agent.pk not in offered):
+        raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
     try:
         metadata = services.host_metadata(payload.metadata)
     except ValueError as exc:
@@ -245,8 +262,8 @@ def list_sessions(
     slugs = _visible_slugs(request)
     rows = (
         # The same authority every other session surface reads — see
-        # apps/canopy_sessions/access.py.
-        access.readable_sessions(request.user, workspace_slugs=slugs)
+        # apps/canopy_sessions/access.py — narrowed to the acting site's agents.
+        _site_scoped(request, access.readable_sessions(request.user, workspace_slugs=slugs))
         .select_related("agent", "runner_binding", "runner_binding__runner")
     )
     # Embedder filters (Task 9): an embedder (e.g. ace-web) narrows the shared
@@ -344,7 +361,8 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     """
     # Only sessions you may act in. Scoping by workspace alone let a co-tenant
     # reset — and with `prune_ghosts`, delete — conversations they cannot read.
-    readable = access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request))
+    readable = _site_scoped(
+        request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request)))
     rows = [
         s for s in readable.select_related("runner_binding", "runner_binding__runner")
         .order_by("created_at")
@@ -701,7 +719,9 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     multiplayer, so a teammate who can read it must see what was shared in it.
     """
     attachment = get_object_or_404(
-        Attachment.objects.select_related("session"), pk=attachment_id
+        Attachment.objects.select_related("session").filter(
+            session__in=_site_scoped(request, Session.objects.all())),
+        pk=attachment_id,
     )
     # The session's own read rule: a teammate who can read the chat can see
     # what was shared in it; a co-tenant who cannot read it cannot either.
@@ -728,7 +748,9 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
     can see.
     """
     attachment = get_object_or_404(
-        Attachment.objects.select_related("session"), pk=attachment_id
+        Attachment.objects.select_related("session").filter(
+            session__in=_site_scoped(request, Session.objects.all())),
+        pk=attachment_id,
     )
     if attachment.session.workspace_id not in _visible_slugs(request) or not access.can_read(
             request.user, attachment.session):

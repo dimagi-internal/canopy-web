@@ -29,11 +29,13 @@ def test_middleware_rejects_delegated_token_for_deactivated_user(user):
     cred = AppCredential.create_credential(name="a", created_by=user, workspace=host_workspace())
     raw, _ = DelegatedToken.issue(app=cred, user=user, ttl_seconds=600)
 
-    ok = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    # A route a site's token reaches (apps/tokens/delegation.py) — `/api/me/`
+    # is outside that surface now, so it would be refused for another reason.
+    ok = Client().get("/api/canopy-sessions/", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert ok.status_code == 200
 
     user.is_active = False
     user.save(update_fields=["is_active"])
 
-    denied = Client().get("/api/me/", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    denied = Client().get("/api/canopy-sessions/", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert denied.status_code == 401

@@ -148,10 +148,11 @@ def test_a_chat_message_from_canopy_is_the_signed_in_user(ctx):
 def test_a_chat_message_through_a_hosts_widget_names_the_host(ctx):
     """A delegated token means an embedding host's widget: the channel says which
     host, and the assurance says the token was minted by an app."""
-    owner, workspace, _agent = ctx
+    from apps.tokens.models import AppCredentialAgent
+
+    owner, workspace, agent = ctx
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=workspace)
-    app.workspace = workspace
-    app.save(update_fields=["workspace"])
+    AppCredentialAgent.objects.create(app=app, agent=agent)
     raw, _tok = DelegatedToken.issue(app=app, user=owner, ttl_seconds=600)
     client = _bearer_client(raw)
     sid = _new_session(client)
