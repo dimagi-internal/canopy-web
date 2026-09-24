@@ -15,6 +15,14 @@ only once (by turn three the agent is reasoning about a page the user has left).
 A tool inverts all three: the agent asks when it needs to know, and gets the
 current view. "Close the ones I'm looking at" is answerable on turn nine.
 
+**Two ways of asking, because there are two kinds of caller.** A PAT names a
+USER, and the question is "which of this person's open pages" — several, if they
+have tabs. A confined caller token names a CONVERSATION, and the question is
+"this screen"; that path exists because a widget's visitor is a contact with no
+canopy account, so the user-scoped predicate matches nothing and the page a host
+declared for that very conversation was invisible to the agent it was declared
+for. The conversation-scoped answer is the narrower of the two.
+
 **It returns a selection, not data.** The state names which rows are on screen
 and which tool resolves them; the agent then calls THAT tool, so the rows arrive
 through the ordinary path with the caller's own ACL applied. The page is a cache
@@ -48,21 +56,47 @@ def _visible_pages(user_id: int) -> list[dict]:
     # direction and the one an id-only filter would have got wrong.
     caller = User.objects.filter(pk=user_id).first()
     sessions = sessions_with_page_for(caller).exclude(page_state={})
-    out = []
-    for session in sessions:
-        state = dict(session.page_state or {})
-        if not state:
-            continue
-        out.append(
-            {
-                "session_id": str(session.id),
-                "state": state,
-                # Surfaced rather than left inside `state` so a caller can order
-                # or compare snapshots without knowing the page's own schema.
-                "version": int(state.get("version") or 0),
-            }
-        )
-    return out
+    return [_page_out(session) for session in sessions if session.page_state]
+
+
+def _pages_of_turns(turn_ids: list[str]) -> list[dict]:
+    """The attached pages of THIS confined conversation, newest first.
+
+    A caller token's tools run as the caller, and a widget visitor is a contact
+    with no canopy account — so `page_visible_q` matches nothing (correctly: it
+    answers "whose pages may this USER see") and the page the host declared for
+    this very conversation was invisible to the agent it was declared for. The
+    symptom was an empty list while a screen full of rows sat in front of the
+    person asking.
+
+    So when the token names a conversation, that is what is answered about. It is
+    NARROWER than the user-scoped path, not wider: one conversation, the token's
+    own, minted by canopy for this turn — the same pinning `who_is_asking` uses
+    (`turn_scope.TURN_PINNED`), for the same reason.
+    """
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn
+
+    session_ids = [
+        sid
+        for sid in Turn.objects.filter(pk__in=turn_ids).values_list("chat_session_id", flat=True)
+        if sid
+    ]
+    sessions = (
+        Session.objects.filter(pk__in=session_ids).exclude(page_state={}).order_by("-created_at")
+    )
+    return [_page_out(session) for session in sessions if session.page_state]
+
+
+def _page_out(session) -> dict:
+    state = dict(session.page_state or {})
+    return {
+        "session_id": str(session.id),
+        "state": state,
+        # Surfaced rather than left inside `state` so a caller can order or
+        # compare snapshots without knowing the page's own schema.
+        "version": int(state.get("version") or 0),
+    }
 
 
 # NOT named `page_something`: `page_tools.TOOL_PREFIX` reserves that namespace
@@ -87,8 +121,22 @@ async def current_page() -> list[dict]:
 
     Call this when a request is about "these", "the ones on screen", "what I'm
     looking at", or any scope narrower than everything the user can access.
+
+    In a confined caller's turn — a visitor talking to an embedded panel — this
+    answers about THAT conversation's page, and nothing else.
     """
+    from apps.mcp.turn_scope import caller_turn_ids
+
     user_id = current_user_id()
+    # A confined caller's turn answers about its OWN conversation. Checked first
+    # because such a caller may also be a canopy user, and in that turn the
+    # question is "this screen", not "every page I have open elsewhere".
+    turn_ids = caller_turn_ids()
+    if turn_ids is not None:
+        pages = await sync_to_async(_pages_of_turns, thread_sensitive=True)(turn_ids)
+        await write_audit(user_id=user_id, tool="current_page",
+                          args_summary=f"{len(pages)} page(s) on this conversation")
+        return pages
     pages = await sync_to_async(_visible_pages, thread_sensitive=True)(user_id)
     await write_audit(user_id=user_id, tool="current_page", args_summary=f"{len(pages)} page(s)")
     return pages
