@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
+from . import inbox_rules
+
 # UNREAD only — the "new email" signal. Critically NOT "all recent threads":
 # every matched thread becomes a turn → a claude session, so an over-broad query
 # is a cost bomb. Idempotency (thread+messageCount) means an unread thread fires
@@ -104,11 +106,8 @@ def _alarm_incident_is_owned(box: str, key: tuple[str, str], alarming: set[str],
     return last is not None and now - last < ALARM_REPEAT_WINDOW_S
 
 
-#: A no-reply sender address. Mirrors the fleet Gmail filter `automated-noreply`
-#: (canopy `src/orchestrator/inbox_filters.py`), which archives this mail on arrival
-#: EXCEPT from SNS, so CloudWatch alarms still reach an agent. The runner applies the
-#: same policy one layer later: SNS mail that is not an alarm (`alarm_key() is None`) is
-#: machine mail too.
+#: A no-reply sender address. Kept for `is_automated`, which predates the table; the
+#: decision in `check_inbox` is `inbox_rules.classify`'s (canopy#679).
 _NOREPLY_ADDRESS = re.compile(
     r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
     re.I)
@@ -183,6 +182,11 @@ class ThreadFacts(NamedTuple):
     #: The newest message's Gmail id: the message this turn is FOR. Goes into the
     #: turn's `origin_ref`, and from there into the caller envelope.
     message_id: str | None = None
+    #: The inbound-email table's row for this thread (canopy#679, `inbox_rules`): the
+    #: newest message's, unless an earlier UNREAD inbound message in the same thread would
+    #: wake — then that one's, so a trailing auto-reply can never archive a person's
+    #: unanswered mail. `None` is "unknown" — fail open, enqueue.
+    verdict: "inbox_rules.Verdict | None" = None
 
 
 def _decoded_body(msg: dict) -> str:
@@ -253,7 +257,47 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
                        newest_from_header=sender,
                        auth_results=tuple(auth),
                        automated=is_automated(first) if sender is not None else None,
-                       message_id=newest.get("id") or None)
+                       message_id=newest.get("id") or None,
+                       verdict=thread_verdict(msgs, mailbox) if sender is not None else None)
+
+
+def thread_verdict(msgs: list[dict], mailbox: str) -> "inbox_rules.Verdict":
+    """The table row that decides this thread: its newest message's row, unless another
+    UNREAD message from someone other than the agent lands in a wake row. Archiving acts on
+    the whole thread, so it is only safe when nothing unread in it would wake."""
+    box = mailbox.lower()
+    newest = inbox_rules.classify(inbox_rules.message_from_gmail(msgs[-1], mailbox))
+    if newest.bucket == inbox_rules.WAKE:
+        return newest
+    for msg in reversed(msgs[:-1]):
+        if "UNREAD" not in (msg.get("labelIds") or ()):
+            continue
+        parsed = inbox_rules.message_from_gmail(msg, mailbox)
+        if box and box in parsed.from_.lower():
+            continue
+        earlier = inbox_rules.classify(parsed)
+        if earlier.bucket == inbox_rules.WAKE:
+            return inbox_rules.Verdict(earlier.row, earlier.bucket,
+                                       f"an earlier unread message: {earlier.evidence} "
+                                       f"(the newest is {newest.row})")
+    return newest
+
+
+def archive_thread(mailbox: str, gog_client: str, thread_id: str, label: str, *,
+                   runner=subprocess.run) -> str | None:
+    """Archive, mark read and label a thread with its table row. Returns ``None`` on
+    success, else the error — the caller then falls back to skipping it unread, which is
+    the pre-#679 behaviour, so a missing label or a gog failure costs a stale unread
+    thread, never a lost message."""
+    try:
+        r = runner(["gog", "gmail", "thread", "modify", thread_id, "--remove=INBOX,UNREAD",
+                    f"--add={label}", "--account", mailbox, "--client", gog_client,
+                    "--no-input"], capture_output=True, text=True, timeout=45)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return f"gog: {exc}"
+    if r.returncode != 0:
+        return (r.stderr or "").strip()[:200] or f"gog exited {r.returncode}"
+    return None
 
 
 def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
@@ -399,8 +443,12 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     "skipped": [ids whose newest message is the agent's own reply],
     "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
     recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S],
-    "automated": [ids whose newest message a machine wrote (see `is_automated`) — no
-    person is waiting, so no session; CloudWatch alarms are exempt],
+    "archived": [ids whose table row (canopy#679 `inbox_rules`) is an archive row, now
+    archived + marked read + labelled with it — no person is waiting, so no session],
+    "automated": [archive-row ids whose labelled archive FAILED, left unread and skipped —
+    the pre-#679 behaviour, and the fallback; see "archive_errors"],
+    "rows": {thread id: table row, for every thread this call classified},
+    "archive_errors": {thread id: the gog error behind an "automated" fallback},
     "ok_without_alarm": [SNS `OK:` ids whose body recovers from something other than
     `ALARM` — an alarm announcing its own creation, or a merely-dark metric. A non-event,
     in its own bucket because there is no incident to fold it into]}
@@ -446,6 +494,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     coalesced: list[str] = []
     ok_without_alarm: list[str] = []
     automated: list[str] = []
+    archived: list[str] = []
+    rows: dict[str, str] = {}
+    archive_errors: dict[str, str] = {}
     box = mailbox.lower()
     # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
     # (the subjects differ), so one alarm transition used to enqueue two turns — and the
@@ -514,13 +565,34 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # `thread get` on every poll for the next fourteen days.
             _seen_state[(box, tid)] = count
             continue
-        # A machine wrote the newest message: a receipt, a bounce, an auto-reply. There is
-        # nobody to answer, and every such session concluded exactly that — 14 of them on
-        # one thread of SES event receipts (ace@ 1a0d0a1632cfde4f, 2026-09-23/24), and a
-        # full turn on a colleague's `Auto-Submitted: auto-replied` OOO (canopy#653). Alarms
-        # are the exception and keep dispatching: `key` is set only for an SNS CloudWatch
-        # `ALARM:`/`OK:`, and alerting is the opposite of junk. `None` (unreadable) enqueues.
-        if facts.automated and not key:
+        # The inbound-email table (canopy#679): one row per message, wake or archive. An
+        # archive row means nobody is waiting — a receipt, a bounce, an auto-reply, a Doc
+        # FYI — and every such session concluded exactly that: 14 of them on one thread of
+        # SES event receipts (ace@ 1a0d0a1632cfde4f, 2026-09-23/24), a full turn on a
+        # colleague's `Auto-Submitted: auto-replied` OOO (canopy#653).
+        #
+        # ARCHIVED, not merely skipped: a skipped thread stays unread in the inbox, so it
+        # keeps taking one of the `max_threads` slots in `in:inbox is:unread newer_than:14d`
+        # for two weeks. The label is the row's name, so the thread itself says which rule
+        # moved it (`canopy email why <thread>` prints the evidence). If the archive fails,
+        # fall back to the old skip — a stale unread thread, never a lost one.
+        #
+        # Alarms never reach here as archive (`wanted/cloudwatch-alarm` is a wake row), and
+        # `key` guards it twice. `verdict is None` (unreadable) enqueues.
+        verdict = facts.verdict
+        if verdict is not None:
+            rows[tid] = verdict.row
+        if verdict is not None and verdict.bucket == inbox_rules.ARCHIVE and not key:
+            err = archive_thread(mailbox, gog_client, tid, verdict.label, runner=runner)
+            if err is None:
+                archived.append(tid)
+            else:
+                automated.append(tid)
+                archive_errors[tid] = err
+            _seen_state[(box, tid)] = count
+            continue
+        if verdict is None and facts.automated and not key:
+            # A `facts_of` seam that predates the table (tests, embedding callers).
             automated.append(tid)
             _seen_state[(box, tid)] = count
             continue
@@ -534,6 +606,8 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                       "discovered_by": discovered_by, "message_count": count}
         if facts.message_id:
             origin_ref["message_id"] = facts.message_id
+        if verdict is not None:
+            origin_ref["inbox_row"] = verdict.row
         if facts.auth_results:
             origin_ref["headers"] = [{"name": "Authentication-Results", "value": v}
                                      for v in facts.auth_results]
@@ -564,4 +638,5 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 _save_alarm_enqueued(_alarm_state_path, now)
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced,
-            "ok_without_alarm": ok_without_alarm, "automated": automated}
+            "ok_without_alarm": ok_without_alarm, "automated": automated,
+            "archived": archived, "rows": rows, "archive_errors": archive_errors}
