@@ -84,6 +84,8 @@ class InviteOut(StrictModel):
     expires_at: dt.datetime
     accepted_at: dt.datetime | None = None
     revoked_at: dt.datetime | None = None
+    created_at: dt.datetime | None = None
+    invited_by_email: str | None = None
 
 
 InviteStatus = Literal["pending", "expired", "revoked", "accepted"]

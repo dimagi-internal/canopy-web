@@ -162,3 +162,39 @@ def test_set_member_role_rejects_unknown_role():
     _ws(a)
     r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "superuser"})
     assert r.status_code == 422
+
+
+def test_owner_reissues_an_invite_and_only_the_new_link_works():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    inv = _invite(a, "acme", "b@dimagi.com")
+    r = _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue")
+    assert r.status_code == 200
+    fresh = r.json()
+    assert fresh["id"] == inv["id"] and fresh["token"] != inv["token"]
+    assert fresh["invited_by_email"] == "a@dimagi.com"
+    b = _user("b@dimagi.com")
+    assert _post(_client(b), f"/api/workspaces/invites/{inv['token']}/accept").status_code == 404
+    assert _post(_client(b), f"/api/workspaces/invites/{fresh['token']}/accept").status_code == 200
+
+
+def test_reissue_is_owner_only_and_tenant_scoped():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    inv = _invite(a, "acme", "b@dimagi.com", "editor")
+    b = _user("b@dimagi.com")
+    _post(_client(b), f"/api/workspaces/invites/{inv['token']}/accept")  # b is now an editor
+    pending = _invite(a, "acme", "c@dimagi.com")
+    assert _post(_client(b), f"/api/workspaces/acme/invites/{pending['id']}/reissue").status_code == 403
+    # another workspace's owner cannot reach acme's invite through their own slug
+    d = _user("d@dimagi.com")
+    _ws(d, "other")
+    assert _post(_client(d), f"/api/workspaces/other/invites/{pending['id']}/reissue").status_code == 404
+
+
+def test_reissue_of_a_revoked_invite_is_gone():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    inv = _invite(a, "acme", "b@dimagi.com")
+    _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/revoke")
+    assert _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue").status_code == 410

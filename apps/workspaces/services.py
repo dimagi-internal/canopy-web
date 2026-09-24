@@ -547,6 +547,31 @@ def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
     return inv.workspace, m.role
 
 
+def reissue_invite(*, invite: WorkspaceInvite) -> WorkspaceInvite:
+    """Send a fresh link for an invite nobody has acted on: a new token and a
+    new 14-day expiry, same email and role. The OLD link stops working — that
+    is the point when a link was lost or pasted somewhere it should not be,
+    and it is what makes an expired invite usable again without retyping it.
+
+    Unlike `create_invite` (which leaves a still-pending, unchanged invite's
+    token alone so an already-shared link keeps working), this ALWAYS rotates:
+    an owner pressing "new link" has asked for exactly that. Accepted and
+    revoked invites are finished and raise InviteError rather than reopening —
+    a revoked invite is re-offered by inviting again. Locks the row so a
+    concurrent accept cannot be undone by a rotation racing it.
+    """
+    with transaction.atomic():
+        inv = WorkspaceInvite.objects.select_for_update().get(pk=invite.pk)
+        if inv.accepted_at is not None:
+            raise InviteError("already_accepted")
+        if inv.revoked_at is not None:
+            raise InviteError("revoked")
+        inv.token = generate_invite_token()
+        inv.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
+        inv.save(update_fields=["token", "expires_at"])
+    return inv
+
+
 def revoke_invite(*, invite: WorkspaceInvite) -> None:
     """Revoke a pending invite. Idempotent: a no-op on an already-revoked or
     already-accepted invite (never reopens an accepted one). Refreshes from

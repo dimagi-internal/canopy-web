@@ -31,6 +31,7 @@ def test_owner_crud_routes_stay_auth_gated():
     # a normal workspace slug never collides with the literal "invites" segment
     assert _is_invite_link(_Req("/api/workspaces/acme/invites/")) is False
     assert _is_invite_link(_Req("/api/workspaces/acme/invites/5/revoke", method="POST")) is False
+    assert _is_invite_link(_Req("/api/workspaces/acme/invites/5/reissue", method="POST")) is False
 
 
 def test_owner_crud_routes_stay_auth_gated_even_if_a_workspace_is_named_invites():

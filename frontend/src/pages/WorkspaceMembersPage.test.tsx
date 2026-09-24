@@ -15,6 +15,7 @@ const setMemberRole = vi.fn<(slug: string, userId: number, role: string) => Prom
 const listInvites = vi.fn<(slug: string) => Promise<InviteOut[]>>()
 const createInvite = vi.fn<(slug: string, email: string, role: string) => Promise<InviteOut>>()
 const revokeInvite = vi.fn<(slug: string, inviteId: number) => Promise<void>>()
+const reissueInvite = vi.fn<(slug: string, inviteId: number) => Promise<InviteOut>>()
 
 class FakeWorkspaceApiError extends Error {
   status: number
@@ -31,6 +32,7 @@ vi.mock('@/api/workspaces', () => ({
   listInvites,
   createInvite,
   revokeInvite,
+  reissueInvite,
   WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
@@ -113,7 +115,7 @@ describe('WorkspaceMembersPage', () => {
     expect(screen.getByText('bob@example.com')).toBeTruthy()
   })
 
-  it('does not show an accepted or revoked invite as pending', async () => {
+  it('does not show an accepted or revoked invite, but keeps an expired one', async () => {
     listMembers.mockResolvedValue([member()])
     listInvites.mockResolvedValue([
       invite({ id: 2, email: 'accepted@example.com', accepted_at: new Date().toISOString() }),
@@ -127,7 +129,82 @@ describe('WorkspaceMembersPage', () => {
     expect(await screen.findByText('pending@example.com')).toBeTruthy()
     expect(screen.queryByText('accepted@example.com')).toBeNull()
     expect(screen.queryByText('revoked@example.com')).toBeNull()
-    expect(screen.queryByText('expired@example.com')).toBeNull()
+    // Expired is still outstanding: nobody acted on it, and "New link" revives it.
+    expect(screen.getByText('expired@example.com')).toBeTruthy()
+    expect(screen.getByText(/expired today/i)).toBeTruthy()
+  })
+
+  it('an expired invite offers a new link but not a copy of the dead one', async () => {
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([
+      invite({ id: 4, email: 'late@example.com', expires_at: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
+    ])
+
+    renderPage()
+    await screen.findByText('late@example.com')
+
+    expect(screen.getByText(/expired 3 days ago/i)).toBeTruthy()
+    expect(screen.queryByLabelText(/copy invite link for late@example.com/i)).toBeNull()
+    expect(screen.getByLabelText(/send a new link to late@example.com/i)).toBeTruthy()
+  })
+
+  it('copy link on a pending invite copies its accept URL', async () => {
+    const writeText = vi.fn<(t: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([invite({ id: 3, email: 'bob@example.com', token: 'tok-abc' })])
+
+    renderPage()
+    await screen.findByText('bob@example.com')
+    fireEvent.click(screen.getByLabelText(/copy invite link for bob@example.com/i))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/invite\/tok-abc$/)))
+    expect(await screen.findByText('Copied!')).toBeTruthy()
+  })
+
+  it('new link reissues the invite and shows the fresh URL', async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('blocked')) } })
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([
+      invite({ id: 4, email: 'late@example.com', token: 'old-tok', expires_at: new Date(Date.now() - 86_400_000).toISOString() }),
+    ])
+    reissueInvite.mockResolvedValue(invite({ id: 4, email: 'late@example.com', token: 'fresh-tok' }))
+
+    renderPage()
+    await screen.findByText('late@example.com')
+    fireEvent.click(screen.getByLabelText(/send a new link to late@example.com/i))
+
+    await waitFor(() => expect(reissueInvite).toHaveBeenCalledWith('acme', 4))
+    expect(await screen.findByText(/fresh-tok/)).toBeTruthy()
+    expect(screen.getByText(/previous link no longer works/i)).toBeTruthy()
+    // the row flipped from expired back to live
+    expect(screen.getByLabelText(/copy invite link for late@example.com/i)).toBeTruthy()
+  })
+
+  it('a non-owner sees no link controls on invites', async () => {
+    mockRole = 'viewer'
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([invite()])
+
+    renderPage()
+    await screen.findByText('bob@example.com')
+
+    expect(screen.queryByLabelText(/copy invite link/i)).toBeNull()
+    expect(screen.queryByLabelText(/send a new link/i)).toBeNull()
+  })
+
+  it('re-inviting an address with an outstanding invite does not duplicate the row', async () => {
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([invite({ id: 6, email: 'again@example.com' })])
+    createInvite.mockResolvedValue(invite({ id: 6, email: 'again@example.com', token: 'rearmed' }))
+
+    renderPage()
+    await screen.findByText('again@example.com')
+    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'again@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /create invite/i }))
+
+    await screen.findByText(/rearmed/)
+    expect(screen.getAllByText('again@example.com')).toHaveLength(1)
   })
 
   it('an owner sees the invite form and revoke/remove controls', async () => {

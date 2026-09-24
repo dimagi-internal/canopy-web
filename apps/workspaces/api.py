@@ -102,6 +102,7 @@ def _invite_out(inv: WorkspaceInvite) -> InviteOut:
     return InviteOut(
         id=inv.id, email=inv.email, role=inv.role, token=inv.token,
         expires_at=inv.expires_at, accepted_at=inv.accepted_at, revoked_at=inv.revoked_at,
+        created_at=inv.created_at, invited_by_email=inv.invited_by.email or None,
     )
 
 
@@ -258,7 +259,12 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     _membership_or_404(request.user, slug)
-    return [_invite_out(i) for i in WorkspaceInvite.objects.filter(workspace_id=slug).order_by("-created_at")]
+    return [
+        _invite_out(i)
+        for i in WorkspaceInvite.objects.filter(workspace_id=slug)
+        .select_related("invited_by")
+        .order_by("-created_at")
+    ]
 
 
 @router.post("/{slug}/invites/{invite_id}/revoke", response={204: None},
@@ -271,6 +277,24 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
         raise HttpError(404, "invite not found")
     services.revoke_invite(invite=inv)
     return Status(204, None)
+
+
+@router.post("/{slug}/invites/{invite_id}/reissue", response=InviteOut,
+             summary="Send a fresh link for an invite (owner-only)")
+def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
+    """New token and a fresh expiry for an invite nobody has accepted or
+    revoked — including one that has expired. The previous link stops working.
+    Accepted or revoked invites answer 410; invite the address again instead."""
+    _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    try:
+        inv = WorkspaceInvite.objects.select_related("invited_by").get(workspace_id=slug, id=invite_id)
+    except WorkspaceInvite.DoesNotExist:
+        raise HttpError(404, "invite not found")
+    try:
+        inv = services.reissue_invite(invite=inv)
+    except services.InviteError as exc:
+        raise HttpError(_INVITE_ERROR_STATUS[exc.code], f"invite {exc.code.replace('_', ' ')}")
+    return _invite_out(inv)
 
 
 @router.get("/invites/{token}/preview", response=InvitePreviewOut, auth=None,
