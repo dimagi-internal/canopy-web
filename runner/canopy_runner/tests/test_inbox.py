@@ -49,7 +49,7 @@ def test_idempotency_key_includes_message_count():
 
 def test_empty_inbox_enqueues_nothing():
     client = FakeClient()
-    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "ok_without_alarm": []}
+    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "ok_without_alarm": [], "automated": []}
     assert client.enqueued == []
 
 
@@ -722,3 +722,109 @@ def test_no_headers_means_no_headers_key_and_the_originator_as_before():
     ref = client.enqueued[0]["origin_ref"]
     assert ref["from"] == "x@y.com"
     assert "headers" not in ref
+
+
+# --- machine-written mail: nobody to answer, so no session (canopy#653) -------------
+
+_SES_SUBJECT = "Amazon SES Email Event Notification"
+_SES_FROM = "Labs email events <no-reply@sns.amazonaws.com>"
+
+
+def _get(headers, msg_id="18f-newest"):
+    payload = json.dumps({"messages": [
+        {"id": "18f-older", "payload": {"headers": [{"name": "From", "value": "x@y.com"}]}},
+        {"id": msg_id, "payload": {"headers": headers}},
+    ]})
+
+    def run(cmd, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+    return run
+
+
+def _search_then_get(threads, headers):
+    search = json.dumps({"threads": threads})
+    get = _get(headers)
+
+    def run(cmd, capture_output, text, timeout):
+        if "thread" in cmd:
+            return get(cmd, capture_output, text, timeout)
+        return SimpleNamespace(returncode=0, stdout=search, stderr="")
+    return run
+
+
+def test_ses_event_receipts_do_not_start_a_session():
+    """ace@ 1a0d0a1632cfde4f: SES Send/Bounce/Delivery receipts from SNS started 14 confined
+    `ask` sessions in 12 hours, each concluding there was nothing to answer."""
+    client = FakeClient()
+    r = _search_then_get([{"id": "thr-ses", "from": _SES_FROM, "subject": _SES_SUBJECT,
+                           "messageCount": 21}], [{"name": "From", "value": _SES_FROM}])
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert client.enqueued == []
+    assert res["automated"] == ["thr-ses"]
+
+
+def test_an_rfc_auto_reply_from_a_person_does_not_start_a_session():
+    """canopy#653's repro: a colleague's OOO whose wording no subject filter knew."""
+    client = FakeClient()
+    r = _search_then_get(
+        [{"id": "thr-ooo", "from": "Neal <nlesh@dimagi.com>",
+          "subject": "less responsive through Sept 25 Re: x", "messageCount": 2}],
+        [{"name": "From", "value": "Neal Lesh <nlesh@dimagi.com>"},
+         {"name": "Auto-Submitted", "value": "auto-replied"},
+         {"name": "Precedence", "value": "bulk"}])
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert client.enqueued == [] and res["automated"] == ["thr-ooo"]
+
+
+@pytest.mark.parametrize("subject", [_ALARM, 'OK: "labs-jj-web-cpu-high" in US East'])
+def test_cloudwatch_alarms_from_the_same_sender_still_dispatch(subject):
+    """Alerting is the opposite of junk: SNS alarm mail is exempt, as in the fleet filter."""
+    client = FakeClient()
+    body = "State Change: ALARM -> OK" if subject.startswith("OK") else ""
+    r = _dual_runner([{"id": "thr-a", "from": SNS, "subject": subject, "messageCount": 1}],
+                     body)
+    res = inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert res["new"] == ["thr-a"] and res["automated"] == []
+
+
+@pytest.mark.parametrize("headers", [
+    [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"}],
+    [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
+     {"name": "Auto-Submitted", "value": "no"}],
+    [{"name": "From", "value": "Reply Guy <reply-noreply-fan@llo-foo.org>"}],
+])
+def test_a_person_still_starts_a_session(headers):
+    client = FakeClient()
+    r = _search_then_get([{"id": "thr-h", "from": "x", "subject": "payments?",
+                           "messageCount": 1}], headers)
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert res["new"] == ["thr-h"] and res["automated"] == []
+
+
+def test_unreadable_thread_fails_open_and_enqueues():
+    client = FakeClient()
+
+    def run(cmd, capture_output, text, timeout):
+        if "thread" in cmd:
+            return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"threads": [
+            {"id": "thr-u", "from": _SES_FROM, "subject": _SES_SUBJECT, "messageCount": 1}]}),
+            stderr="")
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=run)
+    assert res["new"] == ["thr-u"]
+
+
+def test_origin_ref_names_the_message_and_its_count():
+    """The caller envelope's `trigger` reads these: which message this turn is FOR."""
+    client = FakeClient()
+    r = _search_then_get([{"id": "thr-m", "from": "x", "subject": "s", "messageCount": 4}],
+                         [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"}])
+    inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy", runner=r)
+    ref = client.enqueued[0]["origin_ref"]
+    assert ref["message_id"] == "18f-newest"
+    assert ref["message_count"] == 4
