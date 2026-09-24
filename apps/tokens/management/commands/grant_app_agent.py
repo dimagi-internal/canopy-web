@@ -8,9 +8,9 @@ the same hazard: one mistyped slug silently offers the wrong agent to a host's
 whole user base.
 
 Usage:
-    uv run python manage.py grant_app_agent --name connect-labs --agent labs-helper
-    uv run python manage.py grant_app_agent --name connect-labs --agent labs-helper --revoke
-    uv run python manage.py grant_app_agent --name connect-labs --list
+    uv run python manage.py grant_app_agent --workspace connect --name connect-labs --agent labs-helper
+    uv run python manage.py grant_app_agent --workspace connect --name connect-labs --agent labs-helper --revoke
+    uv run python manage.py grant_app_agent --workspace connect --name connect-labs --list
 
 Granting is idempotent — re-running is a no-op rather than an IntegrityError,
 because the operational shape here is "make sure this is allowed", often from a
@@ -29,6 +29,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--name", required=True, help="Existing AppCredential name.")
+        parser.add_argument("--workspace", required=True,
+                            help="Tenant whose site this is — names are unique only per tenant.")
         parser.add_argument("--agent", help="Agent slug to allow (or revoke).")
         parser.add_argument("--revoke", action="store_true",
                             help="Remove the grant instead of adding it.")
@@ -38,7 +40,8 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         name = opts["name"].strip()
         try:
-            cred = AppCredential.objects.get(name=name)
+            cred = AppCredential.objects.get(name=name, workspace_id=opts["workspace"],
+                                             revoked_at__isnull=True)
         except AppCredential.DoesNotExist:
             raise CommandError(
                 f"credential {name!r} does not exist — use create_app_credential to "
@@ -73,6 +76,10 @@ class Command(BaseCommand):
             agent = Agent.objects.get(slug=agent_slug)
         except Agent.DoesNotExist:
             raise CommandError(f"agent {agent_slug!r} does not exist")
+        if agent.workspace_id != cred.workspace_id:
+            raise CommandError(
+                f"agent {agent_slug!r} belongs to {agent.workspace_id}, not {cred.workspace_id} — "
+                "a site offers only its own tenant's agents")
 
         if opts["revoke"]:
             deleted, _ = AppCredentialAgent.objects.filter(app=cred, agent=agent).delete()

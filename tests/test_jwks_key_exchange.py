@@ -232,7 +232,7 @@ def test_the_signature_carries_that_kid_so_a_host_can_pick_the_right_key():
         WorkspaceMembership.objects.create(user=owner, workspace=ws,
                                            role=WorkspaceMembership.OWNER)
         agent = Agent.objects.create(slug="echo", name="E", workspace=ws)
-        _raw, app = AppCredential.create_credential(name="partner", created_by=owner)
+        _raw, app = AppCredential.create_credential(name="partner", created_by=owner, workspace=ws)
         contact = Contact.objects.create(workspace=ws, app=app, external_id="u-1")
         turn = Turn.objects.create(agent=agent, prompt="hi", initiator_contact=contact,
                                    initiator_kind="contact", capability="ask")

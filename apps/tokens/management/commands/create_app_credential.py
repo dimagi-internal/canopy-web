@@ -1,7 +1,7 @@
 """Register a connected site.
 
 Usage:
-    uv run python manage.py create_app_credential --name ace-web
+    uv run python manage.py create_app_credential --workspace connect --name ace-web
 
 The credential identifies the SITE. What it can then do — vouch for a visitor
 with a signed assertion, frame the embed shell, offer an agent — is granted
@@ -25,14 +25,18 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--name", required=True)
+        parser.add_argument("--workspace", required=True,
+                            help="Tenant the site belongs to — each tenant registers its own.")
 
     def handle(self, *args, **opts):
         name = opts["name"].strip()
-        if AppCredential.objects.filter(name=name).exists():
+        ws = opts["workspace"].strip()
+        if AppCredential.objects.filter(name=name, workspace_id=ws,
+                                        revoked_at__isnull=True).exists():
             raise CommandError(
-                f"credential {name!r} already exists — revoke it first to rotate"
+                f"{ws} already has a credential {name!r} — revoke it first to rotate"
             )
-        raw, cred = AppCredential.create_credential(name=name, created_by=None)
+        raw, cred = AppCredential.create_credential(name=name, created_by=None, workspace=ws)
         self.stdout.write(self.style.SUCCESS(f"Registered app credential {name!r} (id={cred.pk})"))
         self.stdout.write("\nCapture this once — it's never stored on the server:\n")
         self.stdout.write(raw)

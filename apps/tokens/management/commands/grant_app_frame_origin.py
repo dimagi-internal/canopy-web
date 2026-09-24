@@ -13,11 +13,11 @@ re-validates on read, so the two together mean no path can install a permissive
 directive.
 
 Usage:
-    uv run python manage.py grant_app_frame_origin --name connect-labs \\
+    uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \\
         --origin https://labs.connect.dimagi.com
-    uv run python manage.py grant_app_frame_origin --name connect-labs \\
+    uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \\
         --origin http://localhost:8000 --remove
-    uv run python manage.py grant_app_frame_origin --name connect-labs --list
+    uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs --list
 """
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--name", required=True, help="Existing AppCredential name.")
+        parser.add_argument("--workspace", required=True,
+                            help="Tenant whose site this is — names are unique only per tenant.")
         parser.add_argument("--origin", help="Origin, e.g. https://labs.connect.dimagi.com")
         parser.add_argument("--remove", action="store_true", help="Remove instead of add.")
         parser.add_argument("--list", action="store_true", help="Show current origins and exit.")
@@ -38,7 +40,8 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         name = opts["name"].strip()
         try:
-            cred = AppCredential.objects.get(name=name)
+            cred = AppCredential.objects.get(name=name, workspace_id=opts["workspace"],
+                                             revoked_at__isnull=True)
         except AppCredential.DoesNotExist:
             raise CommandError(
                 f"credential {name!r} does not exist — use create_app_credential first"

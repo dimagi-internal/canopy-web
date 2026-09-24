@@ -23,6 +23,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -37,9 +38,10 @@ def _agent(slug, ws):
     return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws)
 
 
-def _app(name):
+def _app(name, ws=None):
     admin = User.objects.create_user(f"admin-{name}", f"admin-{name}@dimagi.com", "pw")
-    return AppCredential.create_credential(name=name, created_by=admin)
+    return AppCredential.create_credential(name=name, created_by=admin,
+                                            workspace=ws or host_workspace())
 
 
 def _bearer(app, user):
@@ -179,11 +181,11 @@ def test_payload_carries_what_a_picker_needs():
 # --- the grant command (the allowlist has to be operable without a prod shell) ---
 
 
-def _run(*args):
+def _run(*args, ws="w1"):
     from io import StringIO
     from django.core.management import call_command
     out = StringIO()
-    call_command("grant_app_agent", *args, stdout=out)
+    call_command("grant_app_agent", "--workspace", ws, *args, stdout=out)
     return out.getvalue()
 
 
@@ -193,7 +195,7 @@ def test_grant_command_is_idempotent():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs")
+    _raw, app = _app("connect-labs", ws)
 
     assert "may now offer" in _run("--name", "connect-labs", "--agent", "labs-helper")
     assert "already offers" in _run("--name", "connect-labs", "--agent", "labs-helper")
@@ -204,7 +206,7 @@ def test_grant_command_revokes_and_reports_when_there_was_nothing_to_revoke():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _raw, app = _app("connect-labs")
+    _raw, app = _app("connect-labs", ws)
     _run("--name", "connect-labs", "--agent", "labs-helper")
 
     assert "may no longer offer" in _run("--name", "connect-labs", "--agent", "labs-helper", "--revoke")
@@ -219,7 +221,7 @@ def test_grant_command_refuses_unknown_names_rather_than_creating_them():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
     _agent("labs-helper", ws)
-    _app("connect-labs")
+    _app("connect-labs", ws)
 
     with pytest.raises(CommandError, match="does not exist"):
         _run("--name", "connect-labs", "--agent", "labs-helpr")
@@ -230,4 +232,17 @@ def test_grant_command_refuses_unknown_names_rather_than_creating_them():
 def test_grant_command_list_says_so_when_nothing_is_offered():
     """Fail-closed is easy to mistake for broken, so --list names it."""
     _app("connect-labs")
-    assert "NO agents" in _run("--name", "connect-labs", "--list")
+    assert "NO agents" in _run("--name", "connect-labs", "--list", ws="site-host")
+
+
+def test_grant_command_refuses_another_tenants_agent():
+    """A site belongs to one tenant and offers only that tenant's agents; the
+    other tenant registers the system itself."""
+    from django.core.management.base import CommandError
+    user = User.objects.create_user("u", "u@dimagi.com", "pw")
+    mine, theirs = _ws("w1", user), _ws("w2", user)
+    _agent("theirs", theirs)
+    _app("connect-labs", mine)
+
+    with pytest.raises(CommandError, match="belongs to w2"):
+        _run("--name", "connect-labs", "--agent", "theirs")

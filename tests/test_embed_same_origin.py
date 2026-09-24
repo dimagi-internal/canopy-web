@@ -31,7 +31,7 @@ def _setup():
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    _raw, app = AppCredential.create_credential(name="canopy-web", created_by=user)
+    _raw, app = AppCredential.create_credential(name="canopy-web", created_by=user, workspace=ws)
     AppCredentialAgent.objects.create(app=app, agent=agent)
     token, _row = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600)
     return user, app, token

@@ -98,20 +98,6 @@ def test_a_second_workspaces_owner_cannot_see_my_apps():
     assert c2.get("/api/workspaces/w2/connected-apps").json() == []
 
 
-def test_an_app_registered_before_this_page_existed_is_not_adoptable_by_anyone():
-    """It has no owning workspace, and `workspace_id__in` cannot match NULL.
-
-    This is the nullable-tenant-FK hazard ARCHITECTURE.md records against
-    `Agent.workspace` — a predicate that reads "no tenant ⇒ allowed". Here the
-    filter shape makes it unreachable rather than the code remembering to
-    exclude it.
-    """
-    _user, _ws, c = _ctx()
-    AppCredential.create_credential(name="legacy", created_by=None)
-
-    assert c.get("/api/workspaces/w1/connected-apps").json() == []
-
-
 # --- the URLs, which are the point --------------------------------------------
 
 

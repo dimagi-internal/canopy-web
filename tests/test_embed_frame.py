@@ -19,6 +19,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.tokens.models import AppCredential
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -27,8 +28,8 @@ LABS = "https://labs.connect.dimagi.com"
 
 def _app(name="connect-labs", *, origins=(LABS,)):
     admin = User.objects.create_user(f"a-{name}", f"a-{name}@dimagi.com", "pw")
-    raw, cred = AppCredential.create_credential(        name=name, created_by=admin,
-    )
+    raw, cred = AppCredential.create_credential(name=name, created_by=admin,
+                                                 workspace=host_workspace())
     if origins:
         cred.allowed_frame_origins = list(origins)
         cred.save(update_fields=["allowed_frame_origins"])
@@ -203,7 +204,7 @@ def _run(*args):
     from io import StringIO
     from django.core.management import call_command
     out = StringIO()
-    call_command("grant_app_frame_origin", *args, stdout=out)
+    call_command("grant_app_frame_origin", "--workspace", "site-host", *args, stdout=out)
     return out.getvalue()
 
 

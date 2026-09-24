@@ -98,32 +98,38 @@ uv run python manage.py grant_app_frame_origin --name connect-labs \
     --origin https://labs.connect.dimagi.com
 uv run python manage.py grant_app_frame_origin --name connect-labs \
     --origin http://localhost:8000
-uv run python manage.py grant_app_agent --name connect-labs --agent labs-helper
-uv run python manage.py grant_app_agent --name connect-labs --list
+uv run python manage.py grant_app_agent --workspace connect --name connect-labs --agent labs-helper
+uv run python manage.py grant_app_agent --workspace connect --name connect-labs --list
 ```
 
 ### Serving more than one canopy workspace
 
-Your site is **one identity**: one name, one key, one `iss`, however many
-workspaces it serves. Do not register it twice.
+**Each workspace registers your site itself**, on its own Connected sites page:
+its own name for it, your JWKS URL, the URLs that may frame it, and which of
+*its* agents it may offer. There is no shared registration and no workspace
+that "owns" your site for the others. (Until 2026-09-24 there was — one row,
+a custodian workspace maintaining its keys, and grants from the rest. It
+existed only to arbitrate a shared row, and once your keys became a URL there
+was nothing left worth sharing.)
 
-Each workspace grants it separately — the second and every later one uses
-**"Let a site someone else registered act for us"** on their own Connected
-sites page, and picks which of *their* agents it may offer.
+So nothing one workspace does can reach another's integration: editing its
+origins, disconnecting, or deleting the workspace touches its registration
+alone. Give every workspace the same JWKS URL and rotating your key needs no
+change in any of them.
 
-**Those grants are independent of each other.** A workspace that stops using
-your site withdraws only its own grant: every other workspace keeps working,
-and if the leaver happened to be the one maintaining your site's origins and
-keys, that passes to a workspace still using it. Your integration cannot be
-ended by a tenant you have nothing to do with — which is the point of one
-identity plus separate grants, rather than one workspace "owning" your site.
+**Name the agent** when you mint a visitor token (`agent_slug` on
+`POST /api/auth/contact-token`), and pass `agent` to `canopy.init`, which puts
+it on the embed shell's URL. A site's name is unique only *within* a workspace
+— two workspaces may each have a `connect-labs` — so the name alone does not
+say which registration verifies your assertion. An agent belongs to exactly
+one workspace, and you already know which one you are mounting.
 
-What changes on your side is one field: **name the agent** when you mint a
-visitor token (`agent_slug` on `POST /api/auth/contact-token`). An agent
-belongs to exactly one workspace, so that says which tenant the token is for —
-and you already know it, because you know which agent you are mounting. Omit it
-and you get the workspace that registered the site, which is what every
-integration written before this meant.
+Omitting it still works **while only one workspace has a live site by that
+name**, which is what every integration written before this sends. The moment
+a second workspace registers the same name, an agent-less mint gets a `409
+ambiguous_issuer` and an agent-less shell a 404 rather than a guess: picking
+one would route your visitor into a tenant you never meant. Send the agent and
+that can never happen to you.
 
 One consequence worth expecting: a visitor of yours who talks to agents in two
 workspaces is **two contacts**, one per workspace, and you mint a token for
@@ -132,7 +138,11 @@ leak one's dealings into the other — and it is why the tenant is named at mint
 time rather than inferred.
 
 Canopy does record that the two are **the same person**, keyed on the `sub` you
-sign (your own id for them, in your own namespace). Nothing reads across that
+sign (your own id for them, in your own namespace) *and on your keys* — two
+workspaces' registrations are the same system exactly when they trust the same
+JWKS URL (or the same pasted keys), since only you can sign for them. Register
+one workspace by URL and another by pasted key and canopy will not link them;
+that miss is the safe direction. Nothing reads across that
 link today and neither tenant can see the other's record; it exists so that
 combining a person's context across tenants can later be offered as a
 deliberate act, rather than being impossible because nobody wrote the

@@ -44,7 +44,8 @@ def _world(*, external_id="u-42", with_app=True):
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     app = None
     if with_app:
-        _raw, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
+        _raw, app = AppCredential.create_credential(name="connect-labs", created_by=owner,
+                                                     workspace=ws)
     contact = Contact.objects.create(
         workspace=ws, app=app, external_id=external_id if with_app else "",
         email="" if with_app else "someone@partner.org",

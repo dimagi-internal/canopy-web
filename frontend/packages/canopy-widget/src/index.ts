@@ -205,6 +205,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   // nothing on the boot screen uses them.
   const src =
     `${base}/embed/chat?app=${encodeURIComponent(options.app)}` +
+    // A site name is unique only within a canopy tenant; the agent says whose.
+    (options.agent ? `&agent=${encodeURIComponent(options.agent)}` : '') +
     (theme.mode ? `&theme=${theme.mode}` : '')
 
   let provider: ContextProvider | null = null

@@ -18,6 +18,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.tokens.models import AppCredential, EmbedAuditLog
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -54,8 +55,8 @@ def _shown_app(user):
     A column an owner ticks, not a name matched against a setting — see
     `AppCredential.show_on_canopy_pages`.
     """
-    _raw, app = AppCredential.create_credential(        name="canopy-web", created_by=user
-    )
+    _raw, app = AppCredential.create_credential(name="canopy-web", created_by=user,
+                                                workspace=host_workspace())
     app.show_on_canopy_pages = True
     app.save(update_fields=["show_on_canopy_pages"])
     return app

@@ -55,11 +55,9 @@ def _arrive(priv, sub="u-42", **claims):
 
 
 def _allow(app, *domains):
-    """Granted on the TENANT's authority, not the site's — a site serving several
-    tenants is trusted separately by each."""
-    grant = app.tenant_grants.first()
-    grant.resolvable_domains = list(domains)
-    grant.save(update_fields=["resolvable_domains"])
+    """This tenant's own site, so this tenant's own grant."""
+    app.resolvable_domains = list(domains)
+    app.save(update_fields=["resolvable_domains"])
 
 
 def test_without_resolvable_domains_everyone_is_a_contact(w):
