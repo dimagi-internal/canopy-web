@@ -2856,6 +2856,12 @@ def _drain_inbox(runner_id: str) -> None:
                 if res.get("new"):
                     _log(f"inbox {slug}: {len(res['new'])} new turn(s) "
                          f"({inbox_due.discovered_by(slug, rung_slugs)})")
+                rows = res.get("rows") or {}
+                for tid in res.get("archived") or []:
+                    _log(f"inbox {slug}: {tid} archived -> {rows.get(tid, '?')}")
+                for tid, err in (res.get("archive_errors") or {}).items():
+                    _log(f"inbox {slug}: {tid} -> {rows.get(tid, '?')}: archive failed, "
+                         f"left unread ({err})")
             except Exception as exc:  # noqa: BLE001
                 _log(f"inbox {slug}: check failed ({exc})")
                 # A token that stopped authenticating (rotated, revoked) must be

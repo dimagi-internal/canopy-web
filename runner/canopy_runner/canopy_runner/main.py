@@ -223,6 +223,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             n_coal = len(res.get("coalesced", []))
             n_no_alarm = len(res.get("ok_without_alarm", []))
             n_auto = len(res.get("automated", []))
+            n_arch = len(res.get("archived", []))
             # Log EVERY poll, not just ones that enqueue — otherwise a healthy poll that
             # finds nothing new is silent and you can't tell polling is happening at all.
             # `skipped` = unread threads whose newest message is the agent's own reply
@@ -239,10 +240,19 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # spelling and burned a hal turn (#712).
             logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply, %d coalesced: alarm OK: into its "
-                        "ALARM:, %d OK: with no ALARM to recover from, %d machine-written)",
+                        "ALARM:, %d OK: with no ALARM to recover from, %d archived by the "
+                        "inbound-email table, %d archive failed so skipped unread)",
                         agent, "RUNG" if agent in rung_slugs else "polled",
-                        n_new + n_seen + n_skip + n_coal + n_no_alarm + n_auto,
-                        n_new, n_seen, n_skip, n_coal, n_no_alarm, n_auto)
+                        n_new + n_seen + n_skip + n_coal + n_no_alarm + n_auto + n_arch,
+                        n_new, n_seen, n_skip, n_coal, n_no_alarm, n_arch, n_auto)
+            # The row per thread (canopy#679): "which rule did this?" is answerable from
+            # the log without re-running the classifier.
+            rows = res.get("rows") or {}
+            for tid in res.get("new", []) + res.get("archived", []):
+                logger.info("inbox[%s]: %s -> %s", agent, tid, rows.get(tid, "?"))
+            for tid, err in (res.get("archive_errors") or {}).items():
+                logger.warning("inbox[%s]: %s -> %s: archive failed, left unread: %s",
+                               agent, tid, rows.get(tid, "?"), err)
         except Exception as exc:  # noqa: BLE001 — one bad inbox never kills the loop
             logger.warning("inbox check for %s failed: %s", agent, exc)
         finally:

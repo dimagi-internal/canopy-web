@@ -49,7 +49,7 @@ def test_idempotency_key_includes_message_count():
 
 def test_empty_inbox_enqueues_nothing():
     client = FakeClient()
-    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "ok_without_alarm": [], "automated": []}
+    assert inbox.check_inbox(client, "hal", mailbox="m", gog_client="c", runner=_runner([])) == {"new": [], "seen": [], "skipped": [], "coalesced": [], "ok_without_alarm": [], "automated": [], "archived": [], "rows": {}, "archive_errors": {}}
     assert client.enqueued == []
 
 
@@ -741,11 +741,16 @@ def _get(headers, msg_id="18f-newest"):
     return run
 
 
-def _search_then_get(threads, headers):
+def _search_then_get(threads, headers, modify_rc=0, modified=None):
     search = json.dumps({"threads": threads})
     get = _get(headers)
 
     def run(cmd, capture_output, text, timeout):
+        if "modify" in cmd:
+            if modified is not None:
+                modified.append(cmd)
+            return SimpleNamespace(returncode=modify_rc, stdout="{}",
+                                   stderr="label not found" if modify_rc else "")
         if "thread" in cmd:
             return get(cmd, capture_output, text, timeout)
         return SimpleNamespace(returncode=0, stdout=search, stderr="")
@@ -756,12 +761,18 @@ def test_ses_event_receipts_do_not_start_a_session():
     """ace@ 1a0d0a1632cfde4f: SES Send/Bounce/Delivery receipts from SNS started 14 confined
     `ask` sessions in 12 hours, each concluding there was nothing to answer."""
     client = FakeClient()
+    modified = []
     r = _search_then_get([{"id": "thr-ses", "from": _SES_FROM, "subject": _SES_SUBJECT,
-                           "messageCount": 21}], [{"name": "From", "value": _SES_FROM}])
+                           "messageCount": 21}], [{"name": "From", "value": _SES_FROM}],
+                         modified=modified)
     res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
                             runner=r)
     assert client.enqueued == []
-    assert res["automated"] == ["thr-ses"]
+    assert res["archived"] == ["thr-ses"] and res["rows"] == {"thr-ses": "ignored/no-reply-sender"}
+    # ARCHIVED, not skipped: out of the inbox, read, and labelled with the row that did it
+    # (canopy#679) — a skipped thread held a `max_threads` slot for 14 days.
+    assert modified and modified[0][4:7] == ["thr-ses", "--remove=INBOX,UNREAD",
+                                             "--add=ignored/no-reply-sender"]
 
 
 def test_an_rfc_auto_reply_from_a_person_does_not_start_a_session():
@@ -775,7 +786,80 @@ def test_an_rfc_auto_reply_from_a_person_does_not_start_a_session():
          {"name": "Precedence", "value": "bulk"}])
     res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
                             runner=r)
-    assert client.enqueued == [] and res["automated"] == ["thr-ooo"]
+    assert client.enqueued == [] and res["archived"] == ["thr-ooo"]
+    assert res["rows"]["thr-ooo"] == "ignored/out-of-office"
+
+
+def test_a_failed_archive_falls_back_to_skipping_unread():
+    """A missing label or a gog error must cost a stale unread thread, never a lost one —
+    and never a session either."""
+    client = FakeClient()
+    r = _search_then_get([{"id": "thr-ses", "from": _SES_FROM, "subject": _SES_SUBJECT,
+                           "messageCount": 2}], [{"name": "From", "value": _SES_FROM}],
+                         modify_rc=1)
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert client.enqueued == [] and res["archived"] == []
+    assert res["automated"] == ["thr-ses"] and res["archive_errors"] == {"thr-ses": "label not found"}
+
+
+def _thread_run(messages, threads):
+    get = json.dumps({"messages": messages})
+    search = json.dumps({"threads": threads})
+
+    def run(cmd, capture_output, text, timeout):
+        if "modify" in cmd:
+            return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        if "thread" in cmd:
+            return SimpleNamespace(returncode=0, stdout=get, stderr="")
+        return SimpleNamespace(returncode=0, stdout=search, stderr="")
+    return run
+
+
+def test_a_trailing_auto_reply_never_archives_a_persons_unread_mail():
+    """Archiving acts on the whole thread. A colleague's OOO landing on a thread whose
+    earlier message from a person is still unread must not sweep that message away."""
+    client = FakeClient()
+    msgs = [
+        {"id": "m1", "labelIds": ["INBOX", "UNREAD"],
+         "payload": {"headers": [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
+                                 {"name": "Subject", "value": "payments?"}]}},
+        {"id": "m2", "labelIds": ["INBOX", "UNREAD"],
+         "payload": {"headers": [{"name": "From", "value": "Neal <nlesh@dimagi.com>"},
+                                 {"name": "Subject", "value": "Automatic reply: payments?"},
+                                 {"name": "Auto-Submitted", "value": "auto-replied"}]}},
+    ]
+    r = _thread_run(msgs, [{"id": "thr-mix", "from": "x", "subject": "s", "messageCount": 2}])
+    res = inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert res["new"] == ["thr-mix"] and res["archived"] == []
+    assert client.enqueued[0]["origin_ref"]["inbox_row"] == "person"
+
+
+def _b64(text):
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+@pytest.mark.parametrize("lead,footer,expect", [
+    ("Pat mentioned you in a comment in the following document",
+     "because you are mentioned in this thread by Pat.", "new"),
+    ("Pat accepted a suggestion in the following document",
+     "because you are subscribed to all discussions on Draft.", "archived"),
+    ("Pat added a comment to the following document",
+     "because you are subscribed to all discussions on Draft.", "new"),
+])
+def test_doc_comments_wake_only_when_addressed_or_unplaceable(lead, footer, expect):
+    client = FakeClient()
+    msgs = [{"id": "m1", "labelIds": ["INBOX", "UNREAD"],
+             "payload": {"mimeType": "text/plain",
+                         "headers": [{"name": "From", "value":
+                                      '"Pat (Google Docs)" <comments-noreply@docs.google.com>'},
+                                     {"name": "Subject", "value": "Draft... - a comment"}],
+                         "body": {"data": _b64(f"{lead}\nDraft\ndont send this yet\n{footer}")}}}]
+    r = _thread_run(msgs, [{"id": "thr-d", "from": "x", "subject": "s", "messageCount": 1}])
+    res = inbox.check_inbox(client, "echo", mailbox="echo@dimagi-ai.com", gog_client="canopy",
+                            runner=r)
+    assert res[expect] == ["thr-d"]
 
 
 @pytest.mark.parametrize("subject", [_ALARM, 'OK: "labs-jj-web-cpu-high" in US East'])
@@ -794,7 +878,10 @@ def test_cloudwatch_alarms_from_the_same_sender_still_dispatch(subject):
     [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"}],
     [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
      {"name": "Auto-Submitted", "value": "no"}],
-    [{"name": "From", "value": "Reply Guy <reply-noreply-fan@llo-foo.org>"}],
+    # "reply" inside a word is not the no-reply token. (A literal `noreply` token, as in
+    # `x-noreply-y@`, IS no-reply mail since #679: Gmail's `from:noreply` filter already
+    # tokenised it that way, and the runner and the filter must not disagree.)
+    [{"name": "From", "value": "Reply Guy <replyguy@llo-foo.org>"}],
 ])
 def test_a_person_still_starts_a_session(headers):
     client = FakeClient()
