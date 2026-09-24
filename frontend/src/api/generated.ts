@@ -3179,6 +3179,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/invites/{invite_id}/reissue": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Send a fresh link for an invite (owner-only)
+         * @description New token and a fresh expiry for an invite nobody has accepted or
+         *     revoked — including one that has expired. The previous link stops working.
+         *     Accepted or revoked invites answer 410; invite the address again instead.
+         */
+        readonly post: operations["apps_workspaces_api_reissue_invite"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/invites/{token}/preview": {
         readonly parameters: {
             readonly query?: never;
@@ -10782,6 +10804,10 @@ export interface components {
             readonly accepted_at?: string | null;
             /** Revoked At */
             readonly revoked_at?: string | null;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Invited By Email */
+            readonly invited_by_email?: string | null;
         };
         /** InviteCreateIn */
         readonly InviteCreateIn: {
@@ -17730,6 +17756,29 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_workspaces_api_reissue_invite: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly invite_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InviteOut"];
+                };
             };
         };
     };

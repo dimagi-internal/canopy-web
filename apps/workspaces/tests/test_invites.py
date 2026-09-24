@@ -19,6 +19,7 @@ from apps.workspaces.services import (
     accept_invite,
     create_invite,
     pending_invite_for_email,
+    reissue_invite,
     revoke_invite,
 )
 
@@ -320,3 +321,53 @@ def test_pending_invite_for_email_is_case_insensitive_and_returns_live_invite():
 
     assert found is not None
     assert found.id == inv.id
+
+
+def test_reissue_rotates_token_and_kills_the_old_link():
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    inv = create_invite(workspace=ws, email="b@dimagi.com", role="viewer", invited_by=owner)
+    old_token = inv.token
+
+    fresh = reissue_invite(invite=inv)
+
+    assert fresh.id == inv.id
+    assert fresh.token != old_token
+    assert fresh.role == "viewer"
+    invitee = _user("b@dimagi.com")
+    with pytest.raises(InviteError) as exc_info:
+        accept_invite(token=old_token, user=invitee)
+    assert exc_info.value.code == "not_found"
+    _, role = accept_invite(token=fresh.token, user=invitee)
+    assert role == "viewer"
+
+
+def test_reissue_revives_an_expired_invite():
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    inv = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+    inv.expires_at = timezone.now() - dt.timedelta(days=1)
+    inv.save(update_fields=["expires_at"])
+
+    fresh = reissue_invite(invite=inv)
+
+    assert fresh.is_pending()
+    assert fresh.expires_at > timezone.now() + dt.timedelta(days=13)
+
+
+@pytest.mark.parametrize("finish", ["accept", "revoke"])
+def test_reissue_refuses_a_finished_invite(finish):
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    inv = create_invite(workspace=ws, email="b@dimagi.com", role="editor", invited_by=owner)
+    if finish == "accept":
+        accept_invite(token=inv.token, user=_user("b@dimagi.com"))
+    else:
+        revoke_invite(invite=inv)
+    token_before = WorkspaceInvite.objects.get(pk=inv.pk).token
+
+    with pytest.raises(InviteError) as exc_info:
+        reissue_invite(invite=inv)  # stale in-memory copy: the service must re-read
+
+    assert exc_info.value.code == ("already_accepted" if finish == "accept" else "revoked")
+    assert WorkspaceInvite.objects.get(pk=inv.pk).token == token_before
