@@ -88,6 +88,10 @@ def record_inbound_sender(
 
     contact, created = Contact.objects.get_or_create(
         workspace=workspace,
+        # Keyed like `uniq_contact_per_workspace_email`, which only binds email
+        # contacts: a Slack or widget contact may carry the same address, and
+        # without this the lookup finds both and raises.
+        source=Contact.SOURCE_EMAIL,
         email=email,
         defaults={
             # The same correspondent writing to agents in two tenants is two
