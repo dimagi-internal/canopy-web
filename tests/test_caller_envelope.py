@@ -228,3 +228,45 @@ def test_who_is_asking_refuses_another_tenant(ctx):
     outsider = User.objects.create_user("x", "x@else.org", "pw")
     with as_user(outsider), pytest.raises(Exception, match="turn not found"):
         _who(str(turn.pk))
+
+
+# --- why this turn exists: trigger + thread history ---------------------------------
+
+def test_the_envelope_names_the_triggering_message(ctx):
+    """ace@ 1a0d0a1632cfde4f: 14 confined sessions on SES receipts could not say which
+    message started them, or whether push or poll found it."""
+    _o, _ws, agent = ctx
+    env = caller_context.build(_email(agent, key="email-ace-thr-9-21", thread="thr-9",
+                                      discovered_by="push", message_id="18f-abc",
+                                      message_count=21))
+    t = env["trigger"]
+    assert t["origin"] == Turn.ORIGIN_EMAIL
+    assert t["discovered_by"] == "push"
+    assert t["message_id"] == "18f-abc"
+    assert t["message_count"] == 21
+    assert t["from"] == "fatima@llo-foo.org"
+
+
+def test_message_count_falls_back_to_the_idempotency_key(ctx):
+    """Turns a pre-upgrade runner enqueued carry no `message_count`; the key does."""
+    _o, _ws, agent = ctx
+    env = caller_context.build(_email(agent, key="email-ace-thr-9-7", thread="thr-9"))
+    assert env["trigger"]["message_count"] == 7
+    assert env["trigger"]["message_id"] is None
+
+
+def test_thread_history_counts_earlier_turns_on_the_same_thread(ctx):
+    _o, _ws, agent = ctx
+    first = _email(agent, key="email-ace-thr-9-1", thread="thr-9")
+    _email(agent, key="email-ace-other-1", thread="other")
+    third = _email(agent, key="email-ace-thr-9-3", thread="thr-9", message_count=3)
+    h = caller_context.build(third)["thread_history"]
+    assert h["prior_turns"] == 1
+    assert h["last_prior_turn_id"] == str(first.pk)
+    assert h["last_prior_message_count"] == 1
+    assert caller_context.build(first)["thread_history"]["prior_turns"] == 0
+
+
+def test_no_thread_means_no_thread_history(ctx):
+    _o, _ws, agent = ctx
+    assert caller_context.build(_email(agent, key="e-nothread"))["thread_history"] is None

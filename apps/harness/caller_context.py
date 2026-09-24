@@ -21,6 +21,8 @@ DMARC is still forged.
 """
 from __future__ import annotations
 
+import re
+
 from apps.contacts.models import Contact
 
 from . import initiator as who
@@ -142,6 +144,73 @@ def build(turn) -> dict:
         # procedure without the agent asking canopy a second question. null for a
         # turn with no agent.
         "turn_mode": _turn_mode(turn),
+        # WHY THIS TURN EXISTS, not just who sent it: which message, found how, and
+        # what already ran on the thread. Without it a confined session can't tell a
+        # new message from a re-fire, or say whether a Gmail filter would have stopped
+        # it (both push and poll run the runner's `in:inbox is:unread` query). ace@
+        # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
+        "trigger": _trigger(turn, ref),
+        "thread_history": _thread_history(turn, ref),
+    }
+
+
+_COUNT_SUFFIX = re.compile(r"-(\d+)$")
+
+
+def _trigger(turn, ref: dict) -> dict:
+    count = ref.get("message_count")
+    if count is None and turn.origin == "email":
+        # The email idempotency key is `email-<agent>-<thread>-<messageCount>`, so
+        # turns enqueued before the runner sent `message_count` still say it.
+        m = _COUNT_SUFFIX.search(turn.idempotency_key or "")
+        count = int(m.group(1)) if m else None
+    runner = turn.claimed_by if turn.claimed_by_id else None
+    return {
+        "origin": turn.origin,
+        "discovered_by": ref.get("discovered_by"),
+        "from": ref.get("from"),
+        "message_id": ref.get("message_id"),
+        "message_count": count,
+        "runner": runner.name if runner is not None else None,
+        "matched_classes": _matched_classes(turn),
+    }
+
+
+def _matched_classes(turn) -> list[str]:
+    """The caller classes that earned this turn its capability (e.g. `contact:verified`)
+    — the interface clause an operator would edit to change who gets `ask`."""
+    agent = _agent_of(turn)
+    if agent is None or not turn.capability:
+        return []
+    from apps.agents.interface import caller_classes
+
+    iface = getattr(agent, "interface", None) or {}
+    cap = (iface.get("capabilities") or {}).get(turn.capability) or {}
+    classes = caller_classes(turn, relationship(turn, agent))
+    return sorted(classes & set(cap.get("callers") or []))
+
+
+def _thread_history(turn, ref: dict) -> dict | None:
+    tid = ref.get("thread_id")
+    agent = _agent_of(turn)
+    if not tid or agent is None:
+        return None
+    from django.db.models import Q
+
+    from .models import Turn
+
+    # An email turn targets the thread's SESSION, not the agent (the two are exclusive
+    # by constraint), so match the agent either way.
+    prior = (Turn.objects.filter(Q(agent_id=agent.pk) | Q(chat_session__agent_id=agent.pk),
+                                 origin_ref__thread_id=tid, created_at__lt=turn.created_at)
+             .exclude(pk=turn.pk).order_by("-created_at"))
+    last = prior.first()
+    return {
+        "prior_turns": prior.count(),
+        "last_prior_turn_id": str(last.pk) if last is not None else None,
+        "last_prior_message_count": (
+            _trigger(last, last.origin_ref if isinstance(last.origin_ref, dict) else {})
+            ["message_count"] if last is not None else None),
     }
 
 

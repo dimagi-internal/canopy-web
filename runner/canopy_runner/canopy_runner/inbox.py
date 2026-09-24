@@ -104,6 +104,35 @@ def _alarm_incident_is_owned(box: str, key: tuple[str, str], alarming: set[str],
     return last is not None and now - last < ALARM_REPEAT_WINDOW_S
 
 
+#: A no-reply sender address. Mirrors the fleet Gmail filter `automated-noreply`
+#: (canopy `src/orchestrator/inbox_filters.py`), which archives this mail on arrival
+#: EXCEPT from SNS, so CloudWatch alarms still reach an agent. The runner applies the
+#: same policy one layer later: SNS mail that is not an alarm (`alarm_key() is None`) is
+#: machine mail too.
+_NOREPLY_ADDRESS = re.compile(
+    r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
+    re.I)
+
+
+def is_automated(headers: dict) -> bool:
+    """Did a machine write this message? From its headers alone, and conservatively.
+
+    RFC 3834 `Auto-Submitted` (anything but `no`), `Precedence: bulk|list|junk|auto_reply`,
+    `X-Autoreply`, or a no-reply `From:`. These are the signals canopy's own
+    `agent_email._automation_of` reads; the runner is the layer that can act on them before a
+    session exists, where a Gmail filter cannot match headers at all (canopy#653).
+    """
+    auto_submitted = (headers.get("auto-submitted") or "").strip().lower()
+    precedence = (headers.get("precedence") or "").strip().lower()
+    x_autoreply = (headers.get("x-autoreply") or "").strip().lower()
+    return bool(
+        (auto_submitted and auto_submitted != "no")
+        or precedence in {"bulk", "list", "junk", "auto_reply"}
+        or (x_autoreply and x_autoreply != "no")
+        or _NOREPLY_ADDRESS.search(headers.get("from") or "")
+    )
+
+
 class InboxError(Exception):
     pass
 
@@ -149,6 +178,11 @@ class ThreadFacts(NamedTuple):
     #: (`apps/contacts/email_auth.py`), so the runner forwards evidence and
     #: never a grade.
     auth_results: tuple[str, ...] = ()
+    #: Machine-generated per `is_automated`. `None` is "unknown" — fail open, enqueue.
+    automated: bool | None = None
+    #: The newest message's Gmail id: the message this turn is FOR. Goes into the
+    #: turn's `origin_ref`, and from there into the caller envelope.
+    message_id: str | None = None
 
 
 def _decoded_body(msg: dict) -> str:
@@ -205,17 +239,21 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
     newest = msgs[-1]
     sender = None
     auth: list[str] = []
+    first: dict[str, str] = {}
     for h in (newest.get("payload") or {}).get("headers") or []:
         name = h.get("name", "").lower()
         if name == "from" and sender is None:
             sender = h.get("value") or ""
         elif name == "authentication-results":
             auth.append(h.get("value") or "")
+        first.setdefault(name, h.get("value") or "")
     m = _OK_PRIOR_STATE.search(_decoded_body(newest))
     return ThreadFacts(newest_from=sender.lower() if sender is not None else None,
                        recovers_from_alarm=(m.group(1).upper() == "ALARM") if m else None,
                        newest_from_header=sender,
-                       auth_results=tuple(auth))
+                       auth_results=tuple(auth),
+                       automated=is_automated(first) if sender is not None else None,
+                       message_id=newest.get("id") or None)
 
 
 def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
@@ -361,6 +399,8 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     "skipped": [ids whose newest message is the agent's own reply],
     "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
     recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S],
+    "automated": [ids whose newest message a machine wrote (see `is_automated`) — no
+    person is waiting, so no session; CloudWatch alarms are exempt],
     "ok_without_alarm": [SNS `OK:` ids whose body recovers from something other than
     `ALARM` — an alarm announcing its own creation, or a merely-dark metric. A non-event,
     in its own bucket because there is no incident to fold it into]}
@@ -405,6 +445,7 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     skipped: list[str] = []
     coalesced: list[str] = []
     ok_without_alarm: list[str] = []
+    automated: list[str] = []
     box = mailbox.lower()
     # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
     # (the subjects differ), so one alarm transition used to enqueue two turns — and the
@@ -473,6 +514,16 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # `thread get` on every poll for the next fourteen days.
             _seen_state[(box, tid)] = count
             continue
+        # A machine wrote the newest message: a receipt, a bounce, an auto-reply. There is
+        # nobody to answer, and every such session concluded exactly that — 14 of them on
+        # one thread of SES event receipts (ace@ 1a0d0a1632cfde4f, 2026-09-23/24), and a
+        # full turn on a colleague's `Auto-Submitted: auto-replied` OOO (canopy#653). Alarms
+        # are the exception and keep dispatching: `key` is set only for an SNS CloudWatch
+        # `ALARM:`/`OK:`, and alerting is the opposite of junk. `None` (unreadable) enqueues.
+        if facts.automated and not key:
+            automated.append(tid)
+            _seen_state[(box, tid)] = count
+            continue
         subj = t.get("subject", "")
         # The turn is FOR whoever wrote the newest message — that is who the agent
         # is about to answer — and the headers below describe that same message.
@@ -480,7 +531,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # attribute a pass to the wrong person, so the two must come as a pair.
         frm = facts.newest_from_header or t.get("from", "")
         origin_ref = {"thread_id": tid, "from": frm, "subject": subj,
-                      "discovered_by": discovered_by}
+                      "discovered_by": discovered_by, "message_count": count}
+        if facts.message_id:
+            origin_ref["message_id"] = facts.message_id
         if facts.auth_results:
             origin_ref["headers"] = [{"name": "Authentication-Results", "value": v}
                                      for v in facts.auth_results]
@@ -511,4 +564,4 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
                 _save_alarm_enqueued(_alarm_state_path, now)
         (new if (res or {}).get("_created") else seen).append(tid)
     return {"new": new, "seen": seen, "skipped": skipped, "coalesced": coalesced,
-            "ok_without_alarm": ok_without_alarm}
+            "ok_without_alarm": ok_without_alarm, "automated": automated}

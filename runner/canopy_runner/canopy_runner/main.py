@@ -222,6 +222,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             n_skip = len(res.get("skipped", []))
             n_coal = len(res.get("coalesced", []))
             n_no_alarm = len(res.get("ok_without_alarm", []))
+            n_auto = len(res.get("automated", []))
             # Log EVERY poll, not just ones that enqueue — otherwise a healthy poll that
             # finds nothing new is silent and you can't tell polling is happening at all.
             # `skipped` = unread threads whose newest message is the agent's own reply
@@ -238,10 +239,10 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # spelling and burned a hal turn (#712).
             logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply, %d coalesced: alarm OK: into its "
-                        "ALARM:, %d OK: with no ALARM to recover from)",
+                        "ALARM:, %d OK: with no ALARM to recover from, %d machine-written)",
                         agent, "RUNG" if agent in rung_slugs else "polled",
-                        n_new + n_seen + n_skip + n_coal + n_no_alarm,
-                        n_new, n_seen, n_skip, n_coal, n_no_alarm)
+                        n_new + n_seen + n_skip + n_coal + n_no_alarm + n_auto,
+                        n_new, n_seen, n_skip, n_coal, n_no_alarm, n_auto)
         except Exception as exc:  # noqa: BLE001 — one bad inbox never kills the loop
             logger.warning("inbox check for %s failed: %s", agent, exc)
         finally:
