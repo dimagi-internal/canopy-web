@@ -15,9 +15,9 @@ an app the moment that person moved on.
 
 **What the surface deliberately will not do.** It does not let a site speak for
 canopy's users by email domain. A site vouches for a visitor with a signed
-assertion, and canopy decides who that is: an account they already have at one
-of `resolvable_domains` (a grant bounded to the setting owner's own domain), or
-a contact — never a new account, and never a membership. The provisioning grant
+assertion, and canopy decides who that is: a member of this workspace, as the
+account they already have, or a contact — never a new account, and never a
+membership. The provisioning grant
 this paragraph used to describe went with `/api/auth/token-exchange`
 (2026-09-22), so an app registered here can only ever be embedded.
 """
@@ -170,38 +170,6 @@ def _clean_origins(origins) -> list[str]:
     return cleaned
 
 
-def _clean_resolvable(user, domains) -> list[str]:
-    """Domains this site may resolve to existing canopy users — bounded twice.
-
-    A site allowed to resolve a domain can assert any verified address in it,
-    so a compromised site key could speak for EXISTING canopy users there
-    (never create one). So the grant is narrow by construction: only a domain
-    the person setting it is in (their own verified login address), and only
-    one canopy itself admits at login. Anything else is refused with the reason.
-    """
-    from apps.common.auth_domains import allowed_email_domains
-
-    if not domains:
-        return []
-    admitted = {d.lower() for d in allowed_email_domains()}
-    own = (getattr(user, "email", "") or "").lower().rpartition("@")[2]
-    cleaned: list[str] = []
-    for raw in domains:
-        d = str(raw or "").strip().lower().lstrip("@")
-        if not d:
-            continue
-        if d not in admitted:
-            raise EmbedAppError("domain_not_admitted",
-                                f"{d} is not a domain canopy admits at login")
-        if d != own:
-            raise EmbedAppError("domain_not_yours",
-                                f"you can only let a site resolve your own domain ({own or 'none'}), "
-                                f"not {d}")
-        if d not in cleaned:
-            cleaned.append(d)
-    return cleaned
-
-
 def _clean_keys(keys) -> list[str]:
     """Accept only PEM PUBLIC keys, and say so when something else is pasted.
 
@@ -239,19 +207,6 @@ def _clean_keys(keys) -> list[str]:
         if pem not in cleaned:
             cleaned.append(pem)
     return cleaned
-
-
-def set_resolvable(*, user, app: AppCredential, domains) -> None:
-    """Replace the domains this site may resolve to existing canopy users.
-
-    Only what is being ADDED is bounded to the setter's own domain: removing
-    one must never require the remover to be in it.
-    """
-    current = set(app.resolvable_domains or [])
-    wanted = [str(d or "").strip().lower().lstrip("@") for d in domains]
-    _clean_resolvable(user, [d for d in wanted if d and d not in current])
-    app.resolvable_domains = [d for d in dict.fromkeys(wanted) if d]
-    app.save(update_fields=["resolvable_domains"])
 
 
 def set_agents(app: AppCredential, slugs: list[str]) -> None:
@@ -302,7 +257,6 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
              agents: list[str] | None = None,
              public_keys: list[str] | None = None,
              jwks_url: str | None = None,
-             resolvable_domains: list[str] | None = None,
              ) -> AppCredential:
     """Register a site in this workspace. It holds no secret: the site proves
     itself by signing, against the keys at `jwks_url` (or pasted)."""
@@ -330,23 +284,19 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     cleaned_origins = _clean_origins(origins)
     cleaned_keys = _clean_keys(public_keys or [])
     cleaned_jwks = _clean_jwks_url(jwks_url or "")
-    # Validated BEFORE the row exists, so a refusal leaves nothing half-made.
-    cleaned_domains = _clean_resolvable(user, resolvable_domains or [])
 
     app = AppCredential.create_credential(name=name, created_by=user,
                                                workspace=workspace_slug)
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
     app.jwks_url = cleaned_jwks
-    app.resolvable_domains = cleaned_domains
-    app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url",
-                            "resolvable_domains"])
+    app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url"])
     set_agents(app, agents or [])
     return app
 
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
-           public_keys=None, resolvable_domains=None, jwks_url=None) -> AppCredential:
+           public_keys=None, jwks_url=None) -> AppCredential:
     """Change what this workspace's site may do. Every field is this tenant's
     own, so there is one gate — owning the workspace the row belongs to."""
     require_owner(user, workspace_slug)
@@ -365,8 +315,6 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
         fields.append("jwks_url")
     if fields:
         app.save(update_fields=fields)
-    if resolvable_domains is not None:
-        set_resolvable(user=user, app=app, domains=resolvable_domains)
     if agents is not None:
         set_agents(app, agents)
     return app

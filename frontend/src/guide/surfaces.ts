@@ -142,8 +142,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/connected-apps',
     title: 'Connected sites',
     audience: 'Workspace owner embedding an agent in a website',
-    what: "Which websites may host one of this workspace's agents: the URLs allowed to frame the widget, the agents each site may offer, and the secret a site with its own sign-in uses to vouch for its users. Also the one-click switch that puts the agent panel on canopy's own pages.",
-    actions: ["Turn on the agent panel on canopy's own pages", 'Connect another site by URL', 'Choose which agents a site may offer', 'Issue a new secret', 'Disconnect a site'],
+    what: "Which websites may host one of this workspace's agents: the URLs allowed to frame the widget, the agents each site may offer, and the keys a site signs its visitors with. A visitor who is a member of this workspace arrives as themselves; anyone else as a contact. Also the switch that puts the agent panel on canopy's own pages.",
+    actions: ["Turn on the agent panel on canopy's own pages", 'Connect another site by URL', 'Choose which agents a site may offer', 'Disconnect a site'],
   },
   {
     path: '/w/:workspace/settings/secrets',

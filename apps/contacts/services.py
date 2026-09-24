@@ -152,25 +152,29 @@ def for_workspace(workspace_slug: str):
 
 
 @transaction.atomic
-def resolve_arrival(*, app, contact: Contact, claims: dict, resolvable_domains=None):
+def resolve_arrival(*, app, contact: Contact, claims: dict):
     """The existing canopy USER a widget visitor is, or None — never a new one.
     (Issued a DelegatedToken with assurance `host_signed`.)
 
     Who-is-asking §2 (D1: no dynamic user creation). In order:
 
       1. The contact is already linked to a user (`promote_to_user`): that user.
-      2. The site signed `email_verified: true` for an address at one of the
-         domains THIS TENANT granted it (`resolvable_domains` on the tenant's
-         own grant — a site serving several tenants is trusted separately by
-         each, and one tenant's owner cannot widen what it may do elsewhere),
-         and exactly one active canopy user already holds that address as a
-         VERIFIED allauth email: link the contact and return that user.
+      2. The site signed `email_verified: true` for an address that exactly
+         one active canopy user already holds as a VERIFIED allauth email:
+         link the contact and return that user.
       3. Otherwise None — the visitor is a contact, as before.
 
-    Either way the user must be a member of the site's workspace; a canopy
-    account with no business in this tenant stays a contact rather than
-    arriving with an empty agent list. Linking grants nothing (see
-    `promote_to_user`); arriving as a user means that user's OWN ACL applies.
+    Either way the user must be a member of the site's workspace, and that is
+    the gate: someone allowed in this tenant arrives as themselves, anyone else
+    is a contact. There used to be a second, per-site opt-in on top of it — a
+    list of email domains the site could resolve, empty by default — which
+    meant every member arrived as a contact until an owner found the setting
+    (2026-09-24, Jonathan: "they should always arrive as themselves if they are
+    allowed to"). What it bounded was a stolen site key speaking for existing
+    users; membership bounds that to this tenant's members, through this one
+    site, as short-lived `host_signed` tokens the site's revocation ends.
+    Linking grants nothing (see `promote_to_user`); arriving as a user means
+    that user's OWN ACL applies.
     """
     from allauth.account.models import EmailAddress
     from django.contrib.auth import get_user_model
@@ -183,9 +187,7 @@ def resolve_arrival(*, app, contact: Contact, claims: dict, resolvable_domains=N
         user = User.objects.filter(pk=contact.user_id, is_active=True).first()
     else:
         email = _normalize(str(claims.get("email") or ""))
-        domain = email.rpartition("@")[2]
-        if (email and claims.get("email_verified") is True
-                and domain in {d.lower() for d in (resolvable_domains or [])}):
+        if email and claims.get("email_verified") is True:
             ids = list(EmailAddress.objects.filter(email__iexact=email, verified=True)
                        .values_list("user_id", flat=True).distinct()[:2])
             if len(ids) == 1:

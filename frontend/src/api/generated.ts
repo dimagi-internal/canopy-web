@@ -10921,11 +10921,6 @@ export interface components {
             readonly name: string;
             /** Origins */
             readonly origins: readonly string[];
-            /**
-             * Resolvable Domains
-             * @default []
-             */
-            readonly resolvable_domains: readonly string[];
             /** Agents */
             readonly agents: readonly components["schemas"]["ConnectedAgentOut"][];
             /** Public Keys */
@@ -10968,11 +10963,6 @@ export interface components {
              */
             readonly jwks_url: string;
             /**
-             * Resolvable Domains
-             * @default []
-             */
-            readonly resolvable_domains: readonly string[];
-            /**
              * Show On Canopy Pages
              * @default false
              */
@@ -10990,8 +10980,6 @@ export interface components {
             readonly public_keys?: readonly string[] | null;
             /** Show On Canopy Pages */
             readonly show_on_canopy_pages?: boolean | null;
-            /** Resolvable Domains */
-            readonly resolvable_domains?: readonly string[] | null;
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {

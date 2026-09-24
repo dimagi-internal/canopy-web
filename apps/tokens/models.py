@@ -155,7 +155,8 @@ class AppCredential(models.Model):
     What it can do is vouch for one of its visitors, with a SIGNED ASSERTION
     verified against `public_keys` (`apps/tokens/assertions.py`), and frame the
     embed shell at `allowed_frame_origins`. Canopy decides who that visitor is:
-    an existing user at one of `resolvable_domains`, or a contact.
+    an existing user who is a member of this workspace, or a contact
+    (`contacts.services.resolve_arrival`).
 
     It used to hold a second, much larger power: `/api/auth/token-exchange`
     traded a SHARED SECRET plus an email address for a token, and created the
@@ -179,7 +180,7 @@ class AppCredential(models.Model):
     #: to protect and rotate, so it was removed rather than left idle
     #: (2026-09-24).
     #: The ONE tenant this registration belongs to. Every fact on the row —
-    #: name, keys, origins, agents, resolvable domains — is that tenant's own.
+    #: name, keys, origins, agents — is that tenant's own.
     #:
     #: A site used to be one shared row with a "custodian" workspace
     #: maintaining its keys and origins, plus a grant per tenant (#944). That
@@ -203,12 +204,6 @@ class AppCredential(models.Model):
         related_name="embedded_apps",
         help_text="The tenant this registration belongs to.",
     )
-    #: Domains whose EXISTING canopy users this site may bring in as themselves.
-    #:
-    #: Bounded, when set from the product surface, to the setter's own domain
-    #: (`embed_apps._clean_resolvable`): a compromised site key could speak for
-    #: existing users there, so nobody may widen that beyond what they speak for.
-    resolvable_domains = models.JSONField(default=list, blank=True)
     #: Origins permitted to frame this app's embed shell, as a
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
     #:

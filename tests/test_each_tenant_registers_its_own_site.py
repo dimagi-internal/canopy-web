@@ -278,18 +278,6 @@ def test_deleting_a_workspace_takes_its_registration_and_nothing_else():
     assert _mint(priv, agent_slug="beta-agent").status_code == 200
 
 
-def test_a_domain_one_tenant_allows_is_not_allowed_in_another():
-    """`resolvable_domains` lets a site speak for existing canopy users; each
-    tenant's row carries its own."""
-    _p, _pb, (owner_a, _ca, app_a), (_ob, _cb, app_b) = _world()
-
-    embed_apps.update(user=owner_a, app=app_a, workspace_slug="alpha",
-                      resolvable_domains=["dimagi.com"])
-
-    app_b.refresh_from_db()
-    assert app_b.resolvable_domains == []
-
-
 # --- the embed shell ---------------------------------------------------------------
 
 
