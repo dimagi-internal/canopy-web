@@ -11332,11 +11332,6 @@ export interface components {
              * @default false
              */
             readonly has_github_token: boolean;
-            /**
-             * Has Op Sa Token
-             * @default false
-             */
-            readonly has_op_sa_token: boolean;
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -11354,8 +11349,6 @@ export interface components {
             readonly claude_api_key?: string | null;
             /** Github Token */
             readonly github_token?: string | null;
-            /** Op Sa Token */
-            readonly op_sa_token?: string | null;
         };
         /**
          * RunnerCredentialOut
@@ -11382,11 +11375,6 @@ export interface components {
              * @default
              */
             readonly github_token: string;
-            /**
-             * Op Sa Token
-             * @default
-             */
-            readonly op_sa_token: string;
             /** Updated At */
             readonly updated_at?: string | null;
         };

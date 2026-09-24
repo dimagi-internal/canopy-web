@@ -2640,7 +2640,7 @@ from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-exp
 
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
                           claude_api_key=None, github_token=None,
-                          op_sa_token=None, updated_by=None):
+                          updated_by=None):
     """Upsert a runner's credential bundle. None fields are left unchanged."""
     from apps.common.encryption import encrypt_secret
 
@@ -2651,7 +2651,7 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
     # updated_at/updated_by for it — that timestamp is the audit trail for when a
     # credential last actually changed.
     if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
-                               github_token, op_sa_token)):
+                               github_token)):
         return getattr(runner, "credential", None)
     cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
     if claude_token is not None:
@@ -2662,8 +2662,6 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
         cred.claude_api_key_enc = encrypt_secret(claude_api_key)
     if github_token is not None:
         cred.github_token_enc = encrypt_secret(github_token)
-    if op_sa_token is not None:
-        cred.op_sa_token_enc = encrypt_secret(op_sa_token)
     if updated_by is not None:
         cred.updated_by = updated_by
     cred.save()
@@ -2677,13 +2675,12 @@ def get_runner_credential(runner) -> dict:
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"claude_token": "", "claude_token_secondary": "", "claude_api_key": "",
-                "github_token": "", "op_sa_token": "", "updated_at": None}
+                "github_token": "", "updated_at": None}
     return {
         "claude_token": decrypt_secret(cred.claude_token_enc),
         "claude_token_secondary": decrypt_secret(cred.claude_token_secondary_enc),
         "claude_api_key": decrypt_secret(cred.claude_api_key_enc),
         "github_token": decrypt_secret(cred.github_token_enc),
-        "op_sa_token": decrypt_secret(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
     }
 
@@ -2694,13 +2691,12 @@ def runner_credential_status(runner) -> dict:
     if cred is None:
         return {"has_claude_token": False, "has_claude_token_secondary": False,
                 "has_claude_api_key": False, "has_github_token": False,
-                "has_op_sa_token": False, "updated_at": None}
+                "updated_at": None}
     return {
         "has_claude_token": bool(cred.claude_token_enc),
         "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
         "has_claude_api_key": bool(cred.claude_api_key_enc),
         "has_github_token": bool(cred.github_token_enc),
-        "has_op_sa_token": bool(cred.op_sa_token_enc),
         "updated_at": cred.updated_at,
     }
 # ---- Runner administrators (administer a box without speaking for it) -----
