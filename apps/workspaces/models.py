@@ -211,6 +211,9 @@ class WorkspaceInvite(models.Model):
     accepted_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # When canopy last emailed this invite's link (services.email_invite). Null
+    # = never: email was off, the send failed, or it predates invite email.
+    last_emailed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [

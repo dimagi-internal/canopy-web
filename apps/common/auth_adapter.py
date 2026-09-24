@@ -194,12 +194,23 @@ class CustomAccountAdapter(DefaultAccountAdapter):
     would otherwise inherit this False for first-time Google sign-in too, which
     is why `CustomSocialAccountAdapter.is_open_for_signup` overrides it.
 
-    NOTE: `ACCOUNT_LOGIN_METHODS` / `ACCOUNT_SIGNUP_FIELDS` in settings are
-    allauth>=65 names and are INERT on the pinned 0.63.x — they look like
-    they restrict signup and do not. This adapter is the control that
-    actually works; do not remove it in favour of those settings without
-    first confirming the installed allauth version reads them.
+    NOTE: `ACCOUNT_LOGIN_METHODS` / `ACCOUNT_SIGNUP_FIELDS` were INERT when
+    this was written (allauth 0.63.x); the pin is now 65.x, which reads them.
+    This adapter stays the control regardless — it does not depend on which
+    allauth version is installed.
     """
 
     def is_open_for_signup(self, request):
         return False
+
+    def send_mail(self, template_prefix, email, context):
+        # allauth sends NO mail here — every one of its messages (password
+        # reset, "no account with that address", email confirmation) is for a
+        # local-account flow canopy does not have. It went unnoticed while
+        # there was no mail backend; once invites got SES (apps/common/email.py)
+        # a reset POST minted a working link that lets a Google-only account
+        # SET a password — a login that skips Google and the domain gate — and
+        # the unknown-account notice let anyone make canopy mail an arbitrary
+        # address from the shared labs domain. Dropped here, the one method
+        # every allauth send goes through, so a new allauth mail fails closed.
+        logger.warning("suppressed allauth mail %r to %s", template_prefix, email)

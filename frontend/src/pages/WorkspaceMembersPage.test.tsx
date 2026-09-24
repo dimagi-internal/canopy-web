@@ -134,7 +134,7 @@ describe('WorkspaceMembersPage', () => {
     expect(screen.getByText(/expired today/i)).toBeTruthy()
   })
 
-  it('an expired invite offers a new link but not a copy of the dead one', async () => {
+  it('an expired invite offers resend but not a copy of the dead link', async () => {
     listMembers.mockResolvedValue([member()])
     listInvites.mockResolvedValue([
       invite({ id: 4, email: 'late@example.com', expires_at: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
@@ -145,7 +145,7 @@ describe('WorkspaceMembersPage', () => {
 
     expect(screen.getByText(/expired 3 days ago/i)).toBeTruthy()
     expect(screen.queryByLabelText(/copy invite link for late@example.com/i)).toBeNull()
-    expect(screen.getByLabelText(/send a new link to late@example.com/i)).toBeTruthy()
+    expect(screen.getByLabelText(/resend invite to late@example.com/i)).toBeTruthy()
   })
 
   it('copy link on a pending invite copies its accept URL', async () => {
@@ -162,21 +162,24 @@ describe('WorkspaceMembersPage', () => {
     expect(await screen.findByText('Copied!')).toBeTruthy()
   })
 
-  it('new link reissues the invite and shows the fresh URL', async () => {
+  it('resend reissues the invite, emails it, and shows the fresh URL', async () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('blocked')) } })
     listMembers.mockResolvedValue([member()])
     listInvites.mockResolvedValue([
       invite({ id: 4, email: 'late@example.com', token: 'old-tok', expires_at: new Date(Date.now() - 86_400_000).toISOString() }),
     ])
-    reissueInvite.mockResolvedValue(invite({ id: 4, email: 'late@example.com', token: 'fresh-tok' }))
+    reissueInvite.mockResolvedValue(
+      invite({ id: 4, email: 'late@example.com', token: 'fresh-tok', email_status: 'sent' }),
+    )
 
     renderPage()
     await screen.findByText('late@example.com')
-    fireEvent.click(screen.getByLabelText(/send a new link to late@example.com/i))
+    fireEvent.click(screen.getByLabelText(/resend invite to late@example.com/i))
 
     await waitFor(() => expect(reissueInvite).toHaveBeenCalledWith('acme', 4))
     expect(await screen.findByText(/fresh-tok/)).toBeTruthy()
-    expect(screen.getByText(/previous link no longer works/i)).toBeTruthy()
+    expect(screen.getByText(/previous one no longer works/i)).toBeTruthy()
+    expect(screen.getByText(/emailed the invite to late@example.com/i)).toBeTruthy()
     // the row flipped from expired back to live
     expect(screen.getByLabelText(/copy invite link for late@example.com/i)).toBeTruthy()
   })
@@ -190,7 +193,7 @@ describe('WorkspaceMembersPage', () => {
     await screen.findByText('bob@example.com')
 
     expect(screen.queryByLabelText(/copy invite link/i)).toBeNull()
-    expect(screen.queryByLabelText(/send a new link/i)).toBeNull()
+    expect(screen.queryByLabelText(/resend invite/i)).toBeNull()
   })
 
   it('re-inviting an address with an outstanding invite does not duplicate the row', async () => {
@@ -201,7 +204,7 @@ describe('WorkspaceMembersPage', () => {
     renderPage()
     await screen.findByText('again@example.com')
     fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'again@example.com' } })
-    fireEvent.click(screen.getByRole('button', { name: /create invite/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^send invite$/i }))
 
     await screen.findByText(/rearmed/)
     expect(screen.getAllByText('again@example.com')).toHaveLength(1)
@@ -217,7 +220,7 @@ describe('WorkspaceMembersPage', () => {
     await screen.findByText('bob@example.com')
     expect(screen.getByLabelText(/remove alice@dimagi.com/i)).toBeTruthy()
     expect(screen.getByLabelText(/revoke invite to bob@example.com/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /create invite/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^send invite$/i })).toBeTruthy()
   })
 
   it('a non-owner sees neither the invite form nor revoke/remove controls', async () => {
@@ -230,10 +233,28 @@ describe('WorkspaceMembersPage', () => {
     await screen.findByText('bob@example.com')
     expect(screen.queryByLabelText(/remove alice@dimagi.com/i)).toBeNull()
     expect(screen.queryByLabelText(/revoke invite to bob@example.com/i)).toBeNull()
-    expect(screen.queryByRole('button', { name: /create invite/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^send invite$/i })).toBeNull()
   })
 
-  it('creating an invite renders the resulting link with a copy button and a no-email note', async () => {
+  it('creating an invite says it was emailed, and still shows the link to copy', async () => {
+    mockRole = 'owner'
+    listMembers.mockResolvedValue([member()])
+    listInvites.mockResolvedValue([])
+    createInvite.mockResolvedValue(
+      invite({ id: 9, email: 'newperson@example.com', token: 'emailed-token', email_status: 'sent' }),
+    )
+
+    renderPage()
+    await screen.findByText('alice@dimagi.com')
+    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'newperson@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /^send invite$/i }))
+
+    expect(await screen.findByText(/emailed the invite to newperson@example.com/i)).toBeTruthy()
+    expect(screen.getByText(/emailed-token/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /copy link/i })).toBeTruthy()
+  })
+
+  it('when the email did not go out, the owner is told to send the link themselves', async () => {
     mockRole = 'owner'
     listMembers.mockResolvedValue([member()])
     listInvites.mockResolvedValue([])
@@ -243,14 +264,13 @@ describe('WorkspaceMembersPage', () => {
     await screen.findByText('alice@dimagi.com')
 
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'newperson@example.com' } })
-    fireEvent.click(screen.getByRole('button', { name: /create invite/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^send invite$/i }))
 
     await waitFor(() => expect(createInvite).toHaveBeenCalledWith('acme', 'newperson@example.com', 'editor'))
 
     expect(await screen.findByText(/brandnew-token/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /copy link/i })).toBeTruthy()
-    expect(screen.getByText(/canopy does not/i)).toBeTruthy()
-    expect(screen.getByText(/send this link to them yourself/i)).toBeTruthy()
+    expect(screen.getByText(/canopy didn't email this invite/i)).toBeTruthy()
   })
 
   it('revoke removes the invite row', async () => {

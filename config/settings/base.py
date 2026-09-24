@@ -484,6 +484,30 @@ SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 # (a shell prompt, not an HTTP view). connectlabs.py overrides to the labs URL.
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost:8000")
 
+# --- Outbound email (apps/common/email.py) ---
+# OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
+# and ses:SendEmail on the task role, which live in AWS, not here. Off means
+# NotConfiguredEmailBackend (logs + reports 0 sent), never the console backend
+# in a deployment, because that reports success for mail it discarded. DEBUG
+# keeps the console backend so local development can read what would go out.
+# Tests use Django's locmem backend (pytest-django forces it).
+CANOPY_EMAIL_ENABLED = env.bool("CANOPY_EMAIL_ENABLED", default=False)
+CANOPY_SES_REGION = env("CANOPY_SES_REGION", default=env("AWS_REGION", default="us-east-1"))
+# Tag every send with a configuration set so bounces and complaints are observed.
+CANOPY_SES_CONFIGURATION_SET = env("CANOPY_SES_CONFIGURATION_SET", default="")
+if CANOPY_EMAIL_ENABLED:
+    EMAIL_BACKEND = "apps.common.email.SesEmailBackend"
+elif DEBUG:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+else:
+    EMAIL_BACKEND = "apps.common.email.NotConfiguredEmailBackend"
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
+# Django mails ADMINS on every unhandled 500 once a real backend is live;
+# connect-labs learned that the hard way (a message every two minutes into
+# DeliveryDelay on a fresh domain). Errors go to CloudWatch; never mail them.
+ADMINS: list = []
+MANAGERS: list = []
+
 # CORS
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True

@@ -98,11 +98,12 @@ def _member_out(m: WorkspaceMembership) -> MemberOut:
     return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at)
 
 
-def _invite_out(inv: WorkspaceInvite) -> InviteOut:
+def _invite_out(inv: WorkspaceInvite, email_status: str | None = None) -> InviteOut:
     return InviteOut(
         id=inv.id, email=inv.email, role=inv.role, token=inv.token,
         expires_at=inv.expires_at, accepted_at=inv.accepted_at, revoked_at=inv.revoked_at,
         created_at=inv.created_at, invited_by_email=inv.invited_by.email or None,
+        last_emailed_at=inv.last_emailed_at, email_status=email_status,
     )
 
 
@@ -249,11 +250,15 @@ def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: Memb
 # ---- invites ----
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (owner-only)",)
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
+    """Creates the invite and emails its link to the address. `email_status`
+    says whether the email went out; the link in `token` works either way.
+    Inviting an address that already has an outstanding invite returns that
+    invite and emails its link again (at most once a minute)."""
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     inv = services.create_invite(
         workspace=m.workspace, email=payload.email, role=payload.role, invited_by=request.user,
     )
-    return Status(201, _invite_out(inv))
+    return Status(201, _invite_out(inv, services.email_invite(invite=inv)))
 
 
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
@@ -283,18 +288,28 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
              summary="Send a fresh link for an invite (owner-only)")
 def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
     """New token and a fresh expiry for an invite nobody has accepted or
-    revoked — including one that has expired. The previous link stops working.
-    Accepted or revoked invites answer 410; invite the address again instead."""
+    revoked — including one that has expired — emailed to the invited address.
+    The previous link stops working. Accepted or revoked invites answer 410;
+    invite the address again instead. 429 if this invite was emailed under a
+    minute ago."""
     _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
-        inv = WorkspaceInvite.objects.select_related("invited_by").get(workspace_id=slug, id=invite_id)
+        inv = WorkspaceInvite.objects.select_related("invited_by", "workspace").get(
+            workspace_id=slug, id=invite_id
+        )
     except WorkspaceInvite.DoesNotExist:
         raise HttpError(404, "invite not found")
+    # Checked BEFORE rotating: rotating and then throttling the email would
+    # kill the link the person already has without sending them the new one.
+    # A finished invite falls through to the service's 410 instead.
+    outstanding = inv.accepted_at is None and inv.revoked_at is None
+    if outstanding and services.recently_emailed(inv):
+        raise HttpError(429, "this invite was just emailed — wait a minute before sending another")
     try:
         inv = services.reissue_invite(invite=inv)
     except services.InviteError as exc:
         raise HttpError(_INVITE_ERROR_STATUS[exc.code], f"invite {exc.code.replace('_', ' ')}")
-    return _invite_out(inv)
+    return _invite_out(inv, services.email_invite(invite=inv))
 
 
 @router.get("/invites/{token}/preview", response=InvitePreviewOut, auth=None,

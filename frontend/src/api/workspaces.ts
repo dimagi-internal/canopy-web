@@ -126,14 +126,15 @@ export async function revokeInvite(slug: string, inviteId: number): Promise<void
   }
 }
 
-// Rotates the token and resets the expiry: the returned invite carries the NEW
-// link and the old one stops working. Also how an expired invite is revived.
+// Rotates the token, resets the expiry and emails the new link: the returned
+// invite carries it (and `email_status`), and the old link stops working. Also
+// how an expired invite is revived.
 export async function reissueInvite(slug: string, inviteId: number): Promise<InviteOut> {
   const res = await apiV2.POST('/api/workspaces/{slug}/invites/{invite_id}/reissue', {
     params: { path: { slug, invite_id: inviteId } },
   })
   if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to send a new link'))
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to resend the invite'))
   }
   return res.data as InviteOut
 }
