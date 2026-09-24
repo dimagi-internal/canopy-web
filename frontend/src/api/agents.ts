@@ -462,15 +462,9 @@ export async function putAgentRunnerRules(
 
 export type AgentAdminOut = Schemas['AgentAdminOut']
 
-// Who holds this agent's keys: its owner and the admins granted by name.
-// Workspace owners are admins implicitly and are not listed.
-export async function listAgentAdmins(slug: string): Promise<AgentAdminOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/admins', { params: { path: { slug } } })
-  return unwrap(res, 'listAgentAdmins') as unknown as AgentAdminOut[]
-}
-
 // Browser-only on the server, like ownership transfer: granting admin hands over
-// the agent's credentials, so no token can do it. Both return the refreshed list.
+// the agent's credentials, so no token can do it. Both return the refreshed admin list (the roster reloads
+// getAgentAccess instead, since admin changes access as well as role).
 export async function grantAgentAdmin(slug: string, userId: number): Promise<AgentAdminOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/admins/{user_id}', {
     params: { path: { slug, user_id: userId } },
@@ -483,6 +477,17 @@ export async function revokeAgentAdmin(slug: string, userId: number): Promise<Ag
     params: { path: { slug, user_id: userId } },
   })
   return unwrap(res, 'revokeAgentAdmin') as unknown as AgentAdminOut[]
+}
+
+export type AgentAccessOut = Schemas['AgentAccessOut']
+export type AgentAccessRowOut = Schemas['AgentAccessRowOut']
+
+// Everyone's role on the agent, why, and what they reach — the owner, the
+// admins (granted and implicit), and every other member, as the harness would
+// decide it for them signed in.
+export async function getAgentAccess(slug: string): Promise<AgentAccessOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/access', { params: { path: { slug } } })
+  return unwrap(res, 'getAgentAccess') as unknown as AgentAccessOut
 }
 
 export type AgentInterfaceOut = Schemas['AgentInterfaceOut']

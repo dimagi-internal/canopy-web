@@ -18,6 +18,7 @@ from .models import AgentTaskCommand
 from .schemas import (
     AgentInterfaceIn,
     AgentInterfaceOut,
+    AgentAccessOut,
     AgentAdminOut,
     AgentCommandApplyIn,
     AgentCredentialsIn,
@@ -394,6 +395,26 @@ def unpublish_interface(request: HttpRequest, slug: str):
             summary="Who holds this agent's keys: its owner and admins")
 def list_admins(request: HttpRequest, slug: str):
     return _admin_rows(_get_agent_or_404(request, slug))
+
+
+@router.get("/{slug}/access", response=AgentAccessOut,
+            summary="Everyone's role on this agent, why, and what they can reach")
+def agent_access(request: HttpRequest, slug: str):
+    """Every member of the agent's workspace with their role on the agent
+    (owner / admin / member), the reason for it, and what they reach signed in:
+    the whole agent, the capabilities its published interface lists for them,
+    or nothing. `outsiders` lists the interface rules that reach people outside
+    the workspace. Readable by any member, like the admin list."""
+    from . import access
+
+    agent = _get_agent_or_404(request, slug)
+    iface = agent.interface or {}
+    return {
+        "members": access.roster(agent),
+        "outsiders": access.outsiders(agent),
+        "interface_published": bool(iface.get("capabilities") or iface.get("full")),
+        "slack_enabled": agent.slack_enabled,
+    }
 
 
 # Browser-only, like ownership transfer: granting admin hands over the agent's

@@ -307,6 +307,38 @@ class AgentAdminOut(StrictModel):
     granted_at: dt.datetime | None = None
 
 
+class AgentAccessRowOut(StrictModel):
+    user_id: int
+    email: str
+    name: str
+    workspace_role: Literal["owner", "editor", "viewer"]
+    agent_role: Literal["owner", "admin", "member"]
+    # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
+    basis: str
+    granted_at: dt.datetime | None = None
+    # What they reach signed in: the whole agent, only the listed capabilities,
+    # or nothing (the published interface lists no capability for them).
+    access: Literal["full", "confined", "none"]
+    capabilities: list[str] = []
+    # The `full:` interface rule that lifted a member to full access, if one did.
+    full_rule: str | None = None
+
+
+class AgentOutsiderRuleOut(StrictModel):
+    caller: str
+    access: Literal["full", "confined"]
+    capability: str | None = None
+
+
+class AgentAccessOut(StrictModel):
+    members: list[AgentAccessRowOut]
+    # Rules reaching people outside the workspace (contacts, unidentified).
+    outsiders: list[AgentOutsiderRuleOut]
+    # False = no interface: every caller, member or not, gets the whole agent.
+    interface_published: bool
+    slack_enabled: bool
+
+
 class AgentInterfaceIn(StrictModel):
     # Exactly one of: `source`, the YAML an editor wrote (kept, comments and all),
     # or `interface`, an already-parsed mapping. See apps/agents/interface.py.
