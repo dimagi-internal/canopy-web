@@ -83,21 +83,3 @@ export async function disconnectApp(slug: string, appId: number): Promise<void> 
   await unwrap<void>(res, 'Could not disconnect the site')
 }
 
-/**
- * Let a site another workspace registered act for this one.
- *
- * A site is one identity in the world and may serve several tenants; this is
- * how the second and every later tenant says yes. It does not touch the site's
- * keys or origins — those belong to whoever registered it.
- */
-export async function grantConnectedApp(
-  slug: string,
-  body: { name: string; resolvable_domains: string[]; agents: string[] },
-): Promise<ConnectedApp> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/grants', {
-    params: { path: { slug } },
-    body,
-  })
-  return unwrap<ConnectedApp>(res, 'Could not grant that site')
-}
-

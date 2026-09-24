@@ -75,11 +75,11 @@ class ContactTokenIn(Schema):
     assertion: str
     #: WHICH tenant this token is for, named by an agent the site may offer.
     #:
-    #: A site can serve several canopy tenants, and a visitor's contact belongs
-    #: to exactly one of them (the same human dealt with by two workspaces is
-    #: deliberately two contacts), so the tenant has to be said rather than
-    #: inferred. Omitted = the tenant that registered the site, which is what
-    #: every integration written before this meant.
+    #: Each tenant registers a site itself, so `iss` names a site only within a
+    #: tenant; the agent says which one. Omitted = the one live site with that
+    #: name, which is what every integration written before this meant — and a
+    #: 409 `ambiguous_issuer` once a second tenant registers the same name.
+    #: Send it.
     agent_slug: str = ""
 
 
@@ -113,7 +113,7 @@ _STATUS = {
     "malformed": 400, "no_issuer": 400, "incomplete": 400, "no_subject": 400,
     "no_jti": 400, "unknown_issuer": 401, "bad_signature": 401, "no_key": 401,
     "wrong_audience": 401, "expired": 401, "too_long": 400, "replayed": 401,
-    "rate_limited": 429,
+    "rate_limited": 429, "ambiguous_issuer": 409,
 }
 
 
@@ -147,7 +147,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         # Named, not yet trusted. Nothing may act on this app until the
         # signature verifies below — it is read here only to bill the right
         # budget for the verification it is about to ask for.
-        claimed = assertions.issuer_of(payload.assertion)
+        claimed = assertions.issuer_of(payload.assertion, agent_slug=payload.agent_slug)
     except assertions.AssertionError_ as exc:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, ok=False,
               reason=exc.code, detail="signed assertion")
@@ -161,14 +161,15 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(429, f"rate_limited: {exc}")
 
     try:
-        app, claims = assertions.verify_for_issuer(payload.assertion)
+        app, claims = assertions.verify_for_issuer(payload.assertion,
+                                                       agent_slug=payload.agent_slug)
     except assertions.AssertionError_ as exc:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, ok=False,
               reason=exc.code, detail="signed assertion")
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
     try:
-        workspace, grant = _tenant_for(app, payload.agent_slug)
+        workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
               reason="not_granted", detail=f"agent={payload.agent_slug!r}")
@@ -192,7 +193,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
 
     user = contact_services.resolve_arrival(
         app=app, contact=contact, claims=claims,
-        resolvable_domains=grant.resolvable_domains or [],
+        resolvable_domains=app.resolvable_domains or [],
     )
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
@@ -292,42 +293,21 @@ class ContactSendIn(Schema):
 
 
 def _tenant_for(app, agent_slug: str):
-    """Which tenant this token is for, and that tenant's grant.
+    """Which tenant this token is for: the site's own, always.
 
-    Named by an AGENT, because that is the thing a host already knows when it
-    mounts a widget and the only thing that identifies a tenant unambiguously —
-    an agent belongs to exactly one workspace. The site must be granted by that
-    tenant AND allowed to offer that agent: the first is the tenant saying "this
-    site may act for us", the second "and it may offer this".
-
-    Fails closed and says which of the two is missing, because "not authorized"
-    with no reason sends an integrator to re-read their key configuration.
+    The site was already resolved inside the named agent's tenant
+    (`embed_apps.resolve_site`), so there is no tenant left to choose — only
+    whether this tenant's site may offer the agent. Checked separately because
+    a tenant can register a site and not yet allow it any agents, and "not
+    authorized" with no reason sends an integrator to re-read their keys.
     """
-    from apps.agents.models import Agent
-
-    from .embed_apps import tenant_grant
-
     slug = (agent_slug or "").strip()
-    if slug:
-        agent = Agent.objects.filter(slug=slug).select_related("workspace").first()
-        # Same answer for "no such agent" and "not offered here": a site must
-        # not be able to discover another tenant's agents by guessing slugs.
-        if agent is None or not app.allowed_agents.filter(agent=agent).exists():
-            raise HttpError(403, f"not_granted: {app.name!r} does not offer an agent "
-                                 f"named {slug!r}")
-        workspace = agent.workspace
-    else:
-        if app.workspace_id is None:
-            raise HttpError(
-                409,
-                f"{app.name!r} is not owned by a workspace, so there is no tenant to "
-                "record its visitors in. Reconnect it from Connected sites.",
-            )
-        workspace = app.workspace
-    grant = tenant_grant(app, workspace.slug if hasattr(workspace, "slug") else workspace)
-    if grant is None:
-        raise HttpError(403, f"not_granted: {workspace} has not authorized {app.name!r}")
-    return workspace, grant
+    # Same answer for "no such agent" and "not offered here": a site must not
+    # be able to discover a tenant's agents by guessing slugs.
+    if slug and not app.allowed_agents.filter(agent__slug=slug).exists():
+        raise HttpError(403, f"not_granted: {app.name!r} does not offer an agent "
+                             f"named {slug!r}")
+    return app.workspace
 
 
 def _session_or_404(request: HttpRequest, session_id):

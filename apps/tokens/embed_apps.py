@@ -24,6 +24,7 @@ this paragraph used to describe went with `/api/auth/token-exchange`
 
 from __future__ import annotations
 
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -70,28 +71,74 @@ def require_owner(user, slug: str) -> None:
 
 
 def apps_for(user, slug: str) -> QuerySet[AppCredential]:
-    """The sites this workspace has anything to say about.
+    """The sites this workspace has connected — its own rows, and only those.
 
-    Two kinds, deliberately in one list: sites this workspace REGISTERED, and
-    sites another workspace registered that THIS one has granted. Both are
-    things an owner here can act on — what they may change differs, and
-    `update` is what enforces that — and splitting them would make "which sites
-    act for us" a question with two answers.
-
-    Membership of the grant table, never `workspace_id == slug`, so a site
-    predating this surface (no owning workspace, so no grant) is excluded by
-    construction rather than by remembering to exclude it. A nullable tenant FK
-    read as "no tenant ⇒ allowed" is the exact bug ARCHITECTURE.md records
-    against `Agent.workspace`.
+    Each tenant registers a system itself, so there is no "site another
+    workspace registered that we also use": what is listed here is exactly
+    what an owner here may change, all of it. Retired rows are left out; a
+    disconnected site is gone from the tenant's point of view.
     """
     require_owner(user, slug)
     return (
         AppCredential.objects
-        .filter(tenant_grants__workspace_id__in={slug} & owned_workspace_slugs(user))
-        .distinct()
-        .prefetch_related("allowed_agents__agent", "tenant_grants")
+        .filter(workspace_id=slug, revoked_at__isnull=True)
+        .prefetch_related("allowed_agents__agent")
         .order_by("name")
     )
+
+
+def resolve_site(name: str, agent_slug: str = "") -> AppCredential | None:
+    """Which tenant's registration a host means by `name` — the ONE place a
+    site name becomes a row.
+
+    A name is only unique within a tenant, so it needs a tenant beside it, and
+    the tenant comes from the AGENT the host names: an agent belongs to exactly
+    one workspace, and a host already knows which agent it is mounting. Always
+    the agent's own workspace's row — never another tenant's row of the same
+    name, whatever that row lists.
+
+    With no agent named, the name must be unambiguous among live sites. That is
+    what every integration written before per-tenant sites sends, and it keeps
+    working exactly until a second tenant registers the same name — at which
+    point this refuses (`AmbiguousSite`) rather than pick one, because picking
+    would route a visitor into a tenant their host never meant. The fix the
+    refusal names is to send the agent, which removes the dependency on any
+    other tenant's choices entirely.
+
+    Returns None when nothing matches. Callers answer "unknown" identically for
+    a missing agent and a missing site, so a prober learns nothing about
+    another tenant's agents or registrations.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    live = AppCredential.objects.filter(name=name, revoked_at__isnull=True)
+    slug = (agent_slug or "").strip()
+    if slug:
+        from apps.agents.models import Agent
+
+        workspace_id = (Agent.objects.filter(slug=slug)
+                        .values_list("workspace_id", flat=True).first())
+        if workspace_id is None:
+            return None
+        return live.filter(workspace_id=workspace_id).first()
+    rows = list(live[:2])
+    if len(rows) > 1:
+        raise AmbiguousSite(name)
+    return rows[0] if rows else None
+
+
+class AmbiguousSite(Exception):
+    """More than one tenant has a live site by this name and the caller did not
+    say which. Carries the fix, because the person who hits it is an
+    integrator looking at a host that worked yesterday."""
+
+    def __init__(self, name: str):
+        self.name = name
+        super().__init__(
+            f"more than one workspace has a site named {name!r}; name the agent "
+            "(`agent_slug`, or `agent` in canopy.init) so canopy knows which one"
+        )
 
 
 def _clean_origins(origins) -> list[str]:
@@ -194,90 +241,43 @@ def _clean_keys(keys) -> list[str]:
     return cleaned
 
 
-def tenant_grant(app: AppCredential, workspace_slug: str):
-    """This tenant's grant to this site, or None. The one place that question
-    is asked, so "has this tenant authorized this site" has a single answer."""
-    from .models import AppCredentialTenant
+def set_resolvable(*, user, app: AppCredential, domains) -> None:
+    """Replace the domains this site may resolve to existing canopy users.
 
-    return AppCredentialTenant.objects.filter(app=app, workspace_id=workspace_slug).first()
-
-
-def authorize_tenant(*, user, app: AppCredential, workspace_slug: str,
-                     resolvable_domains=None):
-    """An owner of THIS workspace lets this site act for it.
-
-    The grant a site needs before it can offer any of this tenant's agents or
-    record a visitor here. Made per tenant, by that tenant's own owner, because
-    a site serving several tenants is several separate decisions — and one
-    tenant's owner has no standing to make another's.
+    Only what is being ADDED is bounded to the setter's own domain: removing
+    one must never require the remover to be in it.
     """
-    from .models import AppCredentialTenant
-
-    require_owner(user, workspace_slug)
-    grant, _created = AppCredentialTenant.objects.get_or_create(
-        app=app, workspace_id=workspace_slug, defaults={"created_by": user},
-    )
-    if resolvable_domains is not None:
-        current = set(grant.resolvable_domains or [])
-        wanted = [str(d or "").strip().lower().lstrip("@") for d in resolvable_domains]
-        # Only what is being ADDED is bounded to the setter's own domain:
-        # removing one must never require the remover to be in it.
-        _clean_resolvable(user, [d for d in wanted if d and d not in current])
-        grant.resolvable_domains = [d for d in dict.fromkeys(wanted) if d]
-        grant.save(update_fields=["resolvable_domains"])
-    return grant
+    current = set(app.resolvable_domains or [])
+    wanted = [str(d or "").strip().lower().lstrip("@") for d in domains]
+    _clean_resolvable(user, [d for d in wanted if d and d not in current])
+    app.resolvable_domains = [d for d in dict.fromkeys(wanted) if d]
+    app.save(update_fields=["resolvable_domains"])
 
 
-def revoke_tenant(*, user, app: AppCredential, workspace_slug: str) -> None:
-    """This tenant withdraws. Its agents stop being offered and no visitor is
-    recorded here again; the site's identity and every other tenant's grant are
-    untouched, which is the whole point of the grant being a row."""
-    from apps.agents.models import Agent
+def set_agents(app: AppCredential, slugs: list[str]) -> None:
+    """Replace the agents this site may offer.
 
-    require_owner(user, workspace_slug)
-    AppCredentialAgent.objects.filter(
-        app=app, agent__in=Agent.objects.filter(workspace_id=workspace_slug),
-    ).delete()
-    grant = tenant_grant(app, workspace_slug)
-    if grant is not None:
-        grant.delete()
-
-
-def set_agents(app: AppCredential, workspace_slug: str, slugs: list[str]) -> None:
-    """Replace the agents THIS TENANT offers through this site.
-
-    Scoped to one workspace in both directions, and the delete half is the part
-    that matters: replacing every row for the site would let one tenant's owner
-    silently withdraw another tenant's agents, which is exactly the authority
-    this model exists to keep separate.
-
-    Only agents in this workspace. The picker already intersects the allowlist
-    with the viewer's memberships, so a foreign agent here would be invisible to
-    everyone and read as a grant that silently does nothing — worse than a
-    refusal. Offering another tenant's agent is that tenant's call to make.
+    Only agents in the site's own workspace. The picker intersects the
+    allowlist with the viewer's memberships, so a foreign agent here would be
+    invisible to everyone and read as a grant that silently does nothing —
+    worse than a refusal. Another tenant offering its agent through the same
+    external system registers that system itself.
     """
     from apps.agents.models import Agent
 
-    if tenant_grant(app, workspace_slug) is None:
-        raise EmbedAppError(
-            "not_granted",
-            f"{app.name!r} is not authorized to act for this workspace yet",
-        )
     wanted = [s for s in dict.fromkeys(slugs or []) if s]
     found = {
         a.slug: a
-        for a in Agent.objects.filter(slug__in=wanted, workspace_id=workspace_slug)
+        for a in Agent.objects.filter(slug__in=wanted, workspace_id=app.workspace_id)
     }
     missing = [s for s in wanted if s not in found]
     if missing:
         raise EmbedAppError(
             "unknown_agent",
             f"not agents in this workspace: {', '.join(missing)}. A site can only "
-            "offer agents belonging to the workspace granting them.",
+            "offer agents belonging to the workspace that connected it.",
         )
-    AppCredentialAgent.objects.filter(
-        app=app, agent__in=Agent.objects.filter(workspace_id=workspace_slug),
-    ).exclude(agent__slug__in=wanted).delete()
+    AppCredentialAgent.objects.filter(app=app).exclude(agent__slug__in=wanted).delete()
     for slug in wanted:
         AppCredentialAgent.objects.get_or_create(app=app, agent=found[slug])
 
@@ -297,6 +297,7 @@ def _clean_jwks_url(url) -> str:
         raise EmbedAppError("bad_jwks_url", str(exc)) from exc
 
 
+@transaction.atomic
 def register(*, user, workspace_slug: str, name: str, origins: list[str],
              agents: list[str] | None = None,
              public_keys: list[str] | None = None,
@@ -317,48 +318,39 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
             f"{name!r} cannot be used as a name — letters, digits, hyphens and "
             "underscores only. It appears in a URL and in the host's own code.",
         )
-    if AppCredential.objects.filter(name=name).exists():
-        raise EmbedAppError("duplicate_name", f"an app named {name!r} is already registered")
+    # Per tenant, not canopy-wide: another workspace's `connect-labs` is its
+    # own business, and refusing a name because a stranger holds it would be
+    # the cross-tenant coupling this model exists to remove.
+    if AppCredential.objects.filter(name=name, workspace_id=workspace_slug,
+                                    revoked_at__isnull=True).exists():
+        raise EmbedAppError("duplicate_name",
+                            f"this workspace already has a site named {name!r}")
 
     cleaned_origins = _clean_origins(origins)
     cleaned_keys = _clean_keys(public_keys or [])
+    cleaned_jwks = _clean_jwks_url(jwks_url or "")
+    # Validated BEFORE the row exists, so a refusal leaves nothing half-made.
+    cleaned_domains = _clean_resolvable(user, resolvable_domains or [])
 
-    raw, app = AppCredential.create_credential(name=name, created_by=user)
-    app.workspace_id = workspace_slug
+    raw, app = AppCredential.create_credential(name=name, created_by=user,
+                                               workspace=workspace_slug)
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
-    app.jwks_url = _clean_jwks_url(jwks_url or "")
-    app.save(update_fields=["workspace", "allowed_frame_origins", "public_keys", "jwks_url"])
-    # Registering IS this tenant's own grant: the owner doing it has just said
-    # the site may act for them. A second tenant grants itself separately.
-    authorize_tenant(user=user, app=app, workspace_slug=workspace_slug,
-                     resolvable_domains=resolvable_domains)
-    set_agents(app, workspace_slug, agents or [])
+    app.jwks_url = cleaned_jwks
+    app.resolvable_domains = cleaned_domains
+    app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url",
+                            "resolvable_domains"])
+    set_agents(app, agents or [])
     return raw, app
 
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
            public_keys=None, resolvable_domains=None, jwks_url=None) -> AppCredential:
-    """Change what a registered site may do, as ONE tenant.
-
-    Two kinds of field, deliberately gated differently. The site's IDENTITY —
-    its origins and its keys — belongs to the tenant that registered it, and
-    another tenant editing it would be reaching into every other tenant's
-    integration. What this tenant GRANTS — its own agents, its own resolvable
-    domains — is this tenant's to change, and touches nobody else.
-    """
+    """Change what this workspace's site may do. Every field is this tenant's
+    own, so there is one gate — owning the workspace the row belongs to."""
     require_owner(user, workspace_slug)
-    if tenant_grant(app, workspace_slug) is None:
-        raise EmbedAppError(
-            "not_granted", f"{app.name!r} is not authorized to act for this workspace")
-
-    identity_fields = [f for f in (origins, public_keys, jwks_url) if f is not None]
-    if identity_fields and app.workspace_id != workspace_slug:
-        raise EmbedAppError(
-            "not_owner",
-            f"{app.name!r} is administered by another workspace — you can change what "
-            "your own tenant grants it, but not the site's origins or keys",
-        )
+    if app.workspace_id != workspace_slug:
+        raise EmbedAppError("not_found", "no such connected site in this workspace")
 
     fields: list[str] = []
     if origins is not None:
@@ -373,10 +365,9 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
     if fields:
         app.save(update_fields=fields)
     if resolvable_domains is not None:
-        authorize_tenant(user=user, app=app, workspace_slug=workspace_slug,
-                         resolvable_domains=resolvable_domains)
+        set_resolvable(user=user, app=app, domains=resolvable_domains)
     if agents is not None:
-        set_agents(app, workspace_slug, agents)
+        set_agents(app, agents)
     return app
 
 
@@ -398,13 +389,11 @@ def rotate(app: AppCredential) -> str:
 
 
 def revoke(app: AppCredential) -> AppCredential:
-    """Retire the SITE ITSELF, for everyone. Its embed shell 404s immediately
-    and `issuer_of` stops resolving its name, so nothing it signs verifies.
+    """Retire this registration. Its embed shell 404s immediately and
+    `resolve_site` stops finding it, so nothing it signs verifies.
 
-    Almost never what a tenant means. One tenant leaving is `disconnect`, which
-    calls this only when the last grant is gone — a site nobody grants is
-    reachable by nobody, so retiring it takes nothing away. Left as the blunt
-    instrument for staff (`admin.py`) and for that last-grant case.
+    Revoked rather than deleted: the row is what this tenant's contacts and
+    tokens hang off, and it is the audit trail of what the tenant once allowed.
     """
     if app.revoked_at is None:
         app.revoked_at = timezone.now()
@@ -413,31 +402,18 @@ def revoke(app: AppCredential) -> AppCredential:
 
 
 def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredential:
-    """This tenant stops using the site. **Every other tenant is unaffected.**
+    """This tenant stops using the site.
 
-    "Disconnect" on a tenant's page can only ever mean "we stop". It used to
-    mean "retire this site for everyone": `revoke` set `revoked_at` on the site
-    and `issuer_of` filters on it, so the workspace that happened to register a
-    shared site could end every other tenant's integration with one button,
-    and the button did not say so. That is the coupling this whole model exists
-    to remove — a grant one tenant makes must not be endable by another.
-
-    Two consequences follow, and both are about not stranding anyone:
-
-    * **Custody transfers.** If the leaver was maintaining the site's origins
-      and keys, the oldest remaining grant takes over. A site other tenants
-      still use must never be left with nobody able to correct its key.
-    * **The site is retired only when the last tenant leaves**, where retiring
-      it takes nothing from anybody.
+    Just `revoke`, now that the row is this tenant's alone. It used to carry
+    custody transfer and a last-grant check, because the row was shared and
+    retiring it would have ended every other tenant's integration; another
+    tenant using the same external system has its own row and does not notice.
     """
-    revoke_tenant(user=user, app=app, workspace_slug=workspace_slug)
-    remaining = list(app.tenant_grants.order_by("created_at"))
-    if not remaining:
-        return revoke(app)
-    if app.workspace_id == workspace_slug:
-        app.workspace_id = remaining[0].workspace_id
-        app.save(update_fields=["workspace"])
-    return app
+    require_owner(user, workspace_slug)
+    if app.workspace_id != workspace_slug:
+        raise EmbedAppError("not_found", "no such connected site in this workspace")
+    return revoke(app)
+
 
 def self_app():
     """The app whose widget canopy shows on its own pages, or None.

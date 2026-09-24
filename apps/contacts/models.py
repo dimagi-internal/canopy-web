@@ -66,8 +66,8 @@ class Person(models.Model):
 
     Keyed on what the world ALREADY uses to name them, never on a guess:
 
-    * a site's visitor is `(app, external_id)` — that site's own id, in its own
-      namespace, which cannot collide with another site's people;
+    * a site's visitor is `(issuer, signer, external_id)` — that site's own id,
+      in its own namespace, which cannot collide with another site's people;
     * a correspondent is their address, which for them IS the identity.
 
     A site asserting an email does NOT join those two. The site's id is the
@@ -75,9 +75,20 @@ class Person(models.Model):
     believing the assertion — the thing `auth_result` exists to avoid.
     """
 
-    #: The site that vouches for this person, when they came through one.
-    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE,
-                            null=True, blank=True, related_name="contact_identities")
+    #: The SYSTEM that vouches for this person, when they came through one: the
+    #: `iss` it signs with, and `AppCredential.signer()` — which keys it signs
+    #: with. Not a row.
+    #:
+    #: It was an FK to the site row, when a site was one row shared by every
+    #: tenant. Now each tenant registers a system itself (2026-09-24), so the
+    #: same system is several rows and an FK would make one human arriving via
+    #: two tenants two people — silently undoing this model. Two registrations
+    #: that trust the same keys ARE the same signer, and only that signer can
+    #: produce an assertion either of them accepts, so joining on it never
+    #: merges two different systems. It can miss (one tenant pastes a key,
+    #: another gives the JWKS URL), and a miss is the safe direction.
+    issuer = models.CharField(max_length=100, blank=True, default="")
+    signer = models.CharField(max_length=64, blank=True, default="")
     #: That site's own id for them. Opaque to canopy.
     external_id = models.CharField(max_length=200, blank=True, default="")
     #: Set when the address IS the identity (a correspondent), not when a site
@@ -90,19 +101,19 @@ class Person(models.Model):
         verbose_name_plural = "people"
         constraints = [
             models.UniqueConstraint(
-                fields=["app", "external_id"],
+                fields=["issuer", "signer", "external_id"],
                 condition=models.Q(external_id__gt=""),
-                name="one_person_per_site_visitor",
+                name="one_person_per_signer_visitor",
             ),
             models.UniqueConstraint(
                 fields=["email"],
-                condition=models.Q(app__isnull=True) & models.Q(email__gt=""),
+                condition=models.Q(signer="") & models.Q(email__gt=""),
                 name="one_person_per_correspondent",
             ),
         ]
 
     def __str__(self):
-        return self.email or f"{self.app_id}:{self.external_id}"
+        return self.email or f"{self.issuer}:{self.external_id}"
 
 
 class Contact(models.Model):

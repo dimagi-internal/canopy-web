@@ -18,6 +18,7 @@ from apps.contacts import services
 from apps.contacts.models import Contact
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -30,7 +31,8 @@ def _ws(slug="w1"):
 
 
 def _app(name="connect-labs"):
-    _raw, app = AppCredential.create_credential(name=name, created_by=None)
+    _raw, app = AppCredential.create_credential(name=name, created_by=None,
+                                                workspace=host_workspace())
     return app
 
 

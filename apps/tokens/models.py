@@ -168,42 +168,41 @@ class AppCredential(models.Model):
     rows came to be, and erasing that would erase real provenance.
     """
 
-    name = models.CharField(max_length=100, unique=True)
+    #: What the site calls itself: its `iss`, and the `?app=` of its embed
+    #: shell. Unique WITHIN a tenant, not across canopy — see `workspace`.
+    name = models.CharField(max_length=100)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
-    #: The workspace whose owners administer this app.
+    #: The ONE tenant this registration belongs to. Every fact on the row —
+    #: name, keys, origins, agents, resolvable domains — is that tenant's own.
     #:
-    #: Nullable ONLY for rows that predate the product surface — a credential
-    #: registered before there was a page to register it on has no owning
-    #: tenant to infer, and inventing one would hand somebody an app they never
-    #: created. Such a row keeps working exactly as before and is simply not
-    #: editable in the UI.
+    #: A site used to be one shared row with a "custodian" workspace
+    #: maintaining its keys and origins, plus a grant per tenant (#944). That
+    #: arbitrated a shared row nobody needed once keys became a URL (#929): the
+    #: thing two tenants would have had to agree on is now just where the host
+    #: publishes its JWKS, and copying a URL costs nothing. So each tenant
+    #: registers the system itself (2026-09-24, Jonathan: "full tenant level,
+    #: no custodian"). No custody, no transfer, no tenant able to edit — or end
+    #: — another's integration.
     #:
-    #: The usual hazard with a nullable tenant FK is a predicate that reads
-    #: "no tenant ⇒ allow" (see ARCHITECTURE.md on `Agent.workspace`). It cannot
-    #: arise here: every reader filters `workspace_id__in=<slugs I own>`, and a
-    #: SQL `IN` never matches NULL, so an unowned row is excluded by
-    #: construction rather than by remembering to exclude it.
-    #: The workspace that CUSTODIES this site's identity — its origins and keys.
+    #: The price is that a name no longer identifies one system across canopy:
+    #: two tenants may each have a `connect-labs`. Every lookup by name is
+    #: therefore scoped by tenant (`embed_apps.resolve_site`), and the tenant
+    #: comes from the agent a host names.
     #:
-    #: Custody, not ownership. A site is a description of an external system,
-    #: and several tenants may grant it; the custodian is simply whichever of
-    #: them maintains the facts about it. Custody TRANSFERS when that tenant
-    #: withdraws (`embed_apps.disconnect`), because a site every other tenant
-    #: still uses must not be left with nobody able to correct its key.
-    #:
-    #: `SET_NULL`, never `CASCADE`: deleting a workspace must not delete a site
-    #: other tenants depend on. It used to cascade, which made removing one
-    #: workspace silently end every other tenant's integration through that
-    #: site — the same class of coupling as revoking it globally.
+    #: `CASCADE` is now correct, where it was a bug under custody: the row is
+    #: nobody's but this tenant's, so it goes with the tenant.
     workspace = models.ForeignKey(
         "workspaces.Workspace",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.CASCADE,
         related_name="embedded_apps",
-        help_text="Workspace whose owners maintain this site's origins and keys. "
-        "Transfers if they withdraw; blank for rows predating the Connected sites page.",
+        help_text="The tenant this registration belongs to.",
     )
+    #: Domains whose EXISTING canopy users this site may bring in as themselves.
+    #:
+    #: Bounded, when set from the product surface, to the setter's own domain
+    #: (`embed_apps._clean_resolvable`): a compromised site key could speak for
+    #: existing users there, so nobody may widen that beyond what they speak for.
+    resolvable_domains = models.JSONField(default=list, blank=True)
     #: Origins permitted to frame this app's embed shell, as a
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).
     #:
@@ -278,14 +277,26 @@ class AppCredential(models.Model):
 
     class Meta:
         db_table = "app_credentials"
+        constraints = [
+            # Live rows only, so a tenant that disconnected a site can connect
+            # it again under the same name — disconnecting revokes rather than
+            # deletes, because the row is what its contacts hang off.
+            models.UniqueConstraint(
+                fields=["workspace", "name"],
+                condition=Q(revoked_at__isnull=True),
+                name="one_live_site_name_per_tenant",
+            ),
+        ]
 
     @classmethod
-    def create_credential(cls, *, name, created_by):
+    def create_credential(cls, *, name, created_by, workspace):
         raw = secrets.token_urlsafe(32)
         cred = cls.objects.create(
             name=name,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             created_by=created_by,
+            # A Workspace or its slug (the slug IS its pk).
+            workspace_id=getattr(workspace, "pk", workspace),
         )
         return raw, cred
 
@@ -297,6 +308,23 @@ class AppCredential(models.Model):
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             revoked_at__isnull=True,
         ).first()
+
+    def signer(self) -> str:
+        """Which keys this site signs with, as a stable digest — "" if none.
+
+        What makes two tenants' registrations the SAME external system: only
+        the holder of those keys can produce an assertion either accepts. The
+        JWKS URL when there is one (it survives rotation), else the pasted
+        public keys. Keyed on by `contacts.Person`, so one human arriving via
+        two tenants stays one person without the tenants sharing a row.
+        """
+        if self.jwks_url:
+            source = "jwks\n" + self.jwks_url.strip()
+        elif self.public_keys:
+            source = "keys\n" + "\n".join(sorted(k.strip() for k in self.public_keys))
+        else:
+            return ""
+        return hashlib.sha256(source.encode()).hexdigest()
 
     def frame_origins(self) -> list[str]:
         """The origins that may frame this app's embed shell — validated here,
@@ -313,55 +341,6 @@ class AppCredential(models.Model):
         set-shuffled.
         """
         return [o for o in (self.allowed_frame_origins or []) if is_valid_frame_origin(o)]
-
-
-class AppCredentialTenant(models.Model):
-    """One tenant's grant to a connected site: "this site may act for us."
-
-    A site is ONE identity in the world — one name, one key, one `iss` — and it
-    may serve several canopy tenants. Those are different statements, and
-    conflating them is what `AppCredential.workspace` alone used to do: the row
-    that identified the site also decided whose agents it could offer and where
-    its visitors were recorded, so a site serving two tenants had to be
-    registered twice under two names, and pick which name to sign with.
-
-    Now the site is registered once and each tenant grants it separately. That
-    keeps the authority where it belongs — **an owner of THIS workspace decides
-    whether this site may act for it**, and can revoke that without touching
-    the site's identity or any other tenant's grant — and it is why a grant is
-    a row rather than a flag: it records who authorized it and when.
-
-    A visitor's contact is still per tenant (see `apps/contacts/models.py`: the
-    same human dealt with by two workspaces is deliberately two contacts), so a
-    host serving two tenants mints one token per tenant. That is not a
-    workaround; those genuinely are two different people-records.
-    """
-
-    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE,
-                            related_name="tenant_grants")
-    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
-                                  related_name="granted_sites")
-    #: Domains whose EXISTING canopy users this site may bring in as themselves,
-    #: granted on THIS tenant's authority.
-    #:
-    #: Per tenant rather than per site because it is a grant somebody makes, and
-    #: the person making it can only speak for their own domain
-    #: (`embed_apps._clean_resolvable`). Site-wide, one tenant's owner would be
-    #: widening what the site can do everywhere else it is granted.
-    resolvable_domains = models.JSONField(default=list, blank=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
-                                   null=True, blank=True, related_name="+")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "app_credential_tenants"
-        constraints = [
-            models.UniqueConstraint(fields=["app", "workspace"],
-                                    name="one_grant_per_site_per_tenant"),
-        ]
-
-    def __str__(self):
-        return f"{self.app_id} @ {self.workspace_id}"
 
 
 class AppCredentialAgent(models.Model):

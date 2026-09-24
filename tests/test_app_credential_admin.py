@@ -22,6 +22,7 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.tokens.models import AppCredential
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -36,8 +37,8 @@ def _staff():
 
 
 def _existing():
-    _raw, cred = AppCredential.create_credential(        name="connect-labs", created_by=None
-    )
+    _raw, cred = AppCredential.create_credential(name="connect-labs", created_by=None,
+                                                workspace=host_workspace())
     cred.allowed_frame_origins = [LABS]
     cred.save(update_fields=["allowed_frame_origins"])
     return cred

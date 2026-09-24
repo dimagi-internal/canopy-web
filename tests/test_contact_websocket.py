@@ -25,7 +25,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
 from apps.tokens import assertions
-from apps.tokens.models import AppCredential, AppCredentialTenant, AppCredentialAgent
+from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.canopy_sessions.consumers import SessionConsumer
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -60,13 +60,10 @@ def _world():
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     priv, pub = _keypair()
-    _raw, app = AppCredential.create_credential(name="connect-labs", created_by=owner)
+    _raw, app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.workspace = ws
     app.public_keys = [pub]
     app.save(update_fields=["workspace", "public_keys"])
-    # The grant a real registration makes: a site acts for a tenant because
-    # that tenant's owner said so, not because the row names a workspace.
-    AppCredentialTenant.objects.create(app=app, workspace=ws, created_by=owner)
     AppCredentialAgent.objects.create(app=app, agent=agent)
     return owner, ws, app, priv
 

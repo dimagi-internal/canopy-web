@@ -3337,11 +3337,10 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect a site
-         * @description THIS workspace stops using the site. Every other tenant is unaffected.
+         * @description This workspace stops using the site. It stops verifying immediately.
          *
-         *     Withdrawn rather than deleted: the grant is the audit trail of what this
-         *     workspace once allowed. The site itself is retired only when the last
-         *     tenant leaves, at which point retiring it takes nothing from anybody.
+         *     Retired rather than deleted: the row is what this workspace's visitors'
+         *     records hang off, and the audit trail of what it once allowed.
          */
         readonly delete: operations["apps_tokens_connected_apps_api_disconnect_app"];
         readonly options?: never;
@@ -3365,32 +3364,6 @@ export interface paths {
          *     button, since it is reached for when the old one has leaked.
          */
         readonly post: operations["apps_tokens_connected_apps_api_rotate_secret"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/connected-apps/grants": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Let a site another workspace registered act for this one
-         * @description Authorize an already-registered site to act for this workspace.
-         *
-         *     A site is one identity in the world and may serve several tenants; this is
-         *     how the second and every later tenant says yes, without touching the site's
-         *     keys, its origins, or any other tenant's grant. The site must already
-         *     exist — registering one is a different act, and typing a name that happens
-         *     to be free would silently create an identity nobody controls.
-         */
-        readonly post: operations["apps_tokens_connected_apps_api_grant_site"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10982,16 +10955,6 @@ export interface components {
             readonly signs_assertions: boolean;
             /** Jwks Url */
             readonly jwks_url: string;
-            /**
-             * Administered Here
-             * @default true
-             */
-            readonly administered_here: boolean;
-            /**
-             * Agent Workspaces
-             * @default []
-             */
-            readonly agent_workspaces: readonly string[];
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */
@@ -11061,24 +11024,6 @@ export interface components {
         readonly SecretOut: {
             /** Secret */
             readonly secret: string;
-        };
-        /**
-         * GrantIn
-         * @description Which site, named the way a host names it.
-         */
-        readonly GrantIn: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Resolvable Domains
-             * @default []
-             */
-            readonly resolvable_domains: readonly string[];
-            /**
-             * Agents
-             * @default []
-             */
-            readonly agents: readonly string[];
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
@@ -18084,32 +18029,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SecretOut"];
-                };
-            };
-        };
-    };
-    readonly apps_tokens_connected_apps_api_grant_site: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["GrantIn"];
-            };
-        };
-        readonly responses: {
-            /** @description Created */
-            readonly 201: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
                 };
             };
         };

@@ -26,7 +26,7 @@ from apps.agents.models import Agent
 from apps.contacts import services as contact_services
 from apps.contacts.models import Contact, Person
 from apps.tokens import assertions, embed_apps
-from apps.tokens.models import AppCredentialTenant
+from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -49,6 +49,12 @@ def _tenant(slug, email):
     return owner, ws, c
 
 
+def _public_key():
+    return ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+
+
 def _world():
     owner_a, ws_a, c_a = _tenant("alpha", "a@dimagi.com")
     owner_b, ws_b, c_b = _tenant("beta", "b@dimagi.com")
@@ -64,8 +70,11 @@ def _world():
     _raw, app = embed_apps.register(
         user=owner_a, workspace_slug="alpha", name="connect-labs",
         origins=["https://labs.example.com"], agents=["a-agent"], public_keys=[pub])
-    embed_apps.authorize_tenant(user=owner_b, app=app, workspace_slug="beta")
-    embed_apps.set_agents(app, "beta", ["b-agent"])
+    # B registers the same system itself — same name, same key — as every
+    # tenant now does. Two rows, one signer.
+    embed_apps.register(
+        user=owner_b, workspace_slug="beta", name="connect-labs",
+        origins=["https://labs.example.com"], agents=["b-agent"], public_keys=[pub])
     return app, pem, (ws_a, c_a), (ws_b, c_b)
 
 
@@ -88,7 +97,8 @@ def test_the_same_visitor_in_two_tenants_is_two_contacts_and_one_person():
     _mint(priv, "a-agent")
     _mint(priv, "b-agent")
 
-    rows = Contact.objects.filter(app=app, external_id="visitor-1")
+    # Two site rows as well as two contacts: each tenant registered the site.
+    rows = Contact.objects.filter(app__name=app.name, external_id="visitor-1")
     assert rows.count() == 2
     assert {r.workspace_id for r in rows} == {"alpha", "beta"}
     assert len({r.person_id for r in rows}) == 1
@@ -164,7 +174,8 @@ def test_meeting_the_same_person_twice_does_not_make_a_second_one():
     app, priv, _a, _b = _world()
     for _ in range(3):
         _mint(priv, "a-agent")
-    assert Person.objects.filter(app=app, external_id="visitor-1").count() == 1
+    assert Person.objects.filter(issuer=app.name, signer=app.signer(),
+                                 external_id="visitor-1").count() == 1
 
 
 def test_two_sites_using_the_same_id_are_two_people():
@@ -172,9 +183,11 @@ def test_two_sites_using_the_same_id_are_two_people():
     at another are unrelated, and joining them would invent a person."""
     owner, _ws, _c = _tenant("alpha", "a@dimagi.com")
     _raw1, site1 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-one",
-                                       origins=["https://one.example.com"])
+                                       origins=["https://one.example.com"],
+                                       public_keys=[_public_key()])
     _raw2, site2 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-two",
-                                       origins=["https://two.example.com"])
+                                       origins=["https://two.example.com"],
+                                       public_keys=[_public_key()])
 
     one = contact_services.person_for(app=site1, external_id="u-1")
     two = contact_services.person_for(app=site2, external_id="u-1")
@@ -182,14 +195,42 @@ def test_two_sites_using_the_same_id_are_two_people():
     assert one.pk != two.pk
 
 
+def test_two_tenants_systems_sharing_a_name_but_not_keys_are_two_people():
+    """The cost of per-tenant sites: two tenants may each have a `connect-labs`
+    meaning different systems. The name alone must never join their visitors —
+    only the keys say it is the same signer."""
+    owner_a, _wa, _ca = _tenant("alpha", "a@dimagi.com")
+    owner_b, _wb, _cb = _tenant("beta", "b@dimagi.com")
+    _r, in_a = embed_apps.register(user=owner_a, workspace_slug="alpha", name="connect-labs",
+                                   origins=["https://a.example.com"], public_keys=[_public_key()])
+    _r, in_b = embed_apps.register(user=owner_b, workspace_slug="beta", name="connect-labs",
+                                   origins=["https://b.example.com"], public_keys=[_public_key()])
+
+    assert contact_services.person_for(app=in_a, external_id="u-1").pk \
+        != contact_services.person_for(app=in_b, external_id="u-1").pk
+
+
+def test_the_same_jwks_url_is_the_same_signer_across_tenants():
+    """The usual shape since #929: each tenant pastes the host's JWKS URL."""
+    owner_a, _wa, _ca = _tenant("alpha", "a@dimagi.com")
+    owner_b, _wb, _cb = _tenant("beta", "b@dimagi.com")
+    in_a = AppCredential.create_credential(name="ace-web", created_by=owner_a, workspace="alpha")[1]
+    in_b = AppCredential.create_credential(name="ace-web", created_by=owner_b, workspace="beta")[1]
+    for app in (in_a, in_b):
+        app.jwks_url = "https://ace.example.com/canopy/jwks"
+        app.save(update_fields=["jwks_url"])
+
+    assert contact_services.person_for(app=in_a, external_id="u-1").pk \
+        == contact_services.person_for(app=in_b, external_id="u-1").pk
+
+
+def test_a_site_with_no_keys_has_no_signer_to_key_a_person_on():
+    owner, _ws, _c = _tenant("alpha", "a@dimagi.com")
+    _r, site = embed_apps.register(user=owner, workspace_slug="alpha", name="bare",
+                                   origins=["https://bare.example.com"])
+    assert contact_services.person_for(app=site, external_id="u-1") is None
+
+
 def test_nothing_to_key_on_is_no_person_at_all():
     assert contact_services.person_for() is None
     assert contact_services.person_for(external_id="u-1") is None, "an id needs its site"
-
-
-def test_the_grant_rows_are_what_made_this_reachable():
-    """Guard for the setup above rather than a claim of its own: both tenants
-    had to have granted the site for either contact to exist."""
-    app, _priv, _a, _b = _world()
-    assert {g.workspace_id for g in AppCredentialTenant.objects.filter(app=app)} \
-        == {"alpha", "beta"}

@@ -373,10 +373,17 @@ def person_for(*, app=None, external_id: str = "", email: str = ""):
 
     external_id = (external_id or "").strip()[:200]
     if app is not None and external_id:
-        row, _ = Person.objects.get_or_create(app=app, external_id=external_id)
+        # The signer, not the row: every tenant registers a system itself, so
+        # one system is many rows (see `Person.signer`).
+        signer = app.signer()
+        if not signer:
+            return None
+        row, _ = Person.objects.get_or_create(issuer=app.name, signer=signer,
+                                              external_id=external_id)
         return row
     address = _normalize(email)
     if address:
-        row, _ = Person.objects.get_or_create(app=None, external_id="", email=address)
+        row, _ = Person.objects.get_or_create(issuer="", signer="", external_id="",
+                                              email=address)
         return row
     return None

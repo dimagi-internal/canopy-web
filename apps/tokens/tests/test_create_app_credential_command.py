@@ -12,12 +12,18 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from apps.tokens.models import AppCredential
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _tenant():
+    host_workspace()
+
+
 def test_it_registers_a_site_and_prints_the_secret_once(capsys):
-    call_command("create_app_credential", "--name", "connect-labs")
+    call_command("create_app_credential", "--workspace", "site-host", "--name", "connect-labs")
     out = capsys.readouterr().out
     cred = AppCredential.objects.get(name="connect-labs")
     assert cred.revoked_at is None
@@ -28,19 +34,19 @@ def test_it_registers_a_site_and_prints_the_secret_once(capsys):
 
 
 def test_a_duplicate_name_is_refused_rather_than_silently_rotating():
-    call_command("create_app_credential", "--name", "connect-labs")
+    call_command("create_app_credential", "--workspace", "site-host", "--name", "connect-labs")
     with pytest.raises(CommandError) as exc:
-        call_command("create_app_credential", "--name", "connect-labs")
-    assert "already exists" in str(exc.value)
+        call_command("create_app_credential", "--workspace", "site-host", "--name", "connect-labs")
+    assert "already has" in str(exc.value)
 
 
 def test_registering_grants_nothing_on_its_own():
     """The credential identifies the site. Framing, vouching and which agents it
     may offer are each granted separately — so a fresh row can do nothing."""
-    call_command("create_app_credential", "--name", "connect-labs")
+    call_command("create_app_credential", "--workspace", "site-host", "--name", "connect-labs")
     cred = AppCredential.objects.get(name="connect-labs")
     assert cred.frame_origins() == []
     assert list(cred.public_keys or []) == []
-    assert cred.tenant_grants.count() == 0, "and no tenant has granted it yet"
+    assert cred.resolvable_domains == []
     assert cred.allowed_agents.count() == 0
-    assert cred.workspace_id is None
+    assert cred.workspace_id == "site-host", "it belongs to the tenant named, and only that"

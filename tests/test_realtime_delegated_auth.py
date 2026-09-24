@@ -14,6 +14,7 @@ from django.contrib.auth.models import User
 
 from apps.realtime import channels_auth
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
+from tests.site_tenant import host_workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture()
 def delegated():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
-    _, cred = AppCredential.create_credential(name="a", created_by=user)
+    _, cred = AppCredential.create_credential(name="a", created_by=user, workspace=host_workspace())
     raw, _ = DelegatedToken.issue(app=cred, user=user, ttl_seconds=600)
     return user, raw
 

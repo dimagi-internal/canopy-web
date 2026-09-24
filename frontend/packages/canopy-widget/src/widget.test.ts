@@ -141,6 +141,11 @@ describe('mounting and the three display modes', () => {
     expect(iframe.src).toBe(`${CANOPY}/embed/chat?app=connect-labs`)
   })
 
+  it('names the agent on the shell URL, since a site name is unique only per tenant', () => {
+    const { iframe } = widgetHarness({ agent: 'labs-helper' })
+    expect(iframe.src).toBe(`${CANOPY}/embed/chat?app=connect-labs&agent=labs-helper`)
+  })
+
   it('sandboxes the frame without letting it navigate the host page', () => {
     const { iframe } = widgetHarness()
     const sandbox = iframe.getAttribute('sandbox') ?? ''
