@@ -787,6 +787,8 @@ def _agent_env(slug: str | None) -> dict:
     rather than guessed at.
     """
     env = _child_safe_env()
+    for key in _GITHUB_ENV_KEYS:
+        env.pop(key, None)
     extra = getattr(_TURN_ENV, "extra", None) or {}
     if not slug:
         return {**env, **extra}
@@ -819,6 +821,8 @@ def _agent_env(slug: str | None) -> dict:
         key = key.strip()
         if not key or not key.replace("_", "").isalnum():
             continue
+        if key in _GITHUB_ENV_KEYS:
+            continue  # GitHub is the owner's, issued per turn — never the agent's .env
         value = value.strip().strip('"').strip("'")
         env[key] = value
         loaded += 1
@@ -1493,30 +1497,108 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     return ok, final_text, cli_session_id
 
 
-def _stage_github_token(token: str) -> None:
-    """Make the staged GitHub token usable by BOTH `git` and `gh`.
+# ── GitHub: the agent owner's identity, one turn at a time ──────────────────
+#
+# There is no box-wide GitHub credential. There used to be one — a shared
+# fine-grained PAT exported as GH_TOKEN into this process (so every turn
+# inherited it) and written to a global ~/.git-credentials — which meant every
+# agent pushed as whoever made that token, with whatever it could do, and could
+# not open a pull request (#747). Now each TURN asks canopy-web for its agent
+# owner's token for that agent (`AgentDelegation`), and it goes into that turn's
+# environment and nowhere else, so two concurrent turns for agents with
+# different owners cannot see each other's.
 
-    The credential helper only teaches `git` — `gh` ignores it entirely and looks
-    for its own login or GH_TOKEN. So every agent had working clone/fetch/push but
-    `gh auth status` reported "not logged into any GitHub hosts", which blocks the
-    PR-based shipping flow the operating model is built on. Readiness drills called
-    it out as the single blocking failure for hal after everything else was green.
+#: Variables that may carry a GitHub credential into a turn from anywhere but
+#: `_github_turn_env`: this process's own environment, or an agent's rendered
+#: `.env`. Stripped from every turn, so a turn with no delegation has NO GitHub
+#: identity rather than a leftover one.
+_GITHUB_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN")
 
-    Exporting GH_TOKEN is the fix rather than running `gh auth login`: it needs no
-    interactive step on a headless box, it is scoped to this process tree (so it is
-    inherited by agent turns via `_agent_env`, which copies os.environ), and it
-    leaves nothing on disk to go stale.
-    """
-    os.environ["GH_TOKEN"] = token
+
+def _retire_shared_github_credentials() -> None:
+    """Remove what the shared-PAT era left on this box: the global
+    `~/.git-credentials` store and the `credential.helper store` pointing at it,
+    and any GitHub token in this process's environment. Idempotent; run at every
+    start, because a box that updated in place still has them."""
+    for key in _GITHUB_ENV_KEYS:
+        os.environ.pop(key, None)
+    creds = pathlib.Path.home() / ".git-credentials"
     try:
-        subprocess.run(["git", "config", "--global", "credential.helper", "store"],
-                       check=False, capture_output=True)
-        creds = pathlib.Path.home() / ".git-credentials"
-        line = f"https://x-access-token:{token}@github.com\n"
-        creds.write_text(line)
-        creds.chmod(0o600)
+        if creds.exists():
+            creds.unlink()
+            _log("removed the shared ~/.git-credentials (GitHub is per turn now)")
     except OSError as exc:
-        _log(f"warn: could not stage github token: {exc}")
+        _log(f"warn: could not remove {creds}: {exc}")
+    try:
+        helper = subprocess.run(["git", "config", "--global", "--get", "credential.helper"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+        if helper == "store":
+            subprocess.run(["git", "config", "--global", "--unset", "credential.helper"],
+                           capture_output=True, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not unset the global git credential helper: {exc}")
+
+
+#: The credential helper a turn's git uses. It reads GH_TOKEN from the turn's own
+#: environment at the moment git asks, so it holds nothing itself, and the empty
+#: first entry clears any helper configured globally for github.com.
+_GIT_HELPER = '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+
+
+def github_env(token: str, *, git_name: str = "", git_email: str = "",
+               requested_by: str = "") -> dict:
+    """The environment that gives a subprocess — and only it — a GitHub identity.
+
+    `gh` reads GH_TOKEN; `git` gets a helper through GIT_CONFIG_COUNT/KEY/VALUE,
+    which applies to that process tree and touches no config file. Commits carry
+    the owner's identity instead of "Ubuntu <ubuntu@ip-…>". Every key is always
+    present, blank when unknown, so a turn's env never inherits a stale one.
+    """
+    env = {
+        "GH_TOKEN": token,
+        "GITHUB_TOKEN": token,
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+        "GIT_CONFIG_VALUE_0": "",
+        "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
+        "GIT_CONFIG_VALUE_1": _GIT_HELPER,
+        "CANOPY_REQUESTED_BY": requested_by,
+    }
+    if git_name and git_email:
+        env.update({"GIT_AUTHOR_NAME": git_name, "GIT_AUTHOR_EMAIL": git_email,
+                    "GIT_COMMITTER_NAME": git_name, "GIT_COMMITTER_EMAIL": git_email})
+    return env
+
+
+def _requested_by_from(turn: dict) -> str:
+    who = ((turn.get("caller_context") or {}).get("who") or {})
+    person = who.get("user") or who.get("contact") or {}
+    name, email = person.get("name") or "", person.get("email") or ""
+    if email and name and name != email:
+        return f"{name} <{email}>"
+    return email or name
+
+
+def _github_turn_env(runner_id: str, turn: dict) -> dict:
+    """This turn's GitHub identity, from canopy-web — or none.
+
+    canopy-web decides WHOSE (the turn's agent owner, for that agent); this only
+    names the turn. A refusal (no delegation, expired) is logged, emitted on the
+    turn so its viewer can see why a push will fail, and the turn still runs:
+    most turns never touch GitHub, and failing them all would be worse."""
+    requested_by = _requested_by_from(turn)
+    if not _turn_agent_slug(turn):
+        return {"CANOPY_REQUESTED_BY": requested_by}
+    turn_id = str(turn["id"])
+    status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")
+    if status == 200 and body and body.get("token"):
+        _log(f"turn {turn_id[:8]}: GitHub as @{body.get('github_login') or '?'}")
+        return github_env(body["token"], git_name=body.get("git_name") or "",
+                          git_email=body.get("git_email") or "",
+                          requested_by=body.get("requested_by") or requested_by)
+    _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
+         f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
+    return {"CANOPY_REQUESTED_BY": requested_by}
 
 
 def _chat_session_id(turn: dict) -> str:
@@ -1555,14 +1637,16 @@ def _safe_session_dirname(session_id: str) -> str:
     return cleaned[:80] or "unknown-session"
 
 
-def _git_quiet(*args: str, timeout: float = 60) -> bool:
+def _git_quiet(*args: str, timeout: float = 60, env: dict | None = None) -> bool:
     try:
-        return subprocess.run(["git", *args], capture_output=True, timeout=timeout).returncode == 0
+        return subprocess.run(["git", *args], capture_output=True, timeout=timeout,
+                              env=env).returncode == 0
     except Exception:  # noqa: BLE001
         return False
 
 
-def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path) -> None:
+def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
+                             env: dict | None = None) -> None:
     """Give an agent chat session its OWN worktree of the agent's repo, at the
     session's stable path — the cloud equivalent of the emdash worktree a laptop
     chat runs in. The path never changes (`--resume` resolves a Claude session
@@ -1587,11 +1671,11 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path) -> None:
             return
         if dirty:
             return
-        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin")
+        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
         _git_quiet("-C", str(path), "checkout", "--quiet", "--detach", "origin/main")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    _git_quiet("-C", str(clone), "fetch", "--quiet", "origin")
+    _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
     for ref in ("origin/main", "HEAD"):
         if _git_quiet("-C", str(clone), "worktree", "add", "--quiet", "--detach", str(path), ref):
             _log(f"session worktree: {path} from {clone.name} {ref}")
@@ -1600,7 +1684,7 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
+def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
     """Where claude should run for this turn (runner/ec2 design spec §2:
     'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
     bootstrapped clone under AGENT_ROOT (bootstrap_agents.sh, run once per
@@ -1622,14 +1706,17 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
     (each is its own unit of work), just not for a session's ongoing thread.
 
     Everything else (project turns, or an agent bootstrap hasn't reached yet)
-    keeps the original scratch-dir behavior."""
+    keeps the original scratch-dir behavior.
+
+    `env` is the turn's own environment: its git fetches and pulls use the
+    turn's GitHub identity, since this box holds none of its own."""
     session_id = _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
     if session_id:
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
         if clone is not None and (clone / ".git").exists():
-            _ensure_session_worktree(clone, path)
+            _ensure_session_worktree(clone, path, env=env)
         return path
     if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
@@ -1637,7 +1724,7 @@ def _turn_cwd(turn: dict, turn_id: str) -> pathlib.Path:
             try:
                 subprocess.run(
                     ["git", "-C", str(agent_dir), "pull", "--ff-only"],
-                    check=False, capture_output=True, timeout=60,
+                    check=False, capture_output=True, timeout=60, env=env,
                 )
             except Exception as exc:
                 _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
@@ -1894,6 +1981,7 @@ def bootstrap_agent_fleet() -> None:
     global _BOOTSTRAPPED_AT, _HEALTH_SLOW_AT
     try:
         _run_bootstrap()
+        _github_readiness()
     finally:
         # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
         # is what discharges a refresh request. The checks say how it went.
@@ -1901,6 +1989,28 @@ def bootstrap_agent_fleet() -> None:
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+#: This box's runner id, once paired — for the few calls made outside a loop
+#: that already carries it (the GitHub readiness check after a bootstrap).
+_RUNNER_ID = ""
+
+
+def _github_readiness() -> None:
+    """Can each agent this box serves open a pull request? Asked of canopy-web,
+    which checks the owner's token against GitHub right now — so a missing,
+    expired or under-scoped grant turns a health check red at boot instead of
+    surfacing as a 403 halfway through a turn. One check per agent."""
+    if not _RUNNER_ID:
+        return
+    status, rows = _api("GET", f"/runners/{_RUNNER_ID}/github-readiness")
+    if status != 200 or not isinstance(rows, list):
+        _set_check("github", "warn", f"could not ask canopy-web about GitHub (HTTP {status})")
+        return
+    for row in rows:
+        slug = row.get("agent_slug") or "?"
+        _set_check(f"github.{slug}", row.get("status") or "warn", row.get("detail") or "")
+        _log(f"github {slug}: {row.get('status')} — {row.get('detail')}")
 
 
 def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4) -> tuple[int, list[str]]:
@@ -2191,10 +2301,7 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             # EVERY agent's vault, handed to each of them. A turn gets its own
             # agent's key (`_agent_env`), and bootstrap reads each vault with
             # the key for that vault.
-            if cred.get("github_token"):
-                _stage_github_token(cred["github_token"])
-            _log("staged credential bundle from canopy-web (claude"
-                 f"{'+github' if cred.get('github_token') else ''})")
+            _log("staged credential bundle from canopy-web (claude)")
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")
         time.sleep(POLL_SECONDS)
@@ -3396,11 +3503,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
     try:
-        cwd = _turn_cwd(turn, turn_id)
+        # The turn's GitHub identity, first: the cwd's own git pull needs it.
+        github = _github_turn_env(runner_id, turn)
+        _TURN_ENV.extra = dict(github)
+        cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
         confined = _capability(turn) is not None
-        _TURN_ENV.extra = {}
         if confined:
             # Never resume, never be resumed: an email thread can hold a staff turn
             # (full) and a partner's (confined) on ONE canopy Session, and resuming
@@ -3408,7 +3517,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             resume_id = None
             try:
                 prompt = _confined_prompt(turn)
-                _TURN_ENV.extra, caller_path = _confine(turn)
+                confine_env, caller_path = _confine(turn)
+                _TURN_ENV.extra = {**github, **confine_env}
                 if prompt.startswith("/"):
                     first, sep, rest = prompt.partition("\n")
                     prompt = f"{first} --caller {caller_path}{sep}{rest}"
@@ -3783,6 +3893,9 @@ def main() -> None:
         _log("FATAL: CANOPY_BASE_URL and CANOPY_TOKEN are required")
         sys.exit(1)
     runner_id = pair_or_load()
+    global _RUNNER_ID
+    _RUNNER_ID = runner_id
+    _retire_shared_github_credentials()
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
     bootstrap_agent_fleet()

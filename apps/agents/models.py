@@ -356,6 +356,67 @@ class AgentCredential(models.Model):
         return f"{self.agent.slug}:{self.name}"
 
 
+class AgentDelegation(models.Model):
+    """A PERSON lending their own identity on some service to ONE agent.
+
+    The third kind of credential, beside the agent's own (its 1Password vault —
+    things that ARE the agent: its mailbox, an account of its own) and the
+    tenant's (the workspace's shared vault). `docs/superpowers/specs/
+    2026-09-05-agent-credentials-design.md` named this case and left it out of
+    scope — "`chrome-sales` acts on behalf of the dispatching human, not the
+    agent … an agent vault is the wrong home" — and GitHub is the same shape: an
+    agent's pull request should be opened AS its owner, with the owner's rights.
+
+    Why a row of its own and not a vault item (Jonathan, 2026-09-24):
+
+    - **It belongs to the person, not the agent.** A delegation is USED only
+      while its person owns the agent (`services.delegation_for`), so handing an
+      agent to someone else stops the old owner's identity travelling with it,
+      and the new owner is asked for their own. A vault item would have gone
+      with the agent.
+    - **It is scoped per agent.** For GitHub the owner pastes a fine-grained
+      token whose repository selection IS what this agent may touch — the only
+      per-repository scoping GitHub enforces on a credential that acts as a
+      person. Whether two agents hold the same token is the owner's business;
+      canopy stores one row each and never compares them.
+    - **canopy-web is its only home.** The "canopy-web holds only what it
+      mints" rule is about agent secrets that already live in 1Password. A
+      delegation has nowhere else to live, so it is held here — encrypted,
+      write-only, never returned to a browser — and handed to a runner one TURN
+      at a time (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
+
+    `meta` is what canopy last learned about the secret, never the secret:
+    for GitHub `{login, user_id, name, expires_at, checks: [{repo, ok,
+    detail}], checked_at}`.
+    """
+
+    GITHUB = "github"
+    SERVICE_CHOICES = [(GITHUB, "GitHub")]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="agent_delegations",
+    )
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="delegations")
+    service = models.CharField(max_length=32, choices=SERVICE_CHOICES)
+    secret_enc = models.TextField()
+    meta = models.JSONField(default=dict, blank=True)
+    #: From the service when it says (GitHub's token-expiration header); null
+    #: for a token that never expires. A column, not just `meta`, so "what
+    #: expires soon" is a query.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "agent", "service"],
+                                    name="uniq_agent_delegation"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"delegation:{self.user_id}->{self.agent_id}:{self.service}"
+
+
 class AgentSync(models.Model):
     """A periodic manager sync — a Google Doc covering code/skill improvement AND
     work products. Body lives in `doc_url`; canopy-web keeps the summary +

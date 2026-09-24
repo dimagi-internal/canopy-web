@@ -343,13 +343,17 @@ See "Where secrets live" above for WHICH KEY reads which vault — this section 
 only about naming. Agent `.env.tpl` files reference
 **`op://Agent-<Name>/<kebab-item>/<field>`** (e.g. `Agent-Ace/gog-token/credential`)
 for per-agent items, and the tenant's shared vault (**`op://Canopy-Shared/...`** in
-the `connect`/`dimagi` workspaces) for fleet-wide ones (`github-token`,
-`gog-oauth-client`, `canopy-drive-folder`). The old `AI-Agents` vault stays readable
+the `connect`/`dimagi` workspaces) for fleet-wide ones (`gog-oauth-client`,
+`canopy-drive-folder`). The old `AI-Agents` vault stays readable
 during the migration but nothing new should point at it. The vault NAME is whatever
 canopy-web has registered for that agent or workspace — it is no longer derived from
 the slug, so an agent whose vault is not registered is simply not provisioned.
-`wire.sh` reads `Canopy-Shared/github-token/credential` **on the operator's laptop**
-for this runner's own git access; `bootstrap_agents.sh` reads each agent's own
+**GitHub is not in any vault.** A box holds no GitHub credential: an agent's
+GitHub identity is its OWNER's, lent to that one agent (`AgentDelegation`, set on
+the agent's Settings → Credentials → GitHub). Each turn asks canopy-web for it
+(`POST /api/harness/runners/{id}/turns/{id}/github-token`) and it lives only in
+that turn's environment; bootstrap uses the same token for that agent's private
+clones. `bootstrap_agents.sh` reads each agent's own
 `Agent-<Name>/gog-token/credential` with that agent's key. See
 `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
@@ -377,8 +381,7 @@ Two more are published by `up.sh` itself, not staged by hand:
 - `canopy/cloud-runner/runner-code-sha` — that seed's provenance (`{"sha", "committed_at"}`), which the box stamps into `/opt/canopy-runner/build-info.json` so its first auto-update check can answer. A secret rather than a stack parameter because a parameter lives in UserData, and changing UserData stop/starts the running instance.
 
 Stage them with `./secrets.sh {canopy|claude|op} <file|->`. `wire.sh` reads the
-`canopy`/`claude`/`op` secrets from Secrets Manager and `Canopy-Shared/github-token`
-from 1Password, and `POST`s them all into the freshly-paired runner's credential
+Claude token from Secrets Manager and `POST`s it into the freshly-paired runner's credential
 bundle (`/api/harness/runners/{id}/credential`) — that's what unblocks
 `fetch_and_stage_credential()` and lets bootstrap actually run.
 

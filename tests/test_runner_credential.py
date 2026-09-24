@@ -50,12 +50,14 @@ def test_encryption_roundtrips_and_hides_plaintext():
 def test_set_then_runner_fetches_actual_values(client, runner):
     resp = client.post(
         _cred_url(runner),
-        data={"claude_token": "CLAUDE", "github_token": "GH"},
+        data={"claude_token": "CLAUDE", "claude_api_key": "KEY"},
         content_type="application/json",
     )
     assert resp.status_code == 200, resp.content
     masked = resp.json()
-    assert masked["has_claude_token"] and masked["has_github_token"]
+    assert masked["has_claude_token"] and masked["has_claude_api_key"]
+    # A box holds no GitHub credential any more (AgentDelegation, per turn).
+    assert "has_github_token" not in masked
     assert "CLAUDE" not in resp.content.decode()  # POST response never leaks values
 
     # Stored encrypted, not plaintext.
@@ -64,20 +66,18 @@ def test_set_then_runner_fetches_actual_values(client, runner):
 
     # The runner's own fetch returns the real values.
     got = client.get(_cred_url(runner)).json()
-    assert got == {"claude_token": "CLAUDE", "github_token": "GH",
-                   "claude_token_secondary": "", "claude_api_key": "",
-                   "updated_at": got["updated_at"]}
+    assert got == {"claude_token": "CLAUDE", "claude_token_secondary": "",
+                   "claude_api_key": "KEY", "updated_at": got["updated_at"]}
 
 
 def test_set_is_non_clobbering_per_field(client, runner):
-    services.set_runner_credential(runner, claude_token="C", github_token="G")
+    services.set_runner_credential(runner, claude_token="C", claude_api_key="K")
     # Update only the Claude token; the other two must survive.
     client.post(_cred_url(runner), data={"claude_token": "C2"}, content_type="application/json")
     # Re-fetch fresh (the fixture instance cached its reverse credential relation).
     v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
-    assert v == {"claude_token": "C2", "github_token": "G",
-                 "claude_token_secondary": "", "claude_api_key": "",
-                 "updated_at": v["updated_at"]}
+    assert v == {"claude_token": "C2", "claude_token_secondary": "",
+                 "claude_api_key": "K", "updated_at": v["updated_at"]}
 
 
 def test_fetch_when_unset_is_empty(client, runner):

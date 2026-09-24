@@ -757,6 +757,12 @@ class AgentCredentialsResolveOut(StrictModel):
     # them, and the box then behaves exactly as it does today.
     shared_op_vault: str = ""
     shared_op_sa_token: str = ""
+    # The agent OWNER's GitHub token for this agent (`AgentDelegation`), so a box
+    # can clone the agent's private repo and its private plugin repos. "" when
+    # the owner has lent none. A turn does NOT read it from here: it asks for
+    # its own, bound to the turn it claimed
+    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
+    github_token: str = ""
 
 
 class BootstrapReportIn(StrictModel):
@@ -838,3 +844,37 @@ class SkillHistoryOut(StrictModel):
     present: list[str]
     commits: list[SkillHistoryCommitOut]
     skills: list[SkillHistorySkillOut]
+
+
+# ---- GitHub: the owner's identity, lent to one agent (AgentDelegation) ----
+class AgentGitHubIn(StrictModel):
+    token: str
+
+
+class AgentGitHubCheckOut(StrictModel):
+    repo: str
+    ok: bool
+    detail: str = ""
+
+
+class AgentGitHubOut(StrictModel):
+    """What the settings screen shows about the owner's GitHub delegation to
+    this agent. Never the token."""
+
+    #: `owner/repo`, parsed from the agent's repo URL; "" when it is not GitHub.
+    repo: str = ""
+    owner_email: str = ""
+    #: GitHub's new-token form, pre-filled for this agent.
+    create_url: str = ""
+    set: bool = False
+    #: The GitHub account the token acts as, and the name commits carry.
+    login: str = ""
+    name: str = ""
+    expires_at: datetime | None = None
+    expired: bool = False
+    expiring_soon: bool = False
+    checks: list[AgentGitHubCheckOut] = Field(default_factory=list)
+    #: Why the last check could not run at all (GitHub rejected the token).
+    error: str = ""
+    checked_at: datetime | None = None
+    updated_at: datetime | None = None

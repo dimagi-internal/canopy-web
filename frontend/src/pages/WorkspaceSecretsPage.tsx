@@ -100,8 +100,9 @@ export function WorkspaceSecretsPage(): JSX.Element {
         </h3>
         <p className="mt-1 max-w-2xl text-[12px] text-muted-foreground">
           What <em>every</em> agent here shares — the Google OAuth clients their mailboxes
-          authenticate with, the GitHub token their repos are cloned with. One vault, one key,
-          used by every agent in this workspace.
+          authenticate with. One vault, one key, used by every agent in this workspace. (GitHub is
+          not here: an agent acts on GitHub as its owner, who lends it a token on the agent&rsquo;s
+          Settings → Credentials.)
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <label className="text-[12px] text-muted-foreground" htmlFor="shared-vault-name">
@@ -195,8 +196,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
           What a runner itself holds
         </h3>
         <p className="mt-1 max-w-2xl text-[12px] text-muted-foreground">
-          A box has its own credentials — its Claude login and the GitHub token it clones with. Those
-          are neither of the above: they belong to the machine, not to a tenant or an agent, and are
+          A box has its own credential — its Claude login. That is neither of the above: they belong to the machine, not to a tenant or an agent, and are
           set on the runner (Supervisor → Runners → the box). A runner holds no 1Password key of its
           own — it is handed the two above, per agent, as it provisions one.
         </p>

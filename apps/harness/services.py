@@ -2639,8 +2639,7 @@ from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-exp
 # never went through them.
 
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
-                          claude_api_key=None, github_token=None,
-                          updated_by=None):
+                          claude_api_key=None, updated_by=None):
     """Upsert a runner's credential bundle. None fields are left unchanged."""
     from apps.common.encryption import encrypt_secret
 
@@ -2650,8 +2649,7 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
     # there was a status endpoint). Don't create a row and don't touch
     # updated_at/updated_by for it — that timestamp is the audit trail for when a
     # credential last actually changed.
-    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
-                               github_token)):
+    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key)):
         return getattr(runner, "credential", None)
     cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
     if claude_token is not None:
@@ -2660,8 +2658,6 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
         cred.claude_token_secondary_enc = encrypt_secret(claude_token_secondary)
     if claude_api_key is not None:
         cred.claude_api_key_enc = encrypt_secret(claude_api_key)
-    if github_token is not None:
-        cred.github_token_enc = encrypt_secret(github_token)
     if updated_by is not None:
         cred.updated_by = updated_by
     cred.save()
@@ -2675,12 +2671,11 @@ def get_runner_credential(runner) -> dict:
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"claude_token": "", "claude_token_secondary": "", "claude_api_key": "",
-                "github_token": "", "updated_at": None}
+                "updated_at": None}
     return {
         "claude_token": decrypt_secret(cred.claude_token_enc),
         "claude_token_secondary": decrypt_secret(cred.claude_token_secondary_enc),
         "claude_api_key": decrypt_secret(cred.claude_api_key_enc),
-        "github_token": decrypt_secret(cred.github_token_enc),
         "updated_at": cred.updated_at,
     }
 
@@ -2690,13 +2685,11 @@ def runner_credential_status(runner) -> dict:
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"has_claude_token": False, "has_claude_token_secondary": False,
-                "has_claude_api_key": False, "has_github_token": False,
-                "updated_at": None}
+                "has_claude_api_key": False, "updated_at": None}
     return {
         "has_claude_token": bool(cred.claude_token_enc),
         "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
         "has_claude_api_key": bool(cred.claude_api_key_enc),
-        "has_github_token": bool(cred.github_token_enc),
         "updated_at": cred.updated_at,
     }
 # ---- Runner administrators (administer a box without speaking for it) -----
@@ -2968,11 +2961,17 @@ DRILL_PROMPT = """READINESS DRILL — READ-ONLY. You are the agent "{agent_slug}
 Verify you can operate end-to-end in THIS environment, then report.
 
 1. Confirm your working environment. If your agent repo is not checked out here,
-   clone it (read-only credentials are staged in this environment).
+   clone it (this turn carries your owner's GitHub token for you, in GH_TOKEN).
 2. Run your doctor / preflight / setup-verification checks. READ-ONLY mode:
    take NO outward action — no emails, no posts, no board writes, no deploys,
    no state mutations anywhere. The ONE exception is the report in step 3, which
    is not an outward action at all: it is this drill's return value.
+
+   Include this GitHub check, which proves you can SHIP, not merely that `gh` is
+   logged in. It asks GitHub to open a pull request from a branch that does not
+   exist, so it creates nothing:
+
+   {github_check}
 3. Report the result. THIS STEP IS MANDATORY AND ALREADY AUTHORIZED — it is how a
    drill returns its answer to the system that asked for it, the same way any
    other turn ends by reporting. It is not a message to anyone, it writes no
@@ -2997,6 +2996,26 @@ Verify you can operate end-to-end in THIS environment, then report.
    nothing after reporting."""
 
 
+def _drill_github_check(agent) -> str:
+    """The drill's GitHub step for `agent`. 422 = may open pull requests there
+    (GitHub checks permission before it validates the branch); 403 = the token
+    lacks Pull requests: write; 404 = it cannot see the repo at all."""
+    from apps.agents.delegations import agent_repo
+
+    repo = agent_repo(agent)
+    if not repo:
+        return "(this agent has no GitHub repo recorded in canopy-web — say so in the report)"
+    return (
+        f"code=$(curl -s -o /dev/null -w '%{{http_code}}' -X POST "
+        f"-H \"Authorization: Bearer $GH_TOKEN\" https://api.github.com/repos/{repo}/pulls "
+        f"-d '{{\"title\":\"canopy drill probe\",\"head\":\"canopy-drill-probe/does-not-exist\","
+        f"\"base\":\"main\"}}')\n"
+        f"   422 = PASS (can open pull requests on {repo}); 403 = FAIL (token lacks Pull "
+        f"requests: write); 404 = FAIL (token cannot see {repo}); empty GH_TOKEN = FAIL "
+        f"(no GitHub identity was issued to this turn)."
+    )
+
+
 def _drill_initiator(runner):
     from . import initiator as who
     return who.system(via="drill", accountable=runner.paired_by)
@@ -3019,7 +3038,8 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
             agent=agent,
             origin=Turn.ORIGIN_API,
             idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
-            prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url),
+            prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url,
+                                       github_check=_drill_github_check(agent)),
             pinned_runner=runner,
             # A readiness drill is canopy checking a box; the runner's pairer is
             # the person it is being run for.

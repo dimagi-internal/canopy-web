@@ -2617,6 +2617,57 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/github": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How this agent acts on GitHub (masked — never the token)
+         * @description Whose GitHub identity this agent's pull requests use, when that token
+         *     expires, and whether it can open a pull request on the agent's repo.
+         */
+        readonly get: operations["apps_agents_api_get_agent_github"];
+        /**
+         * Lend this agent your GitHub identity (owner only, write-only)
+         * @description Store the owner's fine-grained GitHub token for this agent.
+         *
+         *     Checked before it is stored: GitHub must accept it, and it must be able to
+         *     open a pull request on the agent's own repo. A token that fails is refused
+         *     with the reason, never saved.
+         */
+        readonly put: operations["apps_agents_api_set_agent_github"];
+        readonly post?: never;
+        /**
+         * Withdraw your GitHub identity from this agent
+         * @description Removes the CALLER's own delegation — nobody can withdraw someone
+         *     else's, and an agent admin who is not its owner has none to withdraw.
+         */
+        readonly delete: operations["apps_agents_api_delete_agent_github"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/github/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-check this agent's GitHub token against GitHub */
+        readonly post: operations["apps_agents_api_check_agent_github"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -3504,8 +3555,8 @@ export interface paths {
         /**
          * Set a cloud runner's credential bundle (owner only)
          * @description Store the per-runner secrets a cloud runner fetches at startup — its Claude
-         *     login (plus the secondary subscription and API key it fails over to), a
-         *     read-only GitHub token, the 1Password SA token. Owner-gated exactly
+         *     login (plus the secondary subscription and API key it fails over to).
+         *     Owner-gated exactly
          *     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
          *     at rest; the response is masked (booleans, never values).
          */
@@ -3534,6 +3585,51 @@ export interface paths {
          *     says when a credential was last actually rotated.
          */
         readonly get: operations["apps_harness_api_get_runner_credential_status"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/github-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * One claimed turn's GitHub credential (its agent owner's)
+         * @description The GitHub token and git identity for ONE turn this runner is executing:
+         *     the turn's agent owner's token for that agent. canopy decides whose — the
+         *     runner only names the turn. Refused (409, with the reason) when the owner
+         *     has lent none or it has expired; there is no shared fallback.
+         */
+        readonly post: operations["apps_harness_api_turn_github_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/github-readiness": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Can each agent this runner serves open a pull request?
+         * @description Checked live against GitHub, per agent routed to this runner. A box calls
+         *     this when it boots so a missing, expired or under-scoped token is a health
+         *     check going red, not a 403 in the middle of a turn.
+         */
+        readonly get: operations["apps_harness_api_runner_github_readiness"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -9877,6 +9973,11 @@ export interface components {
              * @default
              */
             readonly shared_op_sa_token: string;
+            /**
+             * Github Token
+             * @default
+             */
+            readonly github_token: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {
@@ -9912,6 +10013,83 @@ export interface components {
             readonly vault?: string | null;
             /** Service Key */
             readonly service_key?: string | null;
+        };
+        /** AgentGitHubCheckOut */
+        readonly AgentGitHubCheckOut: {
+            /** Repo */
+            readonly repo: string;
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
+        /**
+         * AgentGitHubOut
+         * @description What the settings screen shows about the owner's GitHub delegation to
+         *     this agent. Never the token.
+         */
+        readonly AgentGitHubOut: {
+            /**
+             * Repo
+             * @default
+             */
+            readonly repo: string;
+            /**
+             * Owner Email
+             * @default
+             */
+            readonly owner_email: string;
+            /**
+             * Create Url
+             * @default
+             */
+            readonly create_url: string;
+            /**
+             * Set
+             * @default false
+             */
+            readonly set: boolean;
+            /**
+             * Login
+             * @default
+             */
+            readonly login: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Expired
+             * @default false
+             */
+            readonly expired: boolean;
+            /**
+             * Expiring Soon
+             * @default false
+             */
+            readonly expiring_soon: boolean;
+            /** Checks */
+            readonly checks?: readonly components["schemas"]["AgentGitHubCheckOut"][];
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /** Checked At */
+            readonly checked_at?: string | null;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /** AgentGitHubIn */
+        readonly AgentGitHubIn: {
+            /** Token */
+            readonly token: string;
         };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
@@ -11327,11 +11505,6 @@ export interface components {
              * @default false
              */
             readonly has_claude_api_key: boolean;
-            /**
-             * Has Github Token
-             * @default false
-             */
-            readonly has_github_token: boolean;
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -11347,8 +11520,6 @@ export interface components {
             readonly claude_token_secondary?: string | null;
             /** Claude Api Key */
             readonly claude_api_key?: string | null;
-            /** Github Token */
-            readonly github_token?: string | null;
         };
         /**
          * RunnerCredentialOut
@@ -11370,13 +11541,69 @@ export interface components {
              * @default
              */
             readonly claude_api_key: string;
-            /**
-             * Github Token
-             * @default
-             */
-            readonly github_token: string;
             /** Updated At */
             readonly updated_at?: string | null;
+        };
+        /**
+         * TurnGitHubTokenOut
+         * @description One turn's GitHub credential: its agent OWNER's token for that agent
+         *     (`AgentDelegation`), and the identity to commit with. Handed to the runner
+         *     that claimed the turn, for that turn's environment only.
+         */
+        readonly TurnGitHubTokenOut: {
+            /** Token */
+            readonly token: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Github Login
+             * @default
+             */
+            readonly github_login: string;
+            /**
+             * Git Name
+             * @default
+             */
+            readonly git_name: string;
+            /**
+             * Git Email
+             * @default
+             */
+            readonly git_email: string;
+            /**
+             * Repo
+             * @default
+             */
+            readonly repo: string;
+            /**
+             * Requested By
+             * @default
+             */
+            readonly requested_by: string;
+        };
+        /**
+         * RunnerGitHubReadinessOut
+         * @description Can one agent this runner serves open a pull request, checked against
+         *     GitHub at the moment of asking — so a missing or expired grant surfaces when
+         *     the box boots, not in the middle of a turn.
+         */
+        readonly RunnerGitHubReadinessOut: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Login
+             * @default
+             */
+            readonly login: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
         };
         /**
          * RunnerMintOut
@@ -16873,6 +17100,98 @@ export interface operations {
             };
         };
     };
+    readonly apps_agents_api_get_agent_github: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_set_agent_github: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentGitHubIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_delete_agent_github: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_check_agent_github: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+        };
+    };
     readonly apps_agents_api_delete_agent_credential: {
         readonly parameters: {
             readonly query?: never;
@@ -18185,6 +18504,51 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_turn_github_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnGitHubTokenOut"];
+                };
+            };
+        };
+    };
+    readonly apps_harness_api_runner_github_readiness: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerGitHubReadinessOut"][];
                 };
             };
         };

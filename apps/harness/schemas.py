@@ -970,7 +970,6 @@ class RunnerCredentialIn(Schema):
     claude_token: str | None = None
     claude_token_secondary: str | None = None
     claude_api_key: str | None = None
-    github_token: str | None = None
 
 
 class RunnerCredentialOut(Schema):
@@ -979,7 +978,6 @@ class RunnerCredentialOut(Schema):
     claude_token: str = ""
     claude_token_secondary: str = ""
     claude_api_key: str = ""
-    github_token: str = ""
     updated_at: dt.datetime | None = None
 
 
@@ -1044,8 +1042,37 @@ class RunnerCredentialStatusOut(Schema):
     has_claude_token: bool = False
     has_claude_token_secondary: bool = False
     has_claude_api_key: bool = False
-    has_github_token: bool = False
     updated_at: dt.datetime | None = None
+
+
+class TurnGitHubTokenOut(Schema):
+    """One turn's GitHub credential: its agent OWNER's token for that agent
+    (`AgentDelegation`), and the identity to commit with. Handed to the runner
+    that claimed the turn, for that turn's environment only."""
+
+    token: str
+    expires_at: dt.datetime | None = None
+    github_login: str = ""
+    git_name: str = ""
+    git_email: str = ""
+    #: `owner/repo` of the agent's own repo.
+    repo: str = ""
+    #: `Name <email>` of whoever caused the turn, for a `Requested-by:` trailer;
+    #: "" when nobody in particular did (a schedule, a drill).
+    requested_by: str = ""
+
+
+class RunnerGitHubReadinessOut(Schema):
+    """Can one agent this runner serves open a pull request, checked against
+    GitHub at the moment of asking — so a missing or expired grant surfaces when
+    the box boots, not in the middle of a turn."""
+
+    agent_slug: str
+    #: ok | warn (works, but expires within two weeks) | fail
+    status: str
+    detail: str = ""
+    login: str = ""
+    expires_at: dt.datetime | None = None
 
 
 # ---------------------------------------------------------------------------

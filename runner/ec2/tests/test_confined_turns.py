@@ -27,7 +27,7 @@ def _turn(**kw):
 def cr(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "PROFILE_ROOT", tmp_path / "profiles")
     monkeypatch.setattr(cloud_runner, "CALLER_ROOT", tmp_path / "caller")
-    monkeypatch.setattr(cloud_runner, "_turn_cwd", lambda turn, tid: tmp_path)
+    monkeypatch.setattr(cloud_runner, "_turn_cwd", lambda turn, tid, env=None: tmp_path)
     monkeypatch.setattr(cloud_runner, "_start_lease_renewal",
                         lambda rid, tid: __import__("threading").Event())
     monkeypatch.setattr(cloud_runner, "_child_safe_env", lambda: {"PATH": "/bin"})
