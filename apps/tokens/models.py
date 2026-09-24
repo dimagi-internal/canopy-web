@@ -183,14 +183,26 @@ class AppCredential(models.Model):
     #: arise here: every reader filters `workspace_id__in=<slugs I own>`, and a
     #: SQL `IN` never matches NULL, so an unowned row is excluded by
     #: construction rather than by remembering to exclude it.
+    #: The workspace that CUSTODIES this site's identity — its origins and keys.
+    #:
+    #: Custody, not ownership. A site is a description of an external system,
+    #: and several tenants may grant it; the custodian is simply whichever of
+    #: them maintains the facts about it. Custody TRANSFERS when that tenant
+    #: withdraws (`embed_apps.disconnect`), because a site every other tenant
+    #: still uses must not be left with nobody able to correct its key.
+    #:
+    #: `SET_NULL`, never `CASCADE`: deleting a workspace must not delete a site
+    #: other tenants depend on. It used to cascade, which made removing one
+    #: workspace silently end every other tenant's integration through that
+    #: site — the same class of coupling as revoking it globally.
     workspace = models.ForeignKey(
         "workspaces.Workspace",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="embedded_apps",
-        help_text="Workspace whose owners administer this app. Blank for rows "
-        "registered before the Connected apps page existed.",
+        help_text="Workspace whose owners maintain this site's origins and keys. "
+        "Transfers if they withdraw; blank for rows predating the Connected sites page.",
     )
     #: Origins permitted to frame this app's embed shell, as a
     #: `frame-ancestors` list (`https://host[:port]`, no path, no wildcard).

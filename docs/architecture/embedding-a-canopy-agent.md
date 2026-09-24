@@ -109,10 +109,14 @@ workspaces it serves. Do not register it twice.
 
 Each workspace grants it separately — the second and every later one uses
 **"Let a site someone else registered act for us"** on their own Connected
-sites page, and picks which of *their* agents it may offer. That keeps the
-decision where it belongs: an owner of a workspace decides whether your site
-may act for them, and can withdraw it without touching your keys, your origins,
-or any other workspace's grant.
+sites page, and picks which of *their* agents it may offer.
+
+**Those grants are independent of each other.** A workspace that stops using
+your site withdraws only its own grant: every other workspace keeps working,
+and if the leaver happened to be the one maintaining your site's origins and
+keys, that passes to a workspace still using it. Your integration cannot be
+ended by a tenant you have nothing to do with — which is the point of one
+identity plus separate grants, rather than one workspace "owning" your site.
 
 What changes on your side is one field: **name the agent** when you mint a
 visitor token (`agent_slug` on `POST /api/auth/contact-token`). An agent

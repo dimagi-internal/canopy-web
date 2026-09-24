@@ -229,7 +229,7 @@ def test_withdrawing_one_grant_leaves_every_other_tenant_working():
              data={"name": "connect-labs", "agents": ["b-agent"]},
              content_type="application/json")
 
-    r = c_b.delete(f"/api/workspaces/beta/connected-apps/{app.pk}/grant")
+    r = c_b.delete(f"/api/workspaces/beta/connected-apps/{app.pk}")
 
     assert r.status_code == 204
     assert _mint(priv, agent_slug="b-agent").status_code == 403
@@ -272,3 +272,79 @@ def test_a_stranger_cannot_even_learn_the_tenant_exists():
                data={"name": "connect-labs"}, content_type="application/json")
 
     assert r.status_code == 404, "not 403 — that would confirm beta exists"
+
+
+# --- one tenant's exit must not end another's -----------------------------------
+
+
+def test_the_registrant_leaving_does_not_end_anyone_elses_integration():
+    """The coupling this model exists to remove, and the one that survived the
+    first version: `disconnect` set `revoked_at` on the SITE, and `issuer_of`
+    filters on it — so whichever workspace happened to register a shared site
+    could end every other tenant's integration with one button that did not say
+    so."""
+    app, priv, (_oa, _wa, c_a), (_ob, _wb, c_b) = _world()
+    c_b.post("/api/workspaces/beta/connected-apps/grants",
+             data={"name": "connect-labs", "agents": ["b-agent"]},
+             content_type="application/json")
+
+    assert c_a.delete(f"/api/workspaces/alpha/connected-apps/{app.pk}").status_code == 204
+
+    app.refresh_from_db()
+    assert app.revoked_at is None, "the site is not retired while somebody still grants it"
+    assert _mint(priv, agent_slug="b-agent").status_code == 200, "beta is untouched"
+    assert _mint(priv, agent_slug="a-agent").status_code == 403, "alpha really did leave"
+
+
+def test_custody_transfers_so_a_shared_site_is_never_left_unmaintainable():
+    """If the leaver was the one maintaining the site's key, somebody still
+    using it has to be able to correct that key."""
+    app, _priv, (_oa, _wa, c_a), (_ob, _wb, c_b) = _world()
+    c_b.post("/api/workspaces/beta/connected-apps/grants",
+             data={"name": "connect-labs", "agents": ["b-agent"]},
+             content_type="application/json")
+
+    c_a.delete(f"/api/workspaces/alpha/connected-apps/{app.pk}")
+
+    app.refresh_from_db()
+    assert app.workspace_id == "beta"
+    # And beta can now actually exercise it.
+    r = c_b.patch(f"/api/workspaces/beta/connected-apps/{app.pk}",
+                  data={"origins": ["https://beta.example.com"]},
+                  content_type="application/json")
+    assert r.status_code == 200, r.content
+
+
+def test_the_site_is_retired_only_when_the_last_tenant_leaves():
+    """Then it takes nothing from anybody."""
+    app, priv, (_oa, _wa, c_a), (_ob, _wb, c_b) = _world()
+    c_b.post("/api/workspaces/beta/connected-apps/grants",
+             data={"name": "connect-labs", "agents": ["b-agent"]},
+             content_type="application/json")
+
+    c_a.delete(f"/api/workspaces/alpha/connected-apps/{app.pk}")
+    c_b.delete(f"/api/workspaces/beta/connected-apps/{app.pk}")
+
+    app.refresh_from_db()
+    assert app.revoked_at is not None
+    assert _mint(priv, agent_slug="b-agent").status_code in (401, 403)
+
+
+def test_deleting_a_workspace_does_not_delete_a_site_others_depend_on():
+    """It used to CASCADE: removing one workspace destroyed the site row, and
+    every other tenant's grant with it.
+
+    A workspace with agents cannot be deleted at all (`Agent.workspace` is
+    PROTECT), so this is the wound-down case — the agents go first, and the
+    site another tenant still uses must outlive the tenant that registered it.
+    """
+    app, priv, (_oa, ws_a, _ca), (_ob, _wb, c_b) = _world()
+    c_b.post("/api/workspaces/beta/connected-apps/grants",
+             data={"name": "connect-labs", "agents": ["b-agent"]},
+             content_type="application/json")
+
+    Agent.objects.filter(workspace=ws_a).delete()
+    ws_a.delete()
+
+    assert AppCredential.objects.filter(name="connect-labs").exists()
+    assert _mint(priv, agent_slug="b-agent").status_code == 200

@@ -101,11 +101,3 @@ export async function grantConnectedApp(
   return unwrap<ConnectedApp>(res, 'Could not grant that site')
 }
 
-/** Withdraw this workspace's grant. The site keeps working for every other
- *  tenant that granted it — which is why this is not "disconnect". */
-export async function revokeConnectedAppGrant(slug: string, appId: number): Promise<void> {
-  const res = await apiV2.DELETE('/api/workspaces/{slug}/connected-apps/{app_id}/grant', {
-    params: { path: { slug, app_id: appId } },
-  })
-  unwrap<void>(res, 'Could not withdraw the grant')
-}
