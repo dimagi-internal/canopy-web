@@ -345,5 +345,6 @@ Design **specs** (the "why" record) live in `docs/superpowers/specs/`. The execu
 - `docs/walkthroughs/project-workbench.yaml` — Project workbench walkthrough spec
 - `docs/case-studies/workbench-self-improvement.md` — Self-improvement case study
 - `docs/personas/jonathan.md` — Primary user persona
+- `docs/runbooks/connecting-a-system.md` — **operator's side of connecting a system**: what is self-serve (all of it, for a new site), and which prod state was typed once and lives in no file (the ace-web Connected site row, its signing key's value, ACE's published interface)
 - `docs/runbooks/mobile-loop-real-emdash.md` — Runbook: drive the mobile loop against a real emdash (kept current — see #517)
 - `TODOS.md` — Deferred V2 work (proactive detection, prompt hardening, OAuth integrations, multi-tenant auth, cowork adapter)
