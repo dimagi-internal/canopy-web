@@ -362,7 +362,7 @@ describe('the page is declared BEFORE the turn is queued', () => {
 
     await waitFor(() => expect(order()).toContain('send'))
     const sent = calls.find((c) => c.url.includes('/send'))
-    const body = JSON.parse(String(sent!.init.body))
+    const body = JSON.parse(String(sent!.init?.body))
     expect(body.text).toContain('what am I looking at?')
     expect(body.text).toContain('Context from the page I am on')
     expect(body.text).toContain('list_insights')
@@ -382,7 +382,7 @@ describe('the page is declared BEFORE the turn is queued', () => {
     await say('and now?')
 
     await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
-    const body = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init.body))
+    const body = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init?.body))
     expect(body.text).toContain('7')
     expect(body.text).not.toContain('"visible_ids": [\n    1\n  ]')
   })
