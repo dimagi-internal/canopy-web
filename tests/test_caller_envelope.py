@@ -270,3 +270,124 @@ def test_thread_history_counts_earlier_turns_on_the_same_thread(ctx):
 def test_no_thread_means_no_thread_history(ctx):
     _o, _ws, agent = ctx
     assert caller_context.build(_email(agent, key="e-nothread"))["thread_history"] is None
+
+
+# --- current_page, for a visitor who has no canopy account -------------------------
+# Measured on connect-labs' marketplace panel: the agent called `current_page`,
+# got `{"result":[]}`, and told the person it could not see their screen — while
+# 23 declared organisations sat in front of them. A caller token's tools run as
+# the CALLER, and a widget visitor is a contact with no canopy account, so the
+# user-scoped predicate matched nothing. It was answering the wrong question:
+# "whose pages may this USER see" rather than "what is THIS conversation showing".
+
+
+@contextlib.contextmanager
+def as_caller(turn, user=None):
+    """A confined caller's token: names the conversation, and a user only when
+    the caller happens to have an account (a contact does not)."""
+    access = AccessToken(
+        token="cct_x", client_id=f"turn:{turn.pk}", scopes=["canopy:turn"],
+        claims={"sub": f"turn:{turn.pk}", "user_id": user.pk if user else None,
+                "auth_method": "caller_token", "turn_id": str(turn.pk),
+                "turn_ids": [str(turn.pk)], "tool_globs": ["*"]},
+    )
+    tok = auth_context_var.set(AuthenticatedUser(access))
+    try:
+        yield
+    finally:
+        auth_context_var.reset(tok)
+
+
+def _current_page():
+    return async_to_sync(mcp.call_tool)("current_page", {}).structured_content["result"]
+
+
+def _widget_turn(agent, contact, state, key="w-1"):
+    """A contact's conversation with a declared page, as the widget makes one."""
+    from apps.canopy_sessions import page_state
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=agent.workspace, agent=agent, contact=contact)
+    page_state.set_page_state(session, state)
+    turn, _ = services.enqueue_turn(origin=Turn.ORIGIN_API, idempotency_key=key, session=session,
+                                    initiator=who.for_contact(contact, via="widget:connect-labs"))
+    return turn, session
+
+
+@pytest.fixture()
+def visitor(ctx):
+    _owner, ws, agent = ctx
+    contact = contacts.record_inbound_sender(workspace=ws, address="visitor@partner.org")
+    return agent, contact
+
+
+VIEW = {"resource": "labs-marketplace://orgs", "backing_tool": "marketplace_orgs_get",
+        "visible_ids": ["acme-health", "beta-care"]}
+
+
+def test_a_contact_visitor_can_have_their_page_read(visitor):
+    """The one that was broken. No canopy account, and the page still answers."""
+    agent, contact = visitor
+    turn, session = _widget_turn(agent, contact, VIEW)
+
+    with as_caller(turn):
+        pages = _current_page()
+
+    assert [p["session_id"] for p in pages] == [str(session.id)]
+    assert pages[0]["state"]["visible_ids"] == ["acme-health", "beta-care"]
+    assert pages[0]["version"] == 1
+
+
+def test_it_answers_about_THIS_conversation_and_not_another(visitor):
+    """Narrower than the user-scoped path, not wider: a second conversation's
+    page — the same contact's — is not this screen."""
+    agent, contact = visitor
+    turn, session = _widget_turn(agent, contact, VIEW, key="w-1")
+    _other_turn, other = _widget_turn(agent, contact, {"resource": "stock://on-hand"}, key="w-2")
+
+    with as_caller(turn):
+        pages = _current_page()
+
+    ids = [p["session_id"] for p in pages]
+    assert str(session.id) in ids
+    assert str(other.id) not in ids
+
+
+def test_a_conversation_with_no_declared_page_answers_empty(visitor):
+    agent, contact = visitor
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=agent.workspace, agent=agent, contact=contact)
+    turn, _ = services.enqueue_turn(origin=Turn.ORIGIN_API, idempotency_key="w-3", session=session,
+                                    initiator=who.for_contact(contact, via="widget:connect-labs"))
+
+    with as_caller(turn):
+        assert _current_page() == []
+
+
+def test_a_member_in_a_confined_turn_is_asked_about_the_screen_too(ctx, visitor):
+    """A caller may hold an account. In THAT turn the question is still "this
+    conversation" — their other tabs are a different question."""
+    owner, ws, agent = ctx
+    _agent, contact = visitor
+    turn, session = _widget_turn(agent, contact, VIEW, key="w-4")
+
+    with as_caller(turn, user=owner):
+        pages = _current_page()
+
+    assert [p["session_id"] for p in pages] == [str(session.id)]
+
+
+def test_a_pat_still_answers_about_the_users_own_pages(ctx):
+    """The unchanged path: no caller token, so the user-scoped predicate decides."""
+    owner, ws, agent = ctx
+    from apps.canopy_sessions import page_state
+    from apps.canopy_sessions.models import Session
+
+    mine = Session.objects.create(workspace=ws, agent=agent, created_by=owner)
+    page_state.set_page_state(mine, VIEW)
+
+    with as_user(owner):
+        pages = _current_page()
+
+    assert [p["session_id"] for p in pages] == [str(mine.id)]

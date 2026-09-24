@@ -26,6 +26,21 @@ def _turn_claims() -> dict | None:
     return claims if claims.get("auth_method") == "caller_token" else None
 
 
+def caller_turn_ids() -> list[str] | None:
+    """The turns of THIS caller token's own conversation, or None if not one.
+
+    Public because a tool sometimes has to answer about the conversation rather
+    than about a user: a caller token's tools run as the CALLER, and an outside
+    contact has no canopy account, so every user-scoped lookup correctly matches
+    nothing. The token already names its conversation, which is the narrower
+    question and the answerable one.
+    """
+    claims = _turn_claims()
+    if claims is None:
+        return None
+    return [str(t) for t in (claims.get("turn_ids") or []) if t]
+
+
 def _allowed(name: str, claims: dict) -> bool:
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
 
