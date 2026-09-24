@@ -63,10 +63,10 @@ Go to **Connected sites** in your workspace —
 | **Agents it may offer** | Which of this workspace's agents this site may offer | None ⇒ the picker offers nothing |
 | **Signing key** | The PUBLIC half of a key pair your server signs visitor statements with (§3). Several may be pasted during a rotation | Missing ⇒ your site can vouch for nobody, so the widget never gets a token |
 
-Creating a site also shows a **secret**, once. The signing-key flow in §3 does
-not use it — it exists for an older server-to-server exchange (§3, last part).
-canopy keeps only a hash, so it cannot be recovered; **New secret** issues
-another and invalidates the old one immediately.
+There is **no secret** to copy. A site proves itself by signing (§3), so canopy
+holds nothing that could impersonate it. (Until 2026-09-24 creating a site
+showed a secret once and offered **New secret**; it had authenticated nothing
+since the server-to-server token exchange was removed, so both went.)
 
 URLs are validated on save. A wildcard, a path, or anything containing `;` is
 refused with an explanation — a wildcard in particular would undo the entire

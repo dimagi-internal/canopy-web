@@ -3316,7 +3316,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Connect a site
-         * @description Register a site, and return its secret once.
+         * @description Register a site in this workspace.
          */
         readonly post: operations["apps_tokens_connected_apps_api_connect_app"];
         readonly delete?: never;
@@ -3347,27 +3347,6 @@ export interface paths {
         readonly head?: never;
         /** Change what a connected site may do */
         readonly patch: operations["apps_tokens_connected_apps_api_update_connected_app"];
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/rotate": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Issue a new secret, invalidating the old one
-         * @description The previous secret stops working immediately — that is the point of the
-         *     button, since it is reached for when the old one has leaked.
-         */
-        readonly post: operations["apps_tokens_connected_apps_api_rotate_secret"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/timeline/": {
@@ -10932,8 +10911,8 @@ export interface components {
          * ConnectedAppOut
          * @description A site connected to canopy.
          *
-         *     Carries no secret. The raw credential exists only in the response that
-         *     minted it — there is nothing to re-read here, by construction.
+         *     A site has no secret: it proves itself by signing (`jwks_url` or
+         *     `public_keys`), so there is nothing here to protect or rotate.
          */
         readonly ConnectedAppOut: {
             /** Id */
@@ -10963,12 +10942,6 @@ export interface components {
             readonly last_used_at: string | null;
             /** Revoked */
             readonly revoked: boolean;
-        };
-        /** ConnectedAppCreatedOut */
-        readonly ConnectedAppCreatedOut: {
-            readonly app: components["schemas"]["ConnectedAppOut"];
-            /** Secret */
-            readonly secret: string;
         };
         /** ConnectIn */
         readonly ConnectIn: {
@@ -11019,11 +10992,6 @@ export interface components {
             readonly show_on_canopy_pages?: boolean | null;
             /** Resolvable Domains */
             readonly resolvable_domains?: readonly string[] | null;
-        };
-        /** SecretOut */
-        readonly SecretOut: {
-            /** Secret */
-            readonly secret: string;
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
@@ -17957,7 +17925,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedAppCreatedOut"];
+                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
                 };
             };
         };
@@ -18006,29 +17974,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectedAppOut"];
-                };
-            };
-        };
-    };
-    readonly apps_tokens_connected_apps_api_rotate_secret: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly app_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SecretOut"];
                 };
             };
         };

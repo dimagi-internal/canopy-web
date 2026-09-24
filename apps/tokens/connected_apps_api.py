@@ -6,8 +6,7 @@ invites, the shared vault): `{slug}` in the path, owner-only, 404 before 403 so
 a non-member cannot probe which workspaces exist.
 
 The domain rules live in `embed_apps.py`, not here. This module is the HTTP
-edge — statuses, serialisation and the one thing an endpoint must own, which is
-that the raw secret is returned exactly once, on the response that creates it.
+edge — statuses and serialisation.
 """
 
 from __future__ import annotations
@@ -48,8 +47,8 @@ class ConnectedAgentOut(Schema):
 class ConnectedAppOut(Schema):
     """A site connected to canopy.
 
-    Carries no secret. The raw credential exists only in the response that
-    minted it — there is nothing to re-read here, by construction.
+    A site has no secret: it proves itself by signing (`jwks_url` or
+    `public_keys`), so there is nothing here to protect or rotate.
     """
 
     id: int
@@ -71,16 +70,6 @@ class ConnectedAppOut(Schema):
     created_at: str
     last_used_at: str | None
     revoked: bool
-
-
-class ConnectedAppCreatedOut(Schema):
-    app: ConnectedAppOut
-    #: Shown once. canopy stores only a hash, so this cannot be recovered.
-    secret: str
-
-
-class SecretOut(Schema):
-    secret: str
 
 
 class ConnectIn(Schema):
@@ -159,12 +148,12 @@ def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut
         raise _refuse(exc)
 
 
-@connected_apps_router.post("/{slug}/connected-apps", response={201: ConnectedAppCreatedOut},
+@connected_apps_router.post("/{slug}/connected-apps", response={201: ConnectedAppOut},
                             summary="Connect a site")
 def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
-    """Register a site, and return its secret once."""
+    """Register a site in this workspace."""
     try:
-        raw, app = embed_apps.register(
+        app = embed_apps.register(
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, agents=payload.agents,
             public_keys=payload.public_keys, jwks_url=payload.jwks_url,
@@ -180,7 +169,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
         raise _refuse(exc)
     audit(event=EmbedAuditLog.CONNECT, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} agents={payload.agents}")
-    return Status(201, ConnectedAppCreatedOut(app=_out(app), secret=raw))
+    return Status(201, _out(app))
 
 
 @connected_apps_router.patch("/{slug}/connected-apps/{int:app_id}", response=ConnectedAppOut,
@@ -209,17 +198,6 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
           detail=f"origins={app.frame_origins()} resolvable={app.resolvable_domains} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
-
-
-@connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/rotate", response=SecretOut,
-                            summary="Issue a new secret, invalidating the old one")
-def rotate_secret(request: HttpRequest, slug: str, app_id: int) -> SecretOut:
-    """The previous secret stops working immediately — that is the point of the
-    button, since it is reached for when the old one has leaked."""
-    app = _app_or_404(request, slug, app_id)
-    secret = embed_apps.rotate(app)
-    audit(event=EmbedAuditLog.ROTATE, request=request, app=app, actor=request.user)
-    return SecretOut(secret=secret)
 
 
 @connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},

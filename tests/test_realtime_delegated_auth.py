@@ -22,7 +22,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture()
 def delegated():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
-    _, cred = AppCredential.create_credential(name="a", created_by=user, workspace=host_workspace())
+    cred = AppCredential.create_credential(name="a", created_by=user, workspace=host_workspace())
     raw, _ = DelegatedToken.issue(app=cred, user=user, ttl_seconds=600)
     return user, raw
 

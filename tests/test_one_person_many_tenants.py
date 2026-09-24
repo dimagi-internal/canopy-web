@@ -67,7 +67,7 @@ def _world():
     pub = priv.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo).decode()
-    _raw, app = embed_apps.register(
+    app = embed_apps.register(
         user=owner_a, workspace_slug="alpha", name="connect-labs",
         origins=["https://labs.example.com"], agents=["a-agent"], public_keys=[pub])
     # B registers the same system itself — same name, same key — as every
@@ -182,10 +182,10 @@ def test_two_sites_using_the_same_id_are_two_people():
     """`external_id` lives in the SITE's namespace — `u-1` at one site and `u-1`
     at another are unrelated, and joining them would invent a person."""
     owner, _ws, _c = _tenant("alpha", "a@dimagi.com")
-    _raw1, site1 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-one",
+    site1 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-one",
                                        origins=["https://one.example.com"],
                                        public_keys=[_public_key()])
-    _raw2, site2 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-two",
+    site2 = embed_apps.register(user=owner, workspace_slug="alpha", name="site-two",
                                        origins=["https://two.example.com"],
                                        public_keys=[_public_key()])
 
@@ -201,9 +201,9 @@ def test_two_tenants_systems_sharing_a_name_but_not_keys_are_two_people():
     only the keys say it is the same signer."""
     owner_a, _wa, _ca = _tenant("alpha", "a@dimagi.com")
     owner_b, _wb, _cb = _tenant("beta", "b@dimagi.com")
-    _r, in_a = embed_apps.register(user=owner_a, workspace_slug="alpha", name="connect-labs",
+    in_a = embed_apps.register(user=owner_a, workspace_slug="alpha", name="connect-labs",
                                    origins=["https://a.example.com"], public_keys=[_public_key()])
-    _r, in_b = embed_apps.register(user=owner_b, workspace_slug="beta", name="connect-labs",
+    in_b = embed_apps.register(user=owner_b, workspace_slug="beta", name="connect-labs",
                                    origins=["https://b.example.com"], public_keys=[_public_key()])
 
     assert contact_services.person_for(app=in_a, external_id="u-1").pk \
@@ -214,8 +214,8 @@ def test_the_same_jwks_url_is_the_same_signer_across_tenants():
     """The usual shape since #929: each tenant pastes the host's JWKS URL."""
     owner_a, _wa, _ca = _tenant("alpha", "a@dimagi.com")
     owner_b, _wb, _cb = _tenant("beta", "b@dimagi.com")
-    in_a = AppCredential.create_credential(name="ace-web", created_by=owner_a, workspace="alpha")[1]
-    in_b = AppCredential.create_credential(name="ace-web", created_by=owner_b, workspace="beta")[1]
+    in_a = AppCredential.create_credential(name="ace-web", created_by=owner_a, workspace="alpha")
+    in_b = AppCredential.create_credential(name="ace-web", created_by=owner_b, workspace="beta")
     for app in (in_a, in_b):
         app.jwks_url = "https://ace.example.com/canopy/jwks"
         app.save(update_fields=["jwks_url"])
@@ -226,7 +226,7 @@ def test_the_same_jwks_url_is_the_same_signer_across_tenants():
 
 def test_a_site_with_no_keys_has_no_signer_to_key_a_person_on():
     owner, _ws, _c = _tenant("alpha", "a@dimagi.com")
-    _r, site = embed_apps.register(user=owner, workspace_slug="alpha", name="bare",
+    site = embed_apps.register(user=owner, workspace_slug="alpha", name="bare",
                                    origins=["https://bare.example.com"])
     assert contact_services.person_for(app=site, external_id="u-1") is None
 

@@ -11,7 +11,6 @@ import { WorkspaceApiError } from './workspaces'
 import type { components } from './generated'
 
 export type ConnectedApp = components['schemas']['ConnectedAppOut']
-export type ConnectedAppCreated = components['schemas']['ConnectedAppCreatedOut']
 
 async function unwrap<T>(res: { response: Response; data?: unknown; error?: unknown }, what: string): Promise<T> {
   if (!res.response.ok) {
@@ -41,12 +40,12 @@ export async function connectApp(
     /** Domains this tenant lets the site resolve to existing canopy users. */
     resolvable_domains: string[]
   },
-): Promise<ConnectedAppCreated> {
+): Promise<ConnectedApp> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
     params: { path: { slug } },
     body,
   })
-  return unwrap<ConnectedAppCreated>(res, 'Could not connect the site')
+  return unwrap<ConnectedApp>(res, 'Could not connect the site')
 }
 
 export async function updateConnectedApp(
@@ -66,14 +65,6 @@ export async function updateConnectedApp(
     body,
   })
   return unwrap<ConnectedApp>(res, 'Could not save the change')
-}
-
-export async function rotateSecret(slug: string, appId: number): Promise<string> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/{app_id}/rotate', {
-    params: { path: { slug, app_id: appId } },
-  })
-  const body = await unwrap<{ secret: string }>(res, 'Could not issue a new secret')
-  return body.secret
 }
 
 export async function disconnectApp(slug: string, appId: number): Promise<void> {

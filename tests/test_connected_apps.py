@@ -53,21 +53,19 @@ def _connect(c, body=None, slug="w1"):
 # --- connecting a site --------------------------------------------------------
 
 
-def test_an_owner_can_connect_a_site_and_is_shown_the_secret_once():
+def test_an_owner_can_connect_a_site_and_no_secret_is_issued():
+    """A site proves itself by signing, so registering one hands out nothing
+    to capture, store or rotate."""
     _user, _ws, c = _ctx()
 
     r = _connect(c)
 
     assert r.status_code == 201, r.content
-    body = r.json()
-    assert body["app"]["origins"] == [LABS]
-    # It must be the REAL secret — a response that prints something other than
-    # a working credential is worse than no response.
-    assert AppCredential.lookup(body["secret"]).name == "connect-labs"
-
-    # And it is nowhere in the list afterwards, because only a hash was kept.
-    listed = c.get("/api/workspaces/w1/connected-apps").json()
-    assert "secret" not in listed[0]
+    assert r.json()["origins"] == [LABS]
+    assert "secret" not in r.json()
+    assert not hasattr(AppCredential, "lookup")
+    assert c.post(f"/api/workspaces/w1/connected-apps/{r.json()['id']}/rotate").status_code \
+        in (404, 405)
 
 
 def test_an_editor_cannot():
@@ -125,13 +123,13 @@ def test_a_trailing_slash_is_accepted_and_normalised():
     _user, _ws, c = _ctx()
     r = _connect(c, {"name": "x", "origins": [f"{LABS}/"]})
     assert r.status_code == 201
-    assert r.json()["app"]["origins"] == [LABS]
+    assert r.json()["origins"] == [LABS]
 
 
 def test_several_environments_can_be_connected_at_once():
     _user, _ws, c = _ctx()
     r = _connect(c, {"name": "x", "origins": [LABS, "http://localhost:8000"]})
-    assert r.json()["app"]["origins"] == [LABS, "http://localhost:8000"]
+    assert r.json()["origins"] == [LABS, "http://localhost:8000"]
 
 
 # --- delegation domains: the capability this page used to have ---------------
@@ -151,7 +149,7 @@ def test_the_surface_hands_out_no_email_vouching_at_all():
     app = _connect(c, {"name": "x", "origins": [LABS],
                        # Ignored, not honoured: these keys no longer exist.
                        "delegation_domains": ["dimagi.com"],
-                       "provision_workspace": "w1", "provision_role": "editor"}).json()["app"]
+                       "provision_workspace": "w1", "provision_role": "editor"}).json()
 
     assert "delegation_domains" not in app
     row = AppCredential.objects.get(name="x")
@@ -166,7 +164,7 @@ def test_agents_can_be_offered_and_replaced():
     _user, ws, c = _ctx()
     _agent(ws, "alpha")
     _agent(ws, "beta")
-    app_id = _connect(c, {"name": "x", "origins": [LABS], "agents": ["alpha"]}).json()["app"]["id"]
+    app_id = _connect(c, {"name": "x", "origins": [LABS], "agents": ["alpha"]}).json()["id"]
 
     r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
                 data={"agents": ["beta"]}, content_type="application/json")
@@ -192,21 +190,9 @@ def test_an_agent_from_another_workspace_is_refused_rather_than_silently_ignored
 # --- lifecycle ----------------------------------------------------------------
 
 
-def test_rotating_replaces_the_secret_and_kills_the_old_one():
-    _user, _ws, c = _ctx()
-    created = _connect(c).json()
-    old = created["secret"]
-
-    new = c.post(f"/api/workspaces/w1/connected-apps/{created['app']['id']}/rotate").json()["secret"]
-
-    assert new != old
-    assert AppCredential.lookup(old) is None
-    assert AppCredential.lookup(new) is not None
-
-
 def test_disconnecting_makes_the_embed_shell_404_immediately():
     _user, _ws, c = _ctx()
-    app_id = _connect(c).json()["app"]["id"]
+    app_id = _connect(c).json()["id"]
     assert Client().get("/embed/chat?app=connect-labs").status_code == 200
 
     c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
@@ -242,7 +228,7 @@ def test_ticking_the_box_makes_canopy_show_that_apps_panel():
     body = _connect(c, {"name": "canopy-itself", "origins": [LABS],
                         "agents": ["echo"], "show_on_canopy_pages": True}).json()
 
-    assert body["app"]["shows_on_canopy_pages"] is True
+    assert body["shows_on_canopy_pages"] is True
     assert AppCredential.objects.get(name="canopy-itself").show_on_canopy_pages
 
 
@@ -272,7 +258,7 @@ def test_only_one_app_may_show_there():
 def test_it_can_be_turned_off_again():
     _user, _ws, c = _ctx()
     app_id = _connect(c, {"name": "x", "origins": [LABS],
-                          "show_on_canopy_pages": True}).json()["app"]["id"]
+                          "show_on_canopy_pages": True}).json()["id"]
 
     r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
                 data={"show_on_canopy_pages": False}, content_type="application/json")
@@ -301,7 +287,7 @@ def test_the_widget_reports_the_app_that_shows_there():
 def test_a_revoked_app_stops_showing_there():
     _user, _ws, c = _ctx()
     app_id = _connect(c, {"name": "x", "origins": [LABS],
-                          "show_on_canopy_pages": True}).json()["app"]["id"]
+                          "show_on_canopy_pages": True}).json()["id"]
 
     c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
 
@@ -347,7 +333,7 @@ def test_a_site_can_register_a_signing_key():
 
     body = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub]}).json()
 
-    assert body["app"]["signs_assertions"] is True
+    assert body["signs_assertions"] is True
     # Stored normalised (PEM keeps a trailing newline; the stored form strips
     # it), so compare like for like rather than pinning the incidental.
     assert AppCredential.objects.get(name="x").public_keys == [pub.strip()]
@@ -380,7 +366,7 @@ def test_keys_can_be_rotated_by_editing():
     _user, _ws, c = _ctx()
     _p1, pub1 = _keypair()
     _p2, pub2 = _keypair()
-    app_id = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub1]}).json()["app"]["id"]
+    app_id = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub1]}).json()["id"]
 
     r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
                 data={"public_keys": [pub1, pub2]}, content_type="application/json")
@@ -390,4 +376,4 @@ def test_keys_can_be_rotated_by_editing():
 
 def test_a_site_with_no_key_says_so():
     _user, _ws, c = _ctx()
-    assert _connect(c).json()["app"]["signs_assertions"] is False
+    assert _connect(c).json()["signs_assertions"] is False

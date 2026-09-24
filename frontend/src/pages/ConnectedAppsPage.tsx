@@ -9,7 +9,6 @@ import {
   connectApp,
   disconnectApp,
   listConnectedApps,
-  rotateSecret,
   updateConnectedApp,
   type ConnectedApp,
 } from '@/api/connectedApps'
@@ -53,39 +52,6 @@ export function parseKeys(raw: string): string[] {
  *  and the likeliest thing someone wants for a first connection. */
 export function currentOrigin(): string {
   return typeof window === 'undefined' ? '' : window.location.origin
-}
-
-function Secret({ value, onDone }: { value: string; onDone: () => void }): JSX.Element {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 space-y-2">
-      <p className="text-sm text-foreground">
-        Copy this now — canopy keeps only a hash of it, so it cannot be shown again.
-      </p>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 truncate rounded bg-input px-2 py-1 font-mono text-xs text-foreground">
-          {value}
-        </code>
-        <Button
-          size="sm"
-          onClick={() => {
-            void navigator.clipboard?.writeText(value)
-            setCopied(true)
-          }}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onDone}>
-          Done
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Your site sends it as <code>Authorization: Bearer …</code> when it exchanges a
-        token for a signed-in user. A site that only hosts the widget on canopy's own
-        pages never needs it.
-      </p>
-    </div>
-  )
 }
 
 // Which domains' EXISTING canopy users arrive as themselves (who-is-asking §2)
@@ -197,7 +163,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [apps, setApps] = useState<ConnectedApp[] | null>(null)
   const [agents, setAgents] = useState<AgentOut[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [secret, setSecret] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -248,7 +213,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
   async function onConnect(e: FormEvent) {
     e.preventDefault()
     await run(async () => {
-      const created = await connectApp(slug!, {
+      await connectApp(slug!, {
         name: name.trim(),
         origins: parseOrigins(origins),
         // No domain is typed here. A site vouches for a visitor with a signing
@@ -260,7 +225,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
         public_keys: parseKeys(signingKey),
         jwks_url: jwksUrl.trim(),
       })
-      setSecret(created.secret)
       setName('')
       setOrigins('')
       setPicked([])
@@ -285,7 +249,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
       )}
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {secret && <Secret value={secret} onDone={() => setSecret(null)} />}
 
       {/* Everything already connected. */}
       <section className="space-y-3">
@@ -319,16 +282,6 @@ export function ConnectedAppsPage(): JSX.Element | null {
                 </div>
                 {isOwner && !app.revoked && (
                   <div className="flex shrink-0 gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(async () => setSecret(await rotateSecret(slug, app.id)))
-                      }
-                    >
-                      New secret
-                    </Button>
                     {/* This workspace's own registration. Another workspace
                         using the same system registered it separately. */}
                     <Button

@@ -34,9 +34,7 @@ class Command(BaseCommand):
         if AppCredential.objects.filter(name=name, workspace_id=ws,
                                         revoked_at__isnull=True).exists():
             raise CommandError(
-                f"{ws} already has a credential {name!r} — revoke it first to rotate"
+                f"{ws} already has a site named {name!r}"
             )
-        raw, cred = AppCredential.create_credential(name=name, created_by=None, workspace=ws)
-        self.stdout.write(self.style.SUCCESS(f"Registered app credential {name!r} (id={cred.pk})"))
-        self.stdout.write("\nCapture this once — it's never stored on the server:\n")
-        self.stdout.write(raw)
+        cred = AppCredential.create_credential(name=name, created_by=None, workspace=ws)
+        self.stdout.write(self.style.SUCCESS(f"Registered site {name!r} in {ws} (id={cred.pk})"))

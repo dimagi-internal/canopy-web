@@ -113,7 +113,7 @@ def test_ensure_member_records_provisioning_app_on_create_only():
 
     su = User.objects.create(username="su3", email="su3@dimagi.com")
     ws = Workspace.objects.create(slug="ws2", display_name="WS2", created_by=su)
-    _, cred = AppCredential.create_credential(name="prov-app", created_by=su, workspace=ws)
+    cred = AppCredential.create_credential(name="prov-app", created_by=su, workspace=ws)
 
     user = User.objects.create(username="m2", email="m2@dimagi.com")
     m, created = services.ensure_member(
@@ -147,7 +147,7 @@ def test_provisioned_membership_protects_its_credential_from_deletion(db):
     User = get_user_model()
     admin = User.objects.create_user("prov-admin", "prov-admin@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="prov-ws", display_name="Prov", created_by=admin)
-    _raw, cred = AppCredential.create_credential(name="prov-app", created_by=admin, workspace=ws)
+    cred = AppCredential.create_credential(name="prov-app", created_by=admin, workspace=ws)
     user = User.objects.create_user("prov-u", "prov-u@dimagi.com", "pw")
     ensure_member(ws, user, WorkspaceMembership.EDITOR, provisioned_by_app=cred)
 
