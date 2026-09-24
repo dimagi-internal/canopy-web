@@ -298,6 +298,29 @@ def _runner_or_404(
 
 
 def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """`_tenant_turn_or_404`, then `site ∩ user`: a connected site acting for its
+    visitor sees only its own agents' turns (apps/tokens/delegation.py). Same
+    uniform 404, so a site cannot learn another agent's turn exists."""
+    from apps.tokens import delegation
+
+    turn = _tenant_turn_or_404(request, turn_id)
+    offered = delegation.offered_for(request)
+    if offered is not None and delegation.turn_agent_id(turn) not in offered:
+        raise HttpError(404, "turn not found")
+    return turn
+
+
+def _site_turn_q(request: HttpRequest):
+    """The turns an acting site may see, as a Q — or None when no site acts."""
+    from apps.tokens import delegation
+
+    offered = delegation.offered_for(request)
+    if offered is None:
+        return None
+    return Q(agent_id__in=offered) | Q(agent__isnull=True, chat_session__agent_id__in=offered)
+
+
+def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """Resolve a turn, gated by its tenant.
 
     An AGENT turn derives its tenant one hop away, via agent.workspace (spec
@@ -600,6 +623,13 @@ def list_runners(request: HttpRequest):
         .prefetch_related("drills")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
+    from apps.tokens import delegation
+
+    offered = delegation.offered_for(request)
+    if offered is not None:
+        # A site sees only the runners that serve its own agents — enough for a
+        # "continue on…" picker, and nothing about the rest of the fleet.
+        qs = qs.filter(agent_assignments__agent_id__in=offered).distinct()
     rows = list(qs[:50])
     for r in rows:
         # Resolved here rather than in the schema because it is a property of the
@@ -1237,6 +1267,9 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
 def list_unclaimable_turns(request: HttpRequest):
     """A queued turn addressed to an agent/repo nothing declares sits forever with
     no signal (one sat 12h). Surfacing it turns a silent stall into a warning."""
+    site_q = _site_turn_q(request)
+    if site_q is not None:
+        return services.unclaimable_queued_turns(request.user, turn_q=site_q)
     return services.unclaimable_queued_turns(request.user)
 
 
@@ -1382,6 +1415,9 @@ def list_turns(
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
         | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
     )
+    site_q = _site_turn_q(request)
+    if site_q is not None:
+        qs = qs.filter(site_q)
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     return list(qs[:limit])  # filter BEFORE slicing — a sliced queryset cannot be filtered
 
@@ -1390,7 +1426,15 @@ def list_turns(
 def list_sessions(request: HttpRequest):
     """Open emdash sessions the caller can see — across their workspaces, live runners
     only, newest-first. Drives the phone's Open Sessions list."""
-    return services.list_visible_sessions(request.user)
+    from apps.agents.models import Agent
+    from apps.tokens import delegation
+
+    rows = services.list_visible_sessions(request.user)
+    offered = delegation.offered_for(request)
+    if offered is None:
+        return rows
+    slugs = set(Agent.objects.filter(pk__in=offered).values_list("slug", flat=True))
+    return [r for r in rows if r.agent in slugs]
 
 
 @router.get("/turns/{turn_id}", response=TurnOut)

@@ -74,6 +74,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if close:
             await self.close()
 
+    async def _site_may_open(self, session) -> bool:
+        """`site ∩ user`: a connected site acting for its visitor opens only its
+        own agents' chats — the same limit REST applies (apps/tokens/delegation.py)."""
+        from apps.tokens import delegation
+
+        offered = await database_sync_to_async(delegation.offered_agent_ids)(
+            self.scope.get("delegated_app"))
+        return offered is None or session.agent_id in offered
+
     async def connect(self):
         self._negotiate_protocol()
         user = self.scope.get("user")
@@ -113,7 +122,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # is not a grant, and a role comes from the rule, not from a row this
         # connection wrote.
         role = await database_sync_to_async(access.role_for)(user, session)
-        if role is None:
+        if role is None or not await self._site_may_open(session):
             await self.close(code=4003)
             return
         self.session = session

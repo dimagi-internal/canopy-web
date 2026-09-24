@@ -769,13 +769,31 @@ One request, from a signed-in user on your page.
 | 5 | Your page asks your endpoint for a token | Your own session auth and CSRF. Your server signs a statement about `request.user` |
 | 6 | Canopy `contact-token` | Signature against a registered public key; `aud` is this canopy; `exp` ≤ 120 s; `jti` unused (single-use, fails closed); rate limit. Then finds-or-creates the **contact** `(your app, your id)` and issues an opaque, revocable token |
 | 7 | Token is posted into the frame | `targetOrigin` is canopy's origin, never `*`. The token never appears in a URL |
-| 8 | Frame calls canopy | **Every** request re-resolves the token against the database, with expiry checked, and records which app is acting |
+| 8 | Frame calls canopy | **Every** request re-resolves the token against the database, with expiry checked, and records which app is acting. The token reaches only **your site ∩ the user** (below): the chat routes and a read-only view of your agents' turns and runners — anything else is a 403 `not_delegable` |
 | 9 | `GET /api/embed/agents` | The app comes from the **token**, not a parameter. Returns allowlisted agents **∩** workspaces this user belongs to. Both required |
 | 10 | Session create | Workspace from the user's memberships; the agent must belong to it; the user becomes the owner; the acting app is stamped server-side |
 | 11 | Reading a session | Workspace membership **and** (you created it, or you are a participant, or it is runner-discovered). A co-tenant holding the id cannot read your chat |
-| 12 | WebSocket | The same token, on the query string, since a WS handshake carries no headers |
+| 12 | WebSocket | The same token, on the query string, since a WS handshake carries no headers. It opens only a chat stream, and only for an agent your site offers |
 | 13 | Page state | Computed in the user's browser, in their session, so it names only what that user can see. It carries a SELECTION (ids + the tool that resolves them); the agent re-reads the rows through that tool — as the **agent**, see §8a |
 | 14 | Invalidation | Sent only to sessions whose declared `resource` matches, and carries the URI alone — never row data. A page that declared nothing is told nothing |
+
+**What a user's token can reach: your site ∩ the user.** When your visitor is
+an existing canopy user, the token you hold for them acts *as* them — but only
+inside what your site is for. It reaches:
+
+- the chat API (`/api/canopy-sessions/…`, `/api/w/<ws>/canopy-sessions/…`) and
+  `/api/embed/…`;
+- read-only `GET /api/harness/turns/…`, `/api/harness/sessions` and
+  `/api/harness/runners/` — enough to show "what is the agent doing";
+- the chat websocket;
+
+and within those, **only the agents your site offers** in the workspace that
+registered it. The same person's chats with any other agent, in that workspace
+or another, are a 404 to your token, exactly as to a stranger. Every other
+canopy route answers `403 not_delegable`. Until 2026-09-24 the token was the
+user's whole canopy account; it no longer is. If your integration needs a
+route this does not cover, ask for it by name — it is a list in
+`apps/tokens/delegation.py`, deliberately.
 
 **The property that matters:** nothing is frozen into the token. Tokens are
 opaque random strings stored as hashes, and memberships are re-read from the
