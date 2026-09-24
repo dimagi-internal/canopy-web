@@ -123,8 +123,16 @@ integration written before this meant.
 
 One consequence worth expecting: a visitor of yours who talks to agents in two
 workspaces is **two contacts**, one per workspace, and you mint a token for
-each. That is deliberate — merging them would leak one tenant's dealings into
-another — and it is why the tenant is named at mint time rather than inferred.
+each. That is deliberate — merging what two tenants know about somebody would
+leak one's dealings into the other — and it is why the tenant is named at mint
+time rather than inferred.
+
+Canopy does record that the two are **the same person**, keyed on the `sub` you
+sign (your own id for them, in your own namespace). Nothing reads across that
+link today and neither tenant can see the other's record; it exists so that
+combining a person's context across tenants can later be offered as a
+deliberate act, rather than being impossible because nobody wrote the
+connection down while it was knowable.
 
 ---
 

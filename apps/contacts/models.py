@@ -43,9 +43,89 @@ from django.conf import settings
 from django.db import models
 
 
+class Person(models.Model):
+    """One PERSON, across every tenant that deals with them.
+
+    A `Contact` is deliberately per workspace — the same human dealt with by two
+    tenants is two records, because merging them would leak one tenant's
+    dealings into the other. That rule is about what a tenant may SEE, and it
+    stays. This is the separate question underneath it: does canopy *know* the
+    two records are the same person?
+
+    Until now it only knew implicitly — `(app, external_id)` sits on every
+    contact row, so anything could join on it. Implicit is how two features end
+    up computing "the same person" slightly differently and disagreeing, which
+    is the `definition_key()` lesson from `apps/agents/definition.py`. One row,
+    one answer.
+
+    **This exposes nothing.** Every contact query stays scoped to its workspace;
+    nothing reads across the link today. It exists so that combining a person's
+    context across tenants can later be offered as a deliberate act, with
+    whatever consent that turns out to need — rather than being impossible
+    because the connection was never recorded at the moment it was knowable.
+
+    Keyed on what the world ALREADY uses to name them, never on a guess:
+
+    * a site's visitor is `(app, external_id)` — that site's own id, in its own
+      namespace, which cannot collide with another site's people;
+    * a correspondent is their address, which for them IS the identity.
+
+    A site asserting an email does NOT join those two. The site's id is the
+    stronger key, and matching on an address it merely claims would be
+    believing the assertion — the thing `auth_result` exists to avoid.
+    """
+
+    #: The site that vouches for this person, when they came through one.
+    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE,
+                            null=True, blank=True, related_name="contact_identities")
+    #: That site's own id for them. Opaque to canopy.
+    external_id = models.CharField(max_length=200, blank=True, default="")
+    #: Set when the address IS the identity (a correspondent), not when a site
+    #: merely told us one.
+    email = models.EmailField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_persons"
+        verbose_name_plural = "people"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["app", "external_id"],
+                condition=models.Q(external_id__gt=""),
+                name="one_person_per_site_visitor",
+            ),
+            models.UniqueConstraint(
+                fields=["email"],
+                condition=models.Q(app__isnull=True) & models.Q(email__gt=""),
+                name="one_person_per_correspondent",
+            ),
+        ]
+
+    def __str__(self):
+        return self.email or f"{self.app_id}:{self.external_id}"
+
+
 class Contact(models.Model):
     """One person, as known to one workspace."""
 
+    #: The PERSON this record is about, shared with every other tenant's record
+    #: of the same human.
+    #:
+    #: Named `person`, not `identity`: `Contact.identity` is already a property
+    #: returning how this contact is addressed, and a field of the same name is
+    #: silently shadowed by it — Django never sees the field, so no column is
+    #: ever created and every write is lost with no error.
+    #:
+    #: Nullable because not every contact has an identity canopy can key on —
+    #: a Slack user has no address and no site id — and a null here must read
+    #: as "we cannot tell", never as "the same as some other null".
+    #:
+    #: Nothing reads ACROSS this link today. Contact queries stay scoped to
+    #: their workspace; this only records what was knowable at the moment the
+    #: record was made, so combining a person's context across tenants can be
+    #: offered later as a deliberate act rather than being impossible.
+    person = models.ForeignKey("Person", on_delete=models.SET_NULL,
+                               null=True, blank=True, related_name="contacts")
     #: How well this person's identity was established, on ONE ladder shared by
     #: every channel — see `email_auth.grade_of` for the mail side.
     #:
