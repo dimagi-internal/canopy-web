@@ -2030,6 +2030,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/access": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everyone's role on this agent, why, and what they can reach
+         * @description Every member of the agent's workspace with their role on the agent
+         *     (owner / admin / member), the reason for it, and what they reach signed in:
+         *     the whole agent, the capabilities its published interface lists for them,
+         *     or nothing. `outsiders` lists the interface rules that reach people outside
+         *     the workspace. Readable by any member, like the admin list.
+         */
+        readonly get: operations["apps_agents_api_agent_access"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/admins/{user_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -8751,6 +8775,64 @@ export interface components {
             readonly granted_by_email?: string | null;
             /** Granted At */
             readonly granted_at?: string | null;
+        };
+        /** AgentAccessOut */
+        readonly AgentAccessOut: {
+            /** Members */
+            readonly members: readonly components["schemas"]["AgentAccessRowOut"][];
+            /** Outsiders */
+            readonly outsiders: readonly components["schemas"]["AgentOutsiderRuleOut"][];
+            /** Interface Published */
+            readonly interface_published: boolean;
+            /** Slack Enabled */
+            readonly slack_enabled: boolean;
+        };
+        /** AgentAccessRowOut */
+        readonly AgentAccessRowOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Workspace Role
+             * @enum {string}
+             */
+            readonly workspace_role: "owner" | "editor" | "viewer";
+            /**
+             * Agent Role
+             * @enum {string}
+             */
+            readonly agent_role: "owner" | "admin" | "member";
+            /** Basis */
+            readonly basis: string;
+            /** Granted At */
+            readonly granted_at?: string | null;
+            /**
+             * Access
+             * @enum {string}
+             */
+            readonly access: "full" | "confined" | "none";
+            /**
+             * Capabilities
+             * @default []
+             */
+            readonly capabilities: readonly string[];
+            /** Full Rule */
+            readonly full_rule?: string | null;
+        };
+        /** AgentOutsiderRuleOut */
+        readonly AgentOutsiderRuleOut: {
+            /** Caller */
+            readonly caller: string;
+            /**
+             * Access
+             * @enum {string}
+             */
+            readonly access: "full" | "confined";
+            /** Capability */
+            readonly capability?: string | null;
         };
         /**
          * RunnerPreferenceIn
@@ -15940,6 +16022,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentAdminOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_agents_api_agent_access: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentAccessOut"];
                 };
             };
         };

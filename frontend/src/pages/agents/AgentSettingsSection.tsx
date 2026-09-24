@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useLocation, useOutletContext } from 'react-router-dom'
 
-import { AgentAdminsControl } from '@/components/agents/AgentAdminsControl'
+import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
@@ -22,7 +22,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 // which fixed the split and left everything in a place nobody would look.
 //
 // Grouped by the QUESTION each answers, not by which API serves it:
-//   Who operates it   — owner, admins
+//   People and roles  — owner, and everyone's role here (admins granted inline)
 //   Who can reach it  — callers, Slack
 //   How it runs       — routing: which runner, and which mode, per kind of work
 //   Credentials       — the keys, and the vault they are read from
@@ -68,8 +68,8 @@ export function AgentSettingsSection() {
 
       <Section
         id="operators"
-        title="Who operates it"
-        description={`The people accountable for ${agent.name} and trusted with its keys.`}
+        title="People and roles"
+        description={`Everyone in the workspace, their role on ${agent.name}, and what they can reach.`}
       >
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
@@ -85,15 +85,11 @@ export function AgentSettingsSection() {
             />
           </Setting>
           <Setting
-            title="Admins"
-            who="The agent's owner and workspace owners"
-            description={`People trusted with all of ${agent.name}: they can set its credentials. Everyone else in the workspace can use it but not hold its keys.`}
+            title="People"
+            who="Admins are granted by the agent's owner and workspace owners"
+            description={`Admins are trusted with all of ${agent.name}: they can change it and set its credentials. Workspace owners are always admins. Everyone else can use it, as far as the caller rules below allow.`}
           >
-            <AgentAdminsControl
-              agentSlug={agent.slug}
-              workspace={agent.workspace ?? ''}
-              canManage={agent.can_manage_admins ?? false}
-            />
+            <AgentAccessRoster agentSlug={agent.slug} canManage={agent.can_manage_admins ?? false} />
           </Setting>
         </div>
       </Section>
@@ -153,7 +149,7 @@ export function AgentSettingsSection() {
 
 const SECTIONS: { id: string; title: string }[] = [
   { id: 'about', title: 'About' },
-  { id: 'operators', title: 'Who operates it' },
+  { id: 'operators', title: 'People and roles' },
   { id: 'reach', title: 'Who can reach it' },
   { id: 'running', title: 'How it runs' },
   { id: 'credentials', title: 'Credentials' },

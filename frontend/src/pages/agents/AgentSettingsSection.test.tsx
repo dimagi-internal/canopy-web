@@ -18,7 +18,7 @@ vi.mock('@/api/agents', async (orig) => ({
 // where they sit on the page, not their behaviour (they have their own tests).
 vi.mock('@/components/agents/AgentRouting', () => ({ AgentRouting: () => <div>routing-control</div> }))
 vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () => <div>owner-control</div> }))
-vi.mock('@/components/agents/AgentAdminsControl', () => ({ AgentAdminsControl: () => <div>admins-control</div> }))
+vi.mock('@/components/agents/AgentAccessRoster', () => ({ AgentAccessRoster: () => <div>access-roster</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
 vi.mock('react-router-dom', async (orig) => ({
@@ -49,15 +49,15 @@ describe('AgentSettingsSection', () => {
         <Routes><Route path="/w/:workspace/agents/:slug/settings" element={<AgentSettingsSection />} /></Routes>
       </MemoryRouter>,
     )
-    for (const title of ['Who operates it', 'Who can reach it', 'How it runs', 'Credentials']) {
+    for (const title of ['People and roles', 'Who can reach it', 'How it runs', 'Credentials']) {
       expect(screen.getByRole('heading', { level: 2, name: title })).toBeTruthy()
       expect(screen.getByRole('link', { name: title }).getAttribute('href')).toMatch(/^#/)
     }
     // Each control is present, under the question it belongs to.
     const where = (region: string, name: string) =>
       within(screen.getByRole('region', { name: region })).getByRole('heading', { level: 3, name })
-    expect(where('Who operates it', 'Owner')).toBeTruthy()
-    expect(where('Who operates it', 'Admins')).toBeTruthy()
+    expect(where('People and roles', 'Owner')).toBeTruthy()
+    expect(where('People and roles', 'People')).toBeTruthy()
     expect(where('Who can reach it', 'Callers')).toBeTruthy()
     expect(where('Who can reach it', 'Slack')).toBeTruthy()
     // Turn mode and runners are one table now: a rule can set both.
