@@ -1,4 +1,4 @@
-"""The decision->work edge: an approved Item becomes Turns.
+"""The decision->work edge: an approved ask becomes Turns.
 
 `dispatch[]` was never a new concept — it is a deferred Turn enqueue. Ada's
 `{target_agent, prompt, origin, origin_ref}`, the phone composer's
@@ -15,14 +15,14 @@ from apps.agents.models import Agent
 
 from . import services
 from .dispatch_marker import stamp_dispatched, wrap_human_reply
-from .models import Item, Turn
+from .models import Turn
 
 
 @dataclass(frozen=True)
 class TurnSpec:
     """One deferred Turn enqueue.
 
-    `target_agent=""` means SELF — the Item's own agent. Self-dispatch is the
+    `target_agent=""` means SELF — the ask's own agent. Self-dispatch is the
     default and needs no ceremony; Ada's cross-agent fan-out is this same field
     set to another slug. A parameter, not a code path.
     """
@@ -44,7 +44,7 @@ class TurnSpec:
         )
 
 
-def _with_reply(prompt: str, item: Item) -> str:
+def _with_reply(prompt: str, item) -> str:
     """Carry the human's own words to the agent that will act on them.
 
     A card's `prompt` is written BEFORE the human replies, so on its own it is the
@@ -84,14 +84,14 @@ def _dispatch_initiator(item):
 
 
 def _is_task(obj) -> bool:
-    """A task carries an ask; an Item is an ask. Duck-typed on the one field
+    """A task carries an ask. Duck-typed on the one field
     only a task has, so this module does not have to import the agents app to
     ask a question about the object it was handed."""
     return hasattr(obj, "ask_kind")
 
 
 def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
-    """Enqueue an approved ask's work — an `Item`, or a task carrying an ask.
+    """Enqueue an approved ask's work — a task carrying an ask.
     Idempotent per (ask, index).
 
     One implementation for both because the fields it reads are named the same
@@ -107,7 +107,7 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
 
     Raises ValueError for an unknown OR cross-tenant target_agent rather than
     skipping it: an approved item whose work silently never happens is the worst
-    outcome here. The caller (services.decide_item) runs this inside the same
+    outcome here. The caller (agents.services.decide_ask) runs this inside the same
     transaction as the decision, so a raise rolls the decision back and leaves the
     item OPEN and retryable — rather than stranding it decided-but-undispatched,
     which deciding once (409) would make permanent.
@@ -148,13 +148,13 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
         # instead of `c-turn`, which is what every board dispatch would otherwise
         # read as. `setdefault`: a producer that already chose a name keeps it, and
         # the spec's own provenance keys are untouched (copied, not mutated — the
-        # spec is frozen and shared with the Item's stored JSON).
+        # spec is frozen and shared with the task's stored JSON).
         origin_ref = dict(spec.origin_ref)
         origin_ref.setdefault("item_title", item.title)
         turn, _created = services.enqueue_turn(
             agent=target,
             origin=spec.origin,
-            # `task-` vs `item-`: a task's integer pk and an Item's uuid could
+            # `task-` vs `item-`: a task's integer pk and its uuid could
             # never collide, but a migrated item becomes a task and both keys
             # must stay addressable. The uuid is the one id that survives that.
             idempotency_key=(f"task-{item.uuid}-{i}" if _is_task(item)

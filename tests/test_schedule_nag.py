@@ -11,6 +11,7 @@ import datetime as dt
 import pytest
 
 from apps.agents.models import Agent
+from apps.agents import services as agent_services
 from apps.harness import services as hsvc
 from apps.agents.models import AgentTask
 from apps.harness.models import AgentSchedule, Turn
@@ -100,7 +101,7 @@ def test_implementing_the_nag_re_runs_the_schedule(agent, schedule):
     hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
 
-    item, turns = hsvc.decide_item(
+    item, turns = agent_services.decide_ask(
         nag, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs=set(),
     )
 

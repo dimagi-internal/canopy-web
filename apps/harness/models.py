@@ -418,17 +418,15 @@ class Turn(models.Model):
         related_name="project_turns",
         help_text="Set only for project turns, which have no agent to derive tenancy from.",
     )
-    # The Item whose approval enqueued this turn — the other half of the cycle
-    # (Item.raised_by points back). Null for turns with no decision behind them:
-    # the phone composer (a human asking directly), cron schedules, inbox polls.
-    raised_from = models.ForeignKey(
-        "Item", on_delete=models.SET_NULL, null=True, blank=True,
-        related_name="dispatched_turns",
-    )
-    #: The same edge for a TASK's ask, now that a task can carry one (an Item is
-    #: on its way out). Separate column rather than a generic reference: two
-    #: nullable FKs are legible to a query planner and to a reader, and exactly
-    #: one of them is ever set.
+    #: The ask whose approval enqueued this turn — the other half of the cycle
+    #: (AgentTask.raised_by points back). Null for turns with no decision behind
+    #: them: the phone composer (a human asking directly), cron schedules, inbox
+    #: polls.
+    #:
+    #: There was a second FK beside this one, `raised_from`, pointing at the
+    #: retired `Item` model. Both were written for one release after #873 so a
+    #: rollback kept its provenance; measured on labs before removal, every turn
+    #: carrying the old edge carried this one too (0 exceptions).
     raised_from_task = models.ForeignKey(
         "agents.AgentTask", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="dispatched_turns",
@@ -820,114 +818,6 @@ class AgentSchedule(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"sched:{self.agent.slug}:{self.name}"
-
-    @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
-
-
-class Item(models.Model):
-    """DEPRECATED 2026-09-19 — an item is a TASK with an ask now.
-
-    Nothing reads this model: `agents.AgentTask` carries `ask_kind` / `ask_body`
-    / `decision` / `dispatch`, `agents/migrations/0030_items_become_tasks` moved
-    every row across (keeping each item's id as the task's `uuid`, so old links
-    still resolve), and the `/api/items/` routes serve tasks. The table stays for
-    one release as the rollback path — the same courtesy every other compat shim
-    here gets — and is dropped after the fleet has run on tasks.
-
-    Kept below, unchanged, for that window:
-
-    A thing that needs addressing — the dual of Turn.
-
-    Turn is work an agent does; Item is work YOU do. They form a cycle: a turn
-    raises items, you decide them, and an approved item's `dispatch` enqueues
-    turns. Ada's cross-agent fan-out is that same edge with TurnSpec.target_agent
-    set; the default ("") is self-dispatch. A parameter, not a code path.
-
-    The Item carries its OWN text. It is not a mirror of a subject living
-    elsewhere — it is an utterance at a moment, like an email, which never
-    re-reads the thing it describes. `origin_ref` is provenance (evidence, deep
-    links), NOT identity: nothing resolves it to render this row. That is what
-    keeps this model free of a source registry, of drift, and of any
-    framework->product import.
-
-    See docs/superpowers/specs/2026-07-15-item-and-turn-design.md.
-    """
-
-    REVIEW, QUESTION = "review", "question"
-    KIND_CHOICES = [(REVIEW, "Review"), (QUESTION, "Question")]
-
-    OPEN, DECIDED, DISMISSED = "open", "decided", "dismissed"
-    STATE_CHOICES = [(OPEN, "Open"), (DECIDED, "Decided"), (DISMISSED, "Dismissed")]
-
-    # CLOSED set. A generic inbox must be able to render three buttons for an Item
-    # it has never seen; producer-defined verbs would make that impossible.
-    # Only IMPLEMENT dispatches. DEFER decides the item and signals the producer to
-    # raise it again later, on its own schedule.
-    IMPLEMENT, SKIP, DEFER = "implement", "skip", "defer"
-    DECISION_CHOICES = [(IMPLEMENT, "Implement"), (SKIP, "Skip"), (DEFER, "Defer")]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    agent = models.ForeignKey(
-        "agents.Agent", on_delete=models.CASCADE, related_name="items",
-        help_text="Whose queue this belongs to — the agent ASKING, not the "
-                  "dispatch target. Tenancy rides this FK, as Turn's does.",
-    )
-    raised_by = models.ForeignKey(
-        Turn, on_delete=models.SET_NULL, null=True, blank=True, related_name="raised_items",
-        help_text="The turn that produced this item. Null for items raised outside "
-                  "a turn (an email poll, a manual post).",
-    )
-
-    origin = models.CharField(max_length=32, choices=Turn.ORIGIN_CHOICES)
-    origin_ref = models.JSONField(default=dict, blank=True)
-
-    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=REVIEW)
-    title = models.CharField(max_length=300)
-    body = models.TextField(blank=True, default="")
-
-    state = models.CharField(max_length=10, choices=STATE_CHOICES, default=OPEN)
-    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, blank=True, default="")
-    comment = models.TextField(
-        blank=True, default="",
-        help_text="kind=review: the reviewer's note (optional). "
-                  "kind=question: the answer (required to decide).",
-    )
-    # decided_by is the human decision's attribution. The string is kept as a
-    # display fallback (and for historical rows), but decided_by_user is the real
-    # relationship — a member decides an item via a live request, so unlike the
-    # ingest/caller-supplied deciders elsewhere, request.user IS the decider.
-    decided_by = models.CharField(max_length=200, blank=True, default="")
-    decided_by_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-        related_name="items_decided",
-    )
-    decided_at = models.DateTimeField(null=True, blank=True)
-
-    dispatch = models.JSONField(
-        default=list, blank=True,
-        help_text='[TurnSpec] — deferred Turn enqueues fired on implement. '
-                  'e.g. [{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}]',
-    )
-    dispatched_at = models.DateTimeField(null=True, blank=True)
-
-    batch_key = models.CharField(
-        max_length=120, blank=True, default="", db_index=True,
-        help_text="Groups items reviewed in one sitting (e.g. a fleet audit).",
-    )
-    idempotency_key = models.CharField(max_length=128, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["created_at"]
-        indexes = [
-            models.Index(fields=["agent", "state"]),
-            models.Index(fields=["state", "created_at"]),
-        ]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"item:{self.agent.slug}:{self.kind}:{self.state}:{self.id.hex[:8]}"
 
     @property
     def agent_slug(self) -> str:
