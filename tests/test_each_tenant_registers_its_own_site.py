@@ -66,7 +66,7 @@ def _tenant(slug, email):
 
 
 def _register(owner, slug, pub, name="connect-labs", origins=(ORIGIN,)):
-    _raw, app = embed_apps.register(
+    app = embed_apps.register(
         user=owner, workspace_slug=slug, name=name, origins=list(origins),
         agents=[f"{slug}-agent"], public_keys=[pub],
     )

@@ -28,7 +28,7 @@ LABS = "https://labs.connect.dimagi.com"
 
 def _app(name="connect-labs", *, origins=(LABS,)):
     admin = User.objects.create_user(f"a-{name}", f"a-{name}@dimagi.com", "pw")
-    raw, cred = AppCredential.create_credential(name=name, created_by=admin,
+    cred = AppCredential.create_credential(name=name, created_by=admin,
                                                  workspace=host_workspace())
     if origins:
         cred.allowed_frame_origins = list(origins)

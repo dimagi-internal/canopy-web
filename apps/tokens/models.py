@@ -171,7 +171,13 @@ class AppCredential(models.Model):
     #: What the site calls itself: its `iss`, and the `?app=` of its embed
     #: shell. Unique WITHIN a tenant, not across canopy — see `workspace`.
     name = models.CharField(max_length=100)
-    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    #: No secret. A site used to carry one (`token_hash`), shown once at
+    #: registration with a rotate button — but it authenticated nothing after
+    #: `/api/auth/token-exchange` went (2026-09-22): a site proves itself by
+    #: SIGNING, against keys it publishes, so canopy holds nothing that could
+    #: impersonate it. A secret that opens no door still reads as a credential
+    #: to protect and rotate, so it was removed rather than left idle
+    #: (2026-09-24).
     #: The ONE tenant this registration belongs to. Every fact on the row —
     #: name, keys, origins, agents, resolvable domains — is that tenant's own.
     #:
@@ -290,24 +296,12 @@ class AppCredential(models.Model):
 
     @classmethod
     def create_credential(cls, *, name, created_by, workspace):
-        raw = secrets.token_urlsafe(32)
-        cred = cls.objects.create(
+        return cls.objects.create(
             name=name,
-            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             created_by=created_by,
             # A Workspace or its slug (the slug IS its pk).
             workspace_id=getattr(workspace, "pk", workspace),
         )
-        return raw, cred
-
-    @classmethod
-    def lookup(cls, raw):
-        if not raw:
-            return None
-        return cls.objects.filter(
-            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
-            revoked_at__isnull=True,
-        ).first()
 
     def signer(self) -> str:
         """Which keys this site signs with, as a stable digest — "" if none.
@@ -573,6 +567,8 @@ class EmbedAuditLog(models.Model):
     # The registration itself changed.
     CONNECT = "connect"
     UPDATE = "update"
+    #: No longer written — sites have no secret to rotate. Kept so existing
+    #: audit rows still render with their label.
     ROTATE = "rotate"
     DISCONNECT = "disconnect"
     EVENT_CHOICES = [

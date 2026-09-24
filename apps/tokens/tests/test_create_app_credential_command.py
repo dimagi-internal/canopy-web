@@ -22,15 +22,13 @@ def _tenant():
     host_workspace()
 
 
-def test_it_registers_a_site_and_prints_the_secret_once(capsys):
+def test_it_registers_a_site_and_prints_no_secret(capsys):
     call_command("create_app_credential", "--workspace", "site-host", "--name", "connect-labs")
     out = capsys.readouterr().out
     cred = AppCredential.objects.get(name="connect-labs")
     assert cred.revoked_at is None
-    # The secret is shown, and the row keeps only its hash.
-    printed = out.strip().splitlines()[-1]
-    assert printed and printed not in (cred.token_hash, "")
-    assert AppCredential.lookup(printed) == cred
+    # One line naming what was registered — nothing to capture.
+    assert out.strip().splitlines() == [f"Registered site 'connect-labs' in site-host (id={cred.pk})"]
 
 
 def test_a_duplicate_name_is_refused_rather_than_silently_rotating():

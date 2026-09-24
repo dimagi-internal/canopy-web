@@ -55,7 +55,7 @@ def _shown_app(user):
     A column an owner ticks, not a name matched against a setting — see
     `AppCredential.show_on_canopy_pages`.
     """
-    _raw, app = AppCredential.create_credential(name="canopy-web", created_by=user,
+    app = AppCredential.create_credential(name="canopy-web", created_by=user,
                                                 workspace=host_workspace())
     app.show_on_canopy_pages = True
     app.save(update_fields=["show_on_canopy_pages"])
@@ -103,17 +103,15 @@ def test_connecting_a_site_records_the_actor_and_what_was_granted():
     assert LABS in row.detail and "echo" in row.detail
 
 
-def test_rotating_and_disconnecting_are_recorded():
-    """The two actions someone takes when they think a secret has leaked."""
+def test_disconnecting_is_recorded():
+    """The action someone takes when they think a site's key has leaked."""
     _user, _ws, c = _owner()
     app_id = c.post("/api/workspaces/w1/connected-apps",
                     data={"name": "x", "origins": [LABS]},
-                    content_type="application/json").json()["app"]["id"]
+                    content_type="application/json").json()["id"]
 
-    c.post(f"/api/workspaces/w1/connected-apps/{app_id}/rotate")
     c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
 
-    assert len(_rows(EmbedAuditLog.ROTATE)) == 1
     assert len(_rows(EmbedAuditLog.DISCONNECT)) == 1
 
 
@@ -123,7 +121,7 @@ def test_an_update_records_what_the_app_can_do_now():
     _user, _ws, c = _owner()
     app_id = c.post("/api/workspaces/w1/connected-apps",
                     data={"name": "x", "origins": [LABS]},
-                    content_type="application/json").json()["app"]["id"]
+                    content_type="application/json").json()["id"]
 
     c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
             data={"origins": [LABS, "http://localhost:8000"]},
@@ -141,7 +139,7 @@ def test_deleting_the_app_does_not_erase_its_history():
     _user, _ws, c = _owner()
     app_id = c.post("/api/workspaces/w1/connected-apps",
                     data={"name": "connect-labs", "origins": [LABS]},
-                    content_type="application/json").json()["app"]["id"]
+                    content_type="application/json").json()["id"]
 
     AppCredential.objects.filter(pk=app_id).delete()
 

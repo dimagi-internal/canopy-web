@@ -39,7 +39,7 @@ def _app(name="canopy-web", *, shown=True):
     """
     admin = User.objects.create_user(f"a-{name}", f"a-{name}@dimagi.com", "pw")
     app = AppCredential.create_credential(name=name, created_by=admin,
-                                         workspace=host_workspace())[1]
+                                         workspace=host_workspace())
     if shown:
         app.show_on_canopy_pages = True
         app.save(update_fields=["show_on_canopy_pages"])
