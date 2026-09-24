@@ -18,42 +18,12 @@ import {
   type MemberOut,
   type MemberRole,
 } from '@/api/workspaces'
+import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
 
 const ROLES: InviteRole[] = ['owner', 'editor', 'viewer']
 
-// A dead invite (accepted/revoked/expired) still lives in the API's list —
-// this page only surfaces the ones a human might still act on. Pure + exported
-// so it's testable without a renderer, mirroring RunnerAssignments' pattern.
-export function isInvitePending(inv: InviteOut, now: number = Date.now()): boolean {
-  if (inv.accepted_at || inv.revoked_at) return false
-  return new Date(inv.expires_at).getTime() > now
-}
-
-// Nobody has accepted it and nobody revoked it — pending OR expired. An
-// expired invite stays on the page because it is exactly the one an owner
-// wants to find: somebody never got round to it, and "New link" revives it.
-export function isInviteOutstanding(inv: InviteOut): boolean {
-  return !inv.accepted_at && !inv.revoked_at
-}
-
-const DAY_MS = 86_400_000
-
-// "Expires in 3 days" / "Expired 2 days ago" — the one fact that decides
-// whether the link you are about to copy still works.
-export function inviteExpiryLabel(inv: InviteOut, now: number = Date.now()): string {
-  const delta = new Date(inv.expires_at).getTime() - now
-  const days = Math.round(Math.abs(delta) / DAY_MS)
-  if (delta > 0) {
-    if (days === 0) return 'Expires today'
-    return `Expires in ${days} day${days === 1 ? '' : 's'}`
-  }
-  if (days === 0) return 'Expired today'
-  return `Expired ${days} day${days === 1 ? '' : 's'} ago`
-}
-
-// The absolute, copy-pasteable accept link. There is no email delivery (see
-// the plan's "Delivery is a copy-link, not an email") — the inviter sends this
-// themselves, so it must be unmissable, not a footnote.
+// The absolute, copy-pasteable accept link — the same one the email carries,
+// and the fallback whenever the email did not go out.
 function inviteLink(token: string): string {
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
   return `${window.location.origin}${base}/invite/${token}`
@@ -77,14 +47,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   const [role, setRole] = useState<InviteRole>('editor')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [newInviteLink, setNewInviteLink] = useState<string | null>(null)
+  const [created, setCreated] = useState<{ email: string; link: string; status: EmailStatus | null } | null>(null)
   const [copied, setCopied] = useState(false)
   // Per-row link actions on an outstanding invite: which row's link was just
   // copied, which is mid-reissue, and the fresh link a reissue produced (shown
   // on screen too, since the clipboard can be blocked).
   const [copiedInviteId, setCopiedInviteId] = useState<number | null>(null)
   const [reissuingId, setReissuingId] = useState<number | null>(null)
-  const [reissued, setReissued] = useState<{ email: string; link: string } | null>(null)
+  const [reissued, setReissued] = useState<{ email: string; link: string; status: EmailStatus | null } | null>(null)
 
   useEffect(() => {
     if (!slug) return
@@ -167,7 +137,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
       setCopiedInviteId(inv.id)
     } catch {
       // clipboard blocked — fall back to putting the link on screen to select by hand
-      setReissued({ email: inv.email, link: inviteLink(inv.token) })
+      setReissued({ email: inv.email, link: inviteLink(inv.token), status: null })
     }
   }
 
@@ -179,15 +149,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     try {
       const fresh = await reissueInvite(slug, inv.id)
       setInvites((prev) => (prev ?? []).map((i) => (i.id === fresh.id ? fresh : i)))
-      setReissued({ email: fresh.email, link: inviteLink(fresh.token) })
-      try {
-        await navigator.clipboard.writeText(inviteLink(fresh.token))
-        setCopiedInviteId(fresh.id)
-      } catch {
-        // the notice below still shows the link
-      }
+      setReissued({ email: fresh.email, link: inviteLink(fresh.token), status: fresh.email_status ?? null })
     } catch (e) {
-      setRowError(e instanceof Error ? e.message : 'Failed to send a new link')
+      setRowError(e instanceof Error ? e.message : 'Failed to resend the invite')
     } finally {
       setReissuingId(null)
     }
@@ -198,14 +162,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     if (!slug || !email.trim()) return
     setCreating(true)
     setCreateError(null)
-    setNewInviteLink(null)
+    setCreated(null)
     setCopied(false)
     try {
       const inv = await createInvite(slug, email.trim(), role)
       // Re-inviting an address with an outstanding invite returns THAT row
       // (re-armed server-side), not a new one — replace, don't duplicate.
       setInvites((prev) => [inv, ...(prev ?? []).filter((i) => i.id !== inv.id)])
-      setNewInviteLink(inviteLink(inv.token))
+      setCreated({ email: inv.email, link: inviteLink(inv.token), status: inv.email_status ?? null })
       setEmail('')
     } catch (e2) {
       setCreateError(e2 instanceof Error ? e2.message : 'Failed to create invite')
@@ -215,9 +179,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   }
 
   async function handleCopy() {
-    if (!newInviteLink) return
+    if (!created) return
     try {
-      await navigator.clipboard.writeText(newInviteLink)
+      await navigator.clipboard.writeText(created.link)
       setCopied(true)
     } catch {
       // clipboard blocked (e.g. insecure context) — the link is still on screen to select by hand
@@ -310,7 +274,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         {reissued && (
           <div className="mb-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <p className="text-[12px] font-semibold text-foreground">
-              New link for {reissued.email} — the previous link no longer works. Send this one to them yourself.
+              {reissued.status === null
+                ? `Invite link for ${reissued.email}:`
+                : `New link for ${reissued.email}; the previous one no longer works. ${emailOutcomeText(reissued.status, reissued.email)}`}
             </p>
             <code className="mt-2 block truncate rounded bg-background px-2 py-1 text-[12px] text-foreground-secondary">
               {reissued.link}
@@ -345,6 +311,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                     <TableCell className="whitespace-normal text-muted-foreground">
                       {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : '—'}
                       {inv.invited_by_email && <span> · {inv.invited_by_email}</span>}
+                      {inv.last_emailed_at && (
+                        <div className="text-[11px]">emailed {new Date(inv.last_emailed_at).toLocaleString()}</div>
+                      )}
                     </TableCell>
                     {isOwner && (
                       <TableCell className="text-right">
@@ -366,9 +335,10 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                             size="sm"
                             disabled={reissuingId === inv.id}
                             onClick={() => void handleReissue(inv)}
-                            aria-label={`Send a new link to ${inv.email}`}
+                            aria-label={`Resend invite to ${inv.email}`}
+                            title="Emails a new link; the previous link stops working"
                           >
-                            {reissuingId === inv.id ? 'Working…' : 'New link'}
+                            {reissuingId === inv.id ? 'Sending…' : 'Resend'}
                           </Button>
                           <Button
                             type="button"
@@ -425,21 +395,26 @@ export function WorkspaceMembersPage(): JSX.Element | null {
               </select>
             </div>
             <Button type="submit" disabled={creating || !email.trim()}>
-              {creating ? 'Sending…' : 'Create invite'}
+              {creating ? 'Sending…' : 'Send invite'}
             </Button>
           </form>
 
           {createError && <p className="mt-3 text-sm text-destructive">{createError}</p>}
 
-          {newInviteLink && (
-            <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+          {created && (
+            <div
+              className={
+                created.status === 'sent'
+                  ? 'mt-4 rounded-lg border border-success/30 bg-success/5 p-4'
+                  : 'mt-4 rounded-lg border border-warning/30 bg-warning/5 p-4'
+              }
+            >
               <p className="text-[12px] font-semibold text-foreground">
-                Canopy does not send this invite by email — send this link to them yourself
-                (Slack, email, whatever you already use).
+                {emailOutcomeText(created.status, created.email)}
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 text-[12px] text-foreground-secondary">
-                  {newInviteLink}
+                  {created.link}
                 </code>
                 <Button type="button" size="sm" variant="outline" onClick={() => void handleCopy()}>
                   {copied ? 'Copied!' : 'Copy link'}

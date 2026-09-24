@@ -10,8 +10,11 @@ a workspace JOINABLE, not joined — the user must click. See
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import escape
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -570,6 +573,84 @@ def reissue_invite(*, invite: WorkspaceInvite) -> WorkspaceInvite:
         inv.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
         inv.save(update_fields=["token", "expires_at"])
     return inv
+
+
+# The same invite is not emailed twice inside this window. Re-inviting an
+# address whose invite is unchanged re-sends the SAME link, and an owner
+# double-clicking should not put two copies in someone's inbox.
+INVITE_EMAIL_MIN_INTERVAL = dt.timedelta(seconds=60)
+
+_email_log = logging.getLogger("apps.workspaces.invite_email")
+
+
+def invite_link(invite: WorkspaceInvite) -> str:
+    """Absolute accept URL. CANOPY_PUBLIC_BASE_URL already carries the
+    deployment's path prefix (/canopy on labs)."""
+    return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}/invite/{invite.token}"
+
+
+def recently_emailed(invite: WorkspaceInvite) -> bool:
+    return invite.last_emailed_at is not None and (
+        timezone.now() - invite.last_emailed_at < INVITE_EMAIL_MIN_INTERVAL
+    )
+
+
+def email_invite(*, invite: WorkspaceInvite) -> str:
+    """Email the invite's link to the invited address. Returns what happened:
+
+    - ``sent``: handed to the mail backend (``last_emailed_at`` stamped)
+    - ``throttled``: this invite was emailed under a minute ago; nothing sent
+    - ``not_configured``: delivery is off in this deployment
+    - ``failed``: the backend raised; logged, never propagated
+
+    Never raises: the invite exists whether or not the mail goes out, and the
+    owner still has the link to copy. The caller shows the outcome so a failed
+    send is not mistaken for a delivered one.
+    """
+    if recently_emailed(invite):
+        return "throttled"
+    workspace = invite.workspace
+    inviter = invite.invited_by
+    inviter_name = (inviter.get_full_name() or "").strip() or inviter.email
+    link = invite_link(invite)
+    expires = timezone.localtime(invite.expires_at).strftime("%-d %B %Y")
+    subject = f"{inviter_name} invited you to {workspace.display_name} on Canopy"
+    text = (
+        f"{inviter_name} ({inviter.email}) invited you to join the "
+        f"{workspace.display_name} workspace on Canopy as {invite.role}.\n\n"
+        f"Accept the invite:\n{link}\n\n"
+        f"Sign in with the Google account for {invite.email} — the invite only "
+        f"works for that address. If you don't have a Canopy account yet, "
+        f"signing in creates one.\n\n"
+        f"This link expires on {expires}. If you weren't expecting it, ignore this email.\n"
+    )
+    html = (
+        f"<p>{escape(inviter_name)} ({escape(inviter.email)}) invited you to join the "
+        f"<strong>{escape(workspace.display_name)}</strong> workspace on Canopy as "
+        f"{escape(invite.role)}.</p>"
+        f'<p><a href="{escape(link)}" style="display:inline-block;padding:10px 18px;'
+        f"background:#c2410c;color:#ffffff;border-radius:6px;text-decoration:none;"
+        f'font-weight:600">Accept the invite</a></p>'
+        f"<p>Sign in with the Google account for <strong>{escape(invite.email)}</strong> "
+        f"&mdash; the invite only works for that address. If you don't have a Canopy "
+        f"account yet, signing in creates one.</p>"
+        f'<p style="color:#78716c;font-size:13px">This link expires on {escape(expires)}. '
+        f"If you weren't expecting it, ignore this email.<br>{escape(link)}</p>"
+    )
+    message = EmailMultiAlternatives(
+        subject=subject, body=text, to=[invite.email], reply_to=[inviter.email] if inviter.email else None,
+    )
+    message.attach_alternative(html, "text/html")
+    try:
+        sent = message.send()
+    except Exception:
+        _email_log.exception("invite email failed: invite=%s workspace=%s", invite.pk, workspace.slug)
+        return "failed"
+    if not sent:
+        return "not_configured"
+    invite.last_emailed_at = timezone.now()
+    invite.save(update_fields=["last_emailed_at"])
+    return "sent"
 
 
 def revoke_invite(*, invite: WorkspaceInvite) -> None:

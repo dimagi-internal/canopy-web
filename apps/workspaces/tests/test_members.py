@@ -6,13 +6,16 @@ can't be removed.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import Client
+from django.core import mail
+from django.test import Client, override_settings
+from django.utils import timezone
 
-from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.models import WorkspaceInvite, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -164,10 +167,17 @@ def test_set_member_role_rejects_unknown_role():
     assert r.status_code == 422
 
 
+def _let_email_cool_down(invite_id):
+    WorkspaceInvite.objects.filter(id=invite_id).update(
+        last_emailed_at=timezone.now() - dt.timedelta(minutes=5)
+    )
+
+
 def test_owner_reissues_an_invite_and_only_the_new_link_works():
     a = _user("a@dimagi.com")
     _ws(a)
     inv = _invite(a, "acme", "b@dimagi.com")
+    _let_email_cool_down(inv["id"])
     r = _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue")
     assert r.status_code == 200
     fresh = r.json()
@@ -185,6 +195,7 @@ def test_reissue_is_owner_only_and_tenant_scoped():
     b = _user("b@dimagi.com")
     _post(_client(b), f"/api/workspaces/invites/{inv['token']}/accept")  # b is now an editor
     pending = _invite(a, "acme", "c@dimagi.com")
+    _let_email_cool_down(pending["id"])
     assert _post(_client(b), f"/api/workspaces/acme/invites/{pending['id']}/reissue").status_code == 403
     # another workspace's owner cannot reach acme's invite through their own slug
     d = _user("d@dimagi.com")
@@ -198,3 +209,74 @@ def test_reissue_of_a_revoked_invite_is_gone():
     inv = _invite(a, "acme", "b@dimagi.com")
     _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/revoke")
     assert _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue").status_code == 410
+
+
+@override_settings(CANOPY_PUBLIC_BASE_URL="https://labs.example.test/canopy")
+def test_creating_an_invite_emails_the_link_to_the_invitee():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    mail.outbox.clear()
+    inv = _invite(a, "acme", "b@partner.org", "viewer")
+
+    assert inv["email_status"] == "sent"
+    assert inv["last_emailed_at"]
+    assert len(mail.outbox) == 1
+    msg = mail.outbox[0]
+    assert msg.to == ["b@partner.org"]
+    assert msg.reply_to == ["a@dimagi.com"]
+    assert "Acme" in msg.subject
+    link = f"https://labs.example.test/canopy/invite/{inv['token']}"
+    assert link in msg.body
+    assert link in msg.alternatives[0][0]
+    assert "b@partner.org" in msg.body  # tells them which Google account to use
+
+
+def test_re_inviting_inside_a_minute_does_not_email_twice():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    mail.outbox.clear()
+    first = _invite(a, "acme", "b@partner.org")
+    again = _invite(a, "acme", "b@partner.org")
+    assert again["id"] == first["id"]
+    assert again["email_status"] == "throttled"
+    assert len(mail.outbox) == 1
+
+
+def test_reissue_emails_the_new_link_and_refuses_inside_a_minute():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    inv = _invite(a, "acme", "b@partner.org")
+    # straight after the create email: refused BEFORE rotating, so the link
+    # they were just sent keeps working
+    assert _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue").status_code == 429
+    assert WorkspaceInvite.objects.get(id=inv["id"]).token == inv["token"]
+
+    _let_email_cool_down(inv["id"])
+    mail.outbox.clear()
+    fresh = _post(_client(a), f"/api/workspaces/acme/invites/{inv['id']}/reissue").json()
+    assert fresh["email_status"] == "sent"
+    assert len(mail.outbox) == 1 and fresh["token"] in mail.outbox[0].body
+
+
+@override_settings(EMAIL_BACKEND="apps.common.email.NotConfiguredEmailBackend")
+def test_invite_still_created_when_email_is_off():
+    a = _user("a@dimagi.com")
+    _ws(a)
+    r = _post(_client(a), "/api/workspaces/acme/invites/", {"email": "b@partner.org"})
+    assert r.status_code == 201
+    assert r.json()["email_status"] == "not_configured"
+    assert r.json()["last_emailed_at"] is None
+
+
+def test_invite_still_created_when_the_send_fails(monkeypatch):
+    from django.core.mail import EmailMultiAlternatives
+
+    def boom(self, fail_silently=False):
+        raise RuntimeError("SES said no")
+
+    monkeypatch.setattr(EmailMultiAlternatives, "send", boom)
+    a = _user("a@dimagi.com")
+    _ws(a)
+    r = _post(_client(a), "/api/workspaces/acme/invites/", {"email": "b@partner.org"})
+    assert r.status_code == 201
+    assert r.json()["email_status"] == "failed"

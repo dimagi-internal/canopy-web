@@ -3154,7 +3154,13 @@ export interface paths {
         /** List invites (member-only) */
         readonly get: operations["apps_workspaces_api_list_invites"];
         readonly put?: never;
-        /** Invite by email (owner-only) */
+        /**
+         * Invite by email (owner-only)
+         * @description Creates the invite and emails its link to the address. `email_status`
+         *     says whether the email went out; the link in `token` works either way.
+         *     Inviting an address that already has an outstanding invite returns that
+         *     invite and emails its link again (at most once a minute).
+         */
         readonly post: operations["apps_workspaces_api_create_invite"];
         readonly delete?: never;
         readonly options?: never;
@@ -3191,8 +3197,10 @@ export interface paths {
         /**
          * Send a fresh link for an invite (owner-only)
          * @description New token and a fresh expiry for an invite nobody has accepted or
-         *     revoked — including one that has expired. The previous link stops working.
-         *     Accepted or revoked invites answer 410; invite the address again instead.
+         *     revoked — including one that has expired — emailed to the invited address.
+         *     The previous link stops working. Accepted or revoked invites answer 410;
+         *     invite the address again instead. 429 if this invite was emailed under a
+         *     minute ago.
          */
         readonly post: operations["apps_workspaces_api_reissue_invite"];
         readonly delete?: never;
@@ -10787,6 +10795,10 @@ export interface components {
             readonly created_at?: string | null;
             /** Invited By Email */
             readonly invited_by_email?: string | null;
+            /** Last Emailed At */
+            readonly last_emailed_at?: string | null;
+            /** Email Status */
+            readonly email_status?: ("sent" | "throttled" | "not_configured" | "failed") | null;
         };
         /** InviteCreateIn */
         readonly InviteCreateIn: {

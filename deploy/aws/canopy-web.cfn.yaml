@@ -328,6 +328,12 @@ Resources:
             # GCP deploy. The matching SA key is the CANOPY_DRIVE_SA_KEY_JSON
             # secret below.
             - { Name: CANOPY_DRIVE_ROOT_FOLDER_ID, Value: 1cUv7wQXOvVwuZ86PdhkxpFcuB4Lm9fPz }
+            # Invite email goes out through the labs SES identity; the shared
+            # task role already holds ses:SendEmail on it (connect-labs
+            # infra/labs-email.yml, policy labs-ses-send), and the config set
+            # routes bounces/complaints to labs-jj-email-events.
+            - { Name: CANOPY_EMAIL_ENABLED, Value: "true" }
+            - { Name: CANOPY_SES_CONFIGURATION_SET, Value: labs-jj-email }
             - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: labs-jj-canopy-web-attachments-858923557655 }
             # Web Push (VAPID). The public key is not a secret — it ships in the
             # JS bundle so the browser can subscribe with it; it is the other

@@ -76,6 +76,9 @@ class InviteCreateIn(StrictModel):
     role: Role = "editor"
 
 
+InviteEmailStatus = Literal["sent", "throttled", "not_configured", "failed"]
+
+
 class InviteOut(StrictModel):
     id: int
     email: str
@@ -86,6 +89,10 @@ class InviteOut(StrictModel):
     revoked_at: dt.datetime | None = None
     created_at: dt.datetime | None = None
     invited_by_email: str | None = None
+    last_emailed_at: dt.datetime | None = None
+    # Set only on the create/reissue response: what happened to the email that
+    # call tried to send. Absent from a listing, which sends nothing.
+    email_status: InviteEmailStatus | None = None
 
 
 InviteStatus = Literal["pending", "expired", "revoked", "accepted"]
