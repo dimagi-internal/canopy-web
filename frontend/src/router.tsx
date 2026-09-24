@@ -10,6 +10,7 @@ import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
+import { AgentSkillsPage } from './pages/agents/AgentSkillsPage'
 import { WorkRedirect } from './pages/agents/WorkRedirect'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { InsightsPage } from './pages/InsightsPage'
@@ -69,9 +70,6 @@ const SchedulesSection = lazySection(() =>
 )
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
-)
-const AgentSyncsSection = lazySection(() =>
-  import('./pages/agents/AgentSyncsSection').then((m) => ({ default: m.AgentSyncsSection })),
 )
 const AgentWorkProductsSection = lazySection(() =>
   import('./pages/agents/AgentWorkProductsSection').then((m) => ({ default: m.AgentWorkProductsSection })),
@@ -290,14 +288,26 @@ export const routeTable: RouteObject[] = [
           { path: 'items', element: <WorkRedirect /> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
-          { path: 'syncs', element: <LazySection><AgentSyncsSection /></LazySection> },
+          // Syncs are Status reports, a section of Work products now — a "sync"
+          // could be anything; this is a periodic self-review of the work.
+          { path: 'syncs', element: <Navigate to="../work-products#status-reports" replace /> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },
           { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },
-          { path: 'skills', element: <LazySection><AgentSkillsSection /></LazySection> },
-          { path: 'history', element: <LazySection><AgentHistorySection /></LazySection> },
+          {
+            // Skills and their history are one subject, two views.
+            path: 'skills',
+            element: <AgentSkillsPage />,
+            children: [
+              { index: true, element: <LazySection><AgentSkillsSection /></LazySection> },
+              { path: 'history', element: <LazySection><AgentHistorySection /></LazySection> },
+            ],
+          },
+          // History was its own rail entry, named after neither skills nor the
+          // repo it reads. Old links keep working.
+          { path: 'history', element: <Navigate to="../skills/history" replace /> },
         ],
       },
       { path: '/w/:workspace/ddd', element: <DddPage /> },

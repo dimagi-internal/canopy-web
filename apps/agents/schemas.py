@@ -632,8 +632,10 @@ class CommandResultOut(StrictModel):
     task: AgentTaskOut | None = None
 
 
-# The supervisor inbox is now a pure query over harness.Item (open items across
-# the fleet), served by apps/harness/items_api.py — no projection DTO lives here.
+# The supervisor inbox is a pure query over AgentTask — `waiting_q()`: an open
+# ask, or a live task parked on a person — served by apps/harness/items_api.py.
+# No projection DTO lives here. (It read harness.Item until #873 moved every row
+# onto the task; that model is a tombstone.)
 
 
 # ---- shared ----

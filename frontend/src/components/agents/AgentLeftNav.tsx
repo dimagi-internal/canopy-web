@@ -49,10 +49,10 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     { to: 'inbox', label: 'Inbox', count: waiting },
     { to: 'turns', label: 'Turns' },
     { to: 'schedules', label: 'Schedules' },
-    { to: 'syncs', label: 'Syncs' },
+    // Work products carries Status reports (what a "sync" actually is: a
+    // periodic self-review of this work), and Skills carries its own history.
     { to: 'work-products', label: 'Work products' },
     { to: 'skills', label: 'Skills' },
-    { to: 'history', label: 'History' },
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
     // admins, callers, turn mode, Slack, runners, credentials. They were
     // sections of Overview, a page named after a dashboard.
