@@ -129,3 +129,76 @@ def test_forgetting_a_secret_removes_it(world):
     assert r.status_code == 204
     r = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['owner'])}").get(_value_url(world))
     assert r.status_code == 404
+
+
+# ---- 30-minute lifetime ------------------------------------------------------
+# A shared secret is a hand-off: it is deleted 30 minutes after it was shared,
+# refused on read the moment it expires, and swept on the runner heartbeat so
+# the ciphertext does not linger in a chat nobody opens again.
+
+
+def _age(minutes):
+    import datetime as dt
+
+    from django.utils import timezone
+
+    SessionSecret.objects.update(updated_at=timezone.now() - dt.timedelta(minutes=minutes))
+
+
+def test_a_secret_says_when_it_expires(world):
+    body = _share(world).json()
+    assert "30 minutes" in body["message"]
+    assert body["expires_at"]
+
+
+def test_an_expired_secret_is_refused_and_deleted(world):
+    _share(world)
+    _age(31)
+    r = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['bot'])}").get(_value_url(world))
+    assert r.status_code == 404
+    assert not SessionSecret.objects.exists()
+
+
+def test_a_secret_inside_its_window_still_works(world):
+    _share(world)
+    _age(29)
+    r = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['bot'])}").get(_value_url(world))
+    assert r.status_code == 200
+
+
+def test_the_list_drops_expired_secrets(world):
+    _share(world)
+    _age(31)
+    r = world["browser"].get(f"/api/canopy-sessions/{world['session'].id}/secrets")
+    assert r.json() == []
+
+
+def test_resharing_restarts_the_clock(world):
+    _share(world)
+    _age(29)
+    _share(world, value="a-new-value-for-the-same-name")  # restarts the 30 minutes
+    import datetime as dt
+
+    from apps.canopy_sessions import secrets as session_secrets
+    from django.utils import timezone
+
+    # 29 min after the FIRST share + 2 more would be past 30 if the clock had not restarted.
+    assert session_secrets.purge_expired(timezone.now() + dt.timedelta(minutes=2)) == 0
+    r = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['bot'])}").get(_value_url(world))
+    assert r.json()["value"] == "a-new-value-for-the-same-name"
+
+
+def test_the_runner_heartbeat_sweeps_expired_secrets(world):
+    from django.utils import timezone
+
+    from apps.harness import services as hsvc
+    from apps.harness.models import Runner
+
+    _share(world)
+    _age(31)
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=world["owner"],
+        workspace=world["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    hsvc.heartbeat(runner, active_turn_ids=[])
+    assert not SessionSecret.objects.exists()

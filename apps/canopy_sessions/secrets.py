@@ -16,6 +16,7 @@ Three rules, each load-bearing:
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 from django.utils import timezone
@@ -28,6 +29,22 @@ from .models import Session, SessionSecret
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 VALUE_MAX = 16_384
 SCHEME = "canopy-secret://"
+#: A shared secret is a hand-off, not a store: it dies this long after it was
+#: shared (re-sharing the name restarts the clock). Enforced on every read, and
+#: the rows are deleted by `purge_expired` on the runner heartbeat, so the
+#: ciphertext does not outlive its use either (Jonathan, 2026-09-25).
+TTL = dt.timedelta(minutes=30)
+
+
+def expires_at(row: SessionSecret) -> dt.datetime:
+    return row.updated_at + TTL
+
+
+def purge_expired(now: dt.datetime | None = None) -> int:
+    """Delete every secret past its TTL. One DELETE; safe to call on any read."""
+    cutoff = (now or timezone.now()) - TTL
+    deleted, _ = SessionSecret.objects.filter(updated_at__lte=cutoff).delete()
+    return deleted
 
 
 def normalize_name(name: str) -> str:
@@ -45,7 +62,9 @@ def reference(session_id, name: str) -> str:
 def reference_message(session_id, name: str, note: str = "") -> str:
     """What the chat sees instead of the secret. Tells the agent how to spend it."""
     ref = reference(session_id, name)
-    lines = [f"🔒 I shared a secret, `{name}`, with this session. Its value is not in this chat."]
+    minutes = int(TTL.total_seconds() // 60)
+    lines = [f"🔒 I shared a secret, `{name}`, with this session. Its value is not in this chat, "
+             f"and it is deleted {minutes} minutes from now."]
     if note.strip():
         lines.append(note.strip())
     lines.append(
@@ -85,6 +104,7 @@ def may_resolve(user, session: Session) -> bool:
 
 def resolve_secret(session: Session, name: str, *, user) -> str | None:
     """The plaintext, or None when there is no such secret. Callers gate first."""
+    purge_expired()  # an expired secret is refused even if no heartbeat swept it yet
     row = SessionSecret.objects.filter(session=session, name=name).first()
     if row is None:
         return None

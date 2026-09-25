@@ -12970,6 +12970,8 @@ export interface components {
             readonly updated_at: string;
             /** Last Used At */
             readonly last_used_at?: string | null;
+            /** Expires At */
+            readonly expires_at: string;
             /** Message */
             readonly message: string;
         };
@@ -13005,6 +13007,8 @@ export interface components {
             readonly updated_at: string;
             /** Last Used At */
             readonly last_used_at?: string | null;
+            /** Expires At */
+            readonly expires_at: string;
         };
         /** SessionSecretValueOut */
         readonly SessionSecretValueOut: {

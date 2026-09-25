@@ -336,6 +336,8 @@ export interface SharedSecret {
   created_at: string;
   updated_at: string;
   last_used_at: string | null;
+  /** Deleted 30 minutes after it was shared. */
+  expires_at: string;
 }
 
 /**

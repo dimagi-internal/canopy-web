@@ -11,6 +11,12 @@ import { deleteSecret, listSecrets, shareSecret, type SharedSecret } from "@/api
  * masks it out of the output. The value is write-only here: once saved, this
  * page can say it exists and when it was used, and cannot show it.
  */
+/** "expires in 12 min" — the server deletes it at `expires_at`. */
+export function expiresIn(expiresAt: string, now: number = Date.now()): string {
+  const minutes = Math.ceil((new Date(expiresAt).getTime() - now) / 60_000);
+  return minutes <= 0 ? "expiring" : `expires in ${minutes} min`;
+}
+
 export function ShareSecretForm({
   sessionId,
   onPost,
@@ -64,7 +70,7 @@ export function ShareSecretForm({
     >
       <p className="text-[12px] text-muted-foreground">
         The value is stored encrypted and never enters the chat. The agent gets a reference and uses
-        it without reading it.
+        it without reading it. It is deleted automatically after 30 minutes.
       </p>
       <label className="block space-y-1">
         <span className="text-muted-foreground">Name</span>
@@ -118,7 +124,7 @@ export function ShareSecretForm({
             <div key={s.name} className="flex items-center justify-between gap-2">
               <span className="font-mono">{s.name}</span>
               <span className="ml-auto text-[12px] text-muted-foreground">
-                {s.last_used_at ? "used" : "not used yet"}
+                {s.last_used_at ? "used" : "not used yet"} · {expiresIn(s.expires_at)}
               </span>
               <button
                 type="button"
