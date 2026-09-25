@@ -83,6 +83,10 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
         try:
             _send_one(sub, payload)
             sent += 1
+            # Logged on success too: without it "am I getting notifications?"
+            # could not be answered from the logs — a working pipe and a
+            # silent one both left no trace (2026-09-24).
+            logger.info("push: sent sub=%s user=%s title=%r", sub.pk, user.pk, title)
         except WebPushException as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status in (404, 410):
@@ -119,17 +123,43 @@ def refresh_agent_waiting(agent: Agent) -> int:
         snap.save(update_fields=["waiting_count", "updated_at"])
     if count <= previous:
         return 0  # cleared or unchanged — silence
-    owner = getattr(agent, "owner", None)
-    if owner is None:
-        return 0
     delta = count - previous
-    return send_to_user(
-        owner,
-        title=f"{agent.name} needs you",
-        body=f"{delta} new item{'s' if delta != 1 else ''} · {count} waiting",
-        url="/supervisor",
-        count=count,
+    return sum(
+        send_to_user(
+            user,
+            title=f"{agent.name} needs you",
+            body=f"{delta} new item{'s' if delta != 1 else ''} · {count} waiting",
+            url="/supervisor",
+            count=count,
+        )
+        for user in agent_audience(agent)
     )
+
+
+def agent_audience(agent) -> list:
+    """Who hears about this agent: its owner; else the people who run it.
+
+    Pushing to `agent.owner` alone notified nobody for most of the fleet: on labs
+    six of eight agents (hal, eva, ada, …) have no owner (seen 2026-09-24), so
+    "Hal needs you" was computed, snapshotted and silently dropped. The session
+    ACL already hit the same wall and settled on `Agent.is_admin`'s people
+    (`canopy_sessions/access.py`, leg 4); this is that set, narrowest first —
+    explicit admins who are still members, then the workspace's owners — so a
+    workspace with an explicit admin does not also buzz every owner.
+    """
+    owner = getattr(agent, "owner", None)
+    if owner is not None:
+        return [owner]
+    if not agent.workspace_id:
+        return []
+    from apps.workspaces.models import WorkspaceMembership
+
+    members = WorkspaceMembership.objects.filter(workspace_id=agent.workspace_id)
+    admins = [g.user for g in agent.admin_grants.select_related("user")
+              .filter(user_id__in=members.values("user_id"))]
+    if admins:
+        return admins
+    return [m.user for m in members.filter(role=WorkspaceMembership.OWNER).select_related("user")]
 
 
 def _flush() -> None:
@@ -214,7 +244,7 @@ def _question_audience(session):
     runner = getattr(binding, "runner", None) if binding is not None else None
     candidates = (
         getattr(session, "created_by", None),
-        getattr(agent, "owner", None) if agent is not None else None,
+        *(agent_audience(agent) if agent is not None else ()),
         getattr(runner, "paired_by", None) if runner is not None else None,
     )
     for user in candidates:

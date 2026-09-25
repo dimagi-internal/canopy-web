@@ -546,6 +546,14 @@ LOGGING = {
             "level": env("DJANGO_LOG_LEVEL", default="WARNING"),
             "propagate": False,
         },
+        # Push at INFO: one line per notification actually sent (and per
+        # subscription pruned). Low volume, and the only way to answer "am I
+        # getting notifications?" from the logs rather than from someone's phone.
+        "apps.push": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
         # allauth's own complaints about the auth cycle, which we otherwise
         # never see (see CustomSocialAccountAdapter.on_authentication_error).
         "allauth": {
