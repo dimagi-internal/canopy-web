@@ -393,6 +393,17 @@ next load, deliberately: a widget that stays hidden with no way back is a
 support ticket. Pass `dismissible: false` if you have laid out around it, or
 call `widget.dismiss()` to offer your own way.
 
+**The panel never shows tool calls, and there is no option to.** A visitor
+asked a question and wants the answer, not the MCP calls behind it. canopy
+decides this from the widget's token (a site's delegated token or a contact
+token), not from anything the page can ask for, and withholds the calls on
+every path the panel reads a conversation through: the live socket, the
+snapshot on reconnect, and older history over REST. They are never sent to the
+browser. The transcript keeps every call, so canopy's own chat page shows
+them. While tools run the panel still shows that the agent is working.
+Earlier conversations are listed by date and by the start of what was first
+asked, not by the session's title.
+
 ### Match it to your brand
 
 By default the launcher is an orange pill and the panel is dark, which will not

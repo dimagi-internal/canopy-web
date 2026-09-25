@@ -263,6 +263,8 @@ class ContactSessionOut(Schema):
     id: str
     agent_slug: str | None
     title: str
+    #: See `SessionOut.opening`.
+    opening: str = ""
     status: str
     created_at: str
     #: The host's own descriptive keys, as it set them (e.g. ace-web's
@@ -329,12 +331,13 @@ def _session_or_404(request: HttpRequest, session_id):
 
 
 def _session_out(s) -> ContactSessionOut:
-    from apps.canopy_sessions.services import SERVER_OWNED_METADATA
+    from apps.canopy_sessions.services import SERVER_OWNED_METADATA, opening_of
 
     return ContactSessionOut(
         id=str(s.id),
         agent_slug=s.agent.slug if s.agent_id else None,
         title=s.title,
+        opening=opening_of(s),
         status=s.status,
         created_at=s.created_at.isoformat(),
         metadata={k: v for k, v in (s.metadata or {}).items() if k not in SERVER_OWNED_METADATA},
@@ -402,7 +405,9 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
                          ("page_state__resource", resource), ("page_state__path", page_path)):
         if value:
             rows = rows.filter(**{field: value})
-    return [_session_out(s) for s in rows.order_by("-created_at")[:50]]
+    from apps.canopy_sessions.services import with_opening
+
+    return [_session_out(s) for s in with_opening(rows).order_by("-created_at")[:50]]
 
 
 @contact_router.get("/sessions/{session_id}", response=ContactSessionOut,
@@ -457,6 +462,8 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     rows, has_more = session_services.messages_before(
         session, before=before, limit=clamp_limit(limit)
     )
+    # A contact only ever talks through a widget, which never shows tool calls.
+    rows = session_services.for_widget(rows)
     return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
 
 

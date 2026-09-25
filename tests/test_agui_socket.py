@@ -271,3 +271,83 @@ def test_the_default_is_canopys_own_protocol():
     """Stated as its own test because it is the safety property: every existing
     client, including ones in another repo, keeps working by doing nothing."""
     assert consumers.SessionConsumer.agui_mode is False
+
+
+# --- a widget never receives tool calls ----------------------------------------
+
+
+_TOOL_USE = {"event": "chat.tool_use",
+             "data": {"tool_message_id": "t9", "block": {"name": "list_insights", "input": {}}}}
+_TOOL_RESULT = {"event": "chat.tool_result",
+                "data": {"tool_message_id": "t9", "block": {"content": "[{...a page of JSON...}]"}}}
+_SNAPSHOT_WITH_TOOLS = {
+    "messages": [
+        {"id": "1", "role": "user", "plaintext": "which orgs are in Kenya?"},
+        {"id": "2", "role": "tool_use", "plaintext": "", "content": {"name": "marketplace_orgs_get"}},
+        {"id": "3", "role": "tool_result", "plaintext": "", "content": {"content": "[...]"}},
+        {"id": "4", "role": "assistant", "plaintext": "Three of them."},
+    ],
+    "active_draft": None, "participants": [], "presence_user_ids": [],
+    "current_user_id": 7, "menu": None,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agui_mode", [True, False])
+async def test_a_widget_socket_is_never_sent_a_tool_call(consumer, agui_mode):
+    """A widget's visitor wants the answer, not the MCP calls behind it — so the
+    calls are not collapsed on the page, they never leave canopy."""
+    consumer.agui_mode = agui_mode
+    consumer.hide_tools = True
+
+    await consumer.send_json(_TOOL_USE)
+    await consumer.send_json(_TOOL_RESULT)
+
+    assert consumer.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_widget_snapshot_drops_tool_rows_from_the_verbatim_frame_too(consumer):
+    """The AG-UI snapshot carries canopy's frame verbatim for canopy's own
+    client. Filtering only the projected messages would leak every tool row back
+    through `metadata.canopy.frame`, so the filter runs on the frame first."""
+    consumer.agui_mode = True
+    consumer.hide_tools = True
+
+    await consumer.send_json({"event": "session.state", "data": _SNAPSHOT_WITH_TOOLS})
+
+    [event] = consumer.sent
+    verbatim = event["metadata"]["canopy"]["frame"]["data"]["messages"]
+    assert [m["role"] for m in verbatim] == ["user", "assistant"]
+    assert [m["id"] for m in event["messages"]] == ["1", "4"]
+
+
+@pytest.mark.asyncio
+async def test_a_widget_still_hears_the_agent_working_and_its_reply(consumer):
+    consumer.agui_mode = False
+    consumer.hide_tools = True
+    activity = {"event": "session.activity", "data": {"state": "working"}}
+    delta = {"event": "chat.delta", "data": {"message_id": "m1", "text": "hi"}}
+
+    await consumer.send_json(activity)
+    await consumer.send_json(delta)
+
+    assert consumer.sent == [activity, delta]
+
+
+@pytest.mark.asyncio
+async def test_canopys_own_chat_page_still_gets_every_tool_call(consumer):
+    consumer.agui_mode = False
+
+    await consumer.send_json(_TOOL_USE)
+
+    assert consumer.sent == [_TOOL_USE]
+
+
+def test_a_client_cannot_ask_its_way_in_or_out():
+    """Hidden-ness comes from the credential, so no query value moves it."""
+    for query in (b"tools=shown", b"tools=hidden", b"protocol=ag-ui&tools=all"):
+        c = _Sink()
+        c.scope = {"query_string": query}
+        c._negotiate_protocol()
+        assert c.hide_tools is False

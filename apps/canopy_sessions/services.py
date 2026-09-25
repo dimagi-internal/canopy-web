@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Max
+from django.db.models import Max, OuterRef, Subquery
 from django.utils import timezone
 
 from apps.harness import services as harness_services
@@ -82,6 +82,47 @@ def messages_before(session: Session, before: int, limit: int | None = None):
         return [], False
     has_more = session.messages.filter(turn_index__lt=messages[0].turn_index).exists()
     return messages, has_more
+
+
+#: What an embedded widget never receives: the agent's tool calls and their
+#: results. A widget's visitor asked a question and wants the answer; which MCP
+#: tools ran, with what arguments, is noise to them and often a page of JSON.
+#: Not a host option — a widget cannot ask for them. The transcript keeps every
+#: call, and canopy's own chat page shows them.
+WIDGET_HIDDEN_ROLES = frozenset({Message.TOOL_USE, Message.TOOL_RESULT})
+
+
+def for_widget(messages):
+    """`messages` as an embedded widget may see them — without tool rows."""
+    return [m for m in messages if getattr(m, "role", None) not in WIDGET_HIDDEN_ROLES]
+
+
+#: How much of a conversation's first message a list shows to name it.
+OPENING_CHARS = 140
+
+
+def with_opening(sessions):
+    """`sessions` annotated with `_opening`: the text of each one's first user
+    message, in the same query — a list of fifty must not become fifty-one."""
+    first = (
+        Message.objects.filter(session=OuterRef("pk"), role=Message.USER)
+        .order_by("turn_index")
+        .values("plaintext")[:1]
+    )
+    return sessions.annotate(_opening=Subquery(first))
+
+
+def opening_of(session) -> str:
+    """What the person first asked, as a list names a conversation.
+
+    A widget's session title is canopy's, not the visitor's, and reads as noise
+    to them; the question they typed is the name they would recognise. Only the
+    first paragraph: the widget appends the page's context block to the opening
+    message after a blank line, and that is canopy talking, not the person.
+    """
+    text = (getattr(session, "_opening", None) or "").strip()
+    text = " ".join(text.split("\n\n", 1)[0].split())
+    return text if len(text) <= OPENING_CHARS else text[: OPENING_CHARS - 1].rstrip() + "…"
 
 
 def all_messages(session: Session):

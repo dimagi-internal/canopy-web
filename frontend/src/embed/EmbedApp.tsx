@@ -442,10 +442,12 @@ function EmbedStart({
                   onClick={() => onOpen(s.id)}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted"
                 >
-                  <span className="block truncate text-sm text-foreground">
-                    {s.title || 'Untitled conversation'}
-                  </span>
                   <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>
+                  {/* What you first asked — the name you would recognise. The
+                      session's title is canopy's, and means nothing here. */}
+                  <span className="block truncate text-sm text-foreground">
+                    {s.opening || 'Conversation'}
+                  </span>
                 </button>
               </li>
             ))}
@@ -491,7 +493,8 @@ function EmbedStart({
 
 interface EarlierChat {
   id: string
-  title: string
+  /** The start of the first message (`SessionOut.opening`), trimmed by canopy. */
+  opening: string
   at: string
 }
 
@@ -515,7 +518,7 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
           .filter((r) => r.agent_slug === agent.slug && typeof r.id === 'string')
           .map((r) => ({
             id: r.id as string,
-            title: typeof r.title === 'string' ? r.title : '',
+            opening: typeof r.opening === 'string' ? r.opening : '',
             at: String(r.last_activity_at ?? r.created_at ?? ''),
           }))
           .sort((a, b) => b.at.localeCompare(a.at))
@@ -600,6 +603,8 @@ function EmbedChat({
    *  the answer did not look like it was about routing. */
   isContact?: boolean
 }) {
+  // No tool calls ever arrive here: canopy withholds them from every widget
+  // connection, decided by the token rather than asked for (consumers.py).
   const wsUrl = useCallback(
     () => client.sessionSocketUrl(sessionId) ?? '',
     [client, sessionId],
@@ -781,14 +786,26 @@ function EmbedChat({
           </button>
           <span className="truncate text-[12px] text-muted-foreground">{agent.name}</span>
         </span>
-        <button
-          type="button"
-          onClick={() => link.requestClose()}
-          aria-label="Close"
-          className="rounded px-2 text-muted-foreground hover:text-foreground"
-        >
-          ×
-        </button>
+        <span className="flex shrink-0 items-center gap-1">
+          {/* The ‹ alone was the only way to a new question, and nobody read a
+              bare chevron as "new chat". Same destination — the start screen,
+              whose composer starts a fresh conversation — said in words. */}
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            New chat
+          </button>
+          <button
+            type="button"
+            onClick={() => link.requestClose()}
+            aria-label="Close"
+            className="rounded px-2 text-muted-foreground hover:text-foreground"
+          >
+            ×
+          </button>
+        </span>
       </header>
       <div className="min-h-0 flex-1">
         <ChatPanel

@@ -473,11 +473,11 @@ describe('feedback while the agent works', () => {
 
 describe('the agent and your earlier conversations', () => {
   const EARLIER = [
-    { id: 'old-hal', agent_slug: 'hal', title: 'Older question', created_at: '2026-09-20T10:00:00Z',
+    { id: 'old-hal', agent_slug: 'hal', title: 'cw-old-thread', opening: 'Older question', created_at: '2026-09-20T10:00:00Z',
       last_activity_at: '2026-09-20T10:05:00Z' },
-    { id: 'new-hal', agent_slug: 'hal', title: 'Newer question', created_at: '2026-09-24T10:00:00Z',
+    { id: 'new-hal', agent_slug: 'hal', title: 'cw-new-thread', opening: 'Newer question', created_at: '2026-09-24T10:00:00Z',
       last_activity_at: '2026-09-24T10:05:00Z' },
-    { id: 'echo-1', agent_slug: 'echo', title: 'Not this agent', created_at: '2026-09-25T10:00:00Z',
+    { id: 'echo-1', agent_slug: 'echo', title: 'cw-not-thread', opening: 'Not this agent', created_at: '2026-09-25T10:00:00Z',
       last_activity_at: '2026-09-25T10:05:00Z' },
   ]
 
@@ -532,5 +532,25 @@ describe('the agent and your earlier conversations', () => {
     fireEvent.click(await screen.findByLabelText('All conversations'))
 
     expect(await screen.findByText('Older question')).toBeTruthy()
+  })
+
+  it('names an earlier chat by what was asked and when, never by canopy’s title', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    expect(await screen.findByText('Newer question')).toBeTruthy()
+    expect(screen.queryByText(/-thread$/)).toBeNull()
+    expect(screen.getAllByText(/Sep 2\d/).length).toBeGreaterThan(0)
+  })
+
+  it('starts a new chat from inside a conversation, in words not a chevron', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+    fireEvent.click(await screen.findByText('Newer question'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+
+    expect(await screen.findByText(/Ask Hal something new below/)).toBeTruthy()
+    expect(created()).toBeUndefined()
   })
 })

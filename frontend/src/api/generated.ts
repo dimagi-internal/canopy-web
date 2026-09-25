@@ -7157,6 +7157,11 @@ export interface components {
             readonly agent_slug: string | null;
             /** Title */
             readonly title: string;
+            /**
+             * Opening
+             * @default
+             */
+            readonly opening: string;
             /** Status */
             readonly status: string;
             /** Created At */
@@ -8407,6 +8412,11 @@ export interface components {
             readonly workspace: string;
             /** Title */
             readonly title: string;
+            /**
+             * Opening
+             * @default
+             */
+            readonly opening: string;
             /** Status */
             readonly status: string;
             /**
@@ -12492,6 +12502,11 @@ export interface components {
             readonly workspace: string;
             /** Title */
             readonly title: string;
+            /**
+             * Opening
+             * @default
+             */
+            readonly opening: string;
             /** Status */
             readonly status: string;
             /**
