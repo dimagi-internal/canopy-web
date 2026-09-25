@@ -10585,6 +10585,8 @@ export interface components {
             readonly prompt: string;
             /** Cron */
             readonly cron: string;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
             /** Timezone */
             readonly timezone: string;
             /** Enabled */
@@ -10671,7 +10673,9 @@ export interface components {
             /** Prompt */
             readonly prompt: string;
             /** Cron */
-            readonly cron: string;
+            readonly cron?: string | null;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
             /**
              * Timezone
              * @default UTC
@@ -10735,6 +10739,8 @@ export interface components {
             readonly prompt?: string | null;
             /** Cron */
             readonly cron?: string | null;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
             /** Timezone */
             readonly timezone?: string | null;
             /** Enabled */

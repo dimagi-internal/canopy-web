@@ -13,8 +13,9 @@ Reuses apps.harness.services for the turn-lifecycle operations
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 
-from canopy_cron import next_slots, slots_between
+from canopy_cron import next_slots, slots_between, validate_timezone
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -53,6 +54,62 @@ class DuplicateScheduleName(Exception):
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.name = name
+
+
+class InvalidSchedule(ValueError):
+    """The timing fields do not describe a schedule that can fire: neither or both
+    of cron / run_once_at, or a one-off whose instant has already passed. REST
+    maps it to 422; the MCP re-raises it with the message intact."""
+
+
+def one_off_cron(when: dt.datetime, tz_name: str) -> str:
+    """The 5-field cron that fires at `when`, read in `tz_name`.
+
+    Stored so a runner predating `run_once_at` fires a one-off unchanged: it only
+    ever evaluates `cron` against `fire_after`. The expression repeats yearly, and
+    that is safe precisely because `fire_after` is pinned a minute before `when`
+    (serialize_schedule) and the schedule disables itself on firing
+    (services.fire_schedule) — the next year's slot is never due before then."""
+    local = when.astimezone(ZoneInfo(tz_name))
+    return f"{local.minute} {local.hour} {local.day} {local.month} *"
+
+
+def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict:
+    """Reconcile cron / run_once_at / timezone in a create or update payload.
+
+    Exactly one of cron and run_once_at describes WHEN. A one-off's cron is
+    derived, never supplied; supplying a cron to an existing one-off converts it
+    back to recurring. `now` is read here so every surface agrees on "the past"."""
+    fields = dict(fields)
+    cron = fields.pop("cron", None)
+    once = fields.pop("run_once_at", None)
+    if cron and once:
+        raise InvalidSchedule("give either cron (recurring) or run_once_at (one-off), not both")
+    if current is None and not (cron or once):
+        raise InvalidSchedule("a schedule needs cron (recurring) or run_once_at (one-off)")
+    tz_name = fields.get("timezone") or (current.timezone if current else "UTC")
+    validate_timezone(tz_name)
+    if cron:
+        fields["cron"] = cron
+        fields["run_once_at"] = None
+    elif once:
+        if once.tzinfo is None:
+            # No offset means wall-clock time where the schedule lives:
+            # "2026-09-28T09:00" in America/Denver is 9am Denver.
+            once = once.replace(tzinfo=ZoneInfo(tz_name))
+        # Cron has minute resolution, so a one-off does too.
+        once = once.replace(second=0, microsecond=0)
+        if once <= timezone.now():
+            raise InvalidSchedule(f"run_once_at {once.isoformat()} is not in the future")
+        fields["run_once_at"] = once
+        fields["cron"] = one_off_cron(once, tz_name)
+        # Re-arming a one-off that already fired (it disabled itself) must make it
+        # fire again — unless the caller said otherwise in the same request.
+        fields.setdefault("enabled", True)
+    elif current is not None and current.run_once_at and "timezone" in fields:
+        # Same instant, re-expressed in the new zone.
+        fields["cron"] = one_off_cron(current.run_once_at, tz_name)
+    return fields
 
 
 # The role floor for every schedule WRITE. A schedule is prompt text the runner
@@ -135,12 +192,23 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
     the runner passes to due_slot — last_slot is NULL until the first fire, and
     an unbounded backward lookup would fire a slot predating the schedule."""
     latest = services.latest_occurrence_turn(schedule)
+    now = timezone.now()
+    fire_after = schedule.last_slot or schedule.created_at
+    if schedule.run_once_at:
+        # Pin the anchor just before the one instant, so the derived cron's
+        # earlier-year matches can never be due (see one_off_cron).
+        fire_after = max(fire_after, schedule.run_once_at - dt.timedelta(minutes=1))
+        pending = schedule.enabled and schedule.run_once_at > now
+        next_runs = [schedule.run_once_at] if pending else []
+    else:
+        next_runs = next_slots(schedule.cron, schedule.timezone, now=now, count=3)
     return {
         "id": schedule.id,
         "agent_slug": schedule.agent_slug,
         "name": schedule.name,
         "prompt": schedule.prompt,
         "cron": schedule.cron,
+        "run_once_at": schedule.run_once_at,
         "timezone": schedule.timezone,
         "enabled": schedule.enabled,
         "routing": schedule.routing,
@@ -148,8 +216,8 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
         "always_run": schedule.always_run,
         "notify": schedule.notify,
         "last_slot": schedule.last_slot,
-        "fire_after": schedule.last_slot or schedule.created_at,
-        "next_runs": next_slots(schedule.cron, schedule.timezone, now=timezone.now(), count=3),
+        "fire_after": fire_after,
+        "next_runs": next_runs,
         "last_status": latest.status if latest else "",
         "created_by_email": schedule.created_by.email if schedule.created_by_id else None,
         "created_at": schedule.created_at,
@@ -169,6 +237,7 @@ def create_schedule(
         user, agent_slug, workspace_slug=workspace_slug, require_role=WRITE_ROLE
     )
     creator = user if getattr(user, "is_authenticated", False) else None
+    fields = _apply_timing(fields)
     try:
         # Own savepoint: an IntegrityError from uniq_agent_schedule_name must not
         # poison the request transaction (SESSION_SAVE_EVERY_REQUEST would then
@@ -187,6 +256,7 @@ def update_schedule(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
     )
+    fields = _apply_timing(fields, current=schedule)
     for key, value in fields.items():
         setattr(schedule, key, value)
     if fields:
@@ -259,7 +329,9 @@ def week_schedules(workspace_ids: set, start: dt.datetime, *, created_by=None) -
         rows.append({
             "schedule": serialize_schedule(s),
             "workspace_slug": s.agent.workspace_id,
-            "fires": slots_between(s.cron, s.timezone, start=start, end=end),
+            "fires": (
+                [s.run_once_at] if start <= s.run_once_at < end else []
+            ) if s.run_once_at else slots_between(s.cron, s.timezone, start=start, end=end),
         })
     return rows
 

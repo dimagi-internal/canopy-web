@@ -1802,7 +1802,10 @@ def fire_schedule_route(
     # a self-destruct on same-slot re-fire (fire skips supersede when the key
     # exists, but release would already have killed the turn this route returns).
     # Release runs on the CLAIM tick instead — see claim_next_turn.
-    turn, _ = services.fire_schedule(schedule, payload.slot)
+    try:
+        turn, _ = services.fire_schedule(schedule, payload.slot)
+    except services.OneOffSlotMismatch as exc:
+        raise HttpError(409, str(exc)) from None
     return Status(201, turn)
 
 
