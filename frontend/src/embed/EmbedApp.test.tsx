@@ -543,6 +543,33 @@ describe('the agent and your earlier conversations', () => {
     expect(screen.getAllByText(/Sep 2\d/).length).toBeGreaterThan(0)
   })
 
+  it('leaves out a chat with nothing asked in it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const u = String(url)
+        if (u.includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (u.includes('/api/canopy-sessions/?')) {
+          return {
+            ok: true, status: 200,
+            json: async () => [
+              ...EARLIER,
+              { id: 'empty-hal', agent_slug: 'hal', title: '', opening: '', created_at: '2026-09-25T11:00:00Z' },
+            ],
+          } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    expect(await screen.findByText('Newer question')).toBeTruthy()
+    expect(screen.queryByText('Conversation')).toBeNull()
+  })
+
   it('starts a new chat from inside a conversation, in words not a chevron', async () => {
     withHistory()
     render(<EmbedApp link={hal()} app="connect-labs" />)

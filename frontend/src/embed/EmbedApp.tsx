@@ -515,7 +515,16 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
       .then((data) => {
         if (cancelled || !Array.isArray(data)) return
         const mine = (data as Array<Record<string, unknown>>)
-          .filter((r) => r.agent_slug === agent.slug && typeof r.id === 'string')
+          // A chat with no question in it has nothing to be named by, and there
+          // is nothing in it to pick up — leftovers of the empty-session-per-page
+          // -load bug listed seven blank "Conversation" rows on one account.
+          .filter(
+            (r) =>
+              r.agent_slug === agent.slug &&
+              typeof r.id === 'string' &&
+              typeof r.opening === 'string' &&
+              r.opening.trim() !== '',
+          )
           .map((r) => ({
             id: r.id as string,
             opening: typeof r.opening === 'string' ? r.opening : '',
