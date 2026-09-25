@@ -6,7 +6,6 @@ import {
   RunnerCredentials,
   SLOTS,
   credentialSummary,
-  labelPayload,
   nextPayload,
   type CredentialStatus,
 } from './RunnerCredentials'
@@ -118,16 +117,6 @@ describe('credentialSummary', () => {
   })
 })
 
-describe('labelPayload', () => {
-  it('sends only names that changed, and an emptied one as a clear', () => {
-    const status = { ...ONE_CLAUDE, claude_token_label: 'a@dimagi.com' }
-    expect(labelPayload({ claude_token_label: 'a@dimagi.com' }, status)).toEqual({})
-    expect(labelPayload({ claude_token_label: '  ' }, status)).toEqual({ claude_token_label: '' })
-    expect(labelPayload({ claude_token_secondary_label: ' b@dimagi.com ' }, status))
-      .toEqual({ claude_token_secondary_label: 'b@dimagi.com' })
-  })
-})
-
 describe('RunnerCredentials', () => {
   const TWO = {
     ...ONE_CLAUDE, has_claude_token_secondary: true,
@@ -160,8 +149,8 @@ describe('RunnerCredentials', () => {
     api.getRunnerCredentialStatus.mockResolvedValue(TWO)
     render(<RunnerCredentials runnerId="r1" />)
     await waitFor(() => expect(screen.getByTestId('cred-name-claude_token').textContent)
-      .toBe('a@dimagi.com'))
-    expect(screen.getByTestId('cred-name-claude_token_secondary').textContent).toBe('b@dimagi.com')
+      .toContain('a@dimagi.com'))
+    expect(screen.getByTestId('cred-name-claude_token_secondary').textContent).toContain('b@dimagi.com')
   })
 
   it('swaps primary and fallback', async () => {
@@ -173,24 +162,29 @@ describe('RunnerCredentials', () => {
     await waitFor(() => expect(screen.getByTestId('runner-credentials-swap')).toBeTruthy())
     await act(async () => { fireEvent.click(screen.getByTestId('runner-credentials-swap')) })
     expect(api.swapRunnerLogins).toHaveBeenCalledWith('r1')
-    expect(screen.getByTestId('cred-name-claude_token').textContent).toBe('b@dimagi.com')
+    expect(screen.getByTestId('cred-name-claude_token').textContent).toContain('b@dimagi.com')
   })
 
-  it('will not swap over unsaved typing, which would land on the other login', async () => {
+  it('has no paste box for a login — you sign in to it instead', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(TWO)
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-label-claude_token')).toBeTruthy())
-    fireEvent.change(screen.getByTestId('cred-label-claude_token'), { target: { value: 'c@dimagi.com' } })
-    expect(screen.getByTestId('runner-credentials-swap').hasAttribute('disabled')).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('cred-slot-claude_token')).toBeTruthy())
+    for (const key of ['claude_token', 'claude_token_secondary']) {
+      expect(screen.getByTestId(`cred-slot-${key}`).querySelector('input[type="password"]')).toBeNull()
+    }
+    expect(screen.getByTestId('cred-slot-claude_api_key').querySelector('input[type="password"]')).toBeTruthy()
   })
 
   it('saves a renamed login without touching any token', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(TWO)
     api.setRunnerCredential.mockResolvedValue({ ...TWO, claude_token_label: 'c@dimagi.com' })
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-label-claude_token')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('cred-name-claude_token')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('cred-name-claude_token'))
     fireEvent.change(screen.getByTestId('cred-label-claude_token'), { target: { value: 'c@dimagi.com' } })
-    await act(async () => { fireEvent.click(screen.getByTestId('runner-credentials-save')) })
+    await act(async () => {
+      fireEvent.keyDown(screen.getByTestId('cred-label-claude_token'), { key: 'Enter' })
+    })
     expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token_label: 'c@dimagi.com' })
   })
 })

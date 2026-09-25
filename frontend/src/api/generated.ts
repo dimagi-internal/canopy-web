@@ -11666,11 +11666,6 @@ export interface components {
              * @default
              */
             readonly detail: string;
-            /**
-             * Account
-             * @default
-             */
-            readonly account: string;
         };
         /**
          * RunnerAdminOut

@@ -1139,6 +1139,8 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
         attempted.append(_claude_cred_label())
         capped, dead = _is_usage_cap(text), _is_auth_required(text)
         if ok or not (capped or dead):
+            if ok:
+                _promote_working_subscription(turn_id)
             return ok, text, session_id
         if dead:
             # An unusable credential either way, so it advances the same as a cap
@@ -2173,6 +2175,41 @@ def _advance_claude_credential(*, turn_id: str = "") -> bool:
     return True
 
 
+def _promote_working_subscription(turn_id: str = "") -> None:
+    """The fallback just ran a turn the primary could not: make it the primary.
+
+    Without this the switch lived only in this process. Every restart (and the
+    box restarts itself on every update) went back to the capped primary and
+    spent one failed attempt rediscovering the cap, and the settings page kept
+    calling the dead login "primary". Swapping on canopy-web makes the page show
+    what the box is actually using, and puts the capped login second, where it is
+    tried again once the new primary caps, which is roughly when its own weekly
+    cap has had time to reset. Before this, the box went straight from the
+    fallback to the metered API key and never looked at the primary again.
+
+    Subscriptions only. The API key is last on purpose and never promoted.
+    """
+    if not _CLAUDE_CRED_RUNNER_ID or _CLAUDE_CRED_I != 1 or len(_CLAUDE_CREDS) < 2:
+        return
+    if (_CLAUDE_CREDS[0][0], _CLAUDE_CREDS[1][0]) != ("subscription-1", "subscription-2"):
+        return
+    try:
+        status, _ = _api("POST", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential/swap")
+    except Exception as exc:  # noqa: BLE001 — the turn already succeeded
+        _log(f"warn: could not promote the working login ({exc})")
+        return
+    if status != 200:
+        _log(f"warn: promoting the working login returned {status}")
+        return
+    # Mirror the swap locally so the periodic re-read sees no change (and does
+    # not reset to index 0, which would now be the capped login again).
+    (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[0], _CLAUDE_CREDS[1]
+    _CLAUDE_CREDS[0], _CLAUDE_CREDS[1] = (l1, v1, t2), (l2, v2, t1)
+    _apply_claude_credential(0)
+    _log(f"turn {turn_id[:8]}: the fallback login worked while the primary is capped "
+         "— swapped them on canopy-web")
+
+
 def _notify_api_key_fallback(label: str, turn_id: str) -> None:
     """Tell canopy-web we have fallen back to metered billing.
 
@@ -2660,32 +2697,6 @@ class MintSession:
 _MINT_SESSION = None
 _MINT_ID = ""
 
-#: Claude Code's own profile endpoint — what `/status` reads to show who you are.
-_CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
-
-
-def _account_for_token(token: str) -> str:
-    """The email a freshly minted token belongs to, or "" when we cannot tell.
-
-    Best-effort and never fatal: it only NAMES the login on the settings page so a
-    human can tell the primary from the fallback. A setup-token may be scoped too
-    narrowly to read the profile; then the operator types a name instead.
-    """
-    req = urllib.request.Request(_CLAUDE_PROFILE_URL, headers={
-        "Authorization": f"Bearer {token}",
-        "anthropic-beta": "oauth-2025-04-20",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read() or b"{}")
-    except Exception as exc:  # noqa: BLE001 — a name is not worth a failed sign-in
-        _log(f"mint: could not read the account for the new token ({exc})")
-        return ""
-    account = data.get("account") if isinstance(data, dict) else None
-    email = (account or {}).get("email_address") or (account or {}).get("email") or ""
-    return str(email).strip()[:200]
-
-
 #: How often an idle box re-reads its credential bundle, so a swap or a pasted
 #: token on the settings page takes effect without a restart.
 CREDENTIAL_REREAD_SECONDS = 300
@@ -2771,8 +2782,7 @@ def _drain_mint(runner_id: str) -> None:
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
                 # secret a human handled was the single-use code.
-                _api("POST", f"/runners/{runner_id}/mint/result",
-                     {"token": token, "account": _account_for_token(token)})
+                _api("POST", f"/runners/{runner_id}/mint/result", {"token": token})
                 # The FORMAT, never the secret: 12 characters is the prefix and
                 # nothing else, and it is the one fact we lacked when a real
                 # token was discarded for not looking like the format we assumed.
