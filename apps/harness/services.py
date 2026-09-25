@@ -455,6 +455,14 @@ def heartbeat(
         push_services.send_due_session_pushes(now)
     except Exception:  # noqa: BLE001
         logger.exception("push: draining due session pushes failed")
+    # Same clock: shared chat secrets past their 30 minutes are deleted here, so
+    # the ciphertext goes even if nobody reads the chat again.
+    try:
+        from apps.canopy_sessions import secrets as session_secrets
+
+        session_secrets.purge_expired(now)
+    except Exception:  # noqa: BLE001
+        logger.exception("secrets: purging expired session secrets failed")
     return runner
 
 

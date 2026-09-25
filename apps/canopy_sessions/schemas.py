@@ -424,6 +424,8 @@ class SessionSecretOut(Schema):
     created_at: str
     updated_at: str
     last_used_at: str | None = None
+    #: 30 minutes after it was shared; gone after that (`secrets.TTL`).
+    expires_at: str
 
 
 class SessionSecretCreatedOut(SessionSecretOut):

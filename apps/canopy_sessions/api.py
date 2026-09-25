@@ -919,6 +919,7 @@ def _secret_out(session, row, **extra) -> dict:
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        "expires_at": secrets.expires_at(row).isoformat(),
         **extra,
     }
 
@@ -943,6 +944,7 @@ def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSe
             summary="Secrets shared with this chat (names only, never values)")
 def list_secrets(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
+    secrets.purge_expired()
     return [_secret_out(session, r) for r in session.secrets.select_related("created_by")]
 
 
