@@ -200,3 +200,57 @@ def test_a_transient_send_failure_keeps_the_subscription(agent, sub):
         _item(agent, "i1")
     sub.refresh_from_db()
     assert sub.failure_count == 1  # kept — a 503 is the service's problem, not ours
+
+
+# ---- who hears about an agent with no owner -----------------------------------
+# On labs six of eight agents have owner=None (2026-09-24), so pushing only to
+# agent.owner meant "Hal needs you" went to nobody. The audience falls back to
+# the agent's explicit admins, then the workspace's owners.
+
+
+def _ownerless(workspace, slug="hal"):
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=workspace, owner=None)
+
+
+def test_an_ownerless_agent_pushes_to_the_workspace_owner(workspace, user, sub):
+    hal = _ownerless(workspace)
+    with patch("apps.push.services._send_one") as send:
+        _item(hal, "i1")
+    assert send.call_count == 1
+    assert send.call_args.args[0].user_id == user.pk
+
+
+def test_an_explicit_admin_is_told_instead_of_every_workspace_owner(workspace, user, sub):
+    from apps.agents.models import AgentAdmin
+
+    admin = User.objects.create_user("ad", "ad@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=admin, workspace=workspace, role=WorkspaceMembership.EDITOR)
+    PushSubscription.objects.create(user=admin, endpoint="https://fcm.googleapis.com/fcm/send/BBB",
+                                    p256dh="k", auth="a")
+    hal = _ownerless(workspace)
+    AgentAdmin.objects.create(agent=hal, user=admin)
+    with patch("apps.push.services._send_one") as send:
+        _item(hal, "i1")
+    assert [c.args[0].user_id for c in send.call_args_list] == [admin.pk]
+
+
+def test_an_admin_who_left_the_workspace_is_not_told(workspace, user, sub):
+    from apps.agents.models import AgentAdmin
+
+    gone = User.objects.create_user("gone", "gone@dimagi.com", "pw")
+    PushSubscription.objects.create(user=gone, endpoint="https://fcm.googleapis.com/fcm/send/CCC",
+                                    p256dh="k", auth="a")
+    hal = _ownerless(workspace)
+    AgentAdmin.objects.create(agent=hal, user=gone)  # never a member
+    with patch("apps.push.services._send_one") as send:
+        _item(hal, "i1")
+    assert [c.args[0].user_id for c in send.call_args_list] == [user.pk]  # falls to the ws owner
+
+
+def test_a_sent_push_is_logged(agent, sub, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="apps.push.services"), \
+            patch("apps.push.services._send_one"):
+        _item(agent, "i1")
+    assert any("push: sent" in r.getMessage() for r in caplog.records)

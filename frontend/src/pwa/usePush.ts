@@ -31,6 +31,20 @@ export function setBadge(count: number): void {
   else void nav.clearAppBadge?.()
 }
 
+/** Tell the server where to reach this browser. Idempotent — it upserts on endpoint. */
+async function registerWithServer(sub: PushSubscription): Promise<void> {
+  const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
+  const res = await apiV2.POST('/api/push/subscribe', {
+    body: {
+      endpoint: json.endpoint ?? '',
+      p256dh: json.keys?.p256dh ?? '',
+      auth: json.keys?.auth ?? '',
+      user_agent: navigator.userAgent,
+    },
+  })
+  if (res.error) throw new Error('could not register this device')
+}
+
 export interface UsePush {
   supported: boolean
   permission: NotificationPermission | 'unsupported'
@@ -55,7 +69,14 @@ export function usePush(): UsePush {
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => {
-        if (!cancelled) setSubscribed(!!sub)
+        if (cancelled) return
+        setSubscribed(!!sub)
+        // "Subscribed" here is the BROWSER's opinion. The server can have lost
+        // its row meanwhile (pruned on a 404/410, or re-pointed to whoever
+        // subscribed that endpoint last), and then the toggle reads ON while
+        // nothing is ever sent. Re-registering on every open heals that: the
+        // server upserts on endpoint, so a healthy row is a no-op.
+        if (sub) void registerWithServer(sub).catch(() => {})
       })
       .catch(() => {
         /* no SW yet — not subscribed, not an error worth showing */
@@ -82,16 +103,7 @@ export function usePush(): UsePush {
         userVisibleOnly: true, // Chrome requires it; a silent push is not allowed
         applicationServerKey: urlBase64ToUint8Array(keyRes.data.public_key),
       })
-      const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
-      const res = await apiV2.POST('/api/push/subscribe', {
-        body: {
-          endpoint: json.endpoint ?? '',
-          p256dh: json.keys?.p256dh ?? '',
-          auth: json.keys?.auth ?? '',
-          user_agent: navigator.userAgent,
-        },
-      })
-      if (res.error) throw new Error('could not register this device')
+      await registerWithServer(sub)
       setSubscribed(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not enable notifications')
