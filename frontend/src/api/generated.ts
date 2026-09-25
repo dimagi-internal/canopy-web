@@ -5349,11 +5349,9 @@ export interface paths {
         readonly get: operations["apps_canopy_sessions_api_list_secrets"];
         readonly put?: never;
         /**
-         * Share a secret with this chat by reference (write-only)
-         * @description Stores the value encrypted and returns the MESSAGE to post in its place.
-         *
-         *     Does not post it: the browser sends it through the ordinary send path, so it
-         *     reaches the agent exactly like anything else the person types.
+         * Share a secret with this chat (write-only)
+         * @description Stores the value encrypted. Posts NOTHING into the chat: the person just
+         *     refers to it by name, and the session finds it with `canopy secret list`.
          */
         readonly post: operations["apps_canopy_sessions_api_share_secret"];
         readonly delete?: never;
@@ -5379,23 +5377,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/secrets/{name}/value": {
+    readonly "/api/session-secrets/{transcript_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * PLAINTEXT — for `canopy secret exec`, never a browser
-         * @description Bearer only, and only a writer of the session or the session's own agent.
-         *
-         *     Looked up WITHOUT the read ACL on purpose: the agent spending the secret
-         *     usually cannot read the chat it is working in (it is not its participant),
-         *     and `secrets.may_resolve` is the whole gate. Anyone it refuses gets the
-         *     same 404 as a session that does not exist.
-         */
-        readonly get: operations["apps_canopy_sessions_api_secret_value"];
+        /** Secrets shared with the chat this session is bound to (names only) */
+        readonly get: operations["apps_canopy_sessions_secrets_api_list_for_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/session-secrets/{transcript_id}/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** PLAINTEXT — for `canopy secret exec` inside the bound session only */
+        readonly get: operations["apps_canopy_sessions_secrets_api_value_for_session"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -12956,12 +12963,13 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
-        /** SessionSecretCreatedOut */
-        readonly SessionSecretCreatedOut: {
+        /**
+         * SessionSecretOut
+         * @description What anyone may know about a shared secret: never the value.
+         */
+        readonly SessionSecretOut: {
             /** Name */
             readonly name: string;
-            /** Ref */
-            readonly ref: string;
             /** Created By */
             readonly created_by?: string | null;
             /** Created At */
@@ -12972,43 +12980,16 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Expires At */
             readonly expires_at: string;
-            /** Message */
-            readonly message: string;
         };
         /**
          * SessionSecretIn
-         * @description A secret handed to this chat. `note` rides along in the chat message; the value never does.
+         * @description A secret handed to this chat. Nothing is posted into the chat.
          */
         readonly SessionSecretIn: {
             /** Name */
             readonly name: string;
             /** Value */
             readonly value: string;
-            /**
-             * Note
-             * @default
-             */
-            readonly note: string;
-        };
-        /**
-         * SessionSecretOut
-         * @description What a browser may know about a shared secret: never the value.
-         */
-        readonly SessionSecretOut: {
-            /** Name */
-            readonly name: string;
-            /** Ref */
-            readonly ref: string;
-            /** Created By */
-            readonly created_by?: string | null;
-            /** Created At */
-            readonly created_at: string;
-            /** Updated At */
-            readonly updated_at: string;
-            /** Last Used At */
-            readonly last_used_at?: string | null;
-            /** Expires At */
-            readonly expires_at: string;
         };
         /** SessionSecretValueOut */
         readonly SessionSecretValueOut: {
@@ -20678,7 +20659,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SessionSecretCreatedOut"];
+                    readonly "application/json": components["schemas"]["SessionSecretOut"];
                 };
             };
         };
@@ -20704,12 +20685,34 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_secret_value: {
+    readonly apps_canopy_sessions_secrets_api_list_for_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly session_id: string;
+                readonly transcript_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SessionSecretOut"][];
+                };
+            };
+        };
+    };
+    readonly apps_canopy_sessions_secrets_api_value_for_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly transcript_id: string;
                 readonly name: string;
             };
             readonly cookie?: never;

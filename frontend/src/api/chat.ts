@@ -331,7 +331,6 @@ export function removeParticipant(id: string, userId: number): Promise<Participa
 
 export interface SharedSecret {
   name: string;
-  ref: string;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -341,19 +340,14 @@ export interface SharedSecret {
 }
 
 /**
- * Hand this chat a secret by REFERENCE. The server stores the value and returns
- * the message to post in its place — the caller sends that, never the value.
+ * Hand this chat a secret. Nothing is posted into the chat: mention it by name,
+ * and the session bound to this chat finds it with `canopy secret list`.
  */
-export function shareSecret(
-  id: string,
-  name: string,
-  value: string,
-  note = "",
-): Promise<SharedSecret & { message: string }> {
+export function shareSecret(id: string, name: string, value: string): Promise<SharedSecret> {
   return request(`/api/canopy-sessions/${encodeURIComponent(id)}/secrets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, value, note }),
+    body: JSON.stringify({ name, value }),
   });
 }
 

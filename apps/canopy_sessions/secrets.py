@@ -1,18 +1,29 @@
-"""Secrets handed to a chat by reference. See `models.SessionSecret`.
+"""Secrets a person hands to ONE chat. See `models.SessionSecret`.
 
-Three rules, each load-bearing:
+The person shares a secret from the chat's session menu; nothing is posted into
+the chat. They just mention it by name ("put GH_TOKEN in canopy's Actions
+secrets"), and the agent running that chat finds and spends it with
+`canopy secret list` / `canopy secret exec NAME -- <command>`.
 
-* **The value never enters the chat.** What the sharer's browser posts to the
-  session is `reference_message()` — a name and a URI. Nothing here writes a
-  `Message`, and nothing that returns to a browser carries a value.
-* **Plaintext only to a bearer.** A session cookie is refused even for the
-  person who shared it, so no page can ever render one (the same line
-  `agents.api.resolve_agent_credentials` draws).
-* **Only someone who could act in this chat anyway** — a writer of the session
-  (`access.can_write`), or the session's agent calling as its own canopy login
-  (`Agent.user`). The second leg is what lets the agent that is DOING the work
-  spend it: an agent's own identity is usually not a participant of the chat it
-  is running in.
+The rules, each load-bearing:
+
+* **The value never enters the chat.** Nothing here writes a `Message`, and
+  nothing a browser can reach returns a value — the list is names and times.
+* **Only the session the chat is bound to can use it.** The agent side names
+  ITSELF, by its Claude session id (`CLAUDE_CODE_SESSION_ID`, which the runner
+  reports as `RunnerBinding.transcript_id`), never by a chat id it was told. A
+  secret is released only to the conversation bound to the chat that holds it:
+  another session of the same agent, or the same agent in another chat, gets a
+  404 (Jonathan, 2026-09-25: "only accessible to this session"). On top of
+  that the caller must be the chat's agent identity (`Agent.user`) or a writer
+  of the chat, so knowing a session id is not enough on its own.
+* **Plaintext only to a bearer.** A cookie is refused even for the sharer.
+* **Thirty minutes.** A hand-off, not a store — see `TTL`.
+
+Honest limit: processes of one OS user can read each other's files, so this
+cannot stop a hostile local process that goes looking for another session's id
+and the agent's token. What it stops is every ordinary path by which a secret
+meant for this conversation reaches a different one.
 """
 from __future__ import annotations
 
@@ -24,15 +35,14 @@ from django.utils import timezone
 from apps.common.encryption import decrypt_secret, encrypt_secret
 
 from . import access
-from .models import Session, SessionSecret
+from .models import RunnerBinding, Session, SessionSecret
 
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 VALUE_MAX = 16_384
-SCHEME = "canopy-secret://"
-#: A shared secret is a hand-off, not a store: it dies this long after it was
-#: shared (re-sharing the name restarts the clock). Enforced on every read, and
-#: the rows are deleted by `purge_expired` on the runner heartbeat, so the
-#: ciphertext does not outlive its use either (Jonathan, 2026-09-25).
+#: A shared secret dies this long after it was shared (re-sharing the name
+#: restarts the clock). Enforced on every read, and the rows are deleted by
+#: `purge_expired` on the runner heartbeat, so the ciphertext does not outlive
+#: its use either (Jonathan, 2026-09-25).
 TTL = dt.timedelta(minutes=30)
 
 
@@ -55,26 +65,6 @@ def normalize_name(name: str) -> str:
     return cleaned
 
 
-def reference(session_id, name: str) -> str:
-    return f"{SCHEME}{session_id}/{name}"
-
-
-def reference_message(session_id, name: str, note: str = "") -> str:
-    """What the chat sees instead of the secret. Tells the agent how to spend it."""
-    ref = reference(session_id, name)
-    minutes = int(TTL.total_seconds() // 60)
-    lines = [f"🔒 I shared a secret, `{name}`, with this session. Its value is not in this chat, "
-             f"and it is deleted {minutes} minutes from now."]
-    if note.strip():
-        lines.append(note.strip())
-    lines.append(
-        f"Use it without reading it: `canopy secret exec {ref} -- <command>` "
-        f"(sets ${name} for that one command and masks the value in its output; "
-        f"`--stdin` pipes it in instead)."
-    )
-    return "\n\n".join(lines)
-
-
 def set_secret(session: Session, name: str, value: str, *, user=None) -> SessionSecret:
     name = normalize_name(name)
     value = (value or "").strip()
@@ -93,19 +83,38 @@ def set_secret(session: Session, name: str, value: str, *, user=None) -> Session
     return row
 
 
-def may_resolve(user, session: Session) -> bool:
-    if not getattr(user, "is_authenticated", False):
-        return False
+def session_for_caller(user, transcript_id: str) -> Session | None:
+    """The chat whose bound conversation IS `transcript_id`, if `user` may act for it.
+
+    None — never an error that says which half failed — when no chat is bound to
+    that conversation, or the caller is neither the chat's agent nor a writer.
+    """
+    transcript_id = (transcript_id or "").strip()
+    if not transcript_id or not getattr(user, "is_authenticated", False):
+        return None
+    binding = (
+        RunnerBinding.objects.filter(transcript_id=transcript_id)
+        .select_related("session", "session__agent")
+        .order_by("-updated_at")
+        .first()
+    )
+    session = binding.session if binding is not None else None
+    if session is None:
+        return None
     agent_user_id = getattr(getattr(session, "agent", None), "user_id", None)
     if agent_user_id is not None and agent_user_id == user.pk:
-        return True
-    return access.can_write(user, session)
+        return session
+    return session if access.can_write(user, session) else None
+
+
+def live_secrets(session: Session):
+    purge_expired()  # an expired secret is invisible even if no heartbeat swept it yet
+    return session.secrets.select_related("created_by")
 
 
 def resolve_secret(session: Session, name: str, *, user) -> str | None:
-    """The plaintext, or None when there is no such secret. Callers gate first."""
-    purge_expired()  # an expired secret is refused even if no heartbeat swept it yet
-    row = SessionSecret.objects.filter(session=session, name=name).first()
+    """The plaintext, or None when there is no such live secret. Callers gate first."""
+    row = live_secrets(session).filter(name=name).first()
     if row is None:
         return None
     SessionSecret.objects.filter(pk=row.pk).update(last_used_at=timezone.now())

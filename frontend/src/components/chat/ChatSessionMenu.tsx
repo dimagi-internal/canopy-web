@@ -86,11 +86,10 @@ export function ChatSessionMenu({
           </DropdownMenuItem>
           <DropdownMenuItem
             inset
-            disabled={Boolean(shareDisabledReason)}
             data-testid="share-secret"
             onClick={() => setPanel("secret")}
           >
-            Share a secret…
+            Secrets…
           </DropdownMenuItem>
           <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
             {resetting ? "Resetting…" : "Reset from transcript"}
@@ -110,10 +109,10 @@ export function ChatSessionMenu({
       <Dialog open={panel !== null} onOpenChange={(open: boolean) => !open && setPanel(null)}>
         <DialogContent className="w-[calc(100%-2rem)] max-w-md bg-card">
           <DialogTitle className="text-sm font-semibold text-foreground">
-            {panel === "people" ? "People" : panel === "secret" ? "Share a secret" : "Share to Slack"}
+            {panel === "people" ? "People" : panel === "secret" ? "Secrets" : "Share to Slack"}
           </DialogTitle>
           {panel === "secret" && (
-            <ShareSecretForm sessionId={sessionId} onPost={onShare} onDone={() => setPanel(null)} />
+            <ShareSecretForm sessionId={sessionId} onDone={() => setPanel(null)} />
           )}
           {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} />}
           {panel === "slack" && (
