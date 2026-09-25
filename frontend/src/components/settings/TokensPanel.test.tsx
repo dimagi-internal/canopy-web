@@ -64,3 +64,34 @@ describe('TokensPanel — revoke confirm gate', () => {
     confirmSpy.mockRestore()
   })
 })
+
+describe('TokensPanel — lifetime', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  // The short-lived token is what you hand an AI assistant now that the
+  // session-cookie "Debug access" button is gone — so the lifetime you pick
+  // has to be the one the server is asked for.
+  it('mints with the lifetime picked, and the server default when left alone', async () => {
+    listTokens.mockResolvedValue([])
+    mintToken.mockResolvedValue({ raw: 'cpat_x' })
+    await act(async () => {
+      render(<TokensPanel />)
+    })
+    fireEvent.change(screen.getByLabelText('What is it for?'), { target: { value: 'assistant' } })
+    fireEvent.change(screen.getByLabelText('Expires after'), { target: { value: '1' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Mint token' }))
+    })
+    expect(mintToken).toHaveBeenLastCalledWith('assistant', 1)
+
+    fireEvent.change(screen.getByLabelText('What is it for?'), { target: { value: 'plugin' } })
+    fireEvent.change(screen.getByLabelText('Expires after'), { target: { value: '' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Mint token' }))
+    })
+    expect(mintToken).toHaveBeenLastCalledWith('plugin', null)
+  })
+})

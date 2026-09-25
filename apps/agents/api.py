@@ -11,6 +11,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.common.views_debug import is_machine
 from apps.workspaces import services as wsvc
 
 from . import delegations, services, skill_history
@@ -283,13 +284,14 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 # GitHub-backed features read through, so moving it is a credential decision a
 # PERSON makes in the canopy UI. Any Authorization header — a PAT, the embedded
 # widget's delegated token (which rides alongside the session cookie, same
-# origin), a contact token — means a machine is in the loop, and is refused.
+# origin), a contact token — means a machine is in the loop, and is refused; so
+# is a session minted FROM a token (`is_machine`), or the rule is one call deep.
 # Resolve first so a non-member still gets 404, never 403.
 @router.put("/{slug}/owner", response=AgentDetailOut,
             summary="Transfer the agent's ownership to a member of its workspace (canopy UI only)")
 def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
-    if request.META.get("HTTP_AUTHORIZATION"):
+    if is_machine(request):
         raise HttpError(403, "ownership can only be transferred from the canopy web app")
     if not _may_transfer_owner(request, agent):
         raise HttpError(403, "only a workspace owner or the agent's current owner can transfer it")
@@ -424,7 +426,7 @@ def agent_access(request: HttpRequest, slug: str):
 # token. Resolve first so a non-member gets 404, never 403.
 def _admin_change_gate(request: HttpRequest, slug: str):
     agent = _get_agent_or_404(request, slug)
-    if request.META.get("HTTP_AUTHORIZATION"):
+    if is_machine(request):
         raise HttpError(403, "admins can only be changed from the canopy web app")
     if not _may_manage_admins(request, agent):
         raise HttpError(403, "only the agent's owner or a workspace owner can change its admins")
