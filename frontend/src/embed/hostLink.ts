@@ -40,9 +40,6 @@ export interface HostInit {
   token: string
   agent?: string
   metadata?: Record<string, unknown>
-  /** `'hidden'`: the session socket is opened with `tools=hidden`, so canopy
-   *  never sends this panel the agent's tool calls. */
-  toolCalls?: 'shown' | 'hidden'
   actions: ActionSpec[]
   /** The host's theme, UNVALIDATED — `applyFrameTheme` checks it itself. */
   theme?: unknown
@@ -170,7 +167,6 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
           token: String(data.token ?? ''),
           agent: data.agent ? String(data.agent) : undefined,
           metadata: (data.metadata as Record<string, unknown> | undefined) ?? {},
-          toolCalls: data.toolCalls === 'hidden' ? 'hidden' : 'shown',
           actions: Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : [],
           theme: data.theme,
         })

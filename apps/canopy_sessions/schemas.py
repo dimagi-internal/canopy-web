@@ -112,6 +112,10 @@ class SessionOut(Schema):
     project: str
     workspace: str
     title: str
+    #: The start of the first thing the person typed — what a widget names a
+    #: conversation by, since its title is canopy's (`services.opening_of`).
+    #: Empty on a single-session read, which does not annotate it.
+    opening: str = ""
     status: str
     created_at: dt.datetime
     # When the session last DID something (binding.last_interacted_at > newest

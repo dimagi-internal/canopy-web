@@ -369,7 +369,6 @@ export function EmbedApp({ link, app }: Props) {
       link={link}
       contextPreamble={pendingContext}
       isContact={principal?.kind === 'contact'}
-      hideTools={init?.toolCalls === 'hidden'}
     />
   )
 }
@@ -443,10 +442,12 @@ function EmbedStart({
                   onClick={() => onOpen(s.id)}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted"
                 >
-                  <span className="block truncate text-sm text-foreground">
-                    {s.title || 'Untitled conversation'}
-                  </span>
                   <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>
+                  {/* What you first asked — the name you would recognise. The
+                      session's title is canopy's, and means nothing here. */}
+                  <span className="block truncate text-sm text-foreground">
+                    {s.opening || 'Conversation'}
+                  </span>
                 </button>
               </li>
             ))}
@@ -492,7 +493,8 @@ function EmbedStart({
 
 interface EarlierChat {
   id: string
-  title: string
+  /** The start of the first message (`SessionOut.opening`), trimmed by canopy. */
+  opening: string
   at: string
 }
 
@@ -516,7 +518,7 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
           .filter((r) => r.agent_slug === agent.slug && typeof r.id === 'string')
           .map((r) => ({
             id: r.id as string,
-            title: typeof r.title === 'string' ? r.title : '',
+            opening: typeof r.opening === 'string' ? r.opening : '',
             at: String(r.last_activity_at ?? r.created_at ?? ''),
           }))
           .sort((a, b) => b.at.localeCompare(a.at))
@@ -574,7 +576,6 @@ function EmbedChat({
   link,
   contextPreamble,
   isContact = false,
-  hideTools = false,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. Empty
@@ -601,16 +602,13 @@ function EmbedChat({
    *  part of why a contact silently went without page state: the prop that knew
    *  the answer did not look like it was about routing. */
   isContact?: boolean
-  /** The host asked for `toolCalls: 'hidden'`. Asked of the SERVER, on the
-   *  socket URL, so the calls are never sent rather than sent and hidden — the
-   *  snapshot on connect is filtered the same way. */
-  hideTools?: boolean
 }) {
-  const wsUrl = useCallback(() => {
-    const url = client.sessionSocketUrl(sessionId)
-    if (!url) return ''
-    return hideTools ? `${url}${url.includes('?') ? '&' : '?'}tools=hidden` : url
-  }, [client, sessionId, hideTools])
+  // No tool calls ever arrive here: canopy withholds them from every widget
+  // connection, decided by the token rather than asked for (consumers.py).
+  const wsUrl = useCallback(
+    () => client.sessionSocketUrl(sessionId) ?? '',
+    [client, sessionId],
+  )
   // The agent asking this page to do something. Arrives on the session socket
   // as a DOORBELL only — the durable PageAction row is the mechanism, and the
   // result goes back over HTTP so it is an acknowledged write rather than a

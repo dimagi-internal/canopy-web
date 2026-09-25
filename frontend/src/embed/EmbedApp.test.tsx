@@ -473,11 +473,11 @@ describe('feedback while the agent works', () => {
 
 describe('the agent and your earlier conversations', () => {
   const EARLIER = [
-    { id: 'old-hal', agent_slug: 'hal', title: 'Older question', created_at: '2026-09-20T10:00:00Z',
+    { id: 'old-hal', agent_slug: 'hal', title: 'cw-old-thread', opening: 'Older question', created_at: '2026-09-20T10:00:00Z',
       last_activity_at: '2026-09-20T10:05:00Z' },
-    { id: 'new-hal', agent_slug: 'hal', title: 'Newer question', created_at: '2026-09-24T10:00:00Z',
+    { id: 'new-hal', agent_slug: 'hal', title: 'cw-new-thread', opening: 'Newer question', created_at: '2026-09-24T10:00:00Z',
       last_activity_at: '2026-09-24T10:05:00Z' },
-    { id: 'echo-1', agent_slug: 'echo', title: 'Not this agent', created_at: '2026-09-25T10:00:00Z',
+    { id: 'echo-1', agent_slug: 'echo', title: 'cw-not-thread', opening: 'Not this agent', created_at: '2026-09-25T10:00:00Z',
       last_activity_at: '2026-09-25T10:05:00Z' },
   ]
 
@@ -534,6 +534,15 @@ describe('the agent and your earlier conversations', () => {
     expect(await screen.findByText('Older question')).toBeTruthy()
   })
 
+  it('names an earlier chat by what was asked and when, never by canopy’s title', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    expect(await screen.findByText('Newer question')).toBeTruthy()
+    expect(screen.queryByText(/-thread$/)).toBeNull()
+    expect(screen.getAllByText(/Sep 2\d/).length).toBeGreaterThan(0)
+  })
+
   it('starts a new chat from inside a conversation, in words not a chevron', async () => {
     withHistory()
     render(<EmbedApp link={hal()} app="connect-labs" />)
@@ -543,64 +552,5 @@ describe('the agent and your earlier conversations', () => {
 
     expect(await screen.findByText(/Ask Hal something new below/)).toBeTruthy()
     expect(created()).toBeUndefined()
-  })
-})
-
-describe('toolCalls: hidden', () => {
-  /** Every socket URL the frame opened. The filter is the SERVER's, so what the
-   *  frame owes it is the ask — the only witness is the URL. */
-  let sockets: string[]
-
-  beforeEach(() => {
-    sockets = []
-    class FakeSocket {
-      static OPEN = 1
-      readyState = 0
-      onopen: unknown = null
-      onmessage: unknown = null
-      onclose: unknown = null
-      onerror: unknown = null
-      constructor(url: string) {
-        sockets.push(url)
-      }
-      addEventListener() {}
-      removeEventListener() {}
-      send() {}
-      close() {}
-    }
-    vi.stubGlobal('WebSocket', FakeSocket)
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        calls.push({ url: String(url), init })
-        const u = String(url)
-        if (u.includes('/api/embed/agents')) {
-          return { ok: true, status: 200, json: async () => AGENTS } as Response
-        }
-        if (u.includes('/api/canopy-sessions/?')) {
-          return {
-            ok: true, status: 200,
-            json: async () => [{ id: 'hal-1', agent_slug: 'hal', title: 'Earlier', created_at: '2026-09-25T09:00:00Z' }],
-          } as Response
-        }
-        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
-      }),
-    )
-  })
-
-  async function openEarlierChat(init: HostInit) {
-    render(<EmbedApp link={fakeLink({ waitForInit: async () => init })} app="connect-labs" />)
-    fireEvent.click(await screen.findByText('Earlier'))
-    await waitFor(() => expect(sockets.length).toBeGreaterThan(0))
-  }
-
-  it('asks canopy not to send tool calls when the host hides them', async () => {
-    await openEarlierChat({ token: 't', agent: 'hal', actions: [], toolCalls: 'hidden' })
-    expect(sockets.every((u) => new URL(u).searchParams.get('tools') === 'hidden')).toBe(true)
-  })
-
-  it('leaves the socket alone by default', async () => {
-    await openEarlierChat({ token: 't', agent: 'hal', actions: [] })
-    expect(sockets.some((u) => u.includes('tools='))).toBe(false)
   })
 })

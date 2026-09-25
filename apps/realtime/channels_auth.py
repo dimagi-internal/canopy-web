@@ -211,4 +211,14 @@ class RealtimeAuthMiddleware:
         # has not been taught about them refuses by its existing check rather
         # than by remembering a new one.
         scope["contact"] = None if user else await _contact_from_query_token(scope)
+        # Whether this socket belongs to an embedded widget: a contact, or ANY
+        # delegated token on it. Checked apart from `delegated_app` on purpose —
+        # canopy embedding its own widget is same-origin, so the session cookie
+        # signs the socket in and `delegated_app` is never resolved, yet it is
+        # still a widget. What a widget may not receive (tool calls) is decided
+        # from this, never from a query value the client chooses.
+        scope["via_widget"] = bool(
+            scope["contact"] is not None or delegated_app is not None
+            or (user is not None and await _delegated_app(scope) is not None)
+        )
         return await self.app(scope, receive, send)

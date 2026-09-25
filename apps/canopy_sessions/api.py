@@ -116,6 +116,7 @@ def _out(session: Session) -> dict:
             else ((binding.session_key if (binding and binding.session_key) else "") or session.title)
         ),
         "status": session.status,
+        "opening": services.opening_of(session),
         "created_at": session.created_at,
         # When it last DID something (binding > newest message > created).
         "last_activity_at": services.last_activity_at(session, binding),
@@ -322,7 +323,7 @@ def list_sessions(
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:
         rows = rows.filter(metadata__opp_run_id=opp_run_id)
-    rows = rows.annotate(_last_msg_at=Max("messages__created_at")).distinct().order_by("-created_at")
+    rows = services.with_opening(rows.annotate(_last_msg_at=Max("messages__created_at"))).distinct().order_by("-created_at")
     unseen = services.unseen_q()   # defined once in staleness.py; see Step 3
     if state == "active":
         rows = rows.filter(status=Session.ACTIVE).exclude(unseen)
@@ -384,6 +385,10 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     session = _session_or_404(request, session_id)
     data = _out(session)
     rows, has_more, oldest = services.visible_transcript(session, full=full)
+    from apps.tokens import delegation
+
+    if delegation.acting_app(request) is not None:
+        rows = services.for_widget(rows)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
@@ -414,6 +419,10 @@ def list_messages(
     session = _session_or_404(request, session_id)
     limit = clamp_limit(limit)
     rows, has_more = services.messages_before(session, before=before, limit=limit)
+    from apps.tokens import delegation
+
+    if delegation.acting_app(request) is not None:
+        rows = services.for_widget(rows)
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "has_more_before": has_more,

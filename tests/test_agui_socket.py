@@ -273,7 +273,7 @@ def test_the_default_is_canopys_own_protocol():
     assert consumers.SessionConsumer.agui_mode is False
 
 
-# --- tools=hidden --------------------------------------------------------------
+# --- a widget never receives tool calls ----------------------------------------
 
 
 _TOOL_USE = {"event": "chat.tool_use",
@@ -294,9 +294,9 @@ _SNAPSHOT_WITH_TOOLS = {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agui_mode", [True, False])
-async def test_a_tools_hidden_client_is_never_sent_a_tool_call(consumer, agui_mode):
-    """An embedded widget's visitor wants the answer, not the MCP calls behind
-    it — so the calls are not collapsed on the page, they never leave canopy."""
+async def test_a_widget_socket_is_never_sent_a_tool_call(consumer, agui_mode):
+    """A widget's visitor wants the answer, not the MCP calls behind it — so the
+    calls are not collapsed on the page, they never leave canopy."""
     consumer.agui_mode = agui_mode
     consumer.hide_tools = True
 
@@ -307,7 +307,7 @@ async def test_a_tools_hidden_client_is_never_sent_a_tool_call(consumer, agui_mo
 
 
 @pytest.mark.asyncio
-async def test_a_tools_hidden_snapshot_drops_tool_rows_from_the_verbatim_frame_too(consumer):
+async def test_a_widget_snapshot_drops_tool_rows_from_the_verbatim_frame_too(consumer):
     """The AG-UI snapshot carries canopy's frame verbatim for canopy's own
     client. Filtering only the projected messages would leak every tool row back
     through `metadata.canopy.frame`, so the filter runs on the frame first."""
@@ -323,9 +323,7 @@ async def test_a_tools_hidden_snapshot_drops_tool_rows_from_the_verbatim_frame_t
 
 
 @pytest.mark.asyncio
-async def test_hiding_tools_leaves_the_working_indicator_and_the_reply_alone(consumer):
-    """The panel must still say the agent is busy while tools run, and still
-    receive what it says."""
+async def test_a_widget_still_hears_the_agent_working_and_its_reply(consumer):
     consumer.agui_mode = False
     consumer.hide_tools = True
     activity = {"event": "session.activity", "data": {"state": "working"}}
@@ -338,8 +336,7 @@ async def test_hiding_tools_leaves_the_working_indicator_and_the_reply_alone(con
 
 
 @pytest.mark.asyncio
-async def test_a_client_that_does_not_ask_still_gets_every_tool_call(consumer):
-    """canopy's own chat page shows the calls; hiding is opt-in per connection."""
+async def test_canopys_own_chat_page_still_gets_every_tool_call(consumer):
     consumer.agui_mode = False
 
     await consumer.send_json(_TOOL_USE)
@@ -347,20 +344,10 @@ async def test_a_client_that_does_not_ask_still_gets_every_tool_call(consumer):
     assert consumer.sent == [_TOOL_USE]
 
 
-@pytest.mark.parametrize(
-    "query,expected",
-    [
-        (b"tools=hidden", True),
-        (b"token=x&protocol=ag-ui&tools=hidden", True),
-        (b"protocol=ag-ui", False),
-        (b"tools=shown", False),
-        (b"", False),
-    ],
-)
-def test_hiding_tools_is_negotiated_from_the_query_string(query, expected):
-    c = _Sink()
-    c.scope = {"query_string": query}
-
-    c._negotiate_protocol()
-
-    assert c.hide_tools is expected
+def test_a_client_cannot_ask_its_way_in_or_out():
+    """Hidden-ness comes from the credential, so no query value moves it."""
+    for query in (b"tools=shown", b"tools=hidden", b"protocol=ag-ui&tools=all"):
+        c = _Sink()
+        c.scope = {"query_string": query}
+        c._negotiate_protocol()
+        assert c.hide_tools is False

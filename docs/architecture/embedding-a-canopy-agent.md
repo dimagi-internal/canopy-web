@@ -363,7 +363,6 @@ option exists precisely so you do not have to.
     mode: 'docked',
     launcherLabel: 'Canopy AI',        // what YOUR people call it
     // dismissible: false,             // default true — see below
-    // toolCalls: 'hidden',            // default 'shown' — see below
     // Only if your CSRF cookie is not named `csrftoken`:
     // csrfCookieName: 'csrftoken_labs',
     // Or, if JS cannot read the cookie at all (CSRF_COOKIE_HTTPONLY):
@@ -394,15 +393,16 @@ next load, deliberately: a widget that stays hidden with no way back is a
 support ticket. Pass `dismissible: false` if you have laid out around it, or
 call `widget.dismiss()` to offer your own way.
 
-**Tool calls are yours to hide.** By default the panel shows the agent's tool
-calls, collapsed, as canopy's own chat page does. A site whose visitors want
-the answer and not the machinery behind it passes `toolCalls: 'hidden'`: the
-panel's session socket is then opened with `tools=hidden`, and canopy never
-sends it a tool call or a tool result. They are filtered on the server, not
-hidden on the page, so they cost the visitor nothing, and the reconnect snapshot
-is filtered the same way. The transcript still records every call, so canopy's
-own chat page shows them. While tools run the panel still shows that the
-agent is working.
+**The panel never shows tool calls, and there is no option to.** A visitor
+asked a question and wants the answer, not the MCP calls behind it. canopy
+decides this from the widget's token (a site's delegated token or a contact
+token), not from anything the page can ask for, and withholds the calls on
+every path the panel reads a conversation through: the live socket, the
+snapshot on reconnect, and older history over REST. They are never sent to the
+browser. The transcript keeps every call, so canopy's own chat page shows
+them. While tools run the panel still shows that the agent is working.
+Earlier conversations are listed by date and by the start of what was first
+asked, not by the session's title.
 
 ### Match it to your brand
 

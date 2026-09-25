@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -33,24 +32,16 @@ _EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send"
 #: does not ask must not be able to notice this exists.
 AGUI_PROTOCOL = "ag-ui"
 
-#: `?tools=hidden` — this connection never receives the agent's tool calls.
-#:
-#: For an embedded widget, whose visitor asked a question and wants the answer:
-#: which MCP tools ran, with what arguments, is noise to them and a lot of bytes
-#: (a tool result is often a whole page of JSON). Filtered HERE rather than
-#: collapsed in the panel, so they are never sent at all — and filtered on
-#: canopy's frame BEFORE the AG-UI projection, because the projected snapshot
-#: carries the original frame verbatim and would otherwise leak the rows back.
-#: The transcript keeps every call; canopy's own chat page still shows them.
-#: The agent's working/idle state rides `session.activity`, which is untouched,
-#: so the panel still says it is busy while tools run.
-TOOLS_HIDDEN = "hidden"
+#: Frames an embedded widget never receives (see `services.WIDGET_HIDDEN_ROLES`).
+#: Dropped on canopy's frame BEFORE the AG-UI projection, because the projected
+#: snapshot carries the original frame verbatim and would otherwise leak the
+#: rows back. `session.activity` is untouched, so the panel still says the agent
+#: is working while its tools run.
 _TOOL_EVENTS = frozenset({"chat.tool_use", "chat.tool_result"})
-_TOOL_ROLES = frozenset({Message.TOOL_USE, Message.TOOL_RESULT})
 
 
 def without_tools(frame: dict) -> dict | None:
-    """`frame` as a tools-hidden connection sees it, or None to send nothing."""
+    """`frame` as an embedded widget sees it, or None to send nothing."""
     event = frame.get("event")
     if event in _TOOL_EVENTS:
         return None
@@ -58,7 +49,7 @@ def without_tools(frame: dict) -> dict | None:
         data = frame.get("data") or {}
         messages = data.get("messages")
         if messages:
-            kept = [m for m in messages if m.get("role") not in _TOOL_ROLES]
+            kept = [m for m in messages if m.get("role") not in chat_services.WIDGET_HIDDEN_ROLES]
             if len(kept) != len(messages):
                 return {**frame, "data": {**data, "messages": kept}}
     return frame
@@ -71,13 +62,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     #: headers on a WebSocket handshake, and the subprotocol field is already
     #: how Channels' auth layers are configured here.
     agui_mode = False
-    #: Set at connect from `?tools=hidden`. See `TOOLS_HIDDEN`.
+    #: Whether this socket is an embedded widget's, which never receives tool
+    #: calls. From the CREDENTIAL (`scope["via_widget"]`, set by the auth
+    #: middleware), never from anything the client can ask for.
     hide_tools = False
 
     def _negotiate_protocol(self) -> None:
         raw = (self.scope.get("query_string") or b"").decode("utf-8", "replace")
         self.agui_mode = f"protocol={AGUI_PROTOCOL}" in raw
-        self.hide_tools = TOOLS_HIDDEN in parse_qs(raw).get("tools", [])
         # The evidence for deleting the native wire. canopy's own clients ask
         # for AG-UI as of 2026-09-18, but a tab open across that deploy, an
         # un-upgraded ace-web, or any `canopy-ui` consumer below 0.9 still asks
@@ -126,6 +118,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def connect(self):
         self._negotiate_protocol()
+        self.hide_tools = bool(self.scope.get("via_widget"))
         user = self.scope.get("user")
         contact = self.scope.get("contact")
         if not getattr(user, "is_authenticated", False) and contact is None:
