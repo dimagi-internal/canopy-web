@@ -2660,6 +2660,50 @@ class MintSession:
 _MINT_SESSION = None
 _MINT_ID = ""
 
+#: Claude Code's own profile endpoint — what `/status` reads to show who you are.
+_CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+
+
+def _account_for_token(token: str) -> str:
+    """The email a freshly minted token belongs to, or "" when we cannot tell.
+
+    Best-effort and never fatal: it only NAMES the login on the settings page so a
+    human can tell the primary from the fallback. A setup-token may be scoped too
+    narrowly to read the profile; then the operator types a name instead.
+    """
+    req = urllib.request.Request(_CLAUDE_PROFILE_URL, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read() or b"{}")
+    except Exception as exc:  # noqa: BLE001 — a name is not worth a failed sign-in
+        _log(f"mint: could not read the account for the new token ({exc})")
+        return ""
+    account = data.get("account") if isinstance(data, dict) else None
+    email = (account or {}).get("email_address") or (account or {}).get("email") or ""
+    return str(email).strip()[:200]
+
+
+#: How often an idle box re-reads its credential bundle, so a swap or a pasted
+#: token on the settings page takes effect without a restart.
+CREDENTIAL_REREAD_SECONDS = 300
+_CRED_REREAD_AT = 0.0
+
+
+def _maybe_reread_credentials() -> None:
+    global _CRED_REREAD_AT
+    now = time.monotonic()
+    if now - _CRED_REREAD_AT < CREDENTIAL_REREAD_SECONDS:
+        return
+    _CRED_REREAD_AT = now
+    try:
+        if _reload_claude_credentials():
+            _log("credential bundle changed on canopy-web — using the new order")
+    except Exception as exc:  # noqa: BLE001 — never take the main loop down
+        _log(f"credential re-read error: {exc}")
+
 
 def _drain_mint(runner_id: str) -> None:
     """Advance a browser-driven sign-in by one step, on the poll tick.
@@ -2727,7 +2771,8 @@ def _drain_mint(runner_id: str) -> None:
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
                 # secret a human handled was the single-use code.
-                _api("POST", f"/runners/{runner_id}/mint/result", {"token": token})
+                _api("POST", f"/runners/{runner_id}/mint/result",
+                     {"token": token, "account": _account_for_token(token)})
                 # The FORMAT, never the secret: 12 characters is the prefix and
                 # nothing else, and it is the one fact we lacked when a real
                 # token was discarded for not looking like the format we assumed.
@@ -3605,6 +3650,7 @@ def run_over_rest(runner_id: str) -> None:
         # likely to need one, and leaving this on the WS path only would strand
         # the operator on the runners that fail most.
         _drain_mint(runner_id)
+        _maybe_reread_credentials()
         _drain_inbox(runner_id)
         if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
             time.sleep(POLL_SECONDS)
@@ -3870,6 +3916,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _drain(ws, runner_id)
                     _sync_session_views(runner_id)          # incl. backfills
                     _drain_mint(runner_id)
+                    _maybe_reread_credentials()
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()

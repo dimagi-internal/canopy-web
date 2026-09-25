@@ -52,6 +52,7 @@ from .schemas import (
     RunnerMintCodeIn,
     RunnerMintOut,
     RunnerMintResultIn,
+    RunnerMintStartIn,
     RunnerMintUrlIn,
     RunnerDrillOut,
     RunnerGitHubReadinessOut,
@@ -440,8 +441,21 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
         claude_token=payload.claude_token,
         claude_token_secondary=payload.claude_token_secondary,
         claude_api_key=payload.claude_api_key,
+        claude_token_label=payload.claude_token_label,
+        claude_token_secondary_label=payload.claude_token_secondary_label,
         updated_by=request.user,
     )
+    return services.runner_credential_status(runner)
+
+
+@router.post("/runners/{runner_id}/credential/swap", response=RunnerCredentialStatusOut,
+             summary="Swap the primary and fallback Claude logins")
+def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
+    """The fallback becomes the primary and the primary the fallback — each
+    login keeps its name. The runner reads the new order the next time it
+    re-reads its bundle."""
+    runner = _runner_admin_or_404(request, runner_id)
+    services.swap_runner_logins(runner, updated_by=request.user)
     return services.runner_credential_status(runner)
 
 
@@ -557,7 +571,8 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/mint", response=RunnerMintOut,
              summary="Ask a runner to start a browser sign-in")
-def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
+def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
+                      payload: RunnerMintStartIn | None = None):
     """Begin re-authenticating this runner's Claude subscription from a browser.
 
     The runner picks this up on its next poll, runs the real `claude setup-token`
@@ -566,9 +581,13 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
 
     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
     closed tab, a runner restart mid-flow) must not block every later attempt.
+
+    `slot` names which login the new token replaces — `primary` (the default)
+    or `secondary`, the fallback subscription.
     """
     runner = _runner_admin_or_404(request, runner_id)
-    return services.start_runner_mint(runner, requested_by=request.user)
+    return services.start_runner_mint(runner, requested_by=request.user,
+                                      slot=payload.slot if payload else "primary")
 
 
 @router.get("/runners/{runner_id}/mint", response=RunnerMintOut | None,
@@ -639,7 +658,8 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     mint = services.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
+    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
+                                       account=payload.account)
 
 
 def _admin_row(a) -> dict:

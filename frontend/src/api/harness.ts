@@ -107,11 +107,22 @@ export type RunnerMint = components['schemas']['RunnerMintOut']
 /** Ask a runner to start a sign-in. It runs the real `claude setup-token` under
  *  a pty and posts back the URL a human must open — canopy-web is only the
  *  relay, and never holds the PKCE verifier. Supersedes any stalled attempt. */
-export async function startRunnerMint(runnerId: string): Promise<RunnerMint> {
+export type LoginSlot = RunnerMint['slot']
+
+export async function startRunnerMint(runnerId: string, slot: LoginSlot = 'primary'): Promise<RunnerMint> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/mint', {
     params: { path: { runner_id: runnerId } },
+    body: { slot },
   })
   return unwrap(res, 'startRunnerMint')
+}
+
+/** Make the fallback login the primary and vice versa; each keeps its name. */
+export async function swapRunnerLogins(runnerId: string): Promise<CredentialStatus> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credential/swap', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'swapRunnerLogins')
 }
 
 /** The current attempt, or null when none has been started. Polled while a

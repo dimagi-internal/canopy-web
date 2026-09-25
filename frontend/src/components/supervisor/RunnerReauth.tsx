@@ -4,6 +4,7 @@ import {
   getRunnerMint,
   startRunnerMint,
   submitRunnerMintCode,
+  type LoginSlot,
   type RunnerMint,
 } from '@/api/harness'
 
@@ -22,6 +23,11 @@ import {
 // The minted token never reaches this component. The runner sends it straight to
 // canopy-web, so the only secret that ever touches a browser is the single-use
 // authorization code.
+//
+// One of these sits on EACH subscription login (primary, fallback), and the
+// sign-in names the slot it fills. It used to be a single button above both
+// that always wrote the primary — so "add a fallback" overwrote the login that
+// was working, and nothing on the screen said it would.
 
 /** How long to keep polling for the runner to pick the request up.
  *  A cloud runner polls on its own tick (~15s), so a URL usually lands within
@@ -40,12 +46,21 @@ const POLL_MS = 3_000
  * of. So an outcome shows only when it happened in front of you, in this visit.
  */
 
-export function RunnerReauth({ runnerId, onSignedIn }: {
+export function RunnerReauth({ runnerId, slot = 'primary', isSet = false, onSignedIn }: {
   runnerId: string
+  /** The login this sign-in fills. */
+  slot?: LoginSlot
+  /** Whether that login already holds a token — only changes the button's words. */
+  isSet?: boolean
   /** Lets the parent refresh its masked credential status once a token lands. */
   onSignedIn?: () => void
 }) {
-  const [mint, setMint] = useState<RunnerMint | null>(null)
+  const [latest, setMint] = useState<RunnerMint | null>(null)
+  // A runner has ONE current sign-in, for whichever slot it was started on. The
+  // other slot's row must not show its link or its outcome — that would invite
+  // pasting the fallback's code under the primary. A row older than the slot
+  // field has none, and was always the primary.
+  const mint = latest && (latest.slot ?? 'primary') === slot ? latest : null
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -121,7 +136,7 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
     setCode('')
     setWaitedOut(false)
     startedWaiting.current = null
-    return startRunnerMint(runnerId)
+    return startRunnerMint(runnerId, slot)
   })
 
   const submit = () => run(async () => {
@@ -142,9 +157,8 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
   const idle = !mint || settled
 
   return (
-    <section className="rounded-md border border-border p-3" data-testid="runner-reauth">
-      <div className="flex items-baseline justify-between gap-3">
-        <h4 className="text-sm font-semibold">Sign in to Claude</h4>
+    <div data-testid={`runner-reauth-${slot}`}>
+      <div className="flex items-center gap-2">
         {/* ALWAYS offered, not only when idle. A link is good for minutes, so a
             sign-in left half-done is the ordinary case — and with the button
             hidden mid-flight, a stale link was a dead end with nothing to click.
@@ -156,14 +170,12 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
           data-testid="reauth-start"
           className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
         >
-          {!idle ? 'Start again' : outcomeIsFresh ? 'Sign in again' : 'Start sign-in'}
+          {!idle ? 'Start again' : isSet || outcomeIsFresh ? 'Sign in again' : 'Sign in with Claude'}
         </button>
+        <span className="text-[11px] text-foreground-subtle">
+          {isSet ? 'replaces this login only' : 'fills this login'} &mdash; you open one link and paste one code back
+        </span>
       </div>
-
-      <p className="mt-1 text-xs text-muted-foreground">
-        Re-authenticates this runner&rsquo;s Claude subscription without a terminal.
-        You&rsquo;ll open one link and paste one code back.
-      </p>
 
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
 
@@ -238,6 +250,6 @@ export function RunnerReauth({ runnerId, onSignedIn }: {
           {mint.detail || 'The sign-in did not complete.'}
         </p>
       )}
-    </section>
+    </div>
   )
 }

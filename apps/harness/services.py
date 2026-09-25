@@ -2647,7 +2647,8 @@ from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-exp
 # never went through them.
 
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
-                          claude_api_key=None, updated_by=None):
+                          claude_api_key=None, claude_token_label=None,
+                          claude_token_secondary_label=None, updated_by=None):
     """Upsert a runner's credential bundle. None fields are left unchanged."""
     from apps.common.encryption import encrypt_secret
 
@@ -2657,7 +2658,8 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
     # there was a status endpoint). Don't create a row and don't touch
     # updated_at/updated_by for it — that timestamp is the audit trail for when a
     # credential last actually changed.
-    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key)):
+    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
+                               claude_token_label, claude_token_secondary_label)):
         return getattr(runner, "credential", None)
     cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
     if claude_token is not None:
@@ -2666,6 +2668,10 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
         cred.claude_token_secondary_enc = encrypt_secret(claude_token_secondary)
     if claude_api_key is not None:
         cred.claude_api_key_enc = encrypt_secret(claude_api_key)
+    if claude_token_label is not None:
+        cred.claude_token_label = claude_token_label.strip()[:200]
+    if claude_token_secondary_label is not None:
+        cred.claude_token_secondary_label = claude_token_secondary_label.strip()[:200]
     if updated_by is not None:
         cred.updated_by = updated_by
     cred.save()
@@ -2689,17 +2695,46 @@ def get_runner_credential(runner) -> dict:
 
 
 def runner_credential_status(runner) -> dict:
-    """Masked view — which tokens are set, never their values."""
+    """Masked view — which tokens are set, never their values. Labels are names,
+    not secrets, so they ride along."""
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"has_claude_token": False, "has_claude_token_secondary": False,
-                "has_claude_api_key": False, "updated_at": None}
+                "has_claude_api_key": False, "claude_token_label": "",
+                "claude_token_secondary_label": "", "updated_at": None}
     return {
         "has_claude_token": bool(cred.claude_token_enc),
         "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
         "has_claude_api_key": bool(cred.claude_api_key_enc),
+        "claude_token_label": cred.claude_token_label,
+        "claude_token_secondary_label": cred.claude_token_secondary_label,
         "updated_at": cred.updated_at,
     }
+
+
+def swap_runner_logins(runner, *, updated_by=None):
+    """Make the fallback the primary and vice versa — token AND name together.
+
+    The runner falls through the cascade in slot order, so which login is
+    "primary" is a real choice (whose weekly cap gets spent first), and it used to
+    be changeable only by pasting both tokens back in the other way round. Moving
+    ciphertext is enough: both columns are encrypted with the same key, so no
+    secret is decrypted to do this.
+    """
+    from .models import RunnerCredential
+
+    with transaction.atomic():
+        cred = RunnerCredential.objects.select_for_update().filter(runner=runner).first()
+        if cred is None:
+            return None
+        cred.claude_token_enc, cred.claude_token_secondary_enc = (
+            cred.claude_token_secondary_enc, cred.claude_token_enc)
+        cred.claude_token_label, cred.claude_token_secondary_label = (
+            cred.claude_token_secondary_label, cred.claude_token_label)
+        if updated_by is not None:
+            cred.updated_by = updated_by
+        cred.save()
+    return cred
 # ---- Runner administrators (administer a box without speaking for it) -----
 def request_refresh(runner: Runner) -> Runner:
     """Ask a box to refresh itself — re-run its bootstrap (plugins, the canopy
@@ -2798,7 +2833,7 @@ def _expire_if_stale(mint):
     return mint
 
 
-def start_runner_mint(runner, *, requested_by=None):
+def start_runner_mint(runner, *, requested_by=None, slot="primary"):
     """Ask a runner to begin a browser sign-in, superseding any unfinished one.
 
     Superseding rather than refusing: a mint that stalled (the operator closed
@@ -2811,7 +2846,7 @@ def start_runner_mint(runner, *, requested_by=None):
     RunnerMint.objects.filter(runner=runner).exclude(
         status__in=RunnerMint.FINISHED
     ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
-    return RunnerMint.objects.create(runner=runner, requested_by=requested_by)
+    return RunnerMint.objects.create(runner=runner, requested_by=requested_by, slot=slot)
 
 
 def current_runner_mint(runner):
@@ -2876,18 +2911,29 @@ def take_mint_code(mint) -> str:
     return code
 
 
-def finish_runner_mint(mint, *, token: str = "", detail: str = ""):
-    """The runner reports the outcome; on success the token lands in the bundle.
+def finish_runner_mint(mint, *, token: str = "", detail: str = "", account: str = ""):
+    """The runner reports the outcome; on success the token lands in the bundle,
+    in the slot the human chose.
 
     The token arrives HERE rather than in the browser on purpose: the only secret
     a human ever handles in this flow is the single-use authorization code, and
     the long-lived credential goes straight from the box into encrypted storage.
+
+    `account` is the email the runner read back for the new token, when it could.
+    Absent, the slot keeps its old name: re-signing an expired login in is the
+    common case, and it is the same account.
     """
     from .models import RunnerMint
 
     if token:
-        set_runner_credential(mint.runner, claude_token=token,
-                              updated_by=mint.requested_by)
+        secondary = mint.slot == RunnerMint.SECONDARY
+        label = account.strip() or None
+        set_runner_credential(
+            mint.runner,
+            **({"claude_token_secondary": token, "claude_token_secondary_label": label}
+               if secondary else
+               {"claude_token": token, "claude_token_label": label}),
+            updated_by=mint.requested_by)
         mint.status = RunnerMint.DONE
         mint.detail = detail or "signed in"
     else:

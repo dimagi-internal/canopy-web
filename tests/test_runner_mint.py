@@ -218,3 +218,60 @@ def test_a_fresh_sign_in_is_not_expired(client, runner):
     _post(client, _base(runner))
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     assert client.get(_base(runner)).json()["status"] == "awaiting_code"
+
+
+# ── which login a sign-in fills, and whose it is ───────────────────────────
+
+def _sign_in(client, runner, *, slot=None, token, account=""):
+    _post(client, _base(runner), {"slot": slot} if slot else {})
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+    _post(client, f"{_base(runner)}/code", {"code": "c"})
+    client.get(f"{_base(runner)}/claim")
+    return _post(client, f"{_base(runner)}/result", {"token": token, "account": account})
+
+
+def test_a_fallback_sign_in_leaves_the_primary_alone(client, runner):
+    # The defect: every sign-in wrote the primary, so "add a fallback" replaced
+    # the login that was working and left the fallback empty.
+    _sign_in(client, runner, token="sk-ant-oat01-primary", account="a@dimagi.com")
+    r = _sign_in(client, runner, slot="secondary", token="sk-ant-oat01-fallback",
+                 account="b@dimagi.com")
+    assert r.json()["slot"] == "secondary"
+
+    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
+    assert cred["claude_token"] == "sk-ant-oat01-primary"
+    assert cred["claude_token_secondary"] == "sk-ant-oat01-fallback"
+    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
+    assert status["claude_token_label"] == "a@dimagi.com"
+    assert status["claude_token_secondary_label"] == "b@dimagi.com"
+
+
+def test_a_sign_in_that_cannot_name_its_account_keeps_the_old_name(client, runner):
+    # Re-signing an expired login is the common case, and it is the same account.
+    _post(client, f"/api/harness/runners/{runner.id}/credential",
+          {"claude_token_label": "a@dimagi.com"})
+    _sign_in(client, runner, token="sk-ant-oat01-new")
+    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
+    assert status["claude_token_label"] == "a@dimagi.com"
+
+
+def test_swapping_moves_token_and_name_together(client, runner):
+    _post(client, f"/api/harness/runners/{runner.id}/credential", {
+        "claude_token": "tok-a", "claude_token_label": "a@dimagi.com",
+        "claude_token_secondary": "tok-b", "claude_token_secondary_label": "b@dimagi.com",
+        "claude_api_key": "key",
+    })
+    r = _post(client, f"/api/harness/runners/{runner.id}/credential/swap")
+    assert r.status_code == 200, r.content
+    assert r.json()["claude_token_label"] == "b@dimagi.com"
+
+    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
+    assert (cred["claude_token"], cred["claude_token_secondary"]) == ("tok-b", "tok-a")
+    assert cred["claude_api_key"] == "key", "the API key is not part of the swap"
+
+
+def test_a_stranger_cannot_swap_someone_elses_logins(runner):
+    stranger = User.objects.create_user("stranger", "s@dimagi.com", "pw")
+    c = Client()
+    c.force_login(stranger)
+    assert _post(c, f"/api/harness/runners/{runner.id}/credential/swap").status_code == 404

@@ -3482,6 +3482,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/credential/swap": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Swap the primary and fallback Claude logins
+         * @description The fallback becomes the primary and the primary the fallback — each
+         *     login keeps its name. The runner reads the new order the next time it
+         *     re-reads its bundle.
+         */
+        readonly post: operations["apps_harness_api_swap_runner_logins"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/credential/status": {
         readonly parameters: {
             readonly query?: never;
@@ -3577,6 +3599,9 @@ export interface paths {
          *
          *     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
          *     closed tab, a runner restart mid-flow) must not block every later attempt.
+         *
+         *     `slot` names which login the new token replaces — `primary` (the default)
+         *     or `secondary`, the fallback subscription.
          */
         readonly post: operations["apps_harness_api_start_runner_mint"];
         readonly delete?: never;
@@ -11434,6 +11459,16 @@ export interface components {
              * @default false
              */
             readonly has_claude_api_key: boolean;
+            /**
+             * Claude Token Label
+             * @default
+             */
+            readonly claude_token_label: string;
+            /**
+             * Claude Token Secondary Label
+             * @default
+             */
+            readonly claude_token_secondary_label: string;
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -11449,6 +11484,10 @@ export interface components {
             readonly claude_token_secondary?: string | null;
             /** Claude Api Key */
             readonly claude_api_key?: string | null;
+            /** Claude Token Label */
+            readonly claude_token_label?: string | null;
+            /** Claude Token Secondary Label */
+            readonly claude_token_secondary_label?: string | null;
         };
         /**
          * RunnerCredentialOut
@@ -11550,6 +11589,12 @@ export interface components {
             readonly id: string;
             /** Status */
             readonly status: string;
+            /**
+             * Slot
+             * @default primary
+             * @enum {string}
+             */
+            readonly slot: "primary" | "secondary";
             /** Authorize Url */
             readonly authorize_url: string;
             /** Detail */
@@ -11564,6 +11609,15 @@ export interface components {
              * Format: date-time
              */
             readonly updated_at: string;
+        };
+        /** RunnerMintStartIn */
+        readonly RunnerMintStartIn: {
+            /**
+             * Slot
+             * @default primary
+             * @enum {string}
+             */
+            readonly slot: "primary" | "secondary";
         };
         /**
          * RunnerMintClaimOut
@@ -11602,6 +11656,11 @@ export interface components {
              * @default
              */
             readonly detail: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
         };
         /**
          * RunnerAdminOut
@@ -18342,6 +18401,28 @@ export interface operations {
             };
         };
     };
+    readonly apps_harness_api_swap_runner_logins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
     readonly apps_harness_api_get_runner_credential_status: {
         readonly parameters: {
             readonly query?: never;
@@ -18440,7 +18521,11 @@ export interface operations {
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerMintStartIn"] | null;
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

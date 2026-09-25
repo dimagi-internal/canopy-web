@@ -1,10 +1,25 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment jsdom
+//
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  RunnerCredentials,
   SLOTS,
   credentialSummary,
+  labelPayload,
   nextPayload,
   type CredentialStatus,
 } from './RunnerCredentials'
+
+const api = vi.hoisted(() => ({
+  getRunnerCredentialStatus: vi.fn(),
+  setRunnerCredential: vi.fn(),
+  swapRunnerLogins: vi.fn(),
+  getRunnerMint: vi.fn(),
+  startRunnerMint: vi.fn(),
+  submitRunnerMintCode: vi.fn(),
+}))
+vi.mock('@/api/harness', () => api)
 
 // The cloud box warned on every boot: "only ONE Claude credential is set — a
 // usage cap will stop every agent on this box with nothing to fail over to."
@@ -16,6 +31,8 @@ const NONE: CredentialStatus = {
   has_claude_token: false,
   has_claude_token_secondary: false,
   has_claude_api_key: false,
+  claude_token_label: '',
+  claude_token_secondary_label: '',
   updated_at: null,
 }
 const ONE_CLAUDE: CredentialStatus = { ...NONE, has_claude_token: true }
@@ -98,5 +115,82 @@ describe('credentialSummary', () => {
     const s = credentialSummary(ONE_CLAUDE)
     expect(s.unset).toContain('claude_api_key')
     expect(s.unset).not.toContain('claude_token')
+  })
+})
+
+describe('labelPayload', () => {
+  it('sends only names that changed, and an emptied one as a clear', () => {
+    const status = { ...ONE_CLAUDE, claude_token_label: 'a@dimagi.com' }
+    expect(labelPayload({ claude_token_label: 'a@dimagi.com' }, status)).toEqual({})
+    expect(labelPayload({ claude_token_label: '  ' }, status)).toEqual({ claude_token_label: '' })
+    expect(labelPayload({ claude_token_secondary_label: ' b@dimagi.com ' }, status))
+      .toEqual({ claude_token_secondary_label: 'b@dimagi.com' })
+  })
+})
+
+describe('RunnerCredentials', () => {
+  const TWO = {
+    ...ONE_CLAUDE, has_claude_token_secondary: true,
+    claude_token_label: 'a@dimagi.com', claude_token_secondary_label: 'b@dimagi.com',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getRunnerMint.mockResolvedValue(null)
+  })
+  afterEach(cleanup)
+
+  it('offers a sign-in on EACH login, and each one fills its own slot', async () => {
+    // The defect: one "Start sign-in" above both logins, which always wrote the
+    // primary — so adding a fallback overwrote the login that was working.
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'secondary' })
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('runner-reauth-secondary')).toBeTruthy())
+    expect(screen.getByTestId('runner-reauth-primary')).toBeTruthy()
+
+    const fallback = screen.getByTestId('runner-reauth-secondary')
+    await act(async () => {
+      fireEvent.click(fallback.querySelector('[data-testid="reauth-start"]')!)
+    })
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'secondary')
+  })
+
+  it('names each login', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-name-claude_token').textContent)
+      .toBe('a@dimagi.com'))
+    expect(screen.getByTestId('cred-name-claude_token_secondary').textContent).toBe('b@dimagi.com')
+  })
+
+  it('swaps primary and fallback', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    api.swapRunnerLogins.mockResolvedValue({
+      ...TWO, claude_token_label: 'b@dimagi.com', claude_token_secondary_label: 'a@dimagi.com',
+    })
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('runner-credentials-swap')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('runner-credentials-swap')) })
+    expect(api.swapRunnerLogins).toHaveBeenCalledWith('r1')
+    expect(screen.getByTestId('cred-name-claude_token').textContent).toBe('b@dimagi.com')
+  })
+
+  it('will not swap over unsaved typing, which would land on the other login', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-label-claude_token')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('cred-label-claude_token'), { target: { value: 'c@dimagi.com' } })
+    expect(screen.getByTestId('runner-credentials-swap').hasAttribute('disabled')).toBe(true)
+  })
+
+  it('saves a renamed login without touching any token', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    api.setRunnerCredential.mockResolvedValue({ ...TWO, claude_token_label: 'c@dimagi.com' })
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-label-claude_token')).toBeTruthy())
+    fireEvent.change(screen.getByTestId('cred-label-claude_token'), { target: { value: 'c@dimagi.com' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('runner-credentials-save')) })
+    expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token_label: 'c@dimagi.com' })
   })
 })

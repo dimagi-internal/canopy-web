@@ -862,6 +862,13 @@ class RunnerCredential(models.Model):
     claude_token_enc = models.TextField(blank=True, default="")
     claude_token_secondary_enc = models.TextField(blank=True, default="")
     claude_api_key_enc = models.TextField(blank=True, default="")
+    # WHOSE subscription each login is — the account email when the runner could
+    # learn it at sign-in, otherwise whatever a human typed. Plaintext on purpose:
+    # it names a login, it is not one. Without it "primary" and "fallback" are
+    # two opaque dots, and neither swapping them nor re-signing the right one in
+    # is a decision anyone can make.
+    claude_token_label = models.CharField(max_length=200, blank=True, default="")
+    claude_token_secondary_label = models.CharField(max_length=200, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
@@ -907,11 +914,19 @@ class RunnerMint(models.Model):
     #: Terminal states — a mint in one of these is history, not work.
     FINISHED = (DONE, FAILED)
 
+    #: Which subscription login the minted token replaces. Named by the human who
+    #: started it, never inferred: a sign-in used to land in the primary
+    #: unconditionally, so "add a fallback" silently overwrote the working login.
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
+    SLOT_CHOICES = [(PRIMARY, "primary"), (SECONDARY, "secondary")]
+
     # UUID pk like Runner/Turn: a mint id travels in URLs and logs, and a
     # sequential one would leak how many sign-ins the fleet has needed.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="mints")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=REQUESTED)
+    slot = models.CharField(max_length=16, choices=SLOT_CHOICES, default=PRIMARY)
     authorize_url = models.TextField(blank=True, default="")
     # The single-use code a human pastes back. Cleared the moment the runner
     # takes it: it is spent on first use, and a code left lying in a row is a
