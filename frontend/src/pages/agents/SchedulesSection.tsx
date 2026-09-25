@@ -112,9 +112,23 @@ export function SchedulesSection(): JSX.Element {
                   <td className="px-3 py-2">
                     <span className={row.enabled ? 'text-foreground' : 'text-foreground-subtle'}>{row.name}</span>
                   </td>
-                  <td className="px-3 py-2 text-foreground-secondary">{describeCron(row.cron, row.timezone)}</td>
+                  <td className="px-3 py-2 text-foreground-secondary">
+                    {row.run_once_at
+                      ? `Once — ${new Date(row.run_once_at).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          timeZone: row.timezone,
+                        })}`
+                      : describeCron(row.cron, row.timezone)}
+                  </td>
                   <td className="px-3 py-2 text-muted-foreground">
-                    {row.enabled ? relative(row.next_runs?.[0]) : 'paused'}
+                    {row.enabled
+                      ? relative(row.next_runs?.[0])
+                      : row.run_once_at && row.last_slot
+                        ? 'done'
+                        : 'paused'}
                   </td>
                   <td className="px-3 py-2">
                     <StatusChip status={row.last_status} />

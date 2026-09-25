@@ -9,8 +9,35 @@ const PRESETS: { label: string; cron: string }[] = [
   { label: 'Daily — 9am', cron: '0 9 * * *' },
 ]
 
+/** `iso` as wall-clock "YYYY-MM-DDTHH:MM" in `tz` — the value a
+ * datetime-local input holds. The server reads an offset-less run_once_at in
+ * the schedule's timezone, so the client never does zone arithmetic. */
+function wallClock(iso: string, tz: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(new Date(iso))
+      .map((p) => [p.type, p.value]),
+  )
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+}
+
+function tomorrowNineAm(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T09:00`
+}
+
 /**
- * Declare (or amend) one recurring activity. The point of the whole surface is
+ * Declare (or amend) one scheduled activity — recurring (cron) or once. The point of the whole surface is
  * the "Next runs" panel: it answers "does this cron mean what I think it
  * means?" at edit time, from the SERVER's own next_slots() — instead of next
  * Friday, when it silently doesn't fire.
@@ -30,6 +57,10 @@ export function ScheduleEditor({
   const [prompt, setPrompt] = useState(schedule?.prompt ?? '')
   const [cron, setCron] = useState(schedule?.cron ?? '0 9 * * 5')
   const [tz, setTz] = useState(schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const [once, setOnce] = useState(Boolean(schedule?.run_once_at))
+  const [runOnceAt, setRunOnceAt] = useState(
+    schedule?.run_once_at ? wallClock(schedule.run_once_at, schedule.timezone) : tomorrowNineAm(),
+  )
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState<string[]>([])
@@ -51,6 +82,8 @@ export function ScheduleEditor({
   // "Fridays" while the server fires Thursdays is the exact failure the preview
   // exists to catch.
   useEffect(() => {
+    // A one-off has exactly one run — the time typed — so there is no cron to ask about.
+    if (once) return
     let cancelled = false
     const timer = setTimeout(() => {
       previewCron(agentSlug, cron, tz)
@@ -69,20 +102,23 @@ export function ScheduleEditor({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [agentSlug, cron, tz])
+  }, [agentSlug, cron, tz, once])
 
   async function onSave() {
     setSaving(true)
     setError('')
+    // A one-off sends run_once_at (wall clock, read in `tz` server-side) and no
+    // cron; the server derives the cron and disables it after it fires.
+    const when = once ? { run_once_at: runOnceAt } : { cron }
     try {
       if (schedule) {
-        await updateSchedule(agentSlug, schedule.id, { name, prompt, cron, timezone: tz })
+        await updateSchedule(agentSlug, schedule.id, { name, prompt, ...when, timezone: tz })
       } else {
         // enabled / routing / grace_minutes / notify are omitted deliberately:
         // the server's schema owns those defaults, and restating them here would
         // fork them. Not exposed as knobs yet — a schedule you can't reason
         // about is worse than one with fewer knobs.
-        await createSchedule(agentSlug, { name, prompt, cron, timezone: tz })
+        await createSchedule(agentSlug, { name, prompt, ...when, timezone: tz })
       }
       onSaved()
     } catch (err) {
@@ -154,29 +190,61 @@ export function ScheduleEditor({
         />
 
         <label className="mb-1 block text-[11px] text-muted-foreground">When</label>
-        <div className="mb-2 flex flex-wrap gap-1">
-          {PRESETS.map((p) => (
+        <div className="mb-2 flex gap-1" role="group" aria-label="Repeat">
+          {[
+            { label: 'Repeats', value: false },
+            { label: 'Once', value: true },
+          ].map((m) => (
             <button
-              key={p.cron}
+              key={m.label}
               type="button"
-              onClick={() => setCron(p.cron)}
+              aria-pressed={once === m.value}
+              onClick={() => setOnce(m.value)}
               className={`rounded border px-2 py-0.5 text-[11px] ${
-                cron === p.cron
+                once === m.value
                   ? 'border-primary text-primary'
                   : 'border-input text-foreground-secondary hover:bg-muted'
               }`}
             >
-              {p.label}
+              {m.label}
             </button>
           ))}
         </div>
+        {!once && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {PRESETS.map((p) => (
+              <button
+                key={p.cron}
+                type="button"
+                onClick={() => setCron(p.cron)}
+                className={`rounded border px-2 py-0.5 text-[11px] ${
+                  cron === p.cron
+                    ? 'border-primary text-primary'
+                    : 'border-input text-foreground-secondary hover:bg-muted'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="mb-3 flex gap-2">
-          <input
-            value={cron}
-            onChange={(e) => setCron(e.target.value)}
-            aria-label="Cron expression"
-            className="w-40 rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
-          />
+          {once ? (
+            <input
+              type="datetime-local"
+              value={runOnceAt}
+              onChange={(e) => setRunOnceAt(e.target.value)}
+              aria-label="Run once at"
+              className="w-52 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground"
+            />
+          ) : (
+            <input
+              value={cron}
+              onChange={(e) => setCron(e.target.value)}
+              aria-label="Cron expression"
+              className="w-40 rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
+            />
+          )}
           <input
             value={tz}
             onChange={(e) => setTz(e.target.value)}
@@ -186,8 +254,12 @@ export function ScheduleEditor({
         </div>
 
         <div className="mb-3 rounded border border-border bg-muted/40 px-2 py-1.5">
-          <p className="mb-0.5 text-[11px] text-muted-foreground">Next runs</p>
-          {previewError ? (
+          <p className="mb-0.5 text-[11px] text-muted-foreground">{once ? 'Runs once' : 'Next runs'}</p>
+          {once ? (
+            <p className="text-[11px] text-foreground-secondary">
+              {runOnceAt ? `${runOnceAt.replace('T', ' ')} ${tz} — then it turns itself off` : '—'}
+            </p>
+          ) : previewError ? (
             <p className="text-[11px] text-destructive">{previewError}</p>
           ) : preview.length === 0 ? (
             <p className="text-[11px] text-foreground-subtle">—</p>
@@ -232,7 +304,7 @@ export function ScheduleEditor({
             </button>
             <button
               type="button"
-              disabled={saving || !name.trim() || !prompt.trim()}
+              disabled={saving || !name.trim() || !prompt.trim() || (once && !runOnceAt)}
               onClick={() => void onSave()}
               className="rounded bg-primary px-3 py-1 text-[11px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
