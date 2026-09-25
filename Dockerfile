@@ -27,15 +27,12 @@ RUN VITE_BASE_PATH="$VITE_BASE_PATH" \
 # ─── Stage 2: Python runtime ─────────────────────────────────────────
 FROM python:3.12-slim
 
-# Install Node.js for the optional Claude Code CLI backend
+# No Node or Claude Code CLI here: canopy-web makes no model calls of its own
+# (agents run on runners), and the in-process `claude -p` backend they served
+# was removed 2026-09-25.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates git \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-
-RUN npm install -g @anthropic-ai/claude-code
 
 WORKDIR /app
 
@@ -86,11 +83,7 @@ ENV RUNNER_CLOUD_CODE_SHA=$RUNNER_CLOUD_CODE_SHA
 ARG RUNNER_CLOUD_CODE_COMMITTED_AT="0"
 ENV RUNNER_CLOUD_CODE_COMMITTED_AT=$RUNNER_CLOUD_CODE_COMMITTED_AT
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 EXPOSE 8000
-ENTRYPOINT ["/entrypoint.sh"]
 # --ws-ping-interval 5: uvicorn sends a WebSocket ping every 5s. This IS the idle
 # keepalive for long-lived sockets (runner control channel, supervisor + turn
 # tails): the server→client traffic keeps the shared ALB from idle-closing the

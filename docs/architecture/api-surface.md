@@ -72,13 +72,6 @@ A `canopy.origin` record store — GitHub issue provenance / evidence capture (t
 - `GET /api/issues/{repo_slug}/{number}/` — Get an origin record
 - `DELETE /api/issues/{repo_slug}/{number}/` — Delete an origin record (cleanup)
 
-### AI backend (`apps/common`)
-- `GET /api/ai/status/` — Current backend + auth state
-- `POST /api/ai/switch/` — Switch between `api` and `cli` at runtime
-- `POST /api/ai/auth/start/` — Begin headless Claude CLI login
-- `POST /api/ai/auth/complete/` — Submit OAuth code
-- `GET /api/ai/auth/poll/` — Poll auth status
-
 ### Personal Access Tokens (`apps/tokens`)
 - `GET /api/tokens/` — list my tokens (no raw values)
 - `POST /api/tokens/` — mint a token (raw returned once)

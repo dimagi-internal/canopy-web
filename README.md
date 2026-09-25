@@ -29,7 +29,7 @@ Backend dependencies are managed with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
 # Backend
-cp .env.example .env          # set AI_BACKEND=api + ANTHROPIC_API_KEY, or AI_BACKEND=cli
+cp .env.example .env
 uv sync --extra dev
 uv run python manage.py migrate
 uv run python manage.py runserver

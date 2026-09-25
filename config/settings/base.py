@@ -393,13 +393,10 @@ VAPID_PRIVATE_KEY = env("VAPID_PRIVATE_KEY", default="")
 # Contact for the push service if our sends misbehave. Must be a mailto: URL.
 VAPID_SUBJECT = env("VAPID_SUBJECT", default="mailto:jjackson@dimagi.com")
 
-# AI Backend: "api" (direct Anthropic SDK) or "cli" (claude code CLI)
-AI_BACKEND = env("AI_BACKEND", default="api")
-ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
-# Overrides apps.common.anthropic_client.DEFAULT_MODEL. Empty means "use the
-# code default", so an unset deployment tracks the constant rather than pinning
-# whatever model was current the day the env was written.
-ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="")
+# No AI backend: canopy-web makes no model calls of its own. Every agent turn,
+# chat reply and review runs on a RUNNER, under that box's Claude login
+# (Supervisor → Runners → the box). The in-process Anthropic SDK / `claude -p`
+# backend that used to live here had no caller left and was removed 2026-09-25.
 
 # --- Chat execution (apps/canopy_sessions, SP2b) ---
 # When True (dev/test default), a chat "send" runs the stub executor INLINE so the

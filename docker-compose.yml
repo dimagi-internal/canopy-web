@@ -16,9 +16,6 @@ services:
       - "9100:8000"
     environment:
       DATABASE_URL: postgres://canopy:canopy@db:5432/canopy_web
-      AI_BACKEND: ${AI_BACKEND:-cli}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       AUTH_ALLOWED_EMAIL_DOMAIN: ${AUTH_ALLOWED_EMAIL_DOMAIN:-dimagi.com}
@@ -28,8 +25,6 @@ services:
       - db
     volumes:
       - .:/app
-      - claude-home:/root/claude-data  # Persist Claude CLI auth across rebuilds
 
 volumes:
   pgdata:
-  claude-home:

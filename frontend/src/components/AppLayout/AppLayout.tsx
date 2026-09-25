@@ -9,7 +9,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
-import { aiStatus, aiSwitch } from '@/api/ai'
 import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
 import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
@@ -19,32 +18,11 @@ import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
 import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
 
-const BACKENDS = [
-  { key: 'api' as const, label: 'API', description: 'Direct Anthropic API' },
-  { key: 'cli' as const, label: 'Claude CLI', description: 'Claude subscription via CLI' },
-]
-
 function UserMenu() {
   const auth = useAuth()
   const { theme, setTheme } = useTheme()
   const [open, setOpen] = useState(false)
-  const [status, setStatus] = useState<{
-    backend: string; ready: boolean; detail: string; setup_hint: string | null
-  } | null>(null)
-  const [switching, setSwitching] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-
-  // AI backend status — polled until ready.
-  useEffect(() => {
-    aiStatus().then(setStatus).catch(() => {})
-    const interval = setInterval(() => {
-      aiStatus().then((s) => {
-        setStatus(s)
-        if (s.ready) clearInterval(interval)
-      }).catch(() => {})
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [])
 
   // Close on outside click.
   useEffect(() => {
@@ -62,19 +40,6 @@ function UserMenu() {
 
   const csrfToken = (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] ?? '')
   const initials = (auth.user.name || auth.user.email).slice(0, 1).toUpperCase()
-
-  async function handleSwitch(backend: 'api' | 'cli') {
-    if (status?.backend === backend || switching) return
-    setSwitching(true)
-    try {
-      await aiSwitch(backend)
-      setStatus(await aiStatus())
-    } catch {
-      // silent
-    } finally {
-      setSwitching(false)
-    }
-  }
 
   const segBtn = (active: boolean) =>
     clsx(
@@ -100,8 +65,6 @@ function UserMenu() {
           </span>
         )}
         <span className="hidden sm:inline text-xs text-foreground-secondary max-w-[12rem] truncate">{auth.user.email}</span>
-        {/* AI-not-ready indicator on the chip so it's discoverable without opening the menu. */}
-        {status && !status.ready && <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-label="AI not connected" />}
       </button>
 
       {open && (
@@ -109,40 +72,6 @@ function UserMenu() {
           <div className="border-b border-border px-3 py-2 text-xs text-muted-foreground">
             Signed in as
             <div className="truncate text-foreground-secondary">{auth.user.email}</div>
-          </div>
-
-          {/* AI backend */}
-          <div className="border-b border-border px-3 py-2">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">AI backend</div>
-            {!status ? (
-              <div className="text-xs text-muted-foreground">Checking…</div>
-            ) : (
-              <>
-                <div className="flex gap-1">
-                  {BACKENDS.map((b) => (
-                    <button
-                      key={b.key}
-                      type="button"
-                      disabled={switching}
-                      onClick={() => void handleSwitch(b.key)}
-                      title={b.description}
-                      className={segBtn(status.backend === b.key)}
-                    >
-                      {b.label}
-                    </button>
-                  ))}
-                </div>
-                {!status.ready && (
-                  <Link
-                    to="/settings"
-                    onClick={() => setOpen(false)}
-                    className="mt-1.5 block text-[11px] text-warning hover:underline"
-                  >
-                    Not connected — set up →
-                  </Link>
-                )}
-              </>
-            )}
           </div>
 
           {/* Theme */}

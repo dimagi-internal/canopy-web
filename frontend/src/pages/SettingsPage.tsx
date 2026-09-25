@@ -1,39 +1,19 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { mintDebugSession, type MintDebugSessionResponse } from '@/api/debug'
-import { aiStatus as fetchAiStatus, aiAuthStart, aiAuthComplete, aiAuthPoll } from '@/api/ai'
+import { listRunners, type RunnerOut } from '@/api/harness'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { CopyBlock } from '@/components/CopyBlock'
 import { Button } from 'canopy-ui/ui'
-import { Input } from 'canopy-ui/ui'
-
-type Step = 'idle' | 'loading' | 'awaiting_code' | 'submitting' | 'complete' | 'error'
 
 export function SettingsPage() {
-  const [aiStatus, setAiStatus] = useState<{
-    backend: string; ready: boolean; detail: string
-  } | null>(null)
-  const [step, setStep] = useState<Step>('idle')
-  const [authUrl, setAuthUrl] = useState<string | null>(null)
-  const [code, setCode] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [tokenPreview, setTokenPreview] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   // Presence visibility. Defaults to visible (matches the backend default
   // when no preference row exists yet) so the checkbox never flashes
   // unchecked before the fetch resolves.
   const [showPresence, setShowPresence] = useState(true)
-
-  const refreshStatus = useCallback(() => {
-    fetchAiStatus().then(setAiStatus).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    refreshStatus()
-  }, [refreshStatus])
 
   useEffect(() => {
     getPresencePreference()
@@ -61,170 +41,21 @@ export function SettingsPage() {
     }
   }
 
-  // Poll for auth completion while awaiting code (browser might complete it)
-  useEffect(() => {
-    if (step !== 'awaiting_code') return
-    pollRef.current = setInterval(async () => {
-      try {
-        const result = await aiAuthPoll()
-        if (result.authenticated) {
-          setStep('complete')
-          refreshStatus()
-        }
-      } catch { /* ignore */ }
-    }, 2000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [step, refreshStatus])
-
-  async function handleStartLogin() {
-    setStep('loading')
-    setError(null)
-    setAuthUrl(null)
-    setCode('')
-    setTokenPreview(null)
-    try {
-      const result = await aiAuthStart()
-      if (result.status === 'complete') {
-        setStep('complete')
-        refreshStatus()
-      } else {
-        setAuthUrl(result.auth_url)
-        setStep('awaiting_code')
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start login')
-      setStep('error')
-    }
-  }
-
-  async function handleSubmitCode() {
-    if (!code.trim()) return
-    setStep('submitting')
-    setError(null)
-    try {
-      const result = await aiAuthComplete(code.trim())
-      setTokenPreview(result.token_preview)
-      setStep('complete')
-      refreshStatus()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to complete login')
-      setStep('awaiting_code')
-    }
-  }
-
+  // There is no "AI backend" here any more. canopy-web makes no model calls of
+  // its own — every turn runs on a runner, under THAT box's Claude login — so
+  // the old "Connect Claude Subscription" panel configured something nothing
+  // used. What a person does own is the runners they paired: RunnersPanel
+  // points at where their Claude logins live.
   return (
     <div className="space-y-5 max-w-xl">
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Manage your AI backend and authentication.
+          Your account: the runners you administer, presence, GitHub and access tokens.
         </p>
       </div>
 
-      {/* Current status */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-        <h2 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">AI Backend</h2>
-        {aiStatus ? (
-          <div className="flex items-center gap-3">
-            <span className={
-              aiStatus.ready
-                ? 'inline-flex items-center gap-1.5 text-xs font-medium text-success bg-success/10 border border-success/30 px-2 py-1 rounded'
-                : 'inline-flex items-center gap-1.5 text-xs font-medium text-warning bg-warning/10 border border-warning/30 px-2 py-1 rounded'
-            }>
-              <span className={`w-1.5 h-1.5 rounded-full ${aiStatus.ready ? 'bg-success shadow-[0_0_6px_rgba(74,222,128,0.5)]' : 'bg-warning shadow-[0_0_6px_rgba(251,191,36,0.5)]'}`} />
-              {aiStatus.ready ? 'Connected' : 'Not connected'}
-            </span>
-            <span className="text-sm text-foreground-secondary">{aiStatus.detail}</span>
-          </div>
-        ) : (
-          <span className="text-sm text-muted-foreground">Loading...</span>
-        )}
-      </div>
-
-      {/* Login flow */}
-      {aiStatus && !aiStatus.ready && (
-        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Connect Claude Subscription</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Sign in with your Anthropic account to use your Claude subscription for AI calls.
-            </p>
-          </div>
-
-          {step === 'idle' || step === 'error' || step === 'loading' ? (
-            <div className="space-y-3">
-              <Button size="sm" onClick={handleStartLogin} disabled={step === 'loading'}>
-                {step === 'loading' ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Starting login...
-                  </span>
-                ) : 'Start Login'}
-              </Button>
-              {step === 'loading' && (
-                <p className="text-xs text-muted-foreground">Generating authorization link (a few seconds)...</p>
-              )}
-              {error && (
-                <p className="text-sm text-destructive">{error}</p>
-              )}
-            </div>
-          ) : step === 'awaiting_code' ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <p className="text-sm text-foreground-secondary">
-                  <span className="text-primary font-semibold">1.</span> Click the link below to authorize:
-                </p>
-                <a
-                  href={authUrl!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-sm text-primary hover:text-primary underline underline-offset-2 break-all"
-                >
-                  Open Anthropic Login ↗
-                </a>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm text-foreground-secondary">
-                  <span className="text-primary font-semibold">2.</span> After authorizing, paste the code shown on the callback page:
-                </p>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Paste authorization code..."
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitCode() }}
-                    className="font-mono text-sm"
-                  />
-                  <Button size="sm" onClick={handleSubmitCode} disabled={!code.trim()}>
-                    Submit
-                  </Button>
-                </div>
-              </div>
-              {error && (
-                <p className="text-sm text-destructive">{error}</p>
-              )}
-            </div>
-          ) : step === 'submitting' ? (
-            <p className="text-sm text-foreground-secondary">Completing authentication...</p>
-          ) : null}
-        </div>
-      )}
-
-      {/* Success state — only after completing CLI auth flow, not for general readiness */}
-      {step === 'complete' && aiStatus?.backend === 'cli' && (
-        <div className="rounded-xl border border-success/30 bg-success/10 p-4 space-y-1">
-          <p className="text-sm font-semibold text-success">Authenticated</p>
-          {tokenPreview && (
-            <p className="text-xs text-success/80 font-mono">{tokenPreview}</p>
-          )}
-          <p className="text-xs text-success/70">
-            Claude CLI is connected via your subscription. Token persists across container restarts.
-          </p>
-        </div>
-      )}
+      <RunnersPanel />
 
       {/* Presence */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">
@@ -260,6 +91,59 @@ export function SettingsPage() {
       <TokensPanel />
 
       <DebugAccessPanel />
+    </div>
+  )
+}
+
+/**
+ * The runners you can administer — their Claude login lives on each box, not
+ * here. Runners are owned by the person who paired them (plus anyone they
+ * grant), so this lists exactly the boxes whose credentials are yours to fix,
+ * each linking to its detail on Supervisor.
+ */
+function RunnersPanel() {
+  const [runners, setRunners] = useState<RunnerOut[] | null>(null)
+
+  useEffect(() => {
+    listRunners()
+      .then((rows) => setRunners(rows.filter((r) => r.can_administer)))
+      .catch(() => setRunners([]))
+  }, [])
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-runners">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">Runners</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Agents run on runners, and each cloud runner holds its own Claude login — with a fallback
+          subscription or an API key for when a weekly cap hits.
+        </p>
+      </div>
+      {runners === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : runners.length === 0 ? (
+        <p className="text-sm text-muted-foreground">You don&apos;t administer any runners.</p>
+      ) : (
+        <table className="w-full text-[13px]">
+          <tbody>
+            {runners.map((r) => (
+              <tr key={r.id} className="border-t border-border first:border-t-0">
+                <td className="py-1.5 font-medium text-foreground">{r.name}</td>
+                <td className="py-1.5 text-muted-foreground">{r.kind}</td>
+                <td className="py-1.5 text-muted-foreground">{r.status}</td>
+                <td className="py-1.5 text-right">
+                  <Link
+                    to={`/supervisor?tab=runners&runner=${r.id}`}
+                    className="text-primary hover:underline"
+                  >
+                    {r.kind === 'cloud' ? 'Claude login & admins →' : 'Details →'}
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
