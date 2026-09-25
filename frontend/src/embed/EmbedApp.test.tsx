@@ -470,3 +470,67 @@ describe('feedback while the agent works', () => {
     expect(screen.queryByText(/insights/)).toBeNull()
   })
 })
+
+describe('the agent and your earlier conversations', () => {
+  const EARLIER = [
+    { id: 'old-hal', agent_slug: 'hal', title: 'Older question', created_at: '2026-09-20T10:00:00Z',
+      last_activity_at: '2026-09-20T10:05:00Z' },
+    { id: 'new-hal', agent_slug: 'hal', title: 'Newer question', created_at: '2026-09-24T10:00:00Z',
+      last_activity_at: '2026-09-24T10:05:00Z' },
+    { id: 'echo-1', agent_slug: 'echo', title: 'Not this agent', created_at: '2026-09-25T10:00:00Z',
+      last_activity_at: '2026-09-25T10:05:00Z' },
+  ]
+
+  function withHistory() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const u = String(url)
+        if (u.includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (u.includes('/api/canopy-sessions/?') && (!init?.method || init.method === 'GET')) {
+          return { ok: true, status: 200, json: async () => EARLIER } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+  }
+
+  const hal = () =>
+    fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })
+
+  it('lists only THIS agent’s earlier chats, newest first', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    const newer = await screen.findByText('Newer question')
+    const older = screen.getByText('Older question')
+
+    expect(screen.queryByText('Not this agent')).toBeNull()
+    expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('reopens an earlier chat without creating a new one, and names the agent', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    fireEvent.click(await screen.findByText('Newer question'))
+
+    await waitFor(() => expect(screen.getByLabelText('All conversations')).toBeTruthy())
+    expect(created()).toBeUndefined()
+    expect(screen.getByText('Hal')).toBeTruthy()
+    expect(screen.queryByText('Canopy')).toBeNull()
+  })
+
+  it('goes back to the list from a conversation', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+    fireEvent.click(await screen.findByText('Newer question'))
+
+    fireEvent.click(await screen.findByLabelText('All conversations'))
+
+    expect(await screen.findByText('Older question')).toBeTruthy()
+  })
+})

@@ -34,7 +34,7 @@ type Phase =
    *  is sent over HTTP before this component exists, so nothing on the socket
    *  ever announced it: you typed, pressed send, and watched your own question
    *  disappear into an empty panel. */
-  | { kind: 'chatting'; sessionId: string; firstMessage: string }
+  | { kind: 'chatting'; sessionId: string; firstMessage: string; agent: EmbedAgent }
 
 interface EmbedAgent {
   slug: string
@@ -305,7 +305,7 @@ export function EmbedApp({ link, app }: Props) {
 
       // `text`, not `body`: the page-context block is for the agent to read,
       // not for the person who just typed the question to be shown back.
-      setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text })
+      setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, agent })
     },
     [client, link],
   )
@@ -347,7 +347,12 @@ export function EmbedApp({ link, app }: Props) {
     return (
       <EmbedStart
         agent={phase.agent}
+        client={client}
+        isContact={principal?.kind === 'contact'}
         onStart={(text) => startConversation(phase.agent, text)}
+        onOpen={(sessionId) =>
+          setPhase({ kind: 'chatting', sessionId, firstMessage: '', agent: phase.agent })
+        }
         onClose={() => link.requestClose()}
       />
     )
@@ -355,8 +360,11 @@ export function EmbedApp({ link, app }: Props) {
 
   return (
     <EmbedChat
+      key={phase.sessionId}
       sessionId={phase.sessionId}
       firstMessage={phase.firstMessage}
+      agent={phase.agent}
+      onBack={() => setPhase({ kind: 'ready', agent: phase.agent })}
       client={client}
       link={link}
       contextPreamble={pendingContext}
@@ -375,13 +383,20 @@ export function EmbedApp({ link, app }: Props) {
  */
 function EmbedStart({
   agent,
+  client,
+  isContact,
   onStart,
+  onOpen,
   onClose,
 }: {
   agent: EmbedAgent
+  client: CanopyClient
+  isContact: boolean
   onStart: (text: string) => Promise<void>
+  onOpen: (sessionId: string) => void
   onClose: () => void
 }) {
+  const history = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -414,11 +429,35 @@ function EmbedStart({
         </button>
       </header>
 
-      <div className="grid min-h-0 flex-1 place-items-center p-6">
-        <p className="max-w-xs text-center text-sm text-muted-foreground">
-          Ask {agent.name} about this page.
-        </p>
-      </div>
+      {history.length > 0 ? (
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <p className="px-1 pb-2 text-[12px] text-muted-foreground">
+            Ask {agent.name} something new below, or pick up an earlier conversation:
+          </p>
+          <ul className="space-y-1">
+            {history.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(s.id)}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted"
+                >
+                  <span className="block truncate text-sm text-foreground">
+                    {s.title || 'Untitled conversation'}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="grid min-h-0 flex-1 place-items-center p-6">
+          <p className="max-w-xs text-center text-sm text-muted-foreground">
+            Ask {agent.name} about this page.
+          </p>
+        </div>
+      )}
 
       {/* The kit's own composer, not a hand-rolled one. This screen used to
           draw its own textarea and button, which is how it drifted: in light
@@ -450,6 +489,55 @@ function EmbedStart({
   )
 }
 
+interface EarlierChat {
+  id: string
+  title: string
+  at: string
+}
+
+/** Your earlier conversations with THIS agent on THIS site, newest first.
+ *
+ *  Canopy already scopes the list to the site (the `embed_app` it stamped at
+ *  create, forced for a delegated token) and to the site's own agents, and a
+ *  contact's list is their own conversations only — so the only narrowing left
+ *  here is to the agent this panel is for. A failed or odd response shows no
+ *  history rather than an error: the panel's job is still to let you ask. */
+function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boolean) {
+  const [rows, setRows] = useState<EarlierChat[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const url = isContact ? '/api/contact/sessions' : '/api/canopy-sessions/?state=all&limit=50'
+    client.rest
+      .json<unknown>(url)
+      .then((data) => {
+        if (cancelled || !Array.isArray(data)) return
+        const mine = (data as Array<Record<string, unknown>>)
+          .filter((r) => r.agent_slug === agent.slug && typeof r.id === 'string')
+          .map((r) => ({
+            id: r.id as string,
+            title: typeof r.title === 'string' ? r.title : '',
+            at: String(r.last_activity_at ?? r.created_at ?? ''),
+          }))
+          .sort((a, b) => b.at.localeCompare(a.at))
+          .slice(0, 20)
+        setRows(mine)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [client, agent.slug, isContact])
+  return rows
+}
+
+function whenLabel(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  return new Date(t).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="grid h-full place-items-center p-4 text-muted-foreground">{children}</div>
 }
@@ -479,14 +567,22 @@ function contactDraft(body: string) {
 function EmbedChat({
   sessionId,
   firstMessage,
+  agent,
+  onBack,
   client,
   link,
   contextPreamble,
   isContact = false,
 }: {
   sessionId: string
-  /** The opening message, already sent over HTTP. Echoed once on mount. */
+  /** The opening message, already sent over HTTP. Echoed once on mount. Empty
+   *  when an earlier conversation is reopened — its history comes from the
+   *  socket's snapshot. */
   firstMessage: string
+  /** Whose conversation this is — named in the header, which said "Canopy". */
+  agent: EmbedAgent
+  /** Back to the start screen: a new question, or another earlier chat. */
+  onBack: () => void
   client: CanopyClient
   link: HostLink
   contextPreamble: React.MutableRefObject<string | null>
@@ -673,7 +769,18 @@ function EmbedChat({
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-[12px] text-muted-foreground">Canopy</span>
+        <span className="flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="All conversations"
+            title="All conversations"
+            className="rounded px-1 text-muted-foreground hover:text-foreground"
+          >
+            ‹
+          </button>
+          <span className="truncate text-[12px] text-muted-foreground">{agent.name}</span>
+        </span>
         <button
           type="button"
           onClick={() => link.requestClose()}
