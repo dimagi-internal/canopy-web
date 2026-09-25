@@ -179,7 +179,10 @@ export function ChatPanel({
           header, i.e. unreachable. Pinning keeps "Load earlier"/"Load full"
           always visible. */}
       {historySlot}
-      <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
+      {/* overflow-x-hidden: `overflow-y: auto` alone computes overflow-x to
+          auto, so anything wider than the column made the transcript scroll
+          sideways into empty space. Wide content scrolls inside its own box. */}
+      <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-x-hidden overflow-y-auto">
         <MessageList
           messages={state.messages}
           emptyState={emptyState}

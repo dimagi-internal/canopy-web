@@ -119,8 +119,13 @@ export function MessageItem({
   const showThinking =
     (isPending || isStreaming) && message.role === "assistant" && !text;
   return (
+    // `overflow-wrap:anywhere` so one unbreakable token — a long path, a URL,
+    // inline code — wraps inside the bubble. Without it the token overflowed
+    // `max-w-[80%]` and made the whole transcript scroll sideways into empty
+    // space on a phone (2026-09-24). Tables and code blocks keep their own
+    // horizontal scroll; this only affects running text.
     <div
-      className={`my-2 max-w-[80%] rounded-2xl px-4 py-2 ${bubbleClass}`}
+      className={`my-2 min-w-0 max-w-[80%] rounded-2xl px-4 py-2 [overflow-wrap:anywhere] ${bubbleClass}`}
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
       {showThinking ? (
