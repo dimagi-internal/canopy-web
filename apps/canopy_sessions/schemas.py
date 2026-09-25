@@ -407,3 +407,30 @@ class PageActionResultIn(Schema):
 
     result: object | None = None
     error: str = ""
+
+
+class SessionSecretIn(Schema):
+    """A secret handed to this chat. `note` rides along in the chat message; the value never does."""
+    name: str
+    value: str
+    note: str = ""
+
+
+class SessionSecretOut(Schema):
+    """What a browser may know about a shared secret: never the value."""
+    name: str
+    ref: str
+    created_by: str | None = None
+    created_at: str
+    updated_at: str
+    last_used_at: str | None = None
+
+
+class SessionSecretCreatedOut(SessionSecretOut):
+    #: The text to post into the chat in place of the secret.
+    message: str
+
+
+class SessionSecretValueOut(Schema):
+    name: str
+    value: str

@@ -585,3 +585,49 @@ class Attachment(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"attachment:{str(self.id)[:8]}:{self.filename}"
+
+
+class SessionSecret(models.Model):
+    """A secret a person handed to one chat without it entering the chat.
+
+    The use: "here is a GitHub token, put it in that repo's Actions secrets".
+    Typed into the chat, the token lands in the transcript, the runner's
+    terminal, the model's context and every copy of all three. Shared here, the
+    chat carries only a REFERENCE (`canopy-secret://<session>/<NAME>`), and the
+    agent spends it with `canopy secret exec`, which injects the value into one
+    command and masks it out of that command's output — so the model never
+    reads it (Jonathan, 2026-09-24).
+
+    Write-only over the browser, like `AgentCredential`: the list returns names
+    and timestamps, and the one route that returns a value (`services.
+    resolve_secret`) refuses a cookie and admits only a bearer who can act in
+    the session or who IS the session's agent.
+
+    Scoped to the session on purpose. It is a hand-off, not a store: the agent
+    moves the value to where it belongs, and a session-scoped row cannot leak
+    into another conversation. Closing or deleting the session takes it along.
+    """
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="secrets")
+    #: Upper-case env-var shape, so the reference doubles as the variable
+    #: `canopy secret exec` sets by default.
+    name = models.CharField(max_length=64)
+    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext.
+    value_enc = models.TextField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    #: When a value was last handed out, so the sharer can see it was used.
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["session", "name"], name="one_value_per_session_secret"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"secret:{str(self.session_id)[:8]}:{self.name}"
