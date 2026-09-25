@@ -970,6 +970,9 @@ class RunnerCredentialIn(Schema):
     claude_token: str | None = None
     claude_token_secondary: str | None = None
     claude_api_key: str | None = None
+    #: Whose subscription each login is (an email, or any name). Not a secret.
+    claude_token_label: str | None = Field(default=None, max_length=200)
+    claude_token_secondary_label: str | None = Field(default=None, max_length=200)
 
 
 class RunnerCredentialOut(Schema):
@@ -1004,10 +1007,16 @@ class RunnerMintOut(Schema):
 
     id: uuid.UUID
     status: str
+    #: Which subscription login the new token will replace.
+    slot: Literal["primary", "secondary"] = "primary"
     authorize_url: str
     detail: str
     created_at: dt.datetime
     updated_at: dt.datetime
+
+
+class RunnerMintStartIn(Schema):
+    slot: Literal["primary", "secondary"] = "primary"
 
 
 class RunnerMintClaimOut(Schema):
@@ -1034,6 +1043,8 @@ class RunnerMintResultIn(Schema):
     # human who is sitting there waiting for it.
     token: str = ""
     detail: str = ""
+    #: The account the new token belongs to, when the runner could read it back.
+    account: str = ""
 
 
 class RunnerCredentialStatusOut(Schema):
@@ -1042,6 +1053,8 @@ class RunnerCredentialStatusOut(Schema):
     has_claude_token: bool = False
     has_claude_token_secondary: bool = False
     has_claude_api_key: bool = False
+    claude_token_label: str = ""
+    claude_token_secondary_label: str = ""
     updated_at: dt.datetime | None = None
 
 

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import {
   getRunnerCredentialStatus,
   setRunnerCredential,
+  swapRunnerLogins,
   type CredentialStatus,
+  type LoginSlot,
 } from '@/api/harness'
 import { RunnerReauth } from './RunnerReauth'
 
@@ -35,7 +37,12 @@ export interface Slot {
   statusKey: `has_${SlotKey}`
   label: string
   hint: string
+  /** A subscription LOGIN: it can be signed in from here, named, and reordered.
+   *  The API key is none of those — it is pasted, and it is always last. */
+  login?: { slot: LoginSlot; labelKey: LabelKey }
 }
+
+export type LabelKey = 'claude_token_label' | 'claude_token_secondary_label'
 
 // Claude auth is an ORDERED CASCADE, not one credential — a subscription has a
 // weekly cap, and when it trips every agent on the box stops. Order here is the
@@ -44,14 +51,16 @@ export const SLOTS: readonly Slot[] = [
   {
     key: 'claude_token',
     statusKey: 'has_claude_token',
-    label: 'Claude login (primary)',
-    hint: 'A dedicated `claude setup-token`. Long-lived and non-rotating — do not paste a live OAuth blob whose refresh token rotates.',
+    label: 'Primary login',
+    hint: 'Used first. Or paste a dedicated `claude setup-token` — long-lived and non-rotating, never a live OAuth blob whose refresh token rotates.',
+    login: { slot: 'primary', labelKey: 'claude_token_label' },
   },
   {
     key: 'claude_token_secondary',
     statusKey: 'has_claude_token_secondary',
-    label: 'Claude login (fallback)',
-    hint: 'A SECOND subscription. Without one, a weekly cap on the primary stops every agent on this box.',
+    label: 'Fallback login',
+    hint: 'A SECOND subscription, used when the primary hits its cap. Without one, a weekly cap stops every agent on this box.',
+    login: { slot: 'secondary', labelKey: 'claude_token_secondary_label' },
   },
   {
     key: 'claude_api_key',
@@ -63,6 +72,21 @@ export const SLOTS: readonly Slot[] = [
 // No GitHub slot: a box holds no GitHub credential. Each agent's turns get its
 // owner's token for that agent, one turn at a time — set on the agent's own
 // Settings → Credentials → GitHub.
+
+/** Names that actually changed. Unlike a token, an emptied name is a real edit
+ *  ("clear it"), so "" is sent — but an untouched one is not sent at all. */
+export function labelPayload(
+  draft: Partial<Record<LabelKey, string>>,
+  status: CredentialStatus | null,
+): Partial<Record<LabelKey, string>> {
+  const out: Partial<Record<LabelKey, string>> = {}
+  for (const [k, v] of Object.entries(draft) as [LabelKey, string | undefined][]) {
+    if (v === undefined) continue
+    const trimmed = v.trim()
+    if (trimmed !== (status?.[k] ?? '')) out[k] = trimmed
+  }
+  return out
+}
 
 /** Only the slots actually typed into, trimmed. Blank means "leave alone", never
  *  "clear" — the write schema is non-clobbering and "" would overwrite. */
@@ -107,6 +131,9 @@ export function credentialSummary(s: CredentialStatus): Summary {
 export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Element {
   const [status, setStatus] = useState<CredentialStatus | null>(null)
   const [draft, setDraft] = useState<Partial<Record<SlotKey, string>>>({})
+  const [names, setNames] = useState<Partial<Record<LabelKey, string>>>({})
+  const [dragging, setDragging] = useState<LoginSlot | null>(null)
+  const [dropTarget, setDropTarget] = useState<LoginSlot | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -129,19 +156,22 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
     }
   }, [load])
 
+  const pending = { ...nextPayload(draft), ...labelPayload(names, status) }
+  const dirty = Object.keys(pending).length > 0
+
   const save = async () => {
-    const payload = nextPayload(draft)
     // Nothing typed — skip the request rather than POST an empty body that
     // reports success and changes nothing.
-    if (!Object.keys(payload).length) return
+    if (!dirty) return
     setBusy(true)
     setError(null)
     setSaved(false)
     try {
-      const s = await setRunnerCredential(runnerId, payload)
+      const s = await setRunnerCredential(runnerId, pending)
       if (!alive.current) return
       setStatus(s)
       setDraft({}) // never keep a secret in component state after it lands
+      setNames({})
       setSaved(true)
     } catch (e) {
       if (alive.current) setError(e instanceof Error ? e.message : 'Failed to save')
@@ -149,6 +179,25 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
       if (alive.current) setBusy(false)
     }
   }
+
+  // Reordering moves what is SAVED. Refused while anything is typed, because an
+  // unsaved entry is keyed by position and would silently land on the other login.
+  const swap = async () => {
+    if (dirty) return
+    setBusy(true)
+    setError(null)
+    setSaved(false)
+    try {
+      const s = await swapRunnerLogins(runnerId)
+      if (alive.current) setStatus(s)
+    } catch (e) {
+      if (alive.current) setError(e instanceof Error ? e.message : 'Failed to swap')
+    } finally {
+      if (alive.current) setBusy(false)
+    }
+  }
+  const canSwap = !busy && !dirty && !!status
+    && (status.has_claude_token || status.has_claude_token_secondary)
 
   if (status === null && error === null) {
     return <div className="h-6 w-48 animate-pulse rounded-md bg-muted" data-testid="runner-credentials-loading" />
@@ -173,32 +222,112 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
         </p>
       )}
 
-      {/* Above the paste-a-token fields on purpose: getting the token used to be
-          the hard part (a terminal on the box), and pasting one was the easy
-          part that already had a form. This is the hard part, now a link and a
-          code box. The fields below stay for a token minted elsewhere. */}
-      <RunnerReauth runnerId={runnerId} onSignedIn={load} />
-
-      {SLOTS.map((slot) => {
+      {SLOTS.map((slot, i) => {
         const isSet = status?.[slot.statusKey] ?? false
+        const login = slot.login
+        const name = login ? (names[login.labelKey] ?? status?.[login.labelKey] ?? '') : ''
+        const savedName = login ? status?.[login.labelKey] ?? '' : ''
+        const dropHere = login && dragging && dragging !== login.slot && dropTarget === login.slot
         return (
-          <label key={slot.key} className="flex flex-col gap-0.5" data-testid={`cred-slot-${slot.key}`}>
-            <span className="flex items-center gap-2 text-[12px] text-foreground">
-              <span className={isSet ? 'text-success' : 'text-muted-foreground'}>{isSet ? '●' : '○'}</span>
-              {slot.label}
-              <span className="text-[11px] text-foreground-subtle">{isSet ? 'set' : 'not set'}</span>
-            </span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={draft[slot.key] ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, [slot.key]: e.target.value }))}
-              placeholder={isSet ? 'leave blank to keep current' : 'paste to set'}
-              aria-label={slot.label}
-              className="rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground"
-            />
-            <span className="text-[11px] text-foreground-subtle">{slot.hint}</span>
-          </label>
+          <div key={slot.key}>
+            {/* Between the two logins: the keyboard/touch way to reorder, since
+                HTML drag-and-drop does nothing on a phone. */}
+            {i === 1 && (
+              <div className="-my-1 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => void swap()}
+                  disabled={!canSwap}
+                  data-testid="runner-credentials-swap"
+                  title={dirty ? 'Save or clear what you typed first' : 'Make the fallback the primary'}
+                  className="rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                >
+                  ⇅ swap primary and fallback
+                </button>
+              </div>
+            )}
+            <div
+              data-testid={`cred-slot-${slot.key}`}
+              onDragOver={login ? (e) => {
+                if (dragging && dragging !== login.slot) {
+                  e.preventDefault()
+                  setDropTarget(login.slot)
+                }
+              } : undefined}
+              onDragLeave={() => setDropTarget(null)}
+              onDrop={login ? (e) => {
+                e.preventDefault()
+                const from = dragging
+                setDragging(null)
+                setDropTarget(null)
+                if (from && from !== login.slot) void swap()
+              } : undefined}
+              className={`flex flex-col gap-1 rounded-md border p-2 ${
+                dropHere ? 'border-primary bg-primary/5' : 'border-border'
+              } ${dragging === login?.slot ? 'opacity-50' : ''}`}
+            >
+              <span className="flex items-center gap-2 text-[12px] text-foreground">
+                {/* Only the handle drags: a draggable row would steal the mouse
+                    from its own inputs. The whole row is still the drop target. */}
+                {login && (
+                  <span
+                    aria-hidden
+                    draggable={canSwap}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', login.slot)
+                      const row = e.currentTarget.closest('[data-testid^="cred-slot-"]')
+                      if (row instanceof HTMLElement) e.dataTransfer.setDragImage(row, 12, 12)
+                      setDragging(login.slot)
+                    }}
+                    onDragEnd={() => { setDragging(null); setDropTarget(null) }}
+                    data-testid={`cred-drag-${slot.key}`}
+                    title={canSwap ? 'Drag onto the other login to swap them' : undefined}
+                    className={`select-none text-foreground-subtle ${canSwap ? 'cursor-grab' : 'opacity-40'}`}
+                  >
+                    ⋮⋮
+                  </span>
+                )}
+                <span className={isSet ? 'text-success' : 'text-muted-foreground'}>{isSet ? '●' : '○'}</span>
+                <span className="font-medium">{slot.label}</span>
+                {savedName && (
+                  <span className="truncate text-foreground-secondary" data-testid={`cred-name-${slot.key}`}>
+                    {savedName}
+                  </span>
+                )}
+                <span className="text-[11px] text-foreground-subtle">{isSet ? 'set' : 'not set'}</span>
+              </span>
+
+              {login && (
+                <RunnerReauth runnerId={runnerId} slot={login.slot} isSet={isSet} onSignedIn={load} />
+              )}
+
+              {login && (
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={name}
+                  onChange={(e) => setNames((d) => ({ ...d, [login.labelKey]: e.target.value }))}
+                  placeholder="whose account? e.g. you@dimagi.com"
+                  aria-label={`${slot.label} name`}
+                  data-testid={`cred-label-${slot.key}`}
+                  className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground"
+                />
+              )}
+              <input
+                type="password"
+                autoComplete="off"
+                value={draft[slot.key] ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...d, [slot.key]: e.target.value }))}
+                placeholder={login
+                  ? (isSet ? 'or paste a token to replace it' : 'or paste a token')
+                  : (isSet ? 'leave blank to keep current' : 'paste to set')}
+                aria-label={slot.label}
+                className="rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground"
+              />
+              <span className="text-[11px] text-foreground-subtle">{slot.hint}</span>
+            </div>
+          </div>
         )
       })}
 
@@ -206,7 +335,7 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
         <button
           type="button"
           onClick={() => void save()}
-          disabled={busy || !Object.keys(nextPayload(draft)).length}
+          disabled={busy || !dirty}
           data-testid="runner-credentials-save"
           className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
         >

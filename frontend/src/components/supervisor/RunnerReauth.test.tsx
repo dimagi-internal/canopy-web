@@ -156,7 +156,7 @@ describe('RunnerReauth', () => {
     await waitFor(() => expect(screen.getByTestId('reauth-start')).toBeTruthy())
     expect(screen.queryByTestId('reauth-failed')).toBeNull()
     // …and it offers a plain start, not "again" for something they never did.
-    expect(screen.getByTestId('reauth-start').textContent).toContain('Start sign-in')
+    expect(screen.getByTestId('reauth-start').textContent).toContain('Sign in with Claude')
   })
 
   it('still shows an outcome you were actually present for', async () => {
@@ -170,6 +170,25 @@ describe('RunnerReauth', () => {
       mint({ status: 'failed', detail: 'the code was rejected' }))
     await waitFor(() => expect(screen.getByTestId('reauth-failed').textContent)
       .toContain('the code was rejected'), { timeout: 4000 })
+  })
+
+  it('does not show another login\'s sign-in', async () => {
+    // One current sign-in per runner. The primary's row must not offer the
+    // fallback's link — a code pasted there fills the wrong login.
+    api.getRunnerMint.mockResolvedValue(
+      mint({ status: 'awaiting_code', authorize_url: URL_, slot: 'secondary' }))
+    render(<RunnerReauth runnerId="r1" slot="primary" />)
+    await waitFor(() => expect(api.getRunnerMint).toHaveBeenCalled())
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByTestId('reauth-url')).toBeNull()
+  })
+
+  it('starts the sign-in for its own login', async () => {
+    render(<RunnerReauth runnerId="r1" slot="secondary" />)
+    api.startRunnerMint.mockResolvedValue(mint({ slot: 'secondary' }))
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('reauth-start')) })
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'secondary')
   })
 
   it('never renders a token', async () => {
