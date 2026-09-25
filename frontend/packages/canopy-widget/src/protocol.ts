@@ -69,6 +69,8 @@ export type HostMessage =
       token: string
       agent?: string
       metadata?: Record<string, unknown>
+      /** See `InitOptions.toolCalls`. */
+      toolCalls?: 'shown' | 'hidden'
       actions: ActionSpec[]
       /** Validated host theme for the panel's contents. The frame validates it
        *  AGAIN — it is canopy's document, and does not take a host's word for

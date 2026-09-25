@@ -123,6 +123,14 @@ export interface CanopyWidgetOptions {
   onInvalidate?: (resource: string) => void
   /** Opaque metadata stamped on sessions this widget creates. */
   metadata?: Record<string, unknown>
+  /** Whether the panel shows the agent's tool calls (default `'shown'`).
+   *
+   *  `'hidden'` is for a site whose visitors want the answer, not the MCP calls
+   *  behind it. canopy then never SENDS the calls to this panel — they are
+   *  filtered on the server, not collapsed on the page — while the transcript
+   *  keeps every one of them for canopy's own chat page. The panel still says
+   *  the agent is working while tools run. */
+  toolCalls?: 'shown' | 'hidden'
   /** Text on the launcher bubble. The HOST names it, because the host's page
    *  is where it appears and only the host knows what its people call this
    *  thing — "Canopy AI" on canopy itself, something else on a partner site. */
@@ -320,6 +328,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             token: await mintToken(),
             agent: options.agent,
             metadata: options.metadata,
+            toolCalls: options.toolCalls === 'hidden' ? 'hidden' : 'shown',
             actions: actionSpecs(),
             theme,
           })

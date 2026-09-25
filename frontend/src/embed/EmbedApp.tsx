@@ -369,6 +369,7 @@ export function EmbedApp({ link, app }: Props) {
       link={link}
       contextPreamble={pendingContext}
       isContact={principal?.kind === 'contact'}
+      hideTools={init?.toolCalls === 'hidden'}
     />
   )
 }
@@ -573,6 +574,7 @@ function EmbedChat({
   link,
   contextPreamble,
   isContact = false,
+  hideTools = false,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. Empty
@@ -599,11 +601,16 @@ function EmbedChat({
    *  part of why a contact silently went without page state: the prop that knew
    *  the answer did not look like it was about routing. */
   isContact?: boolean
+  /** The host asked for `toolCalls: 'hidden'`. Asked of the SERVER, on the
+   *  socket URL, so the calls are never sent rather than sent and hidden — the
+   *  snapshot on connect is filtered the same way. */
+  hideTools?: boolean
 }) {
-  const wsUrl = useCallback(
-    () => client.sessionSocketUrl(sessionId) ?? '',
-    [client, sessionId],
-  )
+  const wsUrl = useCallback(() => {
+    const url = client.sessionSocketUrl(sessionId)
+    if (!url) return ''
+    return hideTools ? `${url}${url.includes('?') ? '&' : '?'}tools=hidden` : url
+  }, [client, sessionId, hideTools])
   // The agent asking this page to do something. Arrives on the session socket
   // as a DOORBELL only — the durable PageAction row is the mechanism, and the
   // result goes back over HTTP so it is an acknowledged write rather than a
@@ -781,14 +788,26 @@ function EmbedChat({
           </button>
           <span className="truncate text-[12px] text-muted-foreground">{agent.name}</span>
         </span>
-        <button
-          type="button"
-          onClick={() => link.requestClose()}
-          aria-label="Close"
-          className="rounded px-2 text-muted-foreground hover:text-foreground"
-        >
-          ×
-        </button>
+        <span className="flex shrink-0 items-center gap-1">
+          {/* The ‹ alone was the only way to a new question, and nobody read a
+              bare chevron as "new chat". Same destination — the start screen,
+              whose composer starts a fresh conversation — said in words. */}
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            New chat
+          </button>
+          <button
+            type="button"
+            onClick={() => link.requestClose()}
+            aria-label="Close"
+            className="rounded px-2 text-muted-foreground hover:text-foreground"
+          >
+            ×
+          </button>
+        </span>
       </header>
       <div className="min-h-0 flex-1">
         <ChatPanel

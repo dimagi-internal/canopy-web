@@ -363,6 +363,7 @@ option exists precisely so you do not have to.
     mode: 'docked',
     launcherLabel: 'Canopy AI',        // what YOUR people call it
     // dismissible: false,             // default true — see below
+    // toolCalls: 'hidden',            // default 'shown' — see below
     // Only if your CSRF cookie is not named `csrftoken`:
     // csrfCookieName: 'csrftoken_labs',
     // Or, if JS cannot read the cookie at all (CSRF_COOKIE_HTTPONLY):
@@ -392,6 +393,16 @@ carries an × that hides it for the rest of that page load. It comes back on the
 next load, deliberately: a widget that stays hidden with no way back is a
 support ticket. Pass `dismissible: false` if you have laid out around it, or
 call `widget.dismiss()` to offer your own way.
+
+**Tool calls are yours to hide.** By default the panel shows the agent's tool
+calls, collapsed, as canopy's own chat page does. A site whose visitors want
+the answer and not the machinery behind it passes `toolCalls: 'hidden'`: the
+panel's session socket is then opened with `tools=hidden`, and canopy never
+sends it a tool call or a tool result. They are filtered on the server, not
+hidden on the page, so they cost the visitor nothing, and the reconnect snapshot
+is filtered the same way. The transcript still records every call, so canopy's
+own chat page shows them. While tools run the panel still shows that the
+agent is working.
 
 ### Match it to your brand
 
