@@ -103,7 +103,7 @@ Settings:
 - `WALKTHROUGH_MAX_UPLOAD_BYTES` (default 75 MB)
 
 ### Debug access (`apps/common/views_debug`)
-- `POST /api/debug/mint-session/` — authenticated user mints a short-lived Django session cookie (body: `{ttl_seconds: int}`, clamped to 60s–1w). Returns cookie + curl example. Used to hand access to an AI assistant without going through OAuth. UI lives at `/settings` → "Debug access".
+- `POST /api/debug/mint-session/` — authenticated user mints a short-lived Django session cookie (body: `{ttl_seconds: int}`, clamped to 60s–1w). Returns cookie + curl example. Its one consumer is the macOS menubar, which trades the runner's PAT for a cookie so its web view opens `/supervisor` signed in. No UI (the Settings button was removed 2026-09-25 — hand an assistant a short-lived PAT). A minted session is refused wherever a bearer is (`is_machine`): agent owner transfer and admin changes stay browser-only for a person.
 
 ### Reviews (`apps/reviews`) — DDD narrative review surface
 - `GET /api/reviews/` — List review requests (the `/ddd` dashboard)

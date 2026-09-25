@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { mintDebugSession, type MintDebugSessionResponse } from '@/api/debug'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
-import { CopyBlock } from '@/components/CopyBlock'
-import { Button } from 'canopy-ui/ui'
 
 export function SettingsPage() {
   // Presence visibility. Defaults to visible (matches the backend default
@@ -90,7 +87,6 @@ export function SettingsPage() {
 
       <TokensPanel />
 
-      <DebugAccessPanel />
     </div>
   )
 }
@@ -146,126 +142,4 @@ function RunnersPanel() {
       )}
     </div>
   )
-}
-
-type Mint = MintDebugSessionResponse
-
-const TTL_OPTIONS: Array<{ label: string; seconds: number }> = [
-  { label: '1 hour', seconds: 60 * 60 },
-  { label: '24 hours', seconds: 24 * 60 * 60 },
-  { label: '1 week', seconds: 7 * 24 * 60 * 60 },
-]
-
-function DebugAccessPanel() {
-  const [mint, setMint] = useState<Mint | null>(null)
-  const [minting, setMinting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [ttl, setTtl] = useState<number>(24 * 60 * 60)
-  const [copied, setCopied] = useState<string | null>(null)
-
-  async function handleMint() {
-    setMinting(true)
-    setError(null)
-    setCopied(null)
-    try {
-      const result = await mintDebugSession(ttl)
-      setMint(result)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to mint session')
-    } finally {
-      setMinting(false)
-    }
-  }
-
-  async function copy(text: string, key: string) {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(key)
-      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500)
-    } catch {
-      // ignore
-    }
-  }
-
-  const expiresRelative = mint
-    ? formatExpiry(new Date(mint.expires_at))
-    : null
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">Debug access</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Mint a short-lived session cookie you can hand to an AI assistant
-          (or any HTTP client). It authenticates as you, for the TTL you pick.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Valid for:</span>
-        <div className="flex gap-1">
-          {TTL_OPTIONS.map((opt) => (
-            <button
-              key={opt.seconds}
-              type="button"
-              onClick={() => setTtl(opt.seconds)}
-              className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-                ttl === opt.seconds
-                  ? 'bg-primary/10 border-primary/30 text-primary'
-                  : 'bg-background border-border text-muted-foreground hover:text-foreground-secondary hover:border-input'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <div className="ml-auto">
-          <Button size="sm" onClick={handleMint} disabled={minting}>
-            {minting ? 'Minting…' : mint ? 'Mint another' : 'Mint session cookie'}
-          </Button>
-        </div>
-      </div>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      {mint && (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning/80">
-            <strong className="text-warning">Treat this like a password.</strong>{' '}
-            Anyone with this cookie has your access until {expiresRelative}.
-          </div>
-
-          <CopyBlock
-            label="Cookie"
-            value={`${mint.cookie_name}=${mint.cookie_value}`}
-            copied={copied === 'cookie'}
-            onCopy={() =>
-              copy(`${mint.cookie_name}=${mint.cookie_value}`, 'cookie')
-            }
-          />
-
-          <CopyBlock
-            label="curl example"
-            value={mint.curl_example}
-            copied={copied === 'curl'}
-            onCopy={() => copy(mint.curl_example, 'curl')}
-          />
-
-          <div className="text-[11px] text-muted-foreground">
-            Minted for {mint.email} · expires {expiresRelative} ({new Date(mint.expires_at).toLocaleString()})
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function formatExpiry(date: Date): string {
-  const diffMs = date.getTime() - Date.now()
-  if (diffMs <= 0) return 'expired'
-  const hours = Math.round(diffMs / (1000 * 60 * 60))
-  if (hours < 1) return 'in <1 hour'
-  if (hours < 48) return `in ${hours}h`
-  const days = Math.round(hours / 24)
-  return `in ${days}d`
 }

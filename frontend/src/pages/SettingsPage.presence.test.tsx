@@ -6,7 +6,6 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 // Router here, which is what every other page test in this repo already does.
 import { MemoryRouter } from 'react-router-dom'
 import type { PresencePreferenceOut } from '@/api/presence'
-import type { MintDebugSessionResponse } from '@/api/debug'
 
 // NOTE ON CONVENTION: canopy-web has no @testing-library/jest-dom and no
 // user-event package. Assertions use toBeTruthy()/toBe(), interactions use
@@ -19,14 +18,11 @@ import type { MintDebugSessionResponse } from '@/api/debug'
 // consts are assigned. Same pattern as RunnerAssignments.test.tsx.
 
 
-const mintDebugSession = vi.fn<(ttl?: number) => Promise<MintDebugSessionResponse>>()
-vi.mock('@/api/debug', () => ({ mintDebugSession }))
-
 const getPresencePreference = vi.fn<() => Promise<PresencePreferenceOut>>()
 const setPresencePreference = vi.fn<(next: boolean) => Promise<PresencePreferenceOut>>()
 vi.mock('@/api/presence', () => ({ getPresencePreference, setPresencePreference }))
 
-// TokensPanel (mounted between Presence and DebugAccessPanel) fetches on
+// TokensPanel (mounted after Presence) fetches on
 // mount. Mocked here purely so rendering the full SettingsPage in these
 // presence-focused tests doesn't also hit the (unmocked, jsdom-unreachable)
 // tokens endpoint.

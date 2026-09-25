@@ -12,10 +12,24 @@ import { Input } from 'canopy-ui/ui'
  * the canopy plugin, the MCP surface at /api/mcp/, and any script. It had no UI
  * at all, so the only way to get one was a skill that needs the plugin you are
  * trying to set up.
+ *
+ * The LIFETIME is chosen per token because this is also how you hand an AI
+ * assistant access for an afternoon: a one-day token, revocable here. That
+ * replaced the "Debug access" session-cookie button, which did the same job
+ * with a credential that could also impersonate you in the browser.
  */
+
+// `null` = the server default (180 days); 0 = never expires.
+export const LIFETIMES: ReadonlyArray<{ label: string; days: number | null }> = [
+  { label: '1 day', days: 1 },
+  { label: '1 week', days: 7 },
+  { label: '180 days', days: null },
+  { label: 'Never', days: 0 },
+]
 export function TokensPanel() {
   const [tokens, setTokens] = useState<PersonalToken[]>([])
   const [label, setLabel] = useState('')
+  const [lifetime, setLifetime] = useState<number | null>(null)
   const [minted, setMinted] = useState<string>('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
@@ -37,7 +51,7 @@ export function TokensPanel() {
     e.preventDefault()
     setBusy(true)
     setError('')
-    const res = await mintToken(label.trim(), null)
+    const res = await mintToken(label.trim(), lifetime)
     setBusy(false)
     if ('error' in res) {
       setError(res.error)
@@ -69,8 +83,9 @@ export function TokensPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Personal access tokens</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          How a machine authenticates as you — the canopy plugin, the MCP endpoint, or your
-          own scripts. Sent as <code>Authorization: Bearer &lt;token&gt;</code>.
+          How a machine authenticates as you — the canopy plugin, the MCP endpoint, your own
+          scripts, or an AI assistant you are handing access to for a while (pick a short
+          lifetime). Sent as <code>Authorization: Bearer &lt;token&gt;</code>.
         </p>
       </div>
 
@@ -105,6 +120,23 @@ export function TokensPanel() {
             placeholder="my laptop's canopy plugin"
             required
           />
+        </div>
+        <div>
+          <label htmlFor="pat-lifetime" className="block text-xs text-muted-foreground mb-1">
+            Expires after
+          </label>
+          <select
+            id="pat-lifetime"
+            value={lifetime === null ? '' : String(lifetime)}
+            onChange={(e) => setLifetime(e.target.value === '' ? null : Number(e.target.value))}
+            className="h-9 rounded-md border border-input bg-input px-2 text-sm text-foreground"
+          >
+            {LIFETIMES.map((l) => (
+              <option key={l.label} value={l.days === null ? '' : String(l.days)}>
+                {l.label}
+              </option>
+            ))}
+          </select>
         </div>
         <Button type="submit" size="sm" disabled={busy || !label.trim()}>
           {busy ? 'Minting…' : 'Mint token'}

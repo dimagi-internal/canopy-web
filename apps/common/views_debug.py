@@ -1,10 +1,19 @@
-"""Debug access endpoints.
+"""Minting a browser session from a token.
 
-Lets an authenticated user mint a short-lived Django session cookie they can
-hand to an AI assistant (or any HTTP client) to access the app on their
-behalf. Rationale: the app is gated by Google OAuth, so agents can't hit
-anything except public endpoints. A minted session cookie gives them the
-caller's exact permissions for a bounded TTL.
+POST /api/debug/mint-session/ turns an authenticated caller — in practice a PAT
+— into a short-lived Django session cookie. Its one consumer is the macOS
+menubar app, which trades the runner's PAT for a cookie so its web view opens
+/supervisor already signed in; a bearer header cannot log a web view in.
+
+It used to be a Settings button for handing a cookie to an AI assistant. That
+button is gone (2026-09-25): an assistant working the API uses a short-lived PAT.
+
+A MINTED SESSION IS STILL A MACHINE. The few "canopy web app only" decisions
+(transfer an agent's owner, change its admins) refuse any Authorization header,
+so a leaked token cannot take over an agent — and before this, any PAT could
+walk straight past that by minting a cookie first. Every minted session carries
+`DEBUG_SESSION_MARKER`, and `is_machine(request)` treats it exactly like a
+bearer, so those gates hold for a person signed in through Google and nobody else.
 """
 import json
 
@@ -17,6 +26,18 @@ from django.views.decorators.http import require_POST
 DEFAULT_TTL_SECONDS = 24 * 3600  # 24 hours
 MAX_TTL_SECONDS = 7 * 24 * 3600  # 1 week
 DEBUG_SESSION_MARKER = "_canopy_debug_session"
+
+
+def is_machine(request) -> bool:
+    """True when a token, not a person signed in through the browser, is behind
+    this request: any Authorization header, or a session minted from a token."""
+    if request.META.get("HTTP_AUTHORIZATION"):
+        return True
+    session = getattr(request, "session", None)
+    try:
+        return bool(session is not None and session.get(DEBUG_SESSION_MARKER))
+    except Exception:  # noqa: BLE001 — an unreadable session is not a person
+        return True
 
 
 def _cookie_name() -> str:
