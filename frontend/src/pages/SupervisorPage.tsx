@@ -160,6 +160,21 @@ export default function SupervisorPage(): JSX.Element {
     // Inbox is the bare URL; the others carry ?tab=.
     setSearchParams(value === 'inbox' ? {} : { tab: value })
 
+  // One runner, by link: `?tab=runners&runner=<id>` opens its detail — what
+  // Settings → Runners points at, so "where is this box's Claude login" has an
+  // address. The selection writes the param back, so Back and a copied URL both
+  // mean what is on screen.
+  const runnerParam = searchParams.get('runner')
+  useEffect(() => {
+    if (!runnerParam || !runners || selectedRunner?.id === runnerParam) return
+    const hit = runners.find((r) => r.id === runnerParam)
+    if (hit) setSelectedRunner(hit)
+  }, [runnerParam, runners, selectedRunner])
+  const selectRunner = (r: RunnerOut | null) => {
+    setSelectedRunner(r)
+    setSearchParams(r ? { tab: 'runners', runner: r.id } : { tab: 'runners' })
+  }
+
   return (
     // `max-w-2xl` (672px) is the right measure for the Inbox, whose cards are
     // prose you read. It was applied to the whole page, so on a 1440 laptop —
@@ -274,7 +289,7 @@ export default function SupervisorPage(): JSX.Element {
             <RunnerDetail
               runner={selectedRunner}
               agents={agents ?? []}
-              onBack={() => setSelectedRunner(null)}
+              onBack={() => selectRunner(null)}
               onChanged={handleRunnerChanged}
             />
           ) : errs.runners ? (
@@ -282,7 +297,7 @@ export default function SupervisorPage(): JSX.Element {
           ) : renderRunners === null ? (
             <Skeleton className="h-12 w-full" />
           ) : (
-            <RunnerStatus runners={renderRunners} onSelect={setSelectedRunner} />
+            <RunnerStatus runners={renderRunners} onSelect={selectRunner} />
           )}
         </TabsContent>
       </Tabs>

@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import type { AiStatusLegacy } from '@/api/ai'
 import type { WorkspaceOut } from '@/api/workspaces'
 
 // vi.mock is hoisted above these declarations by vitest's transform, but the
@@ -13,9 +12,6 @@ import type { WorkspaceOut } from '@/api/workspaces'
 const listWorkspaces = vi.fn<() => Promise<WorkspaceOut[]>>()
 vi.mock('@/api/workspaces', () => ({ listWorkspaces }))
 
-const aiStatus = vi.fn<() => Promise<AiStatusLegacy>>()
-const aiSwitch = vi.fn()
-vi.mock('@/api/ai', () => ({ aiStatus, aiSwitch }))
 
 const { AppLayout } = await import('./AppLayout')
 const { AuthContext } = await import('@/auth/AuthProvider')
@@ -55,9 +51,6 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
 
   it('hides "+ Workspace" from an anonymous visitor (public link routes reach this shell)', async () => {
     listWorkspaces.mockResolvedValue([])
-    // UserMenu's aiStatus poll runs unconditionally in an effect, before its
-    // own auth check — mock it even though this test is the anonymous case.
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
 
     renderAs('anonymous')
 
@@ -70,7 +63,6 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
 
   it('shows "+ Workspace" to an authenticated user', async () => {
     listWorkspaces.mockResolvedValue([])
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
 
     renderAs('authenticated')
 
@@ -84,7 +76,6 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
       { slug: 'dimagi', display_name: 'Dimagi' },
       { slug: 'connect', display_name: 'Connect' },
     ] as WorkspaceOut[])
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
 
     renderAs('authenticated')
 

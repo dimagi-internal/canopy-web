@@ -5,7 +5,6 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 // OAuth callback returns the browser to /settings?github=… — so it needs a
 // Router here, which is what every other page test in this repo already does.
 import { MemoryRouter } from 'react-router-dom'
-import type { AiStatusLegacy } from '@/api/ai'
 import type { PresencePreferenceOut } from '@/api/presence'
 import type { MintDebugSessionResponse } from '@/api/debug'
 
@@ -19,12 +18,6 @@ import type { MintDebugSessionResponse } from '@/api/debug'
 // imported — which happens on the dynamic imports below, well after these
 // consts are assigned. Same pattern as RunnerAssignments.test.tsx.
 
-const aiStatus = vi.fn<() => Promise<AiStatusLegacy>>()
-const aiSwitch = vi.fn()
-const aiAuthStart = vi.fn()
-const aiAuthComplete = vi.fn()
-const aiAuthPoll = vi.fn()
-vi.mock('@/api/ai', () => ({ aiStatus, aiSwitch, aiAuthStart, aiAuthComplete, aiAuthPoll }))
 
 const mintDebugSession = vi.fn<(ttl?: number) => Promise<MintDebugSessionResponse>>()
 vi.mock('@/api/debug', () => ({ mintDebugSession }))
@@ -43,6 +36,9 @@ vi.mock('@/api/tokens', () => ({
   revokeToken: vi.fn(),
 }))
 
+// RunnersPanel lists the boxes you administer; not what these tests are about.
+vi.mock('@/api/harness', () => ({ listRunners: vi.fn().mockResolvedValue([]) }))
+
 const { SettingsPage } = await import('./SettingsPage')
 const { PRESENCE_PREFERENCE_CHANGED_EVENT } = await import('@/presence/events')
 const { usePresenceReconnectNonce } = await import('@/presence/usePresenceReconnectNonce')
@@ -54,7 +50,6 @@ afterEach(() => {
 
 describe('SettingsPage presence toggle', () => {
   it('dispatches the presence-reconnect signal after a successful PATCH, and the app shell bumps its remount key in response', async () => {
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
     getPresencePreference.mockResolvedValue({ show_presence: true })
     setPresencePreference.mockResolvedValue({ show_presence: false })
 
@@ -89,7 +84,6 @@ describe('SettingsPage presence toggle', () => {
   })
 
   it('does not dispatch the signal, and reverts the checkbox, if the PATCH fails', async () => {
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
     getPresencePreference.mockResolvedValue({ show_presence: true })
     setPresencePreference.mockRejectedValue(new Error('network error'))
 
@@ -116,7 +110,6 @@ describe('SettingsPage presence toggle', () => {
   })
 
   it("the checkbox's accessible name is just the label, not the help sentence", async () => {
-    aiStatus.mockResolvedValue({ backend: 'api', ready: true, detail: 'ok', setup_hint: null })
     getPresencePreference.mockResolvedValue({ show_presence: true })
 
     render(

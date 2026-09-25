@@ -120,8 +120,8 @@ export function GitHubPanel() {
       <Card>
         <h2 className="text-sm font-semibold text-foreground">GitHub</h2>
         <p className="text-sm text-muted-foreground">
-          GitHub is not set up on this deployment, so canopy cannot push an agent&apos;s
-          repository yet. An administrator needs to configure the GitHub App credentials.
+          GitHub is not set up on this deployment, so canopy cannot read an agent&apos;s skill
+          history. An administrator needs to configure the GitHub App credentials.
         </p>
       </Card>
     )
@@ -138,8 +138,9 @@ export function GitHubPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connect GitHub</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          An agent lives in its own repository. Connect GitHub once and canopy can push to
-          the repositories you choose, on your behalf.
+          Lets canopy read your agents&apos; repositories — their skill history. An agent&apos;s
+          own pushes and pull requests use the token you lend it on the agent&apos;s Settings →
+          Credentials → GitHub, not this connection.
         </p>
       </div>
 
@@ -170,8 +171,8 @@ export function GitHubPanel() {
         <div className="space-y-3">
           {conn.connected && conn.needs_reconnect && (
             <p className="text-[13px] text-warning">
-              Your GitHub connection expired or was revoked. Reconnect it to keep your agents
-              pushing.
+              Your GitHub connection expired or was revoked. Reconnect it to keep skill history
+              syncing.
             </p>
           )}
           <ScopeAdvice />

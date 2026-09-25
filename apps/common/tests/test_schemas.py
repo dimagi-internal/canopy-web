@@ -1,8 +1,6 @@
 import datetime as dt
 
 from apps.common.schemas import (
-    AiStatusOut,
-    AiSwitchIn,
     HealthOut,
     MeOut,
     StrictModel,
@@ -49,24 +47,6 @@ def test_strict_model_rejects_extra_fields():
 def test_health_out():
     parsed = HealthOut.model_validate({"status": "ok"})
     assert parsed.status == "ok"
-
-
-def test_ai_status_out_round_trip():
-    raw = {
-        "backend": "api",
-        "authenticated": True,
-        "detail": "OK",
-    }
-    parsed = AiStatusOut.model_validate(raw)
-    assert parsed.backend == "api"
-
-
-def test_ai_switch_in_literal():
-    AiSwitchIn(backend="api")
-    AiSwitchIn(backend="cli")
-    import pytest
-    with pytest.raises(ValueError):
-        AiSwitchIn(backend="bogus")
 
 
 def test_me_out_round_trip():
