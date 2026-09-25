@@ -13,6 +13,7 @@ import {
 } from "canopy-ui/ui";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
+import { ShareSecretForm } from "./ShareSecret";
 
 /**
  * Everything you can DO to a chat, behind one button.
@@ -51,7 +52,7 @@ export function ChatSessionMenu({
   onClose: () => void;
   closing: boolean;
 }) {
-  const [panel, setPanel] = useState<"people" | "slack" | null>(null);
+  const [panel, setPanel] = useState<"people" | "slack" | "secret" | null>(null);
   // Every item is inset to the checkbox item's gutter, so the list is one column.
 
   return (
@@ -83,6 +84,14 @@ export function ChatSessionMenu({
           >
             Share to Slack…
           </DropdownMenuItem>
+          <DropdownMenuItem
+            inset
+            disabled={Boolean(shareDisabledReason)}
+            data-testid="share-secret"
+            onClick={() => setPanel("secret")}
+          >
+            Share a secret…
+          </DropdownMenuItem>
           <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
             {resetting ? "Resetting…" : "Reset from transcript"}
           </DropdownMenuItem>
@@ -101,8 +110,11 @@ export function ChatSessionMenu({
       <Dialog open={panel !== null} onOpenChange={(open: boolean) => !open && setPanel(null)}>
         <DialogContent className="w-[calc(100%-2rem)] max-w-md bg-card">
           <DialogTitle className="text-sm font-semibold text-foreground">
-            {panel === "people" ? "People" : "Share to Slack"}
+            {panel === "people" ? "People" : panel === "secret" ? "Share a secret" : "Share to Slack"}
           </DialogTitle>
+          {panel === "secret" && (
+            <ShareSecretForm sessionId={sessionId} onPost={onShare} onDone={() => setPanel(null)} />
+          )}
           {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} />}
           {panel === "slack" && (
             <>

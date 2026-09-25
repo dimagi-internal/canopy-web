@@ -328,3 +328,40 @@ export function removeParticipant(id: string, userId: number): Promise<Participa
     { method: "DELETE" },
   );
 }
+
+export interface SharedSecret {
+  name: string;
+  ref: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+}
+
+/**
+ * Hand this chat a secret by REFERENCE. The server stores the value and returns
+ * the message to post in its place — the caller sends that, never the value.
+ */
+export function shareSecret(
+  id: string,
+  name: string,
+  value: string,
+  note = "",
+): Promise<SharedSecret & { message: string }> {
+  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/secrets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, value, note }),
+  });
+}
+
+export function listSecrets(id: string): Promise<SharedSecret[]> {
+  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/secrets`);
+}
+
+export function deleteSecret(id: string, name: string): Promise<void> {
+  return request(
+    `/api/canopy-sessions/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+}
