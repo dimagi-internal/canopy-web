@@ -54,6 +54,12 @@ def _forbidden(exc: ss.ScheduleForbidden) -> HttpError:
     return HttpError(403, f"this action requires the {exc.required} or owner role")
 
 
+def _invalid(exc: ss.InvalidSchedule) -> HttpError:
+    """Timing that cannot fire (e.g. a one-off in the past) -> 422, like any
+    other payload the schema rejects."""
+    return HttpError(422, str(exc))
+
+
 def _duplicate_name(name: str) -> ProblemError:
     """uniq_agent_schedule_name -> 409, the repo's convention for a uniqueness
     violation (apps/projects/api.py, apps/workspaces/api.py)."""
@@ -126,6 +132,8 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
         raise _forbidden(exc) from None
     except ss.DuplicateScheduleName as exc:
         raise _duplicate_name(exc.name) from None
+    except ss.InvalidSchedule as exc:
+        raise _invalid(exc) from None
     return Status(201, ScheduleOut(**ss.serialize_schedule(schedule)))
 
 
@@ -171,6 +179,8 @@ def update_schedule(
         raise _forbidden(exc) from None
     except ss.DuplicateScheduleName as exc:
         raise _duplicate_name(exc.name) from None
+    except ss.InvalidSchedule as exc:
+        raise _invalid(exc) from None
     return ScheduleOut(**ss.serialize_schedule(schedule))
 
 

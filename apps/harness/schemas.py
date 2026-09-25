@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from canopy_cron import validate_cron, validate_timezone
 from ninja import Schema
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
 # These are the values the DB columns accept (origin max_length=32, routing
@@ -665,7 +665,11 @@ class ScheduleIn(Schema):
 
     name: str
     prompt: str
-    cron: str
+    # WHEN — exactly one. `cron` is a recurring schedule; `run_once_at` is a
+    # one-off that fires at that instant and then disables itself (its cron is
+    # derived server-side).
+    cron: str | None = None
+    run_once_at: dt.datetime | None = None
     timezone: str = "UTC"
     enabled: bool = True
     routing: str = "prefer_local"
@@ -675,8 +679,14 @@ class ScheduleIn(Schema):
 
     @field_validator("cron")
     @classmethod
-    def _check_cron(cls, v: str) -> str:
-        return validate_cron(v)
+    def _check_cron(cls, v: str | None) -> str | None:
+        return validate_cron(v) if v is not None else v
+
+    @model_validator(mode="after")
+    def _exactly_one_when(self):
+        if bool(self.cron) == bool(self.run_once_at):
+            raise ValueError("give exactly one of cron (recurring) or run_once_at (one-off)")
+        return self
 
     @field_validator("timezone")
     @classmethod
@@ -697,7 +707,10 @@ class SchedulePatch(Schema):
 
     name: str | None = None
     prompt: str | None = None
+    # Setting `cron` makes the schedule recurring; setting `run_once_at` makes it
+    # a one-off (and re-arms one that already fired). Not both.
     cron: str | None = None
+    run_once_at: dt.datetime | None = None
     timezone: str | None = None
     enabled: bool | None = None
     routing: str | None = None
@@ -722,6 +735,9 @@ class ScheduleOut(Schema):
     name: str
     prompt: str
     cron: str
+    # Set for a one-off: it fires once, at this instant, then `enabled` goes false.
+    # `cron` is then derived from it and is shown only for runner compatibility.
+    run_once_at: dt.datetime | None = None
     timezone: str
     enabled: bool
     routing: str

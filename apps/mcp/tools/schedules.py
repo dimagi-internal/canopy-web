@@ -8,6 +8,8 @@ the success and error paths.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from asgiref.sync import sync_to_async
 from canopy_cron import validate_cron, validate_timezone
 from django.contrib.auth import get_user_model
@@ -68,14 +70,30 @@ def _preview_sync(user_id, agent_slug, cron, timezone):
     return [d.isoformat() for d in ss.preview_cron(user, agent_slug, cron, timezone)]
 
 
+def _parse_when(raw: str | None) -> dt.datetime | None:
+    """ISO-8601 -> datetime. A value without an offset stays naive; the service
+    reads it in the schedule's timezone, so every surface agrees on what
+    '2026-09-28T09:00' means."""
+    if not raw:
+        return None
+    return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
 @mcp.tool
 async def create_schedule(
-    agent_slug: str, name: str, prompt: str, cron: str, timezone: str = "UTC",
+    agent_slug: str, name: str, prompt: str, cron: str = "", timezone: str = "UTC",
     enabled: bool = True, routing: str = "prefer_local", grace_minutes: int = 120,
-    notify: list[str] | None = None,
+    notify: list[str] | None = None, run_once_at: str | None = None,
 ) -> dict:
-    """Create a recurring turn for an agent. `cron` is a 5-field expression;
-    `timezone` an IANA name. `prompt` is what the turn is seeded with."""
+    """Create a scheduled turn for an agent. `prompt` is what the turn is seeded
+    with; `timezone` is an IANA name.
+
+    Give exactly ONE of:
+    - `cron` — a 5-field expression, for a RECURRING turn;
+    - `run_once_at` — an ISO-8601 instant, for a ONE-OFF turn (a reminder, a
+      follow-up). It fires once and then disables itself. Without an offset it is
+      read in `timezone`: run_once_at="2026-09-28T09:00", timezone="America/Denver"
+      is 9am Denver time."""
     user_id = current_user_id()
     summary = f"agent={agent_slug} name={name!r}"
     if user_id is not None:
@@ -88,7 +106,7 @@ async def create_schedule(
     try:
         row = await sync_to_async(_create_sync, thread_sensitive=True)(
             user_id, agent_slug, name, prompt, cron, timezone, enabled, routing,
-            grace_minutes, notify or ["inbox"],
+            grace_minutes, notify or ["inbox"], run_once_at,
         )
     except Exception as exc:  # noqa: BLE001
         await write_audit(user_id=user_id, tool="create_schedule",
@@ -99,12 +117,15 @@ async def create_schedule(
     return row
 
 
-def _create_sync(user_id, agent_slug, name, prompt, cron, timezone, enabled, routing, grace_minutes, notify):
-    validate_cron(cron)
+def _create_sync(user_id, agent_slug, name, prompt, cron, timezone, enabled, routing, grace_minutes,
+                 notify, run_once_at=None):
+    if cron:
+        validate_cron(cron)
     validate_timezone(timezone)
     user = _user(user_id)
-    fields = dict(name=name, prompt=prompt, cron=cron, timezone=timezone, enabled=enabled,
-                  routing=routing, grace_minutes=grace_minutes, notify=notify)
+    fields = dict(name=name, prompt=prompt, cron=cron or None, timezone=timezone, enabled=enabled,
+                  routing=routing, grace_minutes=grace_minutes, notify=notify,
+                  run_once_at=_parse_when(run_once_at))
     return ss.serialize_schedule(ss.create_schedule(user, agent_slug, fields))
 
 
@@ -113,8 +134,11 @@ async def update_schedule(
     agent_slug: str, schedule_id: int, name: str | None = None, prompt: str | None = None,
     cron: str | None = None, timezone: str | None = None, enabled: bool | None = None,
     routing: str | None = None, grace_minutes: int | None = None, notify: list[str] | None = None,
+    run_once_at: str | None = None,
 ) -> dict:
-    """Update a schedule. Only the fields you pass are changed."""
+    """Update a schedule. Only the fields you pass are changed. Passing `cron`
+    makes it recurring; passing `run_once_at` (ISO-8601, read in the schedule's
+    timezone when it has no offset) makes it a one-off, or re-arms one that fired."""
     user_id = current_user_id()
     summary = f"agent={agent_slug} id={schedule_id}"
     if user_id is not None:
@@ -125,7 +149,8 @@ async def update_schedule(
                               args_summary=summary, ok=False, error=str(exc))
             raise
     raw = dict(name=name, prompt=prompt, cron=cron, timezone=timezone, enabled=enabled,
-               routing=routing, grace_minutes=grace_minutes, notify=notify)
+               routing=routing, grace_minutes=grace_minutes, notify=notify,
+               run_once_at=run_once_at)
     fields = {k: v for k, v in raw.items() if v is not None}
     try:
         row = await sync_to_async(_update_sync, thread_sensitive=True)(user_id, agent_slug, schedule_id, fields)
@@ -144,6 +169,8 @@ def _update_sync(user_id, agent_slug, schedule_id, fields):
     if "timezone" in fields:
         validate_timezone(fields["timezone"])
     user = _user(user_id)
+    if "run_once_at" in fields:
+        fields["run_once_at"] = _parse_when(fields["run_once_at"])
     return ss.serialize_schedule(ss.update_schedule(user, agent_slug, schedule_id, fields))
 
 

@@ -1679,13 +1679,27 @@ def _schedule_initiator(schedule, *, manual: bool = False):
     return who.system(via=via, accountable=schedule.created_by)
 
 
+class OneOffSlotMismatch(Exception):
+    """A runner reported a slot for a one-off schedule other than its one instant."""
+
+
 def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     """Materialize `slot` as a queued Turn. Supersedes any still-open occurrence
     of the same schedule first — you only ever owe the newest.
 
     Safe to call concurrently from both macOS-account runners: the slot-derived
     idempotency_key collapses the race inside enqueue_turn.
+
+    A ONE-OFF (run_once_at set) fires only its own instant and then disables
+    itself in the same transaction, so it drops out of every runner's sync. Its
+    stored cron repeats yearly; this guard is what makes that repetition inert
+    even for a runner whose clock or anchor is wrong.
     """
+    if schedule.run_once_at and slot != schedule.run_once_at:
+        raise OneOffSlotMismatch(
+            f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
+            f"not {slot.isoformat()}"
+        )
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
         if not Turn.objects.filter(idempotency_key=key).exists():
@@ -1708,7 +1722,11 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
         )
         if created and (schedule.last_slot is None or slot > schedule.last_slot):
             schedule.last_slot = slot
-            schedule.save(update_fields=["last_slot", "updated_at"])
+            update = ["last_slot", "updated_at"]
+            if schedule.run_once_at:
+                schedule.enabled = False
+                update.append("enabled")
+            schedule.save(update_fields=update)
     return turn, created
 
 
@@ -1811,9 +1829,12 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
     ]
     if not queued:
         return 0
+    # A one-off is exempt like always_run: skipping it would not defer it to "the
+    # next slot" — there is none — it would silently drop the only occurrence.
     always = set(
         AgentSchedule.objects.filter(
-            id__in={t.origin_ref.get("schedule_id") for t in queued}, always_run=True
+            Q(always_run=True) | Q(run_once_at__isnull=False),
+            id__in={t.origin_ref.get("schedule_id") for t in queued},
         ).values_list("id", flat=True)
     )
     count = 0

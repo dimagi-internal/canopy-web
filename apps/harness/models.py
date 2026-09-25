@@ -783,6 +783,15 @@ class AgentSchedule(models.Model):
     name = models.CharField(max_length=200, help_text='e.g. "Weekly manager report"')
     prompt = models.TextField(help_text="What the turn is seeded with, e.g. /echo:manager-report")
     cron = models.CharField(max_length=120, help_text="5-field cron expression, e.g. '0 9 * * 5'")
+    # A ONE-OFF: set, and the schedule fires exactly once, at this instant, then
+    # disables itself. `cron` is still stored — derived from this in `timezone`
+    # (schedule_services.one_off_cron) — so a runner that predates the field keeps
+    # firing it correctly; `fire_after` is pinned just before this instant so the
+    # derived cron's yearly repeats can never come due. Null = recurring.
+    run_once_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fire once at this instant, then disable. Null for a recurring schedule.",
+    )
     timezone = models.CharField(max_length=64, default="UTC", help_text="IANA tz, e.g. America/New_York")
     enabled = models.BooleanField(default=True, help_text="Pause without deleting.")
     routing = models.CharField(max_length=15, choices=Turn.ROUTING_CHOICES, default=Turn.PREFER_LOCAL)
