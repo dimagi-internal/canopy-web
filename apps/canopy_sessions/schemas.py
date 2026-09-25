@@ -410,27 +410,20 @@ class PageActionResultIn(Schema):
 
 
 class SessionSecretIn(Schema):
-    """A secret handed to this chat. `note` rides along in the chat message; the value never does."""
+    """A secret handed to this chat. Nothing is posted into the chat."""
     name: str
     value: str
-    note: str = ""
 
 
 class SessionSecretOut(Schema):
-    """What a browser may know about a shared secret: never the value."""
+    """What anyone may know about a shared secret: never the value."""
     name: str
-    ref: str
     created_by: str | None = None
     created_at: str
     updated_at: str
     last_used_at: str | None = None
     #: 30 minutes after it was shared; gone after that (`secrets.TTL`).
     expires_at: str
-
-
-class SessionSecretCreatedOut(SessionSecretOut):
-    #: The text to post into the chat in place of the secret.
-    message: str
 
 
 class SessionSecretValueOut(Schema):

@@ -61,10 +61,8 @@ from .schemas import (
     ParticipantOut,
     SessionNotifyIn,
     SessionOut,
-    SessionSecretCreatedOut,
     SessionSecretIn,
     SessionSecretOut,
-    SessionSecretValueOut,
     StreamStateOut,
     TransferIn,
     TransferOut,
@@ -909,43 +907,39 @@ def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: 
                          result=action.result, error=action.error)
 
 
-# ---- Secrets shared by reference (models.SessionSecret) ----------------------
+# ---- Secrets shared with a chat (models.SessionSecret) -----------------------
+# The BROWSER half: share, list, forget. Values never come back here; the agent
+# side (`secrets_api`) spends them, and only from the session bound to this chat.
 
-def _secret_out(session, row, **extra) -> dict:
+def _secret_out(row) -> dict:
     return {
         "name": row.name,
-        "ref": secrets.reference(session.pk, row.name),
         "created_by": getattr(row.created_by, "email", None),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
         "expires_at": secrets.expires_at(row).isoformat(),
-        **extra,
     }
 
 
-@router.post("/{session_id}/secrets", response={201: SessionSecretCreatedOut},
-             summary="Share a secret with this chat by reference (write-only)")
+@router.post("/{session_id}/secrets", response={201: SessionSecretOut},
+             summary="Share a secret with this chat (write-only)")
 def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSecretIn):
-    """Stores the value encrypted and returns the MESSAGE to post in its place.
-
-    Does not post it: the browser sends it through the ordinary send path, so it
-    reaches the agent exactly like anything else the person types."""
+    """Stores the value encrypted. Posts NOTHING into the chat: the person just
+    refers to it by name, and the session finds it with `canopy secret list`."""
     session = _session_or_404(request, session_id, write=True)
     try:
         row = secrets.set_secret(session, payload.name, payload.value, user=request.user)
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
-    return 201, _secret_out(session, row,
-                            message=secrets.reference_message(session.pk, row.name, payload.note))
+    return 201, _secret_out(row)
 
 
 @router.get("/{session_id}/secrets", response=list[SessionSecretOut],
             summary="Secrets shared with this chat (names only, never values)")
 def list_secrets(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    secrets.purge_expired()
-    return [_secret_out(session, r) for r in session.secrets.select_related("created_by")]
+    return [_secret_out(r) for r in secrets.live_secrets(session)]
 
 
 @router.delete("/{session_id}/secrets/{name}", response={204: None},
@@ -954,23 +948,3 @@ def delete_secret(request: HttpRequest, session_id: uuid.UUID, name: str):
     session = _session_or_404(request, session_id, write=True)
     session.secrets.filter(name=name).delete()
     return 204, None
-
-
-@router.get("/{session_id}/secrets/{name}/value", response=SessionSecretValueOut,
-            summary="PLAINTEXT — for `canopy secret exec`, never a browser")
-def secret_value(request: HttpRequest, session_id: uuid.UUID, name: str):
-    """Bearer only, and only a writer of the session or the session's own agent.
-
-    Looked up WITHOUT the read ACL on purpose: the agent spending the secret
-    usually cannot read the chat it is working in (it is not its participant),
-    and `secrets.may_resolve` is the whole gate. Anyone it refuses gets the
-    same 404 as a session that does not exist."""
-    if not request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
-        raise HttpError(403, "a secret's value is given only to a bearer token, never a browser session")
-    session = Session.objects.select_related("agent").filter(pk=session_id).first()
-    if session is None or not secrets.may_resolve(request.user, session):
-        raise HttpError(404, "no such secret")
-    value = secrets.resolve_secret(session, name, user=request.user)
-    if value is None:
-        raise HttpError(404, "no such secret")
-    return {"name": name, "value": value}
