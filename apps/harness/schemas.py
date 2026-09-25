@@ -1043,8 +1043,6 @@ class RunnerMintResultIn(Schema):
     # human who is sitting there waiting for it.
     token: str = ""
     detail: str = ""
-    #: The account the new token belongs to, when the runner could read it back.
-    account: str = ""
 
 
 class RunnerCredentialStatusOut(Schema):

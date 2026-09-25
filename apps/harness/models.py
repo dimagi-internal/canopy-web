@@ -862,8 +862,8 @@ class RunnerCredential(models.Model):
     claude_token_enc = models.TextField(blank=True, default="")
     claude_token_secondary_enc = models.TextField(blank=True, default="")
     claude_api_key_enc = models.TextField(blank=True, default="")
-    # WHOSE subscription each login is — the account email when the runner could
-    # learn it at sign-in, otherwise whatever a human typed. Plaintext on purpose:
+    # WHOSE subscription each login is, as a human typed it (a setup-token cannot
+    # read its own account: the profile endpoint answers 403). Plaintext on purpose:
     # it names a login, it is not one. Without it "primary" and "fallback" are
     # two opaque dots, and neither swapping them nor re-signing the right one in
     # is a decision anyone can make.

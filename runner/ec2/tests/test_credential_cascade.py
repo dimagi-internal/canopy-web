@@ -193,3 +193,46 @@ def test_reload_that_finds_the_same_values_does_not_loop(cr, monkeypatch):
     ok, text, _ = cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
     assert ok is False
     assert "exhausted" in text
+
+
+def test_a_fallback_that_works_becomes_the_primary(cr, monkeypatch):
+    """Otherwise every restart (every update) goes back to the capped primary,
+    the settings page keeps calling the dead login "primary", and when the
+    fallback caps the box skips the primary and goes to the metered key."""
+    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "r-1")
+    calls = []
+    monkeypatch.setattr(cr, "_api", lambda m, p, *a, **k: (calls.append((m, p)) or (200, {})))
+    cr._apply_claude_credential(0)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (
+        (False, CAP_TEXT, "") if cr._CLAUDE_CRED_I == 0 else (True, "ok", "s")))
+
+    ok, _, _ = cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+
+    assert ok is True
+    assert ("POST", "/runners/r-1/credential/swap") in calls
+    # The local cascade mirrors the swap: the working token is tried first, and
+    # the capped one is next in line, ahead of the API key.
+    assert [c[2] for c in cr._CLAUDE_CREDS] == ["tok-2", "tok-1", "sk-ant-xxx"]
+    assert cr._CLAUDE_CRED_I == 0
+
+
+def test_the_primary_working_promotes_nothing(cr, monkeypatch):
+    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "r-1")
+    calls = []
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (calls.append(a) or (200, {})))
+    cr._apply_claude_credential(0)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (True, "ok", "s"))
+    cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+    assert calls == []
+
+
+def test_the_api_key_is_never_promoted(cr, monkeypatch):
+    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "r-1")
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (calls.append(a) or (200, {})))
+    cr._apply_claude_credential(0)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (
+        (False, CAP_TEXT, "") if cr._CLAUDE_CRED_I < 2 else (True, "ok", "s")))
+    cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+    assert not any("swap" in str(c) for c in calls)

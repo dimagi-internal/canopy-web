@@ -2920,7 +2920,7 @@ def take_mint_code(mint) -> str:
     return code
 
 
-def finish_runner_mint(mint, *, token: str = "", detail: str = "", account: str = ""):
+def finish_runner_mint(mint, *, token: str = "", detail: str = ""):
     """The runner reports the outcome; on success the token lands in the bundle,
     in the slot the human chose.
 
@@ -2928,21 +2928,16 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", account: str 
     a human ever handles in this flow is the single-use authorization code, and
     the long-lived credential goes straight from the box into encrypted storage.
 
-    `account` is the email the runner read back for the new token, when it could.
-    Absent, the slot keeps its old name: re-signing an expired login in is the
-    common case, and it is the same account.
+    The slot keeps its name. The token cannot say whose it is (a setup-token is
+    scoped to inference only; the profile endpoint answers 403), and re-signing
+    an expired login is the common case, which is the same account.
     """
     from .models import RunnerMint
 
     if token:
-        secondary = mint.slot == RunnerMint.SECONDARY
-        label = account.strip() or None
-        set_runner_credential(
-            mint.runner,
-            **({"claude_token_secondary": token, "claude_token_secondary_label": label}
-               if secondary else
-               {"claude_token": token, "claude_token_label": label}),
-            updated_by=mint.requested_by)
+        key = ("claude_token_secondary" if mint.slot == RunnerMint.SECONDARY
+               else "claude_token")
+        set_runner_credential(mint.runner, **{key: token}, updated_by=mint.requested_by)
         mint.status = RunnerMint.DONE
         mint.detail = detail or "signed in"
     else:

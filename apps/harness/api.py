@@ -658,8 +658,7 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     mint = services.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
-                                       account=payload.account)
+    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
 
 
 def _admin_row(a) -> dict:
