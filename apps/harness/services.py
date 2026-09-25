@@ -2077,6 +2077,10 @@ def record_session(
         if summary is not None:
             binding.summary = summary
         binding.save()
+        # A widget can attach before this binding exists — see seed_stream_desired.
+        from apps.canopy_sessions.services import seed_stream_desired
+
+        seed_stream_desired(binding)
     return binding
 
 
@@ -2420,6 +2424,11 @@ def replace_reported_sessions(
                         _ask_identity(was_asking) != _ask_identity(binding.pending_question)):
                     new_asks.append((binding.session_id, binding.pending_question))
             binding.save()
+            # The same race as record_session: a viewer may have attached before
+            # this report created the binding.
+            from apps.canopy_sessions.services import seed_stream_desired
+
+            seed_stream_desired(binding)
             touched_ids.append(binding.pk)
 
     # Un-archive anything re-reported as open. The DERIVED staleness half of

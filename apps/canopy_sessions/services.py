@@ -565,6 +565,33 @@ def _set_stream_desired(session, desired: bool) -> bool:
     return desired
 
 
+def seed_stream_desired(binding) -> None:
+    """A viewer who arrived BEFORE the session had a runner binding still gets streamed to.
+
+    `attach_session` marks a binding `stream_desired` only on the 0->1 viewer
+    edge, and only if a binding exists at that moment. A brand-new chat has
+    none yet: the embedded widget sends the first message, opens its socket and
+    attaches within a second, while the runner binds the session a moment
+    later when it claims the turn. The edge had already fired into nothing, the
+    new binding started at False, and `post_session_stream` then persisted every
+    event and pushed none — the viewer saw "Thinking…" and never their own
+    words or the reply (connect-labs, 2026-09-25).
+
+    So whoever creates or refreshes a binding calls this after saving it: if
+    someone is watching and the binding does not know, it is told — and the
+    runner with it, on commit, since the caller is usually inside an atomic
+    block. A no-op otherwise, which makes it safe on every save.
+    """
+    from django.db import transaction
+
+    from . import attach
+
+    if binding.stream_desired or attach.count(binding.session_id) <= 0:
+        return
+    session = binding.session
+    transaction.on_commit(lambda: _set_stream_desired(session, True))
+
+
 def attach_session(session) -> bool:
     """A viewer attached. On the 0->1 edge, mark streaming desired + signal the runner."""
     n = attach.attach(session.id)
