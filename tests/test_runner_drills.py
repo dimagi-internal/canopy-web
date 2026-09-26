@@ -258,3 +258,38 @@ def test_drill_prompt_prefers_the_agents_own_token(django_user_model):
     borrowed = prompt.index("workbench-token")
     assert own < borrowed
     assert "~/.hal/.env" in prompt
+
+
+def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run(django_user_model):
+    """An agent reports through its run's signed link, whichever canopy login it
+    happens to hold. Echo reported as echo@dimagi-ai.com — a login not linked to
+    its agent row — and was 404'd, so a passing check read as a dead box
+    (cloud-ec2-1, 2026-09-26)."""
+    import re
+
+    owner = django_user_model.objects.create_user(username="own", email="own@dimagi.com", password="x")
+    stranger = django_user_model.objects.create_user(username="echo-login", email="echo@x.org", password="x")
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, paired_by=owner,
+                              last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+    a = Agent.objects.create(slug="echo7", name="Echo", workspace=a_workspace())
+    [drill] = services.start_drill(r, [a])
+    link = re.search(r'-X POST "([^"]+)"', drill.turn.prompt).group(1)
+    path, query = link.split("/api/harness/", 1)[1].split("?", 1)
+
+    c = Client()
+    c.force_login(stranger)
+    body = {"outcome": "pass", "summary": "ok"}
+    # Without the link, a login that is neither the agent's nor the pairer's: 404.
+    assert c.post(f"/api/harness/{path}", body, content_type="application/json").status_code == 404
+    # A tampered link: still 404.
+    assert c.post(f"/api/harness/{path}?t=x{query[2:]}", body,
+                  content_type="application/json").status_code == 404
+    # The run's own link: accepted.
+    ok = c.post(f"/api/harness/{path}?{query}", body, content_type="application/json")
+    assert ok.status_code == 200, ok.content
+    assert ok.json()["outcome"] == "pass"
+
+    # A NEW run of the same (runner, agent) reuses the row; the old link must not answer it.
+    services.start_drill(r, [a])
+    stale = c.post(f"/api/harness/{path}?{query}", body, content_type="application/json")
+    assert stale.status_code == 404

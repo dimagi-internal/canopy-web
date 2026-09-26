@@ -100,7 +100,7 @@ describe('RunnerDrills', () => {
     startDrill.mockResolvedValue([drill(7)])
 
     render(<RunnerDrills runnerId="r1" />)
-    await screen.findByText(/no drills yet/i)
+    await screen.findByText(/no readiness checks yet/i)
 
     listDrills.mockResolvedValue([drill(7)])
     fireEvent.click(screen.getByTestId('drill-runner-button'))
@@ -120,7 +120,7 @@ describe('RunnerDrills', () => {
     )
 
     render(<RunnerDrills runnerId="r1" />)
-    await screen.findByText(/no drills yet/i)
+    await screen.findByText(/no readiness checks yet/i)
 
     const button = screen.getByTestId('drill-runner-button') as HTMLButtonElement
     fireEvent.click(button)
@@ -142,7 +142,7 @@ describe('RunnerDrills', () => {
     )
 
     render(<RunnerDrills runnerId="r1" />)
-    await screen.findByText(/no drills yet/i)
+    await screen.findByText(/no readiness checks yet/i)
 
     fireEvent.click(screen.getByTestId('drill-runner-button'))
 

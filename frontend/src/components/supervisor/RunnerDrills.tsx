@@ -45,7 +45,7 @@ function ageFor(d: RunnerDrillOut, now: Date): string {
 // back to the raw message (or a generic string) when it isn't JSON, so a
 // non-JSON failure (a proxy error, a network drop) still shows *something*.
 function errorText(e: unknown): string {
-  if (!(e instanceof Error)) return 'Drill failed'
+  if (!(e instanceof Error)) return 'Readiness check failed'
   const idx = e.message.indexOf('{')
   if (idx >= 0) {
     try {
@@ -128,7 +128,7 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
   return (
     <div className="flex flex-col gap-2" data-testid="runner-drills">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Readiness drills</span>
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Readiness checks</span>
         <button
           type="button"
           onClick={() => void onDrill()}
@@ -136,7 +136,7 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
           className="shrink-0 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           data-testid="drill-runner-button"
         >
-          {drilling ? 'Drilling…' : 'Drill runner'}
+          {drilling ? 'Checking…' : 'Check readiness'}
         </button>
       </div>
 
@@ -149,7 +149,7 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
       {drills === null ? (
         <div className="h-8 w-full animate-pulse rounded-md bg-muted" data-testid="runner-drills-loading" />
       ) : drills.length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">No drills yet.</p>
+        <p className="text-[12px] text-muted-foreground">No readiness checks yet.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-[12px]">
