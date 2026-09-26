@@ -307,13 +307,15 @@ def test_every_production_caller_says_who_asked():
 
 
 def test_no_grade_above_tier_2_exists_for_an_embedded_site():
-    """Every tier-3 grade on the ladder is a MAIL grade."""
+    """Every tier-3 grade on the ladder is a MAIL grade, or a full member of
+    our own Slack — where the organisation that owns the Slack provisioned the
+    email. Never an embedded site's."""
     from apps.contacts.models import Contact
 
     top = {g for g, rank in Contact.AUTH_RANK.items()
            if rank >= Contact.AUTH_RANK[Contact.TIER_SIGNED_ALIGNED]}
 
-    assert top == {Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED}, (
+    assert top == {Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED, Contact.AUTH_SLACK_MEMBER}, (
         f"the top of the ladder changed: {top}. A grade an embedded site could "
         "hold up here needs canopy to verify the PERSON, which it does not do — "
         "it verifies the host's signature. See tokens/contact_api.py."
