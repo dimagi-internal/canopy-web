@@ -36,6 +36,20 @@ SYSTEM_NOISE_PREFIXES = (
     # caught by this prefix. The information it carries — that the turn was
     # interrupted — is already obvious from the message that follows it.
     "[request interrupted by user",
+    # Reading an image makes Claude Code add a `type: "user"` record giving its
+    # dimensions ("[Image: original 1440x3214, displayed at 896x2000. Multiply
+    # coordinates by …]"), and a Stop hook that blocks writes its feedback the
+    # same way. Neither is a person. Labs 2026-09-26: Hal read its own
+    # screenshot after a Slack turn ended, the thread was told the conversation
+    # had moved into emdash, and — the dimensions now being the "latest human
+    # message" — the answer that followed was never relayed to it.
+    #
+    # Deliberately NOT a blanket skip of `isMeta` records: that flag also marks
+    # slash-command expansions ("Do a turn of work as Hal…"), which ARE the ask.
+    # "[Image: source: …" is not listed either: it sits beside a human's
+    # attached image, so a person really is there.
+    "[image: original ",
+    "stop hook feedback:",
 )
 
 
