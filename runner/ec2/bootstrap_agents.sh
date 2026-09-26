@@ -1130,10 +1130,20 @@ bootstrap_one_agent() {
   local repo_url; repo_url="$(agent_repo_url "$slug")"
   CLONE_GH_TOKEN="$github_token"
   if ! clone_or_pull "${repo_url%.git}.git" "$dest"; then
-    CLONE_GH_TOKEN=""
-    fail "$slug: clone/pull of ${repo_url} failed (private repo — can its owner's GitHub token see it?)"
-    FAILED_AGENTS+=("$slug")
-    return
+    if [[ -d "$dest/.git" ]]; then
+      # A clone that could not be UPDATED is still a clone: provision the agent
+      # on it, the way a turn already runs in a clone whose pull failed. Failing
+      # the agent here skipped its env, plugins and Gmail too — which is what
+      # every agent without a lent GitHub token hit once the shared PAT was
+      # retired (#965): ada, eva and hal on cloud-ec2-1, 2026-09-26.
+      warn "$slug: could not update ${repo_url} — its owner has lent it no GitHub token that can read it; provisioning the clone as it is (Settings → Credentials → GitHub)"
+      mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "repo not updated: no GitHub token that can read ${repo_url}")"
+    else
+      CLONE_GH_TOKEN=""
+      fail "$slug: clone of ${repo_url} failed (private repo — can its owner's GitHub token see it?)"
+      FAILED_AGENTS+=("$slug")
+      return
+    fi
   fi
   ok "$slug: repo at $dest"
 
