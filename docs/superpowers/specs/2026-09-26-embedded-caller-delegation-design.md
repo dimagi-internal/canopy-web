@@ -1,6 +1,6 @@
 # Acting as the embedded visitor: host-issued grants, not canopy-minted assertions
 
-**Status:** proposed, 2026-09-26. Replaces the canopy → host half of
+**Status:** decided, 2026-09-26 (open questions resolved below). Replaces the canopy → host half of
 `act_on_behalf_of_caller` (`apps/tokens/onbehalf.py`), which is inert today (its
 signing key is a CFN `PLACEHOLDER` and no host verifies it). Also replaces the
 per-page `pages:` capability model in `apps/agents/interface.py` with a per-site
@@ -102,12 +102,22 @@ it is signed by the host's key. The host's key never leaves the host.
    stores it encrypted, attached to the conversation, never to the agent or runner.
    It may be refreshed only by a fresh ID-JAG from the host, i.e. while the visitor
    is still on the page.
-3. **Use (per turn, like the GitHub delegation).** When the runner executes this
-   conversation's turn, the host's MCP headers helper asks canopy-web for the
-   token, only for a turn that runner is executing (the same gate as
-   `POST /runners/{rid}/turns/{tid}/github-token`). The token goes into the MCP
-   request. The session itself never sees it (`profile_guard` keeps the profile
-   file unreadable, as today).
+3. **Use: canopy-web is the gateway; the token never leaves it.** In a visitor's
+   turn the agent does not call the host's MCP directly. It calls the host's tools
+   through canopy's own MCP (`/api/mcp/`), which checks that this turn may call
+   that tool (the ceiling below), attaches the visitor's access token and a fresh
+   DPoP proof server-side, and forwards the call. This is not token passthrough:
+   the token was issued *to canopy* for the host's MCP (`aud`), and canopy is the
+   client using it. It follows that:
+   - **no runner ever holds a visitor token or the DPoP key.** On a laptop every
+     session is the same OS user, so anything a runner holds is one hook away
+     from the agent;
+   - the ceiling is enforced **server-side**, not only by `profile_guard`;
+   - every call lands in one audit log, and revoking the conversation stops it
+     immediately.
+
+   The cost is one network hop per tool call. Canopy-web is already on the path
+   of every turn, so this adds no new place to fail.
 4. **Enforce (the host).** The host's MCP validates `aud`, the DPoP proof, `exp`
    and scope, then runs the tool **as Gillian**. Her rows, her permissions. Its
    audit log records `sub=gillian act=ace client=canopy`.
@@ -117,7 +127,7 @@ it is signed by the host's key. The host's key never leaves the host.
 | Attacker holds | Can | Cannot |
 |---|---|---|
 | canopy-web's DB + client key | Use access tokens for visitors **with a live conversation**, until they expire, within that page's scope; redeem an ID-JAG it captured in the ≤5-min window, once | Mint a grant for anyone. There is no user-signing key to steal. Reach users who never opened the widget. Use a token against any other resource (`aud`). |
-| A runner (laptop or cloud) | Ask canopy-web for the token of a turn **that runner is executing** | Tokens for other conversations, or anything at rest |
+| A runner (laptop or cloud) | Make calls through the gateway for the turn **that runner is executing**, within its ceiling | Obtain any visitor token or DPoP key: they never leave canopy-web |
 | A leaked access token (logs) | Nothing without canopy's DPoP key | Replay it |
 
 Today's design fails the first row: canopy's key could sign for anyone at any
@@ -187,26 +197,55 @@ the host, e.g. its own step-up or MCP's `input_required` (MRTR) confirmation.
    `resource`, DPoP), and issue an ID-JAG alongside the existing contact assertion.
 2. **canopy-web:** CIMD document + JWKS; redeem at arrival; store encrypted per
    conversation; per-turn issuance endpoint; delete `onbehalf`.
-3. **canopy plugin:** the connect-labs MCP headers helper sends the per-turn token
-   (+ DPoP proof) in place of the agent's PAT.
+3. **canopy-web gateway:** visitor turns reach host tools through canopy's MCP,
+   which attaches the token + DPoP proof. The agent's direct connection to the
+   host's MCP is not in a visitor turn's profile.
 4. **Interface:** `sites:` + `ceiling:` replace `pages:`; move ACE's `marketplace`
    capability over.
 5. **Docs:** `embedding-a-canopy-agent.md` §8a ("per-visitor tool permissions do
    not exist yet") is rewritten, and `test_embedding_doc_is_true.py` pins the new
    contract.
 
-## Open questions
+## Decisions (were open questions)
 
-- **Token lifetime vs. conversation length.** A 5-minute ID-JAG plus a ~15-minute
-  access token covers a live chat. An agent that finishes after the visitor has left
-  (a background job) then acts as itself or not at all. Proposed: not at all for
-  host writes; say so in the reply.
-- **DPoP on the host's MCP.** It needs the host's resource server to verify DPoP
-  proofs. If that is too much for step 1, ship with bearer tokens that are
-  audience-bound and ≤15 min, and add DPoP second. The table above then weakens
-  only for leaked tokens.
-- **Which scopes a page may request** is the host's policy. Canopy should record
-  the granted scope on the turn so an owner can see what a visitor's turn could do.
+**1. The visitor leaves before the agent finishes: no presence, no access, and
+never a fallback.**
+- The token lives only while the page is open. The widget re-obtains a fresh
+  ≤5-minute ID-JAG through the host's server every few minutes, so access ends
+  within minutes of the tab closing.
+- **A host call in a visitor's turn uses the visitor's token or fails.** It never
+  falls back to the agent's own credential, which would give the visitor whatever
+  the agent can reach. This is the GitHub delegation's "409 and no shared
+  fallback" rule. The agent tells the visitor it needs them back on the page, and
+  the conversation continues when they return.
+- Unattended work on the visitor's behalf is a later, explicit opt-in: a consent
+  screen at the host ("let ACE keep working for you for 24h") issuing a narrower,
+  longer-lived grant. Not built until a workflow needs it.
+
+**2. DPoP is required from day one, per client, not globally.**
+- The host's MCP enforces DPoP for tokens issued through canopy's jwt-bearer grant
+  (they carry `cnf.jkt`). Ordinary tokens from the host's normal OAuth flow, and
+  personal access tokens, are untouched. **People using the host's MCP directly
+  from Claude Code or any other client see no change**, and a client that cannot
+  do DPoP keeps working.
+- Tokens from canopy's grant carry `client_id=canopy` and `act.sub=<agent>`, so
+  the host can tell "Gillian directly" from "ACE acting for Gillian" and treat the
+  second more narrowly.
+- DPoP is cheap because of decision 3 above (the gateway): the key lives in exactly
+  one place, canopy-web.
+
+**3. The HOST decides a page's scopes, server-side, from its own route registry.**
+- The page's JavaScript is untrusted, so scopes are never taken from anything the
+  browser sends. When the host issues the ID-JAG, it looks up the page's route in a
+  server-side registry (e.g. marketplace → `marketplace:read`). The default is
+  read-only, and an unregistered page gets no grant.
+- **Writes need a write scope *and* a per-call confirmation from the visitor.** The
+  host returns MCP `input_required` (the MRTR pattern, 2026-07-28), showing the
+  visitor exactly what will change before it does.
+- A call succeeds only if three independent parties allow it: the **host's page
+  scope**, the **owner's per-site ceiling**, and the **visitor's own ACL at the
+  host**. Canopy records the granted scope on the turn, so an owner can see what a
+  visitor's turn could do.
 
 ## Sources
 
