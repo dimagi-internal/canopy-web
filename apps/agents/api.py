@@ -24,7 +24,7 @@ from .schemas import (
     AgentCommandApplyIn,
     AgentCredentialsIn,
     AgentGitHubIn,
-    AgentLoginIn,
+    AgentCanopyUserIn,
     AgentGitHubOut,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
@@ -281,21 +281,22 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return _detail(request, agent)
 
 
-# Browser-only, like owner and admin changes: linking a login makes whoever
-# holds its token count as the agent itself (chat secrets, page context), so it
-# is a decision a PERSON makes in the canopy UI. The agent's owner or an admin.
-@router.put("/{slug}/login", response=AgentDetailOut,
-            summary="Link the canopy login that is this agent (canopy UI only)")
-def set_agent_login(request: HttpRequest, slug: str, payload: AgentLoginIn) -> AgentDetailOut:
-    """Which canopy login this agent calls canopy as. A blank email unlinks it."""
+# Browser-only, like owner and admin changes: linking a canopy user makes it
+# count as the agent itself (never confined against itself — agents/access.py),
+# so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
+@router.put("/{slug}/canopy-user", response=AgentDetailOut,
+            summary="Link this agent to the canopy user it is (canopy UI only)")
+def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
+    """The canopy user account this agent's own token signs in as. `user_id`
+    null unlinks it."""
     agent = _get_agent_or_404(request, slug)
     if is_machine(request):
-        raise HttpError(403, "an agent's login can only be changed from the canopy web app")
+        raise HttpError(403, "an agent's canopy user can only be changed from the canopy web app")
     if not agent.is_admin(request.user):
-        raise HttpError(403, "only the agent's owner or an admin can change its login")
+        raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
     try:
-        services.set_agent_login(agent, payload.email)
-    except services.AgentLoginError as exc:
+        services.link_canopy_user(agent, payload.user_id)
+    except services.AgentUserLinkError as exc:
         raise HttpError(422, str(exc)) from exc
     return _detail(request, agent)
 

@@ -324,18 +324,18 @@ export async function transferAgentOwner(slug: string, userId: number | null): P
   return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
 }
 
-/** Link the canopy login that IS this agent ("" unlinks). Browser-only on the
- *  server. A refusal carries its reason (already another instance's login, not
- *  a workspace member), which is what the control shows. */
-export async function setAgentLogin(slug: string, email: string): Promise<AgentDetailOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/login', {
+/** Link this agent to the canopy user it IS (null unlinks). Browser-only on the
+ *  server. A refusal carries its reason (already another instance's user, not a
+ *  workspace member), which is what the control shows. */
+export async function linkAgentCanopyUser(slug: string, userId: number | null): Promise<AgentDetailOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/canopy-user', {
     params: { path: { slug } },
-    body: { email },
+    body: { user_id: userId },
   })
   const out = res as unknown as { data?: AgentDetailOut; error?: { detail?: unknown } }
   if (out.error !== undefined || out.data === undefined) {
     const detail = out.error?.detail
-    throw new Error(typeof detail === 'string' && detail ? detail : 'Could not change the login')
+    throw new Error(typeof detail === 'string' && detail ? detail : 'Could not change the canopy user')
   }
   return out.data
 }
