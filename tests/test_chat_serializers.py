@@ -29,7 +29,7 @@ def test_message_dto_shape():
     assert dto["plaintext"] == "hi"
     assert dto["status"] == "complete"
     assert dto["error_detail"] is None
-    assert set(dto) == {"id", "turn_index", "role", "content", "plaintext",
+    assert set(dto) == {"id", "turn_index", "role", "content", "plaintext", "author",
                         "status", "error_detail", "started_at", "completed_at", "created_at"}
 
 

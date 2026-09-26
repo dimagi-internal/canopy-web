@@ -21,7 +21,7 @@ from django.utils import timezone
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
-from . import attach
+from . import attach, authorship
 from .models import Message, RunnerBinding, Session
 from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
 
@@ -229,6 +229,7 @@ class TailMessage:
     plaintext: str
     content: dict
     created_at: object
+    author: dict | None = None
 
 
 def tail_as_messages(session, binding) -> list[TailMessage]:
@@ -269,13 +270,19 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
         # assistant text quoting a marker is still the agent talking.
         if role == Message.USER and is_system_noise(text):
             continue
+        author = None
+        if role == Message.USER:
+            # Same marker, same parse, as the durable path — a tail row is a
+            # message like any other and must not show a person the marker
+            # syntax while their conversation is still local-only.
+            author, text, _turn = authorship.parse(text)
         # Derived from the ORIGINAL position, never a running counter — a dropped
         # row leaves its slot empty rather than shifting its neighbours, so the
         # tail keeps ordering consistently against itself.
         idx = i - n
         rows.append(TailMessage(
             pk=f"tail:{idx}", turn_index=idx, role=role,
-            plaintext=text, content={"text": text}, created_at=ts,
+            plaintext=text, content={"text": text}, created_at=ts, author=author,
         ))
     return rows
 
@@ -504,7 +511,7 @@ def persist_transcript_rows(session, rows) -> int:
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
             _ensure_current_ordinal_scheme(locked, offset)
         next_index = None
-        prepared: list[tuple[int, str, str, dict]] = []
+        prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
         for row in rows:
             role = row.get("role")
@@ -544,12 +551,20 @@ def persist_transcript_rows(session, rows) -> int:
             content = row.get("content")
             if not isinstance(content, dict):
                 content = {}
+            author = turn_hex = None
+            if role == Message.USER:
+                # The marker canopy prepended at claim (authorship.py). Stripped
+                # here, the single funnel for live stream, backfill and reset, so
+                # every path gets the same text and the same author.
+                author, text, turn_hex = authorship.parse(text)
+                if author is not None and isinstance(content.get("text"), str):
+                    content = {**content, "text": authorship.parse(content["text"])[1]}
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
-            prepared.append((index, role, text, content))
+            prepared.append((index, role, text, content, author, turn_hex))
         if not prepared:
             return 0
         held = set(
@@ -558,8 +573,9 @@ def persist_transcript_rows(session, rows) -> int:
             ).values_list("turn_index", flat=True)
         )
         fresh = [
-            Message(session=locked, turn_index=i, role=r, plaintext=t, content=c)
-            for (i, r, t, c) in prepared
+            Message(session=locked, turn_index=i, role=r, plaintext=t, content=c,
+                    author=a, source_turn_id=uuid.UUID(h) if h else None)
+            for (i, r, t, c, a, h) in prepared
             if i not in held
         ]
         if not fresh:
@@ -1237,6 +1253,14 @@ def send_message(
             initiator=_initiator(initiator, user, origin),
             capability=capability,
         )
+        # The ledger path writes its own row, so it records the author directly
+        # rather than through the transcript marker.
+        if user is not None and getattr(user, "is_authenticated", False):
+            message.author = {"name": (user.get_full_name() or "").strip() or user.email,
+                              "user_id": user.pk}
+        if turn is not None:
+            message.source_turn_id = turn.pk
+        message.save(update_fields=["author", "source_turn_id"])
     # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
     # the human's message is an interjection. Push it down to the runner executing
     # that turn (over its control channel) so the live agent sees it, on top of the

@@ -40,6 +40,7 @@ def message_dto(msg: Message) -> dict:
         "role": msg.role,
         "content": msg.content or {},
         "plaintext": msg.plaintext,
+        "author": msg.author,
         "status": "complete",
         "error_detail": None,
         "started_at": None,

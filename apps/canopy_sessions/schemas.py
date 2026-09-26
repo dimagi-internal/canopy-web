@@ -92,6 +92,7 @@ class MessageOut(Schema):
     role: str
     plaintext: str
     content: dict
+    author: dict | None = None
     created_at: dt.datetime
 
 

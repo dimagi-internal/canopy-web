@@ -7259,6 +7259,10 @@ export interface components {
             readonly content: {
                 readonly [key: string]: unknown;
             };
+            /** Author */
+            readonly author?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Created At
              * Format: date-time

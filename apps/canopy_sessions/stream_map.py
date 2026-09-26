@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from . import authorship
+
 
 def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) -> list[dict]:
     kind = evt.get("kind")
@@ -49,9 +51,12 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # it. Carries the transcript ordinal so the client can upsert rather
         # than append, which is what keeps a re-delivery from doubling it.
         mid = resolve_message_id(seq)
+        # Same parse as the durable path, so a watcher sees the stripped text and
+        # the author before any reload — and the sender's echo matches on text.
+        author, text, _turn = authorship.parse(str(payload.get("text", "")))
         return [{"event": "chat.user_message",
                  "data": {"message_id": mid, "turn_index": seq,
-                          "plaintext": payload.get("text", "")}}]
+                          "plaintext": text, "author": author}}]
     if kind == "assistant":
         mid = resolve_message_id(seq)
         return [
