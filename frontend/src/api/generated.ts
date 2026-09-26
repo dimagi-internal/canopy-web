@@ -2675,6 +2675,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/a2a/agents/{slug}/.well-known/agent-card.json": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's public A2A Agent Card
+         * @description The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
+         *
+         *     Served only for an agent that has published a capability for contacts or
+         *     unknown callers; any other slug is a 404. Supports `If-None-Match`.
+         */
+        readonly get: operations["apps_agents_a2a_api_public_agent_card"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/a2a/agents/{slug}/extendedAgentCard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's authenticated extended A2A Agent Card
+         * @description The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
+         *
+         *     The public card's skills plus every capability the caller may invoke
+         *     themselves. A 404 when that is nothing. Supports `If-None-Match`.
+         */
+        readonly get: operations["apps_agents_a2a_api_extended_agent_card"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runs/": {
         readonly parameters: {
             readonly query?: never;
@@ -10161,6 +10207,136 @@ export interface components {
              */
             readonly detail: string;
         };
+        /** A2AAPIKeySecurityScheme */
+        readonly A2AAPIKeySecurityScheme: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Location
+             * @enum {string}
+             */
+            readonly location: "query" | "header" | "cookie";
+            /** Name */
+            readonly name: string;
+        };
+        /** A2AAgentCapabilities */
+        readonly A2AAgentCapabilities: {
+            /**
+             * Streaming
+             * @default false
+             */
+            readonly streaming: boolean;
+            /**
+             * Pushnotifications
+             * @default false
+             */
+            readonly pushNotifications: boolean;
+            /**
+             * Extendedagentcard
+             * @default false
+             */
+            readonly extendedAgentCard: boolean;
+        };
+        /**
+         * A2AAgentCardOut
+         * @description An A2A v1.0 Agent Card, generated from the agent's declared interface.
+         */
+        readonly A2AAgentCardOut: {
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Supportedinterfaces */
+            readonly supportedInterfaces: readonly components["schemas"]["A2AAgentInterface"][];
+            readonly provider: components["schemas"]["A2AAgentProvider"];
+            /** Version */
+            readonly version: string;
+            /** Documentationurl */
+            readonly documentationUrl?: string | null;
+            readonly capabilities: components["schemas"]["A2AAgentCapabilities"];
+            /** Securityschemes */
+            readonly securitySchemes: {
+                readonly [key: string]: components["schemas"]["A2ASecurityScheme"];
+            };
+            /** Securityrequirements */
+            readonly securityRequirements: readonly components["schemas"]["A2ASecurityRequirement"][];
+            /** Defaultinputmodes */
+            readonly defaultInputModes: readonly string[];
+            /** Defaultoutputmodes */
+            readonly defaultOutputModes: readonly string[];
+            /** Skills */
+            readonly skills: readonly components["schemas"]["A2AAgentSkill"][];
+            /** Iconurl */
+            readonly iconUrl?: string | null;
+        };
+        /** A2AAgentInterface */
+        readonly A2AAgentInterface: {
+            /** Url */
+            readonly url: string;
+            /** Protocolbinding */
+            readonly protocolBinding: string;
+            /** Protocolversion */
+            readonly protocolVersion: string;
+        };
+        /** A2AAgentProvider */
+        readonly A2AAgentProvider: {
+            /** Organization */
+            readonly organization: string;
+            /** Url */
+            readonly url: string;
+        };
+        /** A2AAgentSkill */
+        readonly A2AAgentSkill: {
+            /** Id */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Tags */
+            readonly tags: readonly string[];
+            /** Inputmodes */
+            readonly inputModes?: readonly string[] | null;
+            /** Outputmodes */
+            readonly outputModes?: readonly string[] | null;
+            /** Securityrequirements */
+            readonly securityRequirements?: readonly components["schemas"]["A2ASecurityRequirement"][] | null;
+        };
+        /** A2AHTTPAuthSecurityScheme */
+        readonly A2AHTTPAuthSecurityScheme: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Scheme */
+            readonly scheme: string;
+            /**
+             * Bearerformat
+             * @default
+             */
+            readonly bearerFormat: string;
+        };
+        /** A2ASecurityRequirement */
+        readonly A2ASecurityRequirement: {
+            /** Schemes */
+            readonly schemes: {
+                readonly [key: string]: components["schemas"]["A2AStringList"];
+            };
+        };
+        /** A2ASecurityScheme */
+        readonly A2ASecurityScheme: {
+            readonly httpAuthSecurityScheme?: components["schemas"]["A2AHTTPAuthSecurityScheme"] | null;
+            readonly apiKeySecurityScheme?: components["schemas"]["A2AAPIKeySecurityScheme"] | null;
+        };
+        /** A2AStringList */
+        readonly A2AStringList: {
+            /** List */
+            readonly list?: readonly string[];
+        };
         /** Page[RunSummary] */
         readonly Page_RunSummary_: {
             /** Items */
@@ -17243,6 +17419,64 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["BootstrapReportOut"];
                 };
+            };
+        };
+    };
+    readonly apps_agents_a2a_api_public_agent_card: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["A2AAgentCardOut"];
+                };
+            };
+            /** @description Not Modified */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly apps_agents_a2a_api_extended_agent_card: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["A2AAgentCardOut"];
+                };
+            };
+            /** @description Not Modified */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

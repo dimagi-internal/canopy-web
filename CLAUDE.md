@@ -185,6 +185,7 @@ What lives where:
 - **DDD runs (`apps/runs`, mounted at `/api/ddd`)**
 - **Shareouts (`apps/shareouts`)**
 - **Agents (`apps/agents`) — first-class AI-agent workspace**
+- **A2A Agent Cards (`apps/agents/a2a_api.py`, mounted at `/api/a2a`) — discovery generated from the declared interface; public card only for agents that offer outsiders something**
 - **Agent runs (`apps/agent_runs`, mounted under `/api/agents`)**
 - **Harness (`apps/harness`, mounted at `/api/harness`) — runner registry + turn lifecycle**
 - **Asks (`apps/harness/items_api.py`, mounted at `/api/agents/{slug}/items/` + `/api/items/{id}/`) — tasks that ask a person something.** The paths keep the `items` name; the MODEL is gone. `harness.Item` is a tombstone ("Nothing reads this model") since #873 moved every row onto `AgentTask.{ask_kind,ask_body,ask_state,decision,…}`
