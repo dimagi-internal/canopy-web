@@ -448,3 +448,34 @@ def session_transcript_ref(db_path: str, project: str, task: str) -> tuple[str, 
     if row is None or not row["cwd"] or not row["sid"]:
         return None
     return row["cwd"], row["sid"]
+
+
+def task_worktree(db_path: str, project: str, task: str) -> str | None:
+    """READ-ONLY: the worktree emdash runs (project, task) in, or None.
+
+    `conversations.cwd` is written when emdash creates the conversation — before
+    Claude Code reports a session id, which is why this does not go through
+    `session_transcript_ref` (that one needs both halves). None when emdash cannot
+    answer, never a guess: the caller writes settings INTO this directory, so a wrong
+    answer would confine the wrong session.
+    """
+    if not project or not task or not Path(db_path).exists():
+        return None
+    try:
+        with _db(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT cv.cwd AS cwd
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                JOIN conversations cv ON cv.task_id = t.id
+                WHERE t.name = ? AND p.name = ? AND t.deleted_at IS NULL
+                  AND cv.cwd IS NOT NULL
+                ORDER BY cv.created_at DESC
+                LIMIT 1
+                """,
+                (task, project),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row["cwd"] if row is not None and row["cwd"] else None

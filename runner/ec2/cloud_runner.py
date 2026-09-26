@@ -620,6 +620,12 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
         cmd += ["--resume", resume_session_id]
     else:
         cmd += ["--session-id", str(uuid.uuid4())]
+    # A confined turn's native permission layer (see `_native_settings`). Deny rules
+    # hold under --dangerously-skip-permissions; the flag above stays because this
+    # box has no human to answer a prompt.
+    settings = getattr(_TURN_ENV, "settings", None)
+    if settings:
+        cmd += ["--settings", str(settings)]
     return cmd
 
 
@@ -3527,6 +3533,53 @@ def _confine(turn: dict) -> tuple[dict, str]:
     return {"CANOPY_PROFILE": str(path)}, str(caller_path)
 
 
+def _write_envelope(turn: dict) -> dict:
+    """Every turn's caller envelope, and the env that points the canopy plugin's
+    UserPromptSubmit hook at it: `CANOPY_CALLER=<path>`. The laptop leaves a pointer
+    keyed by emdash task; here the runner spawns claude itself, so it just says so.
+    The hook then puts a short "who is asking" summary beside the prompt — a
+    free-text prompt carries no `--caller`, and without this the agent never knew.
+    Best-effort: {} when there is no envelope or it cannot be written."""
+    env = turn.get("caller_context")
+    turn_id = str(turn.get("id") or "")
+    if not isinstance(env, dict) or not re.fullmatch(r"[0-9a-fA-F-]{8,64}", turn_id):
+        return {}
+    path = CALLER_ROOT / f"{turn_id}.json"
+    try:
+        _write_private(path, env)
+    except OSError as exc:
+        _log(f"warn: could not write the caller envelope for {turn_id[:8]}: {exc}")
+        return {}
+    return {"CANOPY_CALLER": str(path)}
+
+
+def _native_settings(turn: dict, cwd: pathlib.Path, caller_path: str) -> str | None:
+    """A confined turn's capability as Claude Code's OWN permission rules, passed
+    with `--settings` — the second layer under profile_guard (canopy_runner's
+    `native_permissions` holds the translation and the reasoning). Best-effort:
+    profile_guard is the fail-closed layer, so a missing module or an unwritable
+    file costs the second layer, never the turn — and says so."""
+    try:
+        from canopy_runner import native_permissions  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: native permission layer unavailable ({exc}); profile_guard alone confines "
+             f"turn {str(turn.get('id'))[:8]}")
+        return None
+    cap = _capability(turn) or {}
+    tid = str(((turn.get("caller_context") or {}).get("conversation") or {}).get("thread_id")
+              or (turn.get("origin_ref") or {}).get("thread_id") or "")
+    path = PROFILE_ROOT / f"cloud-{turn['id']}.settings.json"
+    try:
+        doc = native_permissions.cli_settings(cap, cwd=str(cwd), caller_path=caller_path,
+                                              thread_id=tid)
+        _write_private(path, doc)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not write the native permission layer ({exc}); profile_guard "
+             f"alone confines turn {str(turn.get('id'))[:8]}")
+        return None
+    return str(path)
+
+
 def _canopy_plugin_root() -> pathlib.Path | None:
     try:
         d = json.loads((pathlib.Path.home() / ".claude" / "plugins" /
@@ -3559,8 +3612,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     turn_id = turn["id"]
     try:
         # The turn's GitHub identity, first: the cwd's own git pull needs it.
-        github = _github_turn_env(runner_id, turn)
+        github = {**_github_turn_env(runner_id, turn), **_write_envelope(turn)}
         _TURN_ENV.extra = dict(github)
+        _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
@@ -3574,6 +3628,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 prompt = _confined_prompt(turn)
                 confine_env, caller_path = _confine(turn)
                 _TURN_ENV.extra = {**github, **confine_env}
+                _TURN_ENV.settings = _native_settings(
+                    turn, cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
+                    caller_path)
                 if prompt.startswith("/"):
                     first, sep, rest = prompt.partition("\n")
                     prompt = f"{first} --caller {caller_path}{sep}{rest}"
@@ -3598,6 +3655,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         finally:
             lease_stop.set()
         _TURN_ENV.extra = {}
+        _TURN_ENV.settings = None
         if cli_session_id:
             # Never let bookkeeping cost us the finish below — an exception here
             # used to strand the turn exactly like a dead socket did (#448).

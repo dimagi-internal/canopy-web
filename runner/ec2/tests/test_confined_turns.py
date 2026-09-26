@@ -151,3 +151,82 @@ def test_no_host_credential_is_a_normal_state_not_an_error(tmp_path, monkeypatch
     cr._confine(turn)
     doc = json.loads((tmp_path / "profiles" / f"cloud-{TID}.json").read_text())
     assert doc["on_behalf_of"] is None
+
+
+# --- who is asking, for every turn; the native layer, for a caller's ------------------
+
+@pytest.fixture()
+def with_canopy_runner(monkeypatch):
+    """The box exposes runner/canopy_runner on sys.path at boot (`_expose_repo_package`)."""
+    import pathlib
+    import sys
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "canopy_runner"))
+    sys.modules.pop("canopy_runner.native_permissions", None)
+
+
+def test_every_turn_points_the_prompt_hook_at_its_envelope(cr, monkeypatch):
+    mod, calls = cr
+    seen = {}
+
+    def fake_execute(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        seen["caller"] = mod._agent_env(agent_slug).get("CANOPY_CALLER")
+        return True, "ok", ""
+
+    monkeypatch.setattr(mod, "execute_prompt", fake_execute)
+    full = _turn(prompt="please deploy", caller_context={"profile": "full", "relationship": "caller",
+                                                         "verified": False})
+    mod._run_turn("r-1", full)
+    assert seen["caller"].endswith(f"{TID}.json")
+    assert json.loads(open(seen["caller"]).read())["relationship"] == "caller"
+
+
+def test_no_envelope_no_pointer(cr, monkeypatch):
+    mod, calls = cr
+    seen = {}
+    monkeypatch.setattr(mod, "execute_prompt", lambda p, t, e, cwd=None, agent_slug=None,
+                        resume_session_id=None: seen.update(
+                            c=mod._agent_env(agent_slug).get("CANOPY_CALLER")) or (True, "", ""))
+    mod._run_turn("r-1", _turn(caller_context=None))
+    assert seen["c"] is None
+
+
+def test_a_confined_turn_passes_its_native_deny_rules_with_settings(cr, monkeypatch, with_canopy_runner):
+    mod, calls = cr
+    seen = {}
+
+    def fake_execute(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        seen["cmd"] = mod._claude_cmd(prompt)
+        return True, "ok", ""
+
+    monkeypatch.setattr(mod, "execute_prompt", fake_execute)
+    mod._run_turn("r-1", _turn())
+    cmd = seen["cmd"]
+    assert "--dangerously-skip-permissions" in cmd and "--settings" in cmd
+    doc = json.loads(open(cmd[cmd.index("--settings") + 1]).read())
+    deny = doc["permissions"]["deny"]
+    assert "Bash" in deny and "Edit" in deny and "mcp__*" in deny   # CAP grants neither
+    assert mod._TURN_ENV.settings is None                            # and it does not leak
+
+
+def test_a_full_turn_gets_no_settings(cr, monkeypatch, with_canopy_runner):
+    mod, calls = cr
+    seen = {}
+    monkeypatch.setattr(mod, "execute_prompt", lambda p, t, e, cwd=None, agent_slug=None,
+                        resume_session_id=None: seen.update(cmd=mod._claude_cmd(p)) or (True, "", ""))
+    mod._run_turn("r-1", _turn(caller_context={"profile": "full"}))
+    assert "--settings" not in seen["cmd"]
+
+
+def test_without_the_module_the_turn_still_runs_confined_by_the_hook(cr, monkeypatch):
+    mod, calls = cr
+    import builtins
+    real = builtins.__import__
+
+    def no_runner(name, *a, **k):
+        if name.startswith("canopy_runner"):
+            raise ImportError("not on this box")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_runner)
+    mod._run_turn("r-1", _turn())
+    assert calls["exec"]["profile"].endswith(f"cloud-{TID}.json")
