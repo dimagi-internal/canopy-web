@@ -200,6 +200,33 @@
   },
   {
     "canopy": {
+      "event": "draft.typing",
+      "data": {
+        "author": {
+          "id": 7,
+          "name": "Beth"
+        },
+        "body": "wip",
+        "at": "2026-09-26T12:00:00+00:00"
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.draft.typing",
+        "value": {
+          "author": {
+            "id": 7,
+            "name": "Beth"
+          },
+          "body": "wip",
+          "at": "2026-09-26T12:00:00+00:00"
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "presence.joined",
       "data": {
         "user_id": 7
@@ -610,27 +637,6 @@
         "name": "canopy.draft.discarded",
         "value": {
           "draft_id": "d1"
-        }
-      }
-    ]
-  },
-  {
-    "canopy": {
-      "event": "draft.lock_changed",
-      "data": {
-        "draft_id": "d1",
-        "holder_user_id": 7,
-        "expires_at": "2026-09-18T12:01:00+00:00"
-      }
-    },
-    "agui": [
-      {
-        "type": "CUSTOM",
-        "name": "canopy.draft.lock_changed",
-        "value": {
-          "draft_id": "d1",
-          "holder_user_id": 7,
-          "expires_at": "2026-09-18T12:01:00+00:00"
         }
       }
     ]

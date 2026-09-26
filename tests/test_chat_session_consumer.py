@@ -1,7 +1,8 @@
 """SP3 Task 3 — the per-session multiplayer SessionConsumer.
 
-Two sockets on one session: a draft edit by one is broadcast to the other, and a
-commit sends + streams the assistant response to everyone (the stub executes).
+Two sockets on one session: each person drafts in their own box (the others see
+it as `draft.typing`), and a commit sends + streams the assistant response to
+everyone (the stub executes).
 """
 from __future__ import annotations
 
@@ -94,21 +95,103 @@ async def test_snapshot_is_canonical():
     await comm.disconnect()
 
 
-async def test_draft_update_broadcasts_to_other_socket():
-    owner, teammate, session = await database_sync_to_async(_seed)()
-    a = await _connect(session, owner)
-    assert (await a.connect())[0]
-    b = await _connect(session, teammate)
-    assert (await b.connect())[0]
+async def _received_frames(comm, window: float = 1.0, interval: float = 0.02) -> list[dict]:
+    """Collect whatever frames arrive within `window` by polling the
+    communicator's output queue. NOT `receive_json_from(timeout=...)`: in this
+    asgiref/channels combination its timeout cancels the communicator's own
+    consumer task, so a call made to prove a frame does NOT arrive leaves the
+    socket dead (same helper as tests/test_realtime_runner_consumer.py)."""
+    import asyncio as _asyncio
+    import json as _json
+    import time as _time
 
-    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hello team"}})
-    frame = await _recv_match(b, lambda f: f.get("event") == "draft.updated")
-    assert frame["data"]["body"] == "hello team"
-    assert frame["data"]["last_editor"] == owner.id
-    # canonical draft.updated is the full DraftSerializer shape
-    assert {"id", "slot", "status", "last_edit_at"} <= set(frame["data"])
-    await a.disconnect()
-    await b.disconnect()
+    frames = []
+    start = _time.monotonic()
+    while _time.monotonic() - start < window:
+        try:
+            msg = comm.output_queue.get_nowait()
+        except _asyncio.QueueEmpty:
+            await _asyncio.sleep(interval)
+            continue
+        assert msg["type"] == "websocket.send"
+        frames.append(_json.loads(msg["text"]))
+    return frames
+
+
+async def test_my_typing_reaches_others_as_draft_typing():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hi there"}})
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["author"]["id"] == owner.id
+    assert typing["data"]["body"] == "hi there"
+    # The author's own sockets get the full draft shape, peers never do.
+    own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
+    assert {"id", "slot", "status", "last_edit_at", "author_id"} <= set(own["data"])
+    assert own["data"]["last_editor"] == owner.id
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_peer_never_receives_my_draft_frames():
+    """canopy-ui <= 0.12 (ace-web) adopts ANY `draft.updated` into its own
+    composer and builds a message out of its OWN box on ANY `draft.committed`,
+    so a peer must see neither — only `draft.typing`."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "x"}})
+    await a.send_json_to({"action": "draft.discard", "data": {}})
+    await a.send_json_to({"action": "chat.send", "data": {"text": "x", "client_id": "c1"}})
+    # The sender's own receipt proves the send happened before we inspect b.
+    await _recv_match(a, lambda f: f["event"] == "draft.committed")
+    seen = [f["event"] for f in await _received_frames(b, window=1.5)]
+    assert "draft.typing" in seen
+    assert "draft.updated" not in seen
+    assert "draft.committed" not in seen
+    assert "draft.discarded" not in seen
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_own_tabs_share_one_draft_and_see_no_peer_row():
+    owner, _t, session = await database_sync_to_async(_seed)()
+    t1, t2 = await _connect(session, owner), await _connect(session, owner)
+    await t1.connect(); await t2.connect()
+    await _recv_match(t1, lambda f: f["event"] == "session.state")
+    await _recv_match(t2, lambda f: f["event"] == "session.state")
+    await t1.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "from desk"}})
+    upd = await _recv_match(t2, lambda f: f["event"] in ("draft.updated", "draft.typing"))
+    assert upd["event"] == "draft.updated" and upd["data"]["body"] == "from desk"
+    await t1.disconnect(); await t2.disconnect()
+
+
+async def test_snapshot_has_my_draft_and_peer_drafts():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    from apps.canopy_sessions import drafts
+    await database_sync_to_async(drafts.update_draft)(session, user=teammate, expected_version=0, body="wip")
+    comm = await _connect(session, owner)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    assert snap["data"]["active_draft"]["author_id"] == owner.id
+    assert snap["data"]["active_draft"]["body"] == ""
+    assert [p["body"] for p in snap["data"]["peer_drafts"]] == ["wip"]
+    assert snap["data"]["peer_drafts"][0]["author"]["id"] == teammate.id
+    await comm.disconnect()
+
+
+async def test_take_over_is_accepted_and_ignored():
+    owner, _t, session = await database_sync_to_async(_seed)()
+    comm = await _connect(session, owner)
+    await comm.connect()
+    await _recv_match(comm, lambda f: f["event"] == "session.state")
+    await comm.send_json_to({"action": "draft.take_over", "data": {}})
+    frames = await _received_frames(comm, window=0.8)
+    assert not [f for f in frames if f["event"].startswith("draft.") or f["event"] == "session.error"]
+    await comm.disconnect()
 
 
 async def test_commit_sends_and_streams_assistant_to_all():

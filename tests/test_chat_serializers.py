@@ -37,15 +37,27 @@ def test_draft_dto_shape_and_none():
     ws, u = _ws_user()
     assert serializers.draft_dto(None) is None
     s = Session.objects.create(workspace=ws, created_by=u, title="t")
-    d = Draft.objects.create(session=s, slot="next", body="wip", version=3, last_editor=u)
+    d = Draft.objects.create(session=s, slot="next", body="wip", version=3, author=u)
     dto = serializers.draft_dto(d)
     assert dto["id"] == str(d.pk)
     assert dto["slot"] == "next"
     assert dto["status"] == "open"
     assert dto["body"] == "wip"
     assert dto["version"] == 3
-    assert dto["last_editor"] == u.pk
+    assert dto["last_editor"] == u.pk  # kept for canopy-ui <= 0.12
+    assert dto["author_id"] == u.pk
     assert dto["last_edit_at"] is not None
+
+
+def test_peer_draft_dto_names_the_author_and_is_not_draft_shaped():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="wip", author=u)
+    dto = serializers.peer_draft_dto(d)
+    assert set(dto) == {"author", "body", "at"}
+    assert dto["author"]["id"] == u.pk
+    assert dto["author"]["name"]
+    assert dto["body"] == "wip"
 
 
 def test_session_state_dto_keys():
@@ -65,9 +77,10 @@ def test_session_state_dto_keys():
     # routed to run it, the box it was on died — and a live-only frame reaches
     # nobody who opened the page after it went quiet. Null when the session has
     # never been asked anything.
-    assert set(state) == {"messages", "active_draft", "participants",
+    assert set(state) == {"messages", "active_draft", "peer_drafts", "participants",
                           "presence_user_ids", "current_user_id", "menu",
                           "turn_status"}
+    assert state["peer_drafts"] == []
     assert state["menu"] is None
     assert state["turn_status"] is None
     assert state["current_user_id"] == u.pk

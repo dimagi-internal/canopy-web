@@ -419,6 +419,8 @@ ROUND_TRIP_FRAMES = [
                         "content": "[]"}}},
     {"event": "session.title_updated", "data": {"title": "Insights triage"}},
     {"event": "draft.updated", "data": {"id": "d1", "body": "x", "version": 2}},
+    {"event": "draft.typing",
+     "data": {"author": {"id": 7, "name": "Beth"}, "body": "wip", "at": "2026-09-26T12:00:00+00:00"}},
     {"event": "presence.joined", "data": {"user_id": 7}},
     {"event": "presence.left", "data": {"user_id": 7}},
     # --- every other frame a canopy client can receive ------------------------
@@ -467,8 +469,6 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "runner went away"}},
     {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
     {"event": "draft.discarded", "data": {"draft_id": "d1"}},
-    {"event": "draft.lock_changed",
-     "data": {"draft_id": "d1", "holder_user_id": 7, "expires_at": "2026-09-18T12:01:00+00:00"}},
     {"event": "page.invalidate", "data": {"uri": "item://"}},
 ]
 
