@@ -1261,12 +1261,6 @@ def send_message(
         if turn is not None:
             message.source_turn_id = turn.pk
         message.save(update_fields=["author", "source_turn_id"])
-    # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
-    # the human's message is an interjection. Push it down to the runner executing
-    # that turn (over its control channel) so the live agent sees it, on top of the
-    # new turn that queues behind it. Post-commit + null-safe (a realtime hiccup
-    # never breaks the send).
-    _maybe_interject(session, message)
     return message, turn
 
 
@@ -1423,30 +1417,7 @@ def _send_transcript_sourced_message(
         initiator=_initiator(initiator, user, origin),
         capability=capability,
     )
-    _maybe_interject(session, message)
     return message, turn
-
-
-def _maybe_interject(session: Session, message: Message) -> None:
-    from apps.realtime import groups
-
-    running = (
-        Turn.objects.filter(
-            chat_session=session,
-            status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
-            claimed_by__isnull=False,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-    if running is None:
-        return
-    groups.publish(groups.runner_group(running.claimed_by_id), {
-        "type": "runner.interject",
-        "turn_id": str(running.id),
-        "session_id": str(session.id),
-        "message": message.plaintext,
-    })
 
 
 def maybe_execute_inline(turn: Turn | None) -> None:

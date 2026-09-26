@@ -37,7 +37,7 @@ class WakeListener:
 
     def _handle(self, raw: str) -> None:
         """Set the wake event on a `wake` frame; route other control frames (cancel,
-        interject, stream) to on_control; ignore malformed lines."""
+        stream) to on_control; ignore malformed lines."""
         try:
             msg = json.loads(raw)
         except (ValueError, TypeError):

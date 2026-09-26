@@ -175,27 +175,6 @@ async def test_cannot_touch_a_turn_it_did_not_claim():
     await comm.disconnect()
 
 
-# --- interjection reaches the runner -----------------------------------------
-async def test_interject_frame_reaches_the_runner():
-    from channels.layers import get_channel_layer
-
-    from apps.realtime import groups
-
-    user, ws, agent, runner = await database_sync_to_async(_setup)()
-    comm = await _connect(runner.id, user)
-    await comm.connect()
-
-    layer = get_channel_layer()
-    await layer.group_send(groups.runner_group(runner.id), {
-        "type": "runner.interject", "turn_id": "t-123", "session_id": "s-1",
-        "message": "wait, change the plan",
-    })
-    frame = await comm.receive_json_from(timeout=2)
-    assert frame == {"type": "interject", "turn_id": "t-123", "session_id": "s-1",
-                     "message": "wait, change the plan"}
-    await comm.disconnect()
-
-
 async def test_cancel_frame_reaches_the_runner():
     from channels.layers import get_channel_layer
 
@@ -253,7 +232,36 @@ async def test_update_available_frame_reaches_the_runner():
     await comm.disconnect()
 
 
-async def test_send_message_interjects_the_running_runner():
+async def _received_frames(comm, window: float = 1.0, interval: float = 0.02) -> list[dict]:
+    """Collect whatever frames arrive within `window`, polling the communicator's
+    output queue directly rather than via `receive_json_from`'s timeout.
+
+    `receive_json_from(timeout=...)` times out by cancelling the CURRENT task
+    (asgiref.timeout); in this asgiref/channels combination that also tears down
+    the communicator's own background consumer task the instant nothing arrives
+    before the deadline — so a call made to prove NO frame shows up (exactly
+    what this test needs) leaves the socket unusable for anything after it.
+    `receive_nothing` sidesteps the same hazard by polling `output_queue`
+    instead of awaiting it under a cancellable timeout; this does the same,
+    while still returning what (if anything) it saw."""
+    import asyncio as _asyncio
+    import json as _json
+    import time as _time
+
+    frames = []
+    start = _time.monotonic()
+    while _time.monotonic() - start < window:
+        try:
+            msg = comm.output_queue.get_nowait()
+        except _asyncio.QueueEmpty:
+            await _asyncio.sleep(interval)
+            continue
+        assert msg["type"] == "websocket.send"
+        frames.append(_json.loads(msg["text"]))
+    return frames
+
+
+async def test_send_during_running_turn_only_queues():
     from apps.canopy_sessions.models import Session
     from apps.canopy_sessions.services import send_message
 
@@ -276,21 +284,26 @@ async def test_send_message_interjects_the_running_runner():
     await comm.connect()
 
     @database_sync_to_async
-    def _send():
-        send_message(session=session, text="actually, stop and do X", user=user, client_id="c9")
+    def _send(text, client_id):
+        send_message(session=session, text=text, user=user, client_id=client_id)
 
-    await _send()
-    # The send also queues a new turn (→ a wake on the runnable group the runner
-    # also joined), so drain a few frames and find the interject.
-    interject = None
-    for _ in range(3):
-        f = await comm.receive_json_from(timeout=2)
-        if f.get("type") == "interject":
-            interject = f
-            break
-    assert interject is not None
-    assert interject["message"] == "actually, stop and do X"
-    assert interject["turn_id"] == str(running.id)
+    await _send("actually, stop and do X", "c9")
+    # A second send while a turn runs is QUEUED behind it and never pushed into
+    # the running turn (spec 2026-09-26: messages land in send order).
+    frames = await _received_frames(comm)
+    assert not any(f.get("type") == "interject" for f in frames)
+    queued = await database_sync_to_async(
+        lambda: list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
+                     .order_by("created_at").values_list("prompt", flat=True)))()
+    assert queued[-1] == "actually, stop and do X"
+
+    await _send("and also Y", "c10")
+    frames = await _received_frames(comm)
+    assert not any(f.get("type") == "interject" for f in frames)
+    queued = await database_sync_to_async(
+        lambda: list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
+                     .order_by("created_at").values_list("prompt", flat=True)))()
+    assert queued[-2:] == ["actually, stop and do X", "and also Y"]
     await comm.disconnect()
 
 

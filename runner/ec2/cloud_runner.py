@@ -1845,11 +1845,10 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
 
 #: Turn id -> the live AcpAgent driving it, for the WS thread to reach into.
 #:
-#: A turn runs on a worker thread blocked inside `run_acp`'s pump; control frames
-#: (`interject`, cancel) arrive on the WS thread. Steering is the one thing that
-#: MUST cross those threads — waiting for the pump would deliver the message
-#: after the turn it was meant to change. `AcpConnection._send` is lock-guarded,
-#: so a prompt from another thread is safe by construction.
+#: A turn runs on a worker thread blocked inside `run_acp`'s pump; the cancel
+#: control frame arrives on the WS thread and must reach that agent without
+#: waiting for the pump. `AcpConnection._send` is lock-guarded, so a call from
+#: another thread is safe by construction.
 _ACP_LIVE: dict = {}
 _ACP_LIVE_LOCK = threading.Lock()
 
@@ -1867,36 +1866,6 @@ def _acp_unregister(turn_id: str) -> None:
 def _acp_agent_for(turn_id: str):
     with _ACP_LIVE_LOCK:
         return _ACP_LIVE.get(turn_id)
-
-
-def steer_turn(turn_id: str, message: str) -> bool:
-    """Deliver a human's message INTO a turn that is already running.
-
-    Returns whether it was delivered, which the caller logs — a message that
-    silently goes nowhere is the failure this exists to prevent, and canopy-web
-    has already told a person their message was sent.
-
-    `claude -p` cannot do this at all: it is one process, one prompt, stdin
-    closed. ACP can — `session/prompt` is a request the agent accepts while a
-    previous one is still running, reported as `_meta.steering.supported` and
-    `promptQueueing` in `initialize`. Verified on cloud-ec2-1 2026-09-09 against
-    adapter 0.75.1: interjected mid-`sleep`, the agent abandoned its loop and
-    answered the new instruction, emitting none of the remaining output.
-
-    The returned Pending is deliberately dropped. The interjection's reply
-    arrives as ordinary `session/update` traffic, which the reducer already
-    turns into ledger rows — the same path the turn's own output takes. Nothing
-    needs to await it, and awaiting it here would block the WS thread.
-    """
-    agent = _acp_agent_for(turn_id)
-    if agent is None:
-        return False
-    try:
-        agent.prompt(message)
-        return True
-    except Exception as exc:  # noqa: BLE001 — a failed steer must not kill the socket
-        _log(f"steer turn={turn_id[:8]} failed: {exc}")
-        return False
 
 
 def stop_turn(turn_id: str) -> bool:
@@ -3753,8 +3722,8 @@ def _ws_url(runner_id: str) -> str:
 
 def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     """Send an action frame and read until the matching ack/result, skipping
-    unrelated frames (a wake/interject that arrives mid-request is not what we're
-    waiting on right now). Returns the matched frame, or None on close/timeout."""
+    unrelated frames (a wake that arrives mid-request is not what we're waiting
+    on right now). Returns the matched frame, or None on close/timeout."""
     import websocket  # local: only the WS path needs the dep
 
     # ws.settimeout() also governs sends, not just recv. A large event frame (e.g.
@@ -3942,19 +3911,6 @@ def run_over_ws(runner_id: str) -> bool:
                     mtype = msg.get("type")
                     if mtype == "wake":
                         _drain(ws, runner_id)
-                    elif mtype == "interject":
-                        # canopy-web has ALREADY told a person their message was
-                        # sent, so whether it actually landed is the thing worth
-                        # logging. Before ACP this frame was logged and dropped:
-                        # `claude -p` is one process with one prompt and stdin
-                        # closed, so there was nowhere to put it.
-                        t_id = str(msg.get("turn_id") or "")
-                        body = str(msg.get("message") or "")
-                        if body and steer_turn(t_id, body):
-                            _log(f"interject turn={t_id[:8]}: delivered mid-turn")
-                        else:
-                            _log(f"interject turn={t_id[:8]}: NOT delivered "
-                                 f"(no live ACP turn) — {body[:60]!r}")
                     elif mtype == "check_inbox":
                         # Mark it due; the POLL thread does the read. Same split
                         # the laptop uses, for the same reason: a `gog` subprocess
