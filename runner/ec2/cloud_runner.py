@@ -410,7 +410,7 @@ def _package_checks() -> None:
     if RUNNER_EXECUTOR == "acp":
         _set_check("packages.acp", *(
             ("ok", "") if _acp_core() is not None
-            else ("fail", "canopy_acp did not import: turns fall back to claude -p and cannot be steered or stopped")))
+            else ("fail", "canopy_acp did not import: turns fall back to claude -p and cannot be stopped")))
 
 
 def _credential_check() -> None:
@@ -1042,7 +1042,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     try:
         agent = core.AcpAgent(cwd=workdir, env=_agent_env(agent_slug), on_update=on_update)
         agent.start()
-        # Reachable by the WS thread from here on — see `steer_turn`.
+        # Reachable by the WS thread from here on — see `stop_turn`.
         _acp_register(turn_id, agent)
         session_id = ""
         if resume_session_id and _resume_target_exists(workdir, resume_session_id):
@@ -1089,7 +1089,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc}")
         return False, f"runner error (acp): {exc}", (agent.session_id if agent else "")
     finally:
-        # Unregister BEFORE close: a steer that arrives in the gap would
+        # Unregister BEFORE close: a stop/cancel that arrives in the gap would
         # otherwise reach a closed connection and raise inside the WS thread.
         _acp_unregister(turn_id)
         if agent is not None:

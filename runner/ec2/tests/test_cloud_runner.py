@@ -1792,12 +1792,8 @@ def test_a_missing_node_degrades_without_attempting_npm(cloud_runner, monkeypatc
 # one live-turn control that remains.
 
 class _FakeAgent:
-    def __init__(self, fail=False):
-        self.prompts, self.cancels, self.fail = [], 0, fail
-    def prompt(self, text):
-        if self.fail:
-            raise RuntimeError("connection is closed")
-        self.prompts.append(text)
+    def __init__(self):
+        self.cancels = 0
     def cancel(self):
         self.cancels += 1
 
@@ -1815,7 +1811,7 @@ def test_stop_cancels_the_live_session(cloud_runner):
 
 
 def test_the_turn_unregisters_before_the_connection_closes(cloud_runner):
-    """Order matters: a steer arriving in the gap would reach a closed
+    """Order matters: a stop/cancel arriving in the gap would reach a closed
     connection and raise inside the WS thread."""
     import re
     src = (pathlib.Path(cloud_runner.__file__).read_text()

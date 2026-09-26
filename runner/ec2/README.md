@@ -126,7 +126,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `code_clone` | the runner's own clone (`RUNNER_SRC_DIR`, default `/opt/canopy-runner/src`) could not be synced to origin/main |
 | `packages.transcripts` | `canopy_transcript` did not import — chat sessions write no durable rows |
 | `packages.inbox` | `canopy_runner` did not import — the box reads no mail; the Gmail doorbell does nothing |
-| `packages.acp` | (`RUNNER_EXECUTOR=acp` only) `canopy_acp` did not import — no steer/stop, turns fall back to `claude -p` |
+| `packages.acp` | (`RUNNER_EXECUTOR=acp` only) `canopy_acp` did not import — no stop, turns fall back to `claude -p` |
 | `bootstrap` | `bootstrap_agents.sh` exited non-zero or did not run |
 | `claude.credentials` | 0 credentials (fail) or 1 (warn: a usage cap stops every agent here) |
 | `claude.version` | `claude --version` does not run |
