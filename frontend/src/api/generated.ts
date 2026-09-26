@@ -5392,40 +5392,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/session-secrets/{transcript_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Secrets shared with the chat this session is bound to (names only) */
-        readonly get: operations["apps_canopy_sessions_secrets_api_list_for_session"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/session-secrets/{transcript_id}/{name}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** PLAINTEXT — for `canopy secret exec` inside the bound session only */
-        readonly get: operations["apps_canopy_sessions_secrets_api_value_for_session"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/contacts/": {
         readonly parameters: {
             readonly query?: never;
@@ -20853,51 +20819,6 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly name: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SessionSecretValueOut"];
-                };
-            };
-        };
-    };
-    readonly apps_canopy_sessions_secrets_api_list_for_session: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly transcript_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["SessionSecretOut"][];
-                };
-            };
-        };
-    };
-    readonly apps_canopy_sessions_secrets_api_value_for_session: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly transcript_id: string;
                 readonly name: string;
             };
             readonly cookie?: never;

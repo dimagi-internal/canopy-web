@@ -15,13 +15,13 @@ only once (by turn three the agent is reasoning about a page the user has left).
 A tool inverts all three: the agent asks when it needs to know, and gets the
 current view. "Close the ones I'm looking at" is answerable on turn nine.
 
-**Two ways of asking, because there are two kinds of caller.** A PAT names a
-USER, and the question is "which of this person's open pages" — several, if they
-have tabs. A confined caller token names a CONVERSATION, and the question is
-"this screen"; that path exists because a widget's visitor is a contact with no
-canopy account, so the user-scoped predicate matches nothing and the page a host
-declared for that very conversation was invisible to the agent it was declared
-for. The conversation-scoped answer is the narrower of the two.
+**Three ways of asking, one per kind of caller, narrowest first.** A session
+driving a chat presents that chat's KEY (`X-Canopy-Chat-Key`) and gets that
+chat's page — this is how an agent sees the screen of the person it is talking
+to. A confined caller token names its own CONVERSATION and gets that. Anything
+else is a USER asking about their own open tabs — several, if they have more
+than one. An agent's login alone is the third case and matches nothing: it is
+in every chat the agent is in, so it cannot say which screen is meant.
 
 **It returns a selection, not data.** The state names which rows are on screen
 and which tool resolves them; the agent then calls THAT tool, so the rows arrive
