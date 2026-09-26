@@ -148,7 +148,7 @@ export function AgentAccessRoster({ agentSlug, canManage }: { agentSlug: string;
       <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-foreground-secondary">
         <span className="font-medium text-foreground">Outside the workspace: </span>
         {!data.interface_published ? (
-          <>no caller rules are published, so anyone who reaches this agent gets the whole agent.</>
+          <>no one — no caller rules are published, so only workspace members can reach this agent.</>
         ) : data.outsiders.length === 0 ? (
           <>no one — the published caller rules name only workspace members.</>
         ) : (

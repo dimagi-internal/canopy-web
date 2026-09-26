@@ -18,6 +18,11 @@ from apps.harness import services
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+from apps.harness import initiator as _initiator
+
+# Queued by canopy itself: these tests are about the queue, not about who asked.
+_BY_CANOPY = _initiator.system(via="test")
+
 pytestmark = pytest.mark.django_db
 
 
@@ -35,7 +40,7 @@ def _ctx(*, agents=(), projects=(), sessions=False, online=True):
 
 
 def _project_turn(ws, project, key="k1", *, aged=True):
-    t = services.enqueue_turn(
+    t = services.enqueue_turn(initiator=_BY_CANOPY, 
         project=project, workspace=ws, origin=Turn.ORIGIN_API,
         idempotency_key=key, prompt="Go",
     )[0]
@@ -71,7 +76,7 @@ def test_silent_when_the_runner_declares_the_repo():
 def test_flags_an_agent_turn_no_runner_declares():
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     other = Agent.objects.create(slug="ghost", name="Ghost", workspace=ws)
-    _age(services.enqueue_turn(agent=other, origin=Turn.ORIGIN_API, idempotency_key="k2", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=other, origin=Turn.ORIGIN_API, idempotency_key="k2", prompt="hi")[0])
     rows = services.unclaimable_queued_turns(user)
     assert [r["target"] for r in rows] == ["agent ghost"]
 
@@ -96,7 +101,7 @@ def test_session_turns_need_a_session_capable_runner():
     from apps.canopy_sessions.models import Session
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"], sessions=False)
     s = Session.objects.create(workspace=ws, created_by=user, title="chat")
-    _age(services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="k3", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="k3", prompt="hi")[0])
     assert [r["target"] for r in services.unclaimable_queued_turns(user)] == ["session"]
 
     Runner.objects.update(capabilities={"agents": [], "projects": [], "sessions": True})
@@ -158,7 +163,7 @@ def test_capabilities_without_assignment_reports_CONFIG():
 
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
-    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka1", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka1", prompt="hi")[0])
     rows = services.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["config"]
     assert "is assigned the agent 'ace'" in rows[0]["reason"]
@@ -171,7 +176,7 @@ def test_assignment_with_offline_runner_reports_OFFLINE():
     user, ws = _ctx(agents=[], projects=[], online=False)
     ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
     RunnerAssignment.objects.create(agent=ace, runner=Runner.objects.get(), rank=0)
-    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka2", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka2", prompt="hi")[0])
     rows = services.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["offline"]
 
@@ -204,7 +209,7 @@ def test_teammates_runner_counts_even_if_caller_paired_none():
     )
     ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
     RunnerAssignment.objects.create(agent=ace, runner=runner, rank=0)
-    _age(services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="kteam", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="kteam", prompt="hi")[0])
 
     rows = services.unclaimable_queued_turns(user2)
     assert [r["kind"] for r in rows] == ["offline"]
@@ -220,7 +225,7 @@ def test_genuinely_no_runner_in_the_tenant_still_reports_CONFIG():
     ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     ghost = _Agent.objects.create(slug="ghost2", name="Ghost2", workspace=ws)
-    _age(services.enqueue_turn(agent=ghost, origin=Turn.ORIGIN_API, idempotency_key="ksolo", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ghost, origin=Turn.ORIGIN_API, idempotency_key="ksolo", prompt="hi")[0])
 
     rows = services.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["config"]

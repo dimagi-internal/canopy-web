@@ -15,6 +15,9 @@ from django.utils import timezone
 from apps.canopy_sessions.models import Session
 from apps.harness import services as harness
 from apps.harness.models import Turn
+from apps.agents.models import Agent
+from apps.agents.testing import admit_contacts
+from apps.harness import initiator as who
 from tests.test_contact_websocket import _contact_token, _world
 
 pytestmark = pytest.mark.django_db
@@ -30,6 +33,7 @@ def _clean_cache():
 @pytest.fixture()
 def w():
     owner, ws, app, priv = _world()
+    admit_contacts(Agent.objects.get(slug="echo"))
     me = Client(HTTP_AUTHORIZATION=f"Bearer {_contact_token(priv, sub='neal')}")
     other = Client(HTTP_AUTHORIZATION=f"Bearer {_contact_token(priv, sub='someone-else')}")
     sid = me.post("/api/contact/sessions", {"agent_slug": "echo", "metadata": {"opp_slug": "bednets"}},
@@ -63,8 +67,9 @@ def test_reading_a_turn_and_its_transcript(w):
 
 def test_stop_cancels_my_unfinished_turns(w):
     Turn.objects.filter(chat_session_id=w["sid"]).delete()
-    t, _ = harness.enqueue_turn(session=Session.objects.get(pk=w["sid"]), origin=Turn.ORIGIN_API,
-                                idempotency_key="q1", prompt="x")
+    s = Session.objects.get(pk=w["sid"])
+    t, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="q1", prompt="x",
+                                initiator=who.for_contact(s.contact, via="api"))
     r = w["me"].post(f"/api/contact/sessions/{w['sid']}/stop")
     assert r.status_code == 200 and r.json()["cancelled"]
     t.refresh_from_db()
@@ -73,7 +78,8 @@ def test_stop_cancels_my_unfinished_turns(w):
 
 def test_what_no_runner_can_take_is_mine_only(w):
     s = Session.objects.get(pk=w["sid"])
-    t, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="stuck", prompt="x")
+    t, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="stuck", prompt="x",
+                                initiator=who.for_contact(s.contact, via="api"))
     Turn.objects.filter(pk=t.pk).update(created_at=timezone.now() - timedelta(hours=1))
     theirs = Session.objects.create(workspace=w["ws"], title="not mine")
     t2, _ = harness.enqueue_turn(session=theirs, origin=Turn.ORIGIN_API, idempotency_key="other", prompt="x")
