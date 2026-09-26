@@ -6,9 +6,8 @@ issued when its runner claimed the chat's turn (`X-Canopy-Chat-Key`, see
 `models.ChatKey`) — the `/key` routes. There is no route that takes a chat id:
 a key reaches the secrets of the chat it was issued for and no other.
 
-The `/{transcript_id}` routes are the old way — the caller had to be the chat's
-agent login AND name the chat's Claude session id — kept for one release so a
-session started before its runner updated still works. Delete them next.
+(The old `/{transcript_id}` routes — the caller had to be the chat's agent login
+AND name the chat's Claude session id — were removed 2026-09-26.)
 
 Bearer only. Anyone refused gets the same 404 as "nothing here", so the answer
 never says whether a chat exists or which check failed.
@@ -25,15 +24,6 @@ from . import secrets
 from .schemas import SessionSecretOut, SessionSecretValueOut
 
 router = Router(auth=session_auth, tags=["chat"])
-
-
-def _session(request: HttpRequest, transcript_id: str):
-    if not request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
-        raise HttpError(403, "chat secrets are given only to a bearer token, never a browser session")
-    session = secrets.session_for_caller(request.user, transcript_id)
-    if session is None:
-        raise HttpError(404, "no chat is bound to this session for you")
-    return session
 
 
 def _keyed(request: HttpRequest):
@@ -58,7 +48,6 @@ def _out(row) -> dict:
     }
 
 
-# Registered BEFORE `/{transcript_id}`, which would otherwise swallow "key".
 @router.get("/key", response=list[SessionSecretOut],
             summary="Secrets shared with the chat this key was issued for (names only)")
 def list_for_key(request: HttpRequest):
@@ -69,22 +58,6 @@ def list_for_key(request: HttpRequest):
             summary="PLAINTEXT — for `canopy secret exec` in the session holding this chat's key")
 def value_for_key(request: HttpRequest, name: str):
     value = secrets.resolve_secret(_keyed(request), name, user=request.user)
-    if value is None:
-        raise HttpError(404, "no such secret")
-    return {"name": name, "value": value}
-
-
-@router.get("/{transcript_id}", response=list[SessionSecretOut],
-            summary="Secrets shared with the chat this session is bound to (names only)")
-def list_for_session(request: HttpRequest, transcript_id: str):
-    return [_out(r) for r in secrets.live_secrets(_session(request, transcript_id))]
-
-
-@router.get("/{transcript_id}/{name}", response=SessionSecretValueOut,
-            summary="PLAINTEXT — for `canopy secret exec` inside the bound session only")
-def value_for_session(request: HttpRequest, transcript_id: str, name: str):
-    session = _session(request, transcript_id)
-    value = secrets.resolve_secret(session, name, user=request.user)
     if value is None:
         raise HttpError(404, "no such secret")
     return {"name": name, "value": value}

@@ -16,18 +16,16 @@ The rules, each load-bearing:
   agent, or the same agent in another chat, holds a different key and gets a
   404 (Jonathan, 2026-09-25: "only accessible to this session").
 
-  The older path below — the caller must be the chat's agent login
-  (`Agent.user`) or a writer, AND name the chat's Claude session id — stays for
-  one release so sessions started before their runner learned to leave a key
-  keep working. It is an inference from two indirect facts (a login shared by
-  every turn of that agent, and an id that can be found rather than given),
-  which is why the key replaced it (2026-09-26). Delete it next.
+  It replaced (2026-09-26) an inference from two indirect facts — the caller
+  was the chat's agent login (`Agent.user`, shared by every turn of that agent)
+  and named the chat's Claude session id (a value that can be found rather than
+  given).
 * **Plaintext only to a bearer.** A cookie is refused even for the sharer.
 * **Thirty minutes.** A hand-off, not a store — see `TTL`.
 
 Honest limit: processes of one OS user can read each other's files, so this
-cannot stop a hostile local process that goes looking for another session's id
-and the agent's token. What it stops is every ordinary path by which a secret
+cannot stop a hostile local process that goes looking for another chat's key
+file. What it stops is every ordinary path by which a secret
 meant for this conversation reaches a different one.
 """
 from __future__ import annotations
@@ -39,8 +37,7 @@ from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
 
-from . import access
-from .models import RunnerBinding, Session, SessionSecret
+from .models import Session, SessionSecret
 
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 VALUE_MAX = 16_384
@@ -86,30 +83,6 @@ def set_secret(session: Session, name: str, value: str, *, user=None) -> Session
         },
     )
     return row
-
-
-def session_for_caller(user, transcript_id: str) -> Session | None:
-    """The chat whose bound conversation IS `transcript_id`, if `user` may act for it.
-
-    None — never an error that says which half failed — when no chat is bound to
-    that conversation, or the caller is neither the chat's agent nor a writer.
-    """
-    transcript_id = (transcript_id or "").strip()
-    if not transcript_id or not getattr(user, "is_authenticated", False):
-        return None
-    binding = (
-        RunnerBinding.objects.filter(transcript_id=transcript_id)
-        .select_related("session", "session__agent")
-        .order_by("-updated_at")
-        .first()
-    )
-    session = binding.session if binding is not None else None
-    if session is None:
-        return None
-    agent_user_id = getattr(getattr(session, "agent", None), "user_id", None)
-    if agent_user_id is not None and agent_user_id == user.pk:
-        return session
-    return session if access.can_write(user, session) else None
 
 
 def live_secrets(session: Session):

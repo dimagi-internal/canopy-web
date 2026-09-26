@@ -552,9 +552,9 @@ def detach(request: HttpRequest, session_id: str) -> dict:
 #
 # Nothing here widens the boundary: the prefix is unchanged, the session is
 # resolved by the same `_session_or_404`, and page state is strictly less
-# sensitive than the message history a contact can already read. The agent's own
-# read is unaffected — `page_visible_q` matches a contact's session through its
-# AGENT leg, since such a session deliberately has no `created_by`.
+# sensitive than the message history a contact can already read. The agent reads
+# it with the chat's key (canopy_sessions.ChatKey), which does not depend on who
+# created the session — a contact's deliberately has no `created_by`.
 
 
 @contact_router.put("/sessions/{session_id}/page-state", response=PageStateOut,

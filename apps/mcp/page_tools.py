@@ -55,11 +55,10 @@ def _attached_sessions(user):
     "the pages this caller can reach". Ordered newest-first so the most recent
     attachment wins a name collision.
 
-    The predicate is `page_access.page_visible_q`, not `created_by=user`. That
-    older filter was right for a human asking about their own tabs and wrong for
-    the only case that happens in production: the AGENT is the caller, holding
-    its own PAT, while the session was created by the human it is talking to —
-    so it matched nothing and the agent silently had no page tools at all.
+    This is the USER path: a person's own tabs (`page_access.page_visible_q`).
+    An agent's session reaches the page of the chat it is driving through that
+    chat's key instead (`_list_tools` checks it first) — its login alone is in
+    every chat the agent is in, so it matches nothing here.
     """
     from apps.canopy_sessions.page_access import sessions_with_page_for
 

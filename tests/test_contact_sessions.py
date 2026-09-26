@@ -241,8 +241,8 @@ def test_the_contact_routes_refuse_a_request_with_no_token_at_all():
 # --- the page the contact is looking at ---------------------------------------
 # A contact could hold a conversation but never say what was on their screen,
 # because neither declaration route existed under `/api/contact/`. The agent's
-# own read was never the obstacle: `page_visible_q` matches a contact's session
-# through its AGENT leg, since such a session has no `created_by`.
+# own read was never the obstacle: the session driving the chat reads its page
+# with the chat's key, which does not depend on who created the session.
 
 
 def _started(c, hdr):
@@ -270,22 +270,27 @@ def test_a_contact_declares_what_they_are_looking_at():
 
 def test_the_agent_can_read_a_contacts_page():
     """The point of the whole feature: the panel is useless if the declaration
-    lands somewhere the agent cannot see."""
-    from apps.canopy_sessions.page_access import sessions_with_page_for
+    lands somewhere the agent cannot see. The agent reads it through the chat
+    key canopy issues the session driving this chat."""
+    from unittest import mock
 
-    _owner, _ws, _app, priv, offered, _private = _world()
-    agent_user = User.objects.create_user("echo-bot", "echo@dimagi-ai.com", "pw")
-    offered.user = agent_user
-    offered.save(update_fields=["user"])
+    from apps.canopy_sessions import chat_keys
+    from apps.canopy_sessions.models import Session
+    from apps.mcp.tools.page import _page_of_chat
 
+    _owner, _ws, _app, priv, _offered, _private = _world()
     c, hdr = Client(), _contact_headers(priv)
     sid = _started(c, hdr)
     c.put(f"/api/contact/sessions/{sid}/page-state",
           data={"state": {"resource": "labs-marketplace://orgs"}},
           content_type="application/json", **hdr)
 
-    seen = list(sessions_with_page_for(agent_user))
-    assert [str(s.id) for s in seen] == [sid]
+    key = chat_keys.mint(Session.objects.get(pk=sid))
+    with mock.patch("apps.mcp.chat_scope.get_http_headers",
+                    return_value={chat_keys.HEADER.lower(): key}):
+        pages = _page_of_chat()
+    assert [p["session_id"] for p in pages] == [sid]
+    assert pages[0]["state"]["resource"] == "labs-marketplace://orgs"
 
 
 def test_one_contact_cannot_declare_a_page_on_anothers_session():
