@@ -185,6 +185,33 @@ resolve_roster() {  # -> comma-joined slugs; registry first, AGENT_SLUGS offline
   printf '%s\n' "${slugs:-${AGENT_SLUGS:-}}"
 }
 
+# THIS instance's mailbox (canopy-web `Agent.email`) — or nothing. Never the
+# slug or the repo: every instance of an agent shares its repo, so either would
+# point two instances at one inbox (canopy-web#984). Read once from the agent
+# list and cached, like the registry above; unreachable means "none known".
+agent_mailbox() {  # slug -> mailbox, or empty
+  local slug="$1"
+  if [[ -z "${_MAILBOXES_READ:-}" ]]; then
+    _MAILBOXES_READ=1
+    _MAILBOXES_CACHE=""
+    local base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+    if [[ -n "$base" && -n "$tok" ]]; then
+      _MAILBOXES_CACHE="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/?limit=200" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+for a in (d.get("items") if isinstance(d, dict) else d) or []:
+    if (a or {}).get("slug") and (a or {}).get("email"):
+        print("%s\t%s" % (a["slug"], a["email"]))
+' 2>/dev/null)" || _MAILBOXES_CACHE=""
+    fi
+  fi
+  printf '%s' "$_MAILBOXES_CACHE" | awk -F'\t' -v s="$slug" '$1==s {print $2; exit}'
+}
+
 agent_repo_url() {  # slug -> clone url; registry pointer, else the org convention
   local slug="$1" reg url
   reg="$(agent_registry)"
@@ -491,9 +518,9 @@ if v:
 # Agent-<Slug> and nothing else by design, so it cannot reach the shared gog
 # OAuth clients — see ensure_client_creds. All four are blank-safe; a
 # deployment that serves none behaves exactly as it did before this existed.
-agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>\x1f<github-token>"
+agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>\x1f<github-token>\x1f<mailbox>"
   local slug="$1" base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
-  [[ -n "$base" && -n "$tok" ]] || { printf '\x1f\x1f\x1f\x1f\n'; return 0; }
+  [[ -n "$base" && -n "$tok" ]] || { printf '\x1f\x1f\x1f\x1f\x1f\n'; return 0; }
   local body
   # A control plane we could not ASK is not the same as an agent nobody has
   # registered, and since there is no fallback the difference decides what a
@@ -501,7 +528,7 @@ agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<sh
   if ! body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
           "${base%/}/api/agents/${slug}/credentials/resolve" 2>/dev/null)"; then
     warn "$slug: could not reach canopy-web for its vault config — treating as unregistered this pass"
-    printf '\x1f\x1f\x1f\x1f\n'; return 0
+    printf '\x1f\x1f\x1f\x1f\x1f\n'; return 0
   fi
   BODY="$body" python3 -c '
 import json, os
@@ -514,10 +541,10 @@ except Exception:
 # key in the agent slots, which is a cross-level fallback carrying the wrong
 # tier credential. Seen on cloud-ec2-1 2026-09-22 as
 # "op inject from Canopy-Shared failed: Agent-Hal isnt a vault in this account".
-print("%s\x1f%s\x1f%s\x1f%s\x1f%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
+print("%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s" % (d.get("op_vault") or "", d.get("op_sa_token") or "",
                                d.get("shared_op_vault") or "", d.get("shared_op_sa_token") or "",
-                               d.get("github_token") or ""))
-' 2>/dev/null || printf '\x1f\x1f\x1f\x1f\n'
+                               d.get("github_token") or "", d.get("mailbox") or ""))
+' 2>/dev/null || printf '\x1f\x1f\x1f\x1f\x1f\n'
 }
 
 FAILED_AGENTS=()
@@ -645,8 +672,10 @@ step2_gog_config() {
   local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
   local pairs=()
   for slug in "${slugs[@]}"; do
-    local client="${GOG_CLIENT[$slug]:-$slug}"
-    pairs+=("${slug}@dimagi-ai.com=${client}")
+    local client="${GOG_CLIENT[$slug]:-$slug}" mailbox
+    mailbox="$(agent_mailbox "$slug")"
+    [[ -n "$mailbox" ]] || continue   # no mailbox recorded for this instance
+    pairs+=("${mailbox}=${client}")
   done
   python3 - "$cfg" "${pairs[@]}" <<'PY'
 import json, sys
@@ -1047,7 +1076,6 @@ bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
   local client="${GOG_CLIENT[$slug]:-$slug}"
-  local account="${slug}@dimagi-ai.com"
   # WHERE this agent's secrets live and WHICH key reads them — from canopy-web,
   # the custodian of both, and from nowhere else. Two levels, each with its own
   # key, and neither substitutes for the other:
@@ -1057,9 +1085,15 @@ bootstrap_one_agent() {
   # the box-wide key, so an agent nobody had registered looked configured, and
   # "which identity read this secret" had no answer. Unregistered now says so,
   # here and in the readiness report.
-  local vault op_token shared_vault shared_token github_token cfg
+  local vault op_token shared_vault shared_token github_token account cfg
   cfg="$(agent_vault_config "$slug")"
-  IFS=$'\x1f' read -r vault op_token shared_vault shared_token github_token <<<"$cfg"
+  IFS=$'\x1f' read -r vault op_token shared_vault shared_token github_token account <<<"$cfg"
+  # THIS instance's mailbox, from canopy-web (Agent.email) — never derived from
+  # the slug or the repo, which would point two instances of one agent at one
+  # inbox (canopy-web#984). None recorded means no Gmail set up for it.
+  if [[ -z "$account" ]]; then
+    warn "$slug: canopy-web records no mailbox for this instance — skipping its Gmail setup (set the agent's canopy user or email)"
+  fi
   if [[ -n "$github_token" ]]; then
     ok "$slug: GitHub token lent by its owner (from canopy-web)"
   else
@@ -1083,9 +1117,11 @@ bootstrap_one_agent() {
   # none of it is needed to materialize a credential.
   if (( CREDENTIALS_ONLY )); then
     ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token" "$op_token"
-    refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
-    verify_mailbox "$slug" "$account" "$client"
-    verify_turn_client "$slug" "$account"
+    if [[ -n "$account" ]]; then
+      refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
+      verify_mailbox "$slug" "$account" "$client"
+      verify_turn_client "$slug" "$account"
+    fi
     report_bootstrap "$slug"
     READY_AGENTS+=("$slug")
     return
@@ -1115,9 +1151,11 @@ bootstrap_one_agent() {
   # has not been fetched yet; the call is repeated after the import below.
   ensure_client_creds "$client" "$vault" "$slug" "$shared_vault" "$shared_token" "$op_token"
 
-  refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
-  verify_mailbox "$slug" "$account" "$client"
-  verify_turn_client "$slug" "$account"
+  if [[ -n "$account" ]]; then
+    refresh_gmail_token "$slug" "$account" "$client" "$vault" "$shared_vault" "$shared_token" "$op_token"
+    verify_mailbox "$slug" "$account" "$client"
+    verify_turn_client "$slug" "$account"
+  fi
 
   report_bootstrap "$slug"
   READY_AGENTS+=("$slug")

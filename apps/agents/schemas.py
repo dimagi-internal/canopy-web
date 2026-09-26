@@ -772,6 +772,12 @@ class AgentCredentialsResolveOut(StrictModel):
     # its own, bound to the turn it claimed
     # (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
     github_token: str = ""
+    # THIS instance's mailbox (`Agent.email`), which the box sets Gmail up for.
+    # Not a secret; it rides here because bootstrap already asks this route per
+    # agent. It is the instance's, never the repo's — every instance of an
+    # agent shares its repo, and deriving the address from the repo or the slug
+    # would point two instances at one inbox (canopy-web#984).
+    mailbox: str = ""
 
 
 class BootstrapReportIn(StrictModel):

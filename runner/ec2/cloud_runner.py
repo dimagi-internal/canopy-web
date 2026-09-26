@@ -2892,28 +2892,58 @@ class _InboxClient:
         return {**(payload or {}), "_created": status == 201}
 
 
-def _agent_mailboxes() -> dict:
-    """{agent_slug: {"account": ..., "client": ...}} from the agent clones.
+#: slug -> (fetched_at, the INSTANCE's mailbox per canopy-web, "" for none).
+_INSTANCE_MAILBOX: dict = {}
+_INSTANCE_MAILBOX_TTL_SECONDS = 600
 
-    `/api/inbound/runner-mailboxes` deliberately serves only address + topic —
-    "the runner intersects this with the mailboxes it actually holds credentials
-    for". On this box that intersection IS the clone: bootstrap provisions gog
-    per agent, and each repo's config/agent.json names its mailbox and the gog
-    client its turns DECLARE. That client is intent, not fact — see
-    `_resolve_mailbox_clients`, which replaces it with the one whose token
-    actually authenticates before anything is read.
+
+def _instance_mailbox(slug: str) -> str:
+    """The mailbox canopy-web records for THIS instance of the agent
+    (`Agent.email`), or "" when it records none. Cached briefly; on a failed
+    lookup the last known answer is kept rather than dropping a live inbox."""
+    now = time.time()
+    hit = _INSTANCE_MAILBOX.get(slug)
+    if hit and now - hit[0] < _INSTANCE_MAILBOX_TTL_SECONDS:
+        return hit[1]
+    status, body = _api("GET", f"/{slug}/", prefix="/api/agents")
+    if status != 200 or not isinstance(body, dict):
+        return hit[1] if hit else ""
+    mailbox = str(body.get("email") or "").strip()
+    _INSTANCE_MAILBOX[slug] = (now, mailbox)
+    return mailbox
+
+
+def _agent_mailboxes() -> dict:
+    """{agent_slug: {"account": ..., "client": ...}} for the agents this box runs.
+
+    THE MAILBOX IS THE INSTANCE'S, from canopy-web (`Agent.email`) — never the
+    repo's. An agent's repo is its DEFINITION, shared by every instance of it
+    (apps/agents/definition.py), so its `config/agent.json` names the same
+    address for all of them: two ACE instances on two boxes would both poll
+    ace@ and enqueue its mail as their own turns (canopy-web#984). An instance
+    with no mailbox recorded in canopy is not polled at all, rather than
+    inheriting the definition's.
+
+    The gog CLIENT still comes from the clone: that is the definition's intent
+    (which OAuth app its turns present), and `_resolve_mailbox_clients` replaces
+    it with the one whose token actually authenticates before anything is read.
     """
     boxes: dict = {}
     for slug in [s.strip() for s in AGENT_SLUGS.split(",") if s.strip()]:
         cfg = pathlib.Path(AGENT_ROOT) / slug / "config" / "agent.json"
         try:
             data = json.loads(cfg.read_text())
-        except Exception:  # noqa: BLE001 — an agent without one simply has no mailbox
+        except Exception:  # noqa: BLE001 — no clone yet: nothing provisioned to read with
             continue
-        account = (data.get("email") or "").strip()
-        client = (data.get("gog_client") or "").strip()
-        if account and client:
-            boxes[slug] = {"account": account, "client": client}
+        account = _instance_mailbox(slug)
+        if not account:
+            continue
+        declared = (data.get("email") or "").strip()
+        if declared and declared.lower() != account.lower():
+            _log(f"inbox {slug}: its repo names {declared}, but this instance's mailbox in "
+                 f"canopy-web is {account} — polling {account}")
+        client = (data.get("gog_client") or "").strip() or slug
+        boxes[slug] = {"account": account, "client": client}
     return boxes
 
 
