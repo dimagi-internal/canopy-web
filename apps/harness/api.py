@@ -563,7 +563,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
             status, detail = "warn", f"token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
         else:
             status, detail = "ok", f"acts as @{st['login']}" + (
-                f", can open pull requests on {st['repo']}" if st["repo"] else "")
+                f", can push and open pull requests on {st['repo']}" if st["repo"] else "")
         out.append({"agent_slug": agent.slug, "status": status, "detail": detail,
                     "login": st.get("login", ""), "expires_at": st.get("expires_at")})
     return out
@@ -1841,9 +1841,9 @@ def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/drills/{drill_id}/report", response=RunnerDrillOut)
-def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn):
-    """The drilled agent's callback, accepted from the drilled agent's own login
-    or from the runner's owner."""
+def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn, t: str = ""):
+    """The drilled agent's callback: accepted with the run's signed report link
+    (`t`), from the drilled agent's own login, or from the runner's owner."""
     # Two callers, both legitimate. An agent with its own canopy login
     # (`Agent.user`, per-agent PATs) reports AS ITSELF and correctly refuses to
     # borrow the operator's token — gating on the runner owner alone 404'd that
@@ -1853,7 +1853,11 @@ def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn):
     drill = get_object_or_404(
         RunnerDrill.objects.select_related("runner", "agent"), pk=drill_id
     )
-    agent_user_id = drill.agent.user_id
-    if agent_user_id is None or agent_user_id != request.user.id:
-        _runner_or_404(request, drill.runner_id)  # the owner gate; 404 on non-owner
+    # The signed link comes first and is sufficient: it names this one run, so
+    # it lets its holder report that run and nothing else — whichever canopy
+    # login the agent happens to authenticate with.
+    if not services.drill_report_token_ok(drill, t):
+        agent_user_id = drill.agent.user_id
+        if agent_user_id is None or agent_user_id != request.user.id:
+            _runner_or_404(request, drill.runner_id)  # the owner gate; 404 on non-owner
     return services.report_drill(drill, outcome=payload.outcome, summary=payload.summary)

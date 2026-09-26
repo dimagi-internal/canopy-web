@@ -3036,7 +3036,7 @@ def resolve_schedule_nags(schedule_id: int) -> int:
 # docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md.
 # ---------------------------------------------------------------------------
 
-DRILL_PROMPT = """READINESS DRILL — READ-ONLY. You are the agent "{agent_slug}".
+DRILL_PROMPT = """READINESS CHECK — READ-ONLY. You are the agent "{agent_slug}".
 Verify you can operate end-to-end in THIS environment, then report.
 
 1. Confirm your working environment. If your agent repo is not checked out here,
@@ -3087,12 +3087,47 @@ def _drill_github_check(agent) -> str:
     return (
         f"code=$(curl -s -o /dev/null -w '%{{http_code}}' -X POST "
         f"-H \"Authorization: Bearer $GH_TOKEN\" https://api.github.com/repos/{repo}/pulls "
-        f"-d '{{\"title\":\"canopy drill probe\",\"head\":\"canopy-drill-probe/does-not-exist\","
+        f"-d '{{\"title\":\"canopy readiness probe\",\"head\":\"canopy-drill-probe/does-not-exist\","
         f"\"base\":\"main\"}}')\n"
         f"   422 = PASS (can open pull requests on {repo}); 403 = FAIL (token lacks Pull "
         f"requests: write); 404 = FAIL (token cannot see {repo}); empty GH_TOKEN = FAIL "
-        f"(no GitHub identity was issued to this turn)."
+        f"(no GitHub identity was issued to this turn).\n"
+        f"   Then push, the same way — a branch at a commit that cannot exist, so nothing "
+        f"is created:\n"
+        f"   code=$(curl -s -o /dev/null -w '%{{http_code}}' -X POST "
+        f"-H \"Authorization: Bearer $GH_TOKEN\" https://api.github.com/repos/{repo}/git/refs "
+        f"-d '{{\"ref\":\"refs/heads/canopy-drill-probe/does-not-exist\","
+        f"\"sha\":\"0000000000000000000000000000000000000001\"}}')\n"
+        f"   422 = PASS (can push to {repo}); 403 or 404 = FAIL (token lacks Contents: write "
+        f"on {repo})."
     )
+
+
+#: A readiness check's report link carries its own permission: whoever holds
+#: the link may report THAT run's result, and nothing else. The run is named by
+#: (drill id, started_at) because the row is reused per (runner, agent) — an old
+#: link must not be able to answer a newer run.
+_DRILL_REPORT_SALT = "harness.drill-report"
+_DRILL_REPORT_MAX_AGE = 2 * 24 * 3600
+
+
+def drill_report_token(drill: RunnerDrill) -> str:
+    from django.core import signing
+
+    return signing.dumps({"d": drill.pk, "s": drill.started_at.isoformat()},
+                         salt=_DRILL_REPORT_SALT)
+
+
+def drill_report_token_ok(drill: RunnerDrill, token: str) -> bool:
+    from django.core import signing
+
+    if not token or drill.started_at is None:
+        return False
+    try:
+        body = signing.loads(token, salt=_DRILL_REPORT_SALT, max_age=_DRILL_REPORT_MAX_AGE)
+    except signing.BadSignature:
+        return False
+    return body == {"d": drill.pk, "s": drill.started_at.isoformat()}
 
 
 def _drill_initiator(runner):
@@ -3112,7 +3147,12 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
             defaults={"outcome": RunnerDrill.OUTCOME_PENDING, "summary": "",
                       "finished_at": None, "started_at": timezone.now()},
         )
-        report_url = f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
+        # The link authorizes the report, not the reporter's identity: an agent
+        # reporting as its own canopy login was 404'd whenever that login was
+        # not linked to the agent row (echo/ace/eva, 2026-09-26), and a drill
+        # that cannot report reads exactly like a box that cannot reach canopy.
+        report_url = (f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
+                      f"?t={drill_report_token(drill)}")
         turn, _created = enqueue_turn(
             agent=agent,
             origin=Turn.ORIGIN_API,

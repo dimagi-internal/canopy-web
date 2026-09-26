@@ -41,11 +41,14 @@ EXPIRY = "2026-12-01 10:00:00 UTC"
 
 
 class FakeGitHub:
-    """Answers `/user` and the pull-request probe like GitHub does. `pr` maps a
-    repo to the probe's status code: 422 allowed, 403 no permission, 404 unseen."""
+    """Answers `/user` and the two probes like GitHub does. `pr` / `push` map a
+    repo to a probe's status code: 422 allowed, 403 no permission, 404 unseen.
+    Push defaults to whatever the PR probe says, as it does for a token that
+    has both permissions or neither."""
 
-    def __init__(self, *, login="olive", pr=None, user_status=200, expiry=EXPIRY):
+    def __init__(self, *, login="olive", pr=None, push=None, user_status=200, expiry=EXPIRY):
         self.login, self.pr, self.user_status, self.expiry = login, pr or {}, user_status, expiry
+        self.push = push or {}
         self.probed: list[str] = []
 
     def _resp(self, status, body=None, headers=None):
@@ -59,7 +62,14 @@ class FakeGitHub:
                           {"github-authentication-token-expiration": self.expiry} if self.expiry else {})
 
     def post(self, url, json=None, **_):
-        repo = url.split("/repos/", 1)[1].rsplit("/pulls", 1)[0]
+        path = url.split("/repos/", 1)[1]
+        if path.endswith("/git/refs"):
+            repo = path.rsplit("/git/refs", 1)[0]
+            # A ref at a commit that cannot exist: nothing is ever created.
+            assert json["ref"].startswith("refs/heads/canopy-permission-probe/")
+            assert json["sha"] == "0" * 39 + "1"
+            return self._resp(self.push.get(repo, self.pr.get(repo, 404)))
+        repo = path.rsplit("/pulls", 1)[0]
         self.probed.append(repo)
         assert json["head"].startswith("canopy-permission-probe/")  # never a real branch
         return self._resp(self.pr.get(repo, 404))
@@ -104,7 +114,7 @@ def test_owner_lends_a_working_token_and_it_is_stored_encrypted(agent, owner, gi
     assert decrypt_secret(row.secret_enc) == "github_pat_olive"
     assert row.meta["login"] == "olive"
     assert row.meta["checks"] == [{"repo": "dimagi-internal/echo", "ok": True,
-                                   "detail": "can open pull requests"}]
+                                   "detail": "can push and open pull requests"}]
     assert row.expires_at == dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC)
 
 
@@ -115,6 +125,15 @@ def test_owner_lends_a_working_token_and_it_is_stored_encrypted(agent, owner, gi
 def test_a_token_that_cannot_open_a_pull_request_is_refused_not_stored(agent, owner, github, code, says):
     github.pr["dimagi-internal/echo"] = code
     with pytest.raises(delegations.DelegationError, match=says):
+        _lend(agent, owner, github)
+    assert not AgentDelegation.objects.exists()
+
+
+def test_a_token_that_can_open_prs_but_not_push_is_refused(agent, owner, github):
+    # Pull requests: write without Contents: write — it could never push the
+    # branch the pull request would come from.
+    github.push["dimagi-internal/echo"] = 403
+    with pytest.raises(delegations.DelegationError, match="Contents"):
         _lend(agent, owner, github)
     assert not AgentDelegation.objects.exists()
 

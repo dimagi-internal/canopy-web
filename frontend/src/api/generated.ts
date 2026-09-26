@@ -4580,8 +4580,8 @@ export interface paths {
         readonly put?: never;
         /**
          * Report Drill
-         * @description The drilled agent's callback, accepted from the drilled agent's own login
-         *     or from the runner's owner.
+         * @description The drilled agent's callback: accepted with the run's signed report link
+         *     (`t`), from the drilled agent's own login, or from the runner's owner.
          */
         readonly post: operations["apps_harness_api_report_drill"];
         readonly delete?: never;
@@ -19574,7 +19574,9 @@ export interface operations {
     };
     readonly apps_harness_api_report_drill: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly t?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly drill_id: number;

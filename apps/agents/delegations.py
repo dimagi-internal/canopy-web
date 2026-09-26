@@ -42,6 +42,12 @@ EXPIRY_WARNING = dt.timedelta(days=14)
 #: created) or 403/404 (not allowed). The one GitHub call that answers "may
 #: this token open a pull request here" without opening one.
 _PROBE_HEAD = "canopy-permission-probe/does-not-exist"
+#: The push probe's twin: asking to create a branch at a commit that cannot
+#: exist. GitHub checks Contents: write before it looks for the commit, so 422
+#: = may push (and nothing is created), 403/404 = may not. Verified 2026-09-26:
+#: 422 on a writable repo, 403 on a repo outside a fine-grained token's
+#: selection, 404 on one the person cannot write at all.
+_PROBE_SHA = "0" * 39 + "1"
 _REPO_PATH = re.compile(r"^github\.com/([\w.-]+)/([\w.-]+)$")
 
 
@@ -157,10 +163,42 @@ def probe_pull_request(token: str, repo: str) -> dict:
     return {"repo": repo, "ok": False, "detail": f"GitHub answered {resp.status_code}"}
 
 
+def probe_push(token: str, repo: str) -> dict:
+    """May this token push to `repo`? Creates nothing — see `_PROBE_SHA`."""
+    try:
+        resp = requests.post(
+            f"{GITHUB_API}/repos/{repo}/git/refs",
+            headers=_headers(token),
+            json={"ref": f"refs/heads/{_PROBE_HEAD}", "sha": _PROBE_SHA},
+            timeout=HTTP_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return {"repo": repo, "ok": False, "detail": f"could not reach GitHub: {exc}"}
+    if resp.status_code == 422:
+        return {"repo": repo, "ok": True, "detail": "can push"}
+    if resp.status_code in (403, 404):
+        return {"repo": repo, "ok": False,
+                "detail": "the token cannot push here — it needs Contents: Read and write, "
+                          "and this repo in its repository selection"}
+    return {"repo": repo, "ok": False, "detail": f"GitHub answered {resp.status_code}"}
+
+
+def check_repo(token: str, repo: str) -> dict:
+    """Can this token SHIP to `repo` — push a branch, then open a pull request?
+    One row per repo; the first thing it cannot do is the detail."""
+    pr = probe_pull_request(token, repo)
+    if not pr["ok"]:
+        return pr
+    push = probe_push(token, repo)
+    if not push["ok"]:
+        return push
+    return {"repo": repo, "ok": True, "detail": "can push and open pull requests"}
+
+
 def _meta_for(token: str, agent: Agent) -> dict:
     meta = inspect_github(token)
     repo = agent_repo(agent)
-    meta["checks"] = [probe_pull_request(token, repo)] if repo else []
+    meta["checks"] = [check_repo(token, repo)] if repo else []
     meta["checked_at"] = timezone.now().isoformat()
     return meta
 

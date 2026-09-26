@@ -113,7 +113,7 @@ export function RunnerStatus({
               data-testid={`runner-drill-badge-${r.name}`}
               className={`hidden shrink-0 text-xs sm:inline ${drillBadgeClass(r.drill_rollup)}`}
             >
-              drilled {relative(r.drill_rollup.last_finished_at)} —{' '}
+              checked {relative(r.drill_rollup.last_finished_at)} —{' '}
               {r.drill_rollup.passed}/{r.drill_rollup.passed + r.drill_rollup.failed + r.drill_rollup.pending}
             </span>
           )}
@@ -128,7 +128,7 @@ export function RunnerStatus({
               {r.host && <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>}
               {r.drill_rollup && (
                 <span className={`shrink-0 ${drillBadgeClass(r.drill_rollup)}`}>
-                  drilled {relative(r.drill_rollup.last_finished_at)}
+                  checked {relative(r.drill_rollup.last_finished_at)}
                 </span>
               )}
             </span>
