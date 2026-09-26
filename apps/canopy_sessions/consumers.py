@@ -557,10 +557,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # My own draft, and everyone else's in progress. A contact has no draft
         # and sees every non-empty one as a peer's.
         if self.user is not None:
-            # A read, not draft_for's get-or-create: connecting (a viewer
-            # included) must write nothing. draft_dto(None) is null.
-            own = Draft.objects.filter(
-                session=self.session, author=self.user, slot="next").first()
+            if self.role in _EDIT_ROLES:
+                # An editor gets a row to type into: canopy-ui <= 0.12 sends
+                # `draft.update` only while `active_draft` is non-null, so a
+                # null here would silently stop its live typing.
+                own = drafts.draft_for(self.session, self.user)
+            else:
+                # A viewer cannot type, so connecting must write nothing.
+                own = Draft.objects.filter(
+                    session=self.session, author=self.user, slot="next").first()
             peers = drafts.peer_drafts(self.session, self.user)
         else:
             own = None

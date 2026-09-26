@@ -176,22 +176,27 @@ async def test_snapshot_has_my_draft_and_peer_drafts():
     comm = await _connect(session, owner)
     await comm.connect()
     snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
-    # Connecting writes nothing: no draft of mine yet, so none is created.
-    assert snap["data"]["active_draft"] is None
+    # An editor always gets a draft to type into (old clients need one).
+    assert snap["data"]["active_draft"]["author_id"] == owner.id
+    assert snap["data"]["active_draft"]["body"] == ""
     assert [p["body"] for p in snap["data"]["peer_drafts"]] == ["wip"]
     assert snap["data"]["peer_drafts"][0]["author"]["id"] == teammate.id
     await comm.disconnect()
+
+
+async def test_a_viewer_connecting_writes_no_draft():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    await database_sync_to_async(
+        lambda: SessionParticipant.objects.filter(session=session, user=teammate)
+        .update(role=SessionParticipant.VIEWER))()
+    comm = await _connect(session, teammate)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    assert snap["data"]["active_draft"] is None
+    await comm.disconnect()
     from apps.canopy_sessions.models import Draft
     assert not await database_sync_to_async(
-        Draft.objects.filter(session=session, author=owner).exists)()
-    # Once I have typed, the snapshot carries MY draft.
-    await database_sync_to_async(drafts.update_draft)(session, user=owner, expected_version=0, body="mine")
-    again = await _connect(session, owner)
-    await again.connect()
-    snap = await _recv_match(again, lambda f: f["event"] == "session.state")
-    assert snap["data"]["active_draft"]["author_id"] == owner.id
-    assert snap["data"]["active_draft"]["body"] == "mine"
-    await again.disconnect()
+        Draft.objects.filter(session=session, author=teammate).exists)()
 
 
 async def test_take_over_is_accepted_and_ignored():
