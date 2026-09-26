@@ -1277,13 +1277,23 @@ def queued_messages(session: Session) -> list[dict]:
     harness.turn_status: it is a function of rows that change on their own clock.
     A send leaves the list when the transcript row carrying its turn id lands
     (Message.source_turn_id, parsed from the author marker), or when its turn
-    ends without one (cancelled, failed)."""
-    landed = set(Message.objects.filter(session=session, source_turn_id__isnull=False)
+    ends without one (cancelled, failed).
+
+    Bounded by the NON-TERMINAL turns, never by the session's whole history:
+    this runs on every status transition and every streamed transcript batch,
+    so a long-lived session must not make it scan every Message it has ever
+    landed. `select_related` on the initiator FKs is load-bearing too — dropped,
+    `authorship.for_turn` (called once per turn below) turns back into an N+1."""
+    turns = list(
+        Turn.objects.select_related("initiator_user", "initiator_contact")
+        .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+        .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
+        .order_by("created_at")
+    )
+    if not turns:
+        return []
+    landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
                  .values_list("source_turn_id", flat=True))
-    turns = (Turn.objects.select_related("initiator_user", "initiator_contact")
-             .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
-             .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
-             .order_by("created_at"))
     prefix = f"chat:{session.id.hex}:"
     out = []
     for t in turns:
