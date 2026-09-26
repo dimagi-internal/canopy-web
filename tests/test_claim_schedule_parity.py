@@ -36,6 +36,11 @@ from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+from apps.harness import initiator as _initiator
+
+# Queued by canopy itself: these tests are about the queue, not about who asked.
+_BY_CANOPY = _initiator.system(via="test")
+
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 
@@ -130,7 +135,7 @@ def test_what_a_runner_may_fire_is_exactly_what_it_may_claim(fleet):
     fails here whichever direction it moves."""
     runner = fleet["runner"]
     for agent in fleet["agents"].values():
-        services.enqueue_turn(
+        services.enqueue_turn(initiator=_BY_CANOPY, 
             agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"k-{agent.slug}"
         )
 
@@ -151,7 +156,7 @@ def test_a_second_workspace_of_the_pairer_is_not_lost_to_the_runner_fk(fleet):
     assert runner.workspace_id == "mine"
     assert "elsewhere" in _syncable_agent_slugs(runner)
 
-    services.enqueue_turn(
+    services.enqueue_turn(initiator=_BY_CANOPY, 
         agent=fleet["agents"]["elsewhere"], origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="k1"
     )
     assert _claimable_agent_slugs(runner) == {"elsewhere"}
@@ -167,7 +172,7 @@ def test_an_orphaned_runner_can_neither_fire_nor_claim(fleet):
     runner.paired_by = None
     runner.save(update_fields=["paired_by"])
     for agent in fleet["agents"].values():
-        services.enqueue_turn(
+        services.enqueue_turn(initiator=_BY_CANOPY, 
             agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"o-{agent.slug}"
         )
 
@@ -185,7 +190,7 @@ def test_losing_a_membership_narrows_both_sides_together(fleet):
     assert wsvc.user_workspace_slugs(pairer) == {"mine"}
 
     for agent in fleet["agents"].values():
-        services.enqueue_turn(
+        services.enqueue_turn(initiator=_BY_CANOPY, 
             agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"r-{agent.slug}"
         )
 

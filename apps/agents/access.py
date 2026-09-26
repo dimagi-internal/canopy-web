@@ -92,7 +92,7 @@ def roster(agent) -> list[dict]:
 def outsiders(agent) -> list[dict]:
     """What people OUTSIDE the workspace can reach: every interface rule naming
     a contact or an unidentified caller. Empty when no interface is published,
-    which means an outsider's turn runs in the agent's full profile — the
+    which means an outsider is refused (default deny, 2026-09-26) — the
     caller reports that separately as `interface_published`."""
     iface = agent.interface or {}
     out = []

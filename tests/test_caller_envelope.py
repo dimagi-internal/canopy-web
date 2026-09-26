@@ -23,6 +23,7 @@ from apps.harness import initiator as who
 from apps.harness.models import RunnerAssignment, Turn
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.agents.testing import admit_contacts
 
 pytestmark = pytest.mark.django_db
 
@@ -37,6 +38,7 @@ def ctx():
     ws = Workspace.objects.create(slug="canopy", display_name="Canopy", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="Ace", workspace=ws, owner=owner)
+    admit_contacts(agent)
     return owner, ws, agent
 
 

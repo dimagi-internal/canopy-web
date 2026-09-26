@@ -23,6 +23,7 @@ from apps.harness import caller_context, services
 from apps.harness import turn_mode as modes
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.agents.testing import admit_contacts
 
 pytestmark = pytest.mark.django_db
 
@@ -39,6 +40,7 @@ def fleet(client):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, turn_mode=Agent.MANUAL)
+    admit_contacts(eva)
     now = timezone.now()
     laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,

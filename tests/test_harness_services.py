@@ -11,6 +11,11 @@ from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.testing import a_member, a_workspace
 
+from apps.harness import initiator as _initiator
+
+# Queued by canopy itself: these tests are about the queue, not about who asked.
+_BY_CANOPY = _initiator.system(via="test")
+
 pytestmark = pytest.mark.django_db
 
 
@@ -42,23 +47,23 @@ def _runner(agent=None, **kw):
 
 def test_enqueue_is_idempotent():
     a = _agent()
-    t1, created1 = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    t2, created2 = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t1, created1 = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
+    t2, created2 = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     assert created1 is True and created2 is False and t1.pk == t2.pk
 
 
 def test_enqueue_second_key_queues_behind():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    t2, created = services.enqueue_turn(agent=a, origin="slack", idempotency_key="k2")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
+    t2, created = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="slack", idempotency_key="k2")
     assert created is True and t2.status == Turn.QUEUED
     assert Turn.objects.filter(agent=a).count() == 2
 
 
 def test_claim_serializes_execution_per_agent():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
-    services.enqueue_turn(agent=a, origin="slack", idempotency_key="k2")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="slack", idempotency_key="k2")
     r = _runner(a)
     first = services.claim_next_turn(r)
     assert first is not None
@@ -73,7 +78,7 @@ def test_claim_excludes_paused_agents():
     """Per-agent pause: a paused agent's queued turn is not claimed, but stays QUEUED
     (resumable), and other agents are unaffected."""
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     # echo paused → nothing to claim, and the turn is untouched
     assert services.claim_next_turn(r, exclude_slugs=["echo"]) is None
@@ -85,7 +90,7 @@ def test_claim_excludes_paused_agents():
 
 def test_claim_next_turn_happy_path():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     claimed = services.claim_next_turn(r)
     assert claimed.pk == t.pk
@@ -100,7 +105,7 @@ def test_claim_requires_assignment():
     A runner may declare the agent in capabilities but will claim nothing without
     an explicit RunnerAssignment row."""
     a = _agent("eva")
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     # Runner has eva in capabilities but no RunnerAssignment
     r = _runner(agent=None, capabilities={"agents": ["eva"]})
     assert services.claim_next_turn(r) is None
@@ -113,14 +118,14 @@ def test_claim_requires_assignment():
 
 def test_local_only_never_claimed_by_cloud():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1", routing="local_only")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1", routing="local_only")
     r = _runner(kind=Runner.CLOUD)
     assert services.claim_next_turn(r) is None
 
 
 def test_claim_is_exclusive():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r1, r2 = _runner(a), _runner(a, name="jj-mbp-2")
     first = services.claim_next_turn(r1)
     second = services.claim_next_turn(r2)
@@ -129,7 +134,7 @@ def test_claim_is_exclusive():
 
 def test_expired_lease_goes_lost_and_is_reclaimable():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     t = services.claim_next_turn(r)
     Turn.objects.filter(pk=t.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
@@ -137,13 +142,13 @@ def test_expired_lease_goes_lost_and_is_reclaimable():
     t.refresh_from_db()
     assert t.status == Turn.LOST
     # lost is terminal -> lane free -> a re-enqueue with a new key claims fine
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k2")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k2")
     assert services.claim_next_turn(r) is not None
 
 
 def test_heartbeat_renews_lease_and_status():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     t = services.claim_next_turn(r)
     old_expiry = t.lease_expires_at
@@ -156,7 +161,7 @@ def test_heartbeat_renews_lease_and_status():
 
 def test_degraded_runner_claims_nothing():
     a = _agent()
-    services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner()
     services.heartbeat(r, active_turn_ids=[], degraded=True, note="emdash schema drift")
     assert services.claim_next_turn(r) is None
@@ -164,7 +169,7 @@ def test_degraded_runner_claims_nothing():
 
 def test_append_events_assigns_monotonic_seq():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     n = services.append_events(t, [{"kind": "status", "payload": {"s": "claimed"}}])
     n += services.append_events(t, [{"kind": "status", "payload": {"s": "running"}}])
     assert n == 2
@@ -173,7 +178,7 @@ def test_append_events_assigns_monotonic_seq():
 
 def test_finish_turn_sets_terminal_state():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     claimed = services.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="2 commands applied")
@@ -183,7 +188,7 @@ def test_finish_turn_sets_terminal_state():
 
 def test_finish_turn_does_not_resurrect_lost_turn():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     claimed = services.claim_next_turn(r)
     # simulate a lease sweep declaring the turn lost while the runner is
@@ -203,7 +208,7 @@ def test_finish_turn_does_not_resurrect_lost_turn():
 
 def test_mark_running_does_not_resurrect_lost_turn():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     claimed = services.claim_next_turn(r)
     Turn.objects.filter(pk=claimed.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
@@ -221,14 +226,14 @@ def test_mark_running_does_not_resurrect_lost_turn():
 
 def test_finish_turn_rejects_bad_status():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     with pytest.raises(ValueError):
         services.finish_turn(t, status="queued")
 
 
 def test_finish_turn_idempotent_on_terminal():
     a = _agent()
-    t, _ = services.enqueue_turn(agent=a, origin="board", idempotency_key="k1")
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     claimed = services.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="first")
@@ -252,7 +257,7 @@ def test_finish_turn_idempotent_on_terminal():
 
 def _claimed_turn(origin="email", key="k1", slug="echo"):
     a = _agent(slug)
-    services.enqueue_turn(agent=a, origin=origin, idempotency_key=key)
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=origin, idempotency_key=key)
     r = _runner(a)
     return services.claim_next_turn(r), r
 

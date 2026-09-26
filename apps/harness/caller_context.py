@@ -85,6 +85,13 @@ def relationship_for_user(user, agent) -> str:
         return CALLER
     if agent.owner_id == user.pk:
         return OWNER
+    # The agent's OWN canopy login (`Agent.user`, #983) is the agent itself —
+    # confining it against itself is nonsense. Only its own: another agent's
+    # login stays whatever its membership makes it, or everyone with the whole
+    # of agent A could steer agent B through A (anyone at dimagi.com with full
+    # ACE shipping code through Hal).
+    if agent.user_id is not None and agent.user_id == user.pk:
+        return SYSTEM
     is_admin = getattr(agent, "is_admin", None)
     if callable(is_admin) and is_admin(user):
         return ADMIN
@@ -132,11 +139,12 @@ def build(turn) -> dict:
             "subject": str(ref.get("subject") or "") or None,
         },
         # What the caller invoked and the scope it grants (§4). null means the
-        # agent's FULL profile: its owner, an admin, canopy itself, or an agent
-        # that has published no interface. Otherwise the runner and the agent's
+        # agent's FULL profile: its owner, an admin, canopy itself, or a
+        # member of an agent that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
         "profile": "restricted" if turn.capability else "full",
-        # WHY: owner | admin | system | full:<rule> | capability:<name> | no-interface.
+        # WHY: owner | admin | system | full:<rule> | capability:<name> |
+        # no-interface (a member, with nothing published) | refused.
         # `full:contact@dimagi.com:verified` is canopy granting domain-wide access —
         # what `canopy caller tier` reads instead of an allowlist in the repo.
         "granted_by": _granted_by(turn, agent),

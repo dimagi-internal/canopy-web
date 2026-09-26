@@ -77,6 +77,6 @@ describe('AgentAccessRoster', () => {
   it('says plainly when no caller rules are published', async () => {
     getAgentAccess.mockResolvedValue({ ...ACCESS, interface_published: false, outsiders: [] })
     render(<AgentAccessRoster agentSlug="ace" canManage={false} />)
-    expect(await screen.findByText(/anyone who reaches this agent gets the whole agent/)).toBeTruthy()
+    expect(await screen.findByText(/only workspace members can reach this agent/)).toBeTruthy()
   })
 })

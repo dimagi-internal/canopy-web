@@ -18,6 +18,11 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import a_workspace
 
+from apps.harness import initiator as _initiator
+
+# Queued by canopy itself: these tests are about the queue, not about who asked.
+_BY_CANOPY = _initiator.system(via="test")
+
 pytestmark = pytest.mark.django_db
 
 User = get_user_model()
@@ -84,7 +89,7 @@ def test_pinned_turn_invisible_to_other_runners():
     r2 = _runner("r2", u, capabilities={"agents": ["echo"]})
     RunnerAssignment.objects.create(agent=a, runner=r2, rank=0)
 
-    turn, _ = services.enqueue_turn(
+    turn, _ = services.enqueue_turn(initiator=_BY_CANOPY, 
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="p1", pinned_runner=r1,
     )
 
@@ -107,7 +112,7 @@ def test_pin_bypasses_assignments_but_not_tenancy():
     a = Agent.objects.create(slug="echo", name="Echo", workspace=victim_ws)
     r_stranger = _runner("evil", stranger)
 
-    turn, _ = services.enqueue_turn(
+    turn, _ = services.enqueue_turn(initiator=_BY_CANOPY, 
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="p2", pinned_runner=r_stranger,
     )
 
@@ -125,7 +130,7 @@ def test_rank0_available_blocks_rank1():
     r0, r1 = _online_runner("r0", u), _online_runner("r1", u)
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c1")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c1")
     assert services.claim_next_turn(r1) is None      # r0 is available → r1 waits
     assert services.claim_next_turn(r0) is not None  # r0 claims
 
@@ -136,7 +141,7 @@ def test_rank1_takes_over_when_rank0_offline():
     r1 = _online_runner("r1", u)
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c2")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c2")
     assert services.claim_next_turn(r1) is not None
 
 
@@ -146,7 +151,7 @@ def test_not_ready_counts_as_unavailable():
     r1 = _online_runner("r1", u)
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c3")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c3")
     assert services.claim_next_turn(r1) is not None
 
 
@@ -155,7 +160,7 @@ def test_grace_opens_next_rank_even_when_rank0_available(monkeypatch):
     r0, r1 = _online_runner("r0", u), _online_runner("r1", u)
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
-    turn, _ = services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c4")
+    turn, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c4")
     Turn.objects.filter(pk=turn.pk).update(
         created_at=timezone.now() - timezone.timedelta(seconds=services.CASCADE_GRACE_SECONDS + 1)
     )
@@ -166,7 +171,7 @@ def test_unassigned_runner_never_claims_even_with_capabilities():
     u = _user()
     r = _online_runner("r", u, capabilities={"agents": ["echo"]})
     a = _agent("echo")  # no assignments at all → unroutable
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
     assert services.claim_next_turn(r) is None
 
 
@@ -181,7 +186,7 @@ def test_disabled_rank0_does_not_block_enabled_rank1():
     a = _agent("echo")
     _assign(a, r0, 0, enabled=False)
     _assign(a, r1, 1)
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c6")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c6")
     assert services.claim_next_turn(r0) is None      # disabled → never claims
     claimed = services.claim_next_turn(r1)
     assert claimed is not None and claimed.status == Turn.CLAIMED
@@ -192,7 +197,7 @@ def test_disabled_runner_itself_never_claims():
     r0 = _online_runner("r0", u)
     a = _agent("echo")
     _assign(a, r0, 0, enabled=False)
-    services.enqueue_turn(agent=a, origin=Turn.ORIGIN_API, idempotency_key="c7")
+    services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c7")
     assert services.claim_next_turn(r0) is None
 
 
@@ -216,7 +221,7 @@ def test_bound_session_claims_only_on_binding_holder():
     other = _online_runner("other", u, capabilities={"sessions": True})
     s = _session(workspace=ws, project="canopy-web")
     _bind(s, holder)
-    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s1")
+    services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s1")
     assert services.claim_next_turn(other) is None
     assert services.claim_next_turn(holder) is not None
 
@@ -229,7 +234,7 @@ def test_bound_session_with_offline_holder_waits_for_placement():
     other = _online_runner("other", u, capabilities={"sessions": True})
     s = _session(workspace=ws, project="canopy-web")
     _bind(s, holder)
-    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s2")
+    services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s2")
     assert services.claim_next_turn(other) is None  # nobody claims until user places
 
 
@@ -241,5 +246,5 @@ def test_unbound_agent_session_follows_assignment_order():
     r1 = _online_runner("r1", u, capabilities={"sessions": True})
     _assign(a, r0, 0); _assign(a, r1, 1)
     s = _session(agent=a, workspace=ws)
-    services.enqueue_turn(session=s, origin=Turn.ORIGIN_API, idempotency_key="s3")
+    services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s3")
     assert services.claim_next_turn(r1) is not None  # r0 offline → r1 (rank 1) takes it

@@ -46,11 +46,14 @@ that lies about its resource reaches exactly the tools that owner already decide
 to expose to that page — and it had to be an allowlisted app, framing from a
 registered origin, to open a conversation at all.
 
-**Opt-in per agent.** An agent that has published no interface behaves exactly
-as before: every turn runs in its full profile. Publishing one is what turns
-the caller path on, so an agent is never half-restricted by accident. A
-capability with no `pages` is never selected this way, so an existing interface
-behaves exactly as it did.
+**Default deny.** An agent that has published no interface is reachable by its
+workspace's members (in its full profile, as before) and by nobody else: a
+contact or an unidentified caller is refused. Until 2026-09-26 it ran EVERY
+turn full, which made the enforcement below opt-in — and on that day Hal, with
+no interface, pushed and deployed code for a colleague on Slack who was not a
+member of its workspace. Publishing an interface is how an agent lets anyone
+outside in. A capability with no `pages` is never selected by a page, so an
+existing interface behaves exactly as it did.
 
 Caller classes: `member` (a workspace member who is not an admin), `contact`
 (someone canopy knows who is not a member), `unknown` (nobody established who).
@@ -296,11 +299,26 @@ def full_rule(classes: set[str], iface: dict) -> str | None:
     return None
 
 
+def published(iface: dict) -> bool:
+    """Whether the agent has declared anything. An interface with neither a
+    `full:` rule nor a capability says nothing, and is treated as none."""
+    return bool(iface.get("capabilities") or iface.get("full"))
+
+
+#: Who reaches an agent that has published NO interface: the people canopy
+#: already knows by login and their workspace let in, and canopy itself.
+_TRUSTED_WITHOUT_INTERFACE = frozenset({"owner", "admin", "system", "member"})
+
+
 def capability_for(turn, agent, requested: str | None = None) -> str | None:
     """Which profile this turn runs in: FULL, a capability name, or None (refused).
 
-    FULL when the agent has published no interface (opt-in: nothing changes
-    until it does), and for its owner, admins, and canopy's own turns. A
+    FULL for its owner, admins, and canopy's own turns. With NO published
+    interface, workspace members get FULL too and everyone else — a contact, a
+    stranger — is refused: default deny (2026-09-26). It used to be FULL for
+    everyone, so an agent reachable from Slack or email with no interface ran
+    a colleague-of-nobody's ask with its whole profile, and the enforcement
+    layer only existed for the one agent that had opted in. A
     caller gets the capability they asked for — `requested`, e.g. a tool called
     over MCP — or `ask` by default (every free-form channel), if their class is
     listed for it; otherwise they are refused (`callers_default: none`).
@@ -308,9 +326,9 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
 
     iface = getattr(agent, "interface", None) or {}
-    if not iface.get("capabilities") and not iface.get("full"):
-        return FULL
     rel = relationship(turn, agent)
+    if not published(iface):
+        return FULL if rel in _TRUSTED_WITHOUT_INTERFACE else None
     if rel in (OWNER, ADMIN, SYSTEM):
         return FULL
     classes = caller_classes(turn, rel)
@@ -329,9 +347,9 @@ def granted_by(turn, agent) -> str:
     from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
 
     iface = getattr(agent, "interface", None) or {}
-    if not iface.get("capabilities") and not iface.get("full"):
-        return "no-interface"
     rel = relationship(turn, agent)
+    if not published(iface):
+        return "no-interface" if rel in _TRUSTED_WITHOUT_INTERFACE else "refused"
     if rel in (OWNER, ADMIN, SYSTEM):
         return rel
     rule = full_rule(caller_classes(turn, rel), iface)

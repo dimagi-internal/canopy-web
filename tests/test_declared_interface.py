@@ -82,12 +82,51 @@ def test_parse_normalises():
     assert got["capabilities"]["ask"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
 
-# --- opt-in: nothing changes until an agent publishes ---------------------------------
+# --- no interface: default deny, except the people the workspace let in ------------
 
-def test_without_an_interface_every_turn_is_full(w):
+def test_without_an_interface_a_contact_is_refused(w):
+    # Until 2026-09-26 an agent with no interface ran every turn FULL, so a
+    # stranger on Slack or email drove the whole agent (Hal, via Slack, that day).
     t = _email(w["agent"], "e1")
-    assert t.capability == FULL and t.status == Turn.QUEUED
-    assert caller_context.build(t)["profile"] == "full"
+    assert t.status == Turn.CANCELLED
+    assert "offers nothing" in t.result_note
+    assert caller_context.build(t)["granted_by"] == "refused"
+
+
+def test_without_an_interface_a_member_still_gets_the_whole_agent(w):
+    from apps.workspaces import services as wsvc
+
+    member = User.objects.create_user(username="m", email="m@dimagi.com")
+    wsvc.ensure_member(w["agent"].workspace, member, WorkspaceMembership.EDITOR)
+    t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="m1",
+                                prompt="x", initiator=who.for_user(member, via="api", assurance="pat"))
+    assert t.status == Turn.QUEUED and t.capability == FULL
+    assert caller_context.build(t)["granted_by"] == "no-interface"
+
+
+def test_an_agents_own_login_is_the_agent_itself(w):
+
+    login = User.objects.create_user(username="ace-login", email="ace@dimagi-ai.com")
+    w["agent"].user = login
+    w["agent"].interface = parse(IFACE)       # even with an interface that confines callers
+    w["agent"].save()
+    t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="self",
+                                prompt="x", initiator=who.for_user(login, via="api", assurance="pat"))
+    assert t.capability == FULL
+    assert caller_context.build(t)["relationship"] == "system"
+
+
+def test_another_agents_login_is_not_trusted_through_it(w):
+    # Otherwise anyone with the whole of agent A could steer agent B through A.
+
+    login = User.objects.create_user(username="hal-login", email="hal@dimagi-ai.com")
+    Agent.objects.create(slug="hal", name="Hal", workspace=w["agent"].workspace, user=login)
+    w["agent"].interface = parse(IFACE)
+    w["agent"].save()
+    t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="other",
+                                prompt="x", initiator=who.for_user(login, via="api", assurance="pat"))
+    assert t.status == Turn.CANCELLED   # not the whole of ace — here, nothing at all
+    assert caller_context.build(t)["relationship"] != "system"
 
 
 # --- who gets what ---------------------------------------------------------------------

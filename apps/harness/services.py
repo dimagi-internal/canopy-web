@@ -161,8 +161,8 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
-    FULL for an agent with no published interface, and for its owner, admins
-    and canopy's own turns. A caller gets the capability their class is
+    FULL for its owner, admins and canopy's own turns, and for a workspace
+    member of an agent with no published interface (anyone else is refused). A caller gets the capability their class is
     offered. A caller offered nothing is refused: the turn is written already
     CANCELLED with the reason, for the same reasons a blocked sender's is (the
     idempotency key holds, an old runner sees a 201, and the refusal is
