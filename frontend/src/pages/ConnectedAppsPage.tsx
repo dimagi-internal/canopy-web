@@ -96,6 +96,76 @@ function AgentPicker({
   )
 }
 
+/**
+ * Where the site's own OAuth server and MCP server are, so the agent can call
+ * the site's tools AS the visitor (host grant contract v1). Both blank is an
+ * ordinary state: the site grants nothing, and the agent cannot act for a
+ * visitor there. canopy never falls back to the agent's own login.
+ */
+function HostGrantFields({
+  issuer,
+  resource,
+  onIssuer,
+  onResource,
+}: {
+  issuer: string
+  resource: string
+  onIssuer: (v: string) => void
+  onResource: (v: string) => void
+}): JSX.Element {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <label className="block space-y-1">
+        <span className="text-xs text-foreground-secondary">Sign-in issuer (optional)</span>
+        <input
+          value={issuer}
+          onChange={(e) => onIssuer(e.target.value)}
+          placeholder="https://labs.connect.dimagi.com"
+          className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
+        />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-xs text-foreground-secondary">MCP server (optional)</span>
+        <input
+          value={resource}
+          onChange={(e) => onResource(e.target.value)}
+          placeholder="https://labs.connect.dimagi.com/mcp/"
+          className="w-full rounded-md border border-input bg-input px-3 py-2 font-mono text-[11px] text-foreground"
+        />
+      </label>
+    </div>
+  )
+}
+
+function HostGrantEditor({
+  app,
+  busy,
+  onSave,
+}: {
+  app: ConnectedApp
+  busy: boolean
+  onSave: (issuer: string, resource: string) => void
+}): JSX.Element {
+  const [issuer, setIssuer] = useState(app.host_issuer)
+  const [resource, setResource] = useState(app.host_mcp_resource)
+  const dirty = issuer.trim() !== app.host_issuer || resource.trim() !== app.host_mcp_resource
+  return (
+    <div className="space-y-2 border-t border-border pt-2">
+      <p className="text-xs text-muted-foreground">
+        {app.issues_host_grants
+          ? 'The agent can use this site\'s tools as the visitor, when the site grants it.'
+          : 'The agent cannot act as a visitor on this site.'}
+      </p>
+      <HostGrantFields issuer={issuer} resource={resource} onIssuer={setIssuer} onResource={setResource} />
+      {dirty && (
+        <Button size="sm" disabled={busy} onClick={() => onSave(issuer.trim(), resource.trim())}>
+          Save
+        </Button>
+      )}
+    </div>
+  )
+}
+
 export function ConnectedAppsPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const { workspaces } = useWorkspace()
@@ -113,6 +183,8 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [picked, setPicked] = useState<string[]>([])
   const [signingKey, setSigningKey] = useState('')
   const [jwksUrl, setJwksUrl] = useState('')
+  const [hostIssuer, setHostIssuer] = useState('')
+  const [hostResource, setHostResource] = useState('')
 
   const reload = useCallback(async () => {
     if (!slug) return
@@ -161,12 +233,16 @@ export function ConnectedAppsPage(): JSX.Element | null {
         agents: picked,
         public_keys: parseKeys(signingKey),
         jwks_url: jwksUrl.trim(),
+        host_issuer: hostIssuer.trim(),
+        host_mcp_resource: hostResource.trim(),
       })
       setName('')
       setOrigins('')
       setPicked([])
       setSigningKey('')
       setShowHere(false)
+      setHostIssuer('')
+      setHostResource('')
     })
   }
 
@@ -236,6 +312,20 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   }
                 />
               )}
+              {isOwner && !app.revoked && (
+                <HostGrantEditor
+                  app={app}
+                  busy={busy}
+                  onSave={(issuer, resource) =>
+                    void run(() =>
+                      updateConnectedApp(slug, app.id, {
+                        host_issuer: issuer,
+                        host_mcp_resource: resource,
+                      }),
+                    )
+                  }
+                />
+              )}
             </div>
           ))}
       </section>
@@ -302,6 +392,21 @@ export function ConnectedAppsPage(): JSX.Element | null {
               Only if you have no JWKS URL. Never the private key.
             </span>
           </label>
+
+          <div className="space-y-1">
+            <span className="text-xs text-foreground-secondary">
+              Let the agent use this site&apos;s tools as the visitor
+            </span>
+            <HostGrantFields
+              issuer={hostIssuer}
+              resource={hostResource}
+              onIssuer={setHostIssuer}
+              onResource={setHostResource}
+            />
+            <span className="block text-xs text-muted-foreground">
+              Only if the site issues grants to canopy. Leave blank otherwise.
+            </span>
+          </div>
 
           {/* An ordinary option on an ordinary form. canopy used to have a
               section of its own here, driven by a reserved name that had to

@@ -20,10 +20,11 @@ see.
    you serve on), or the widget will not load on your machine. See
    [§1](#1-register-your-app-in-canopy).
 3. **Your visitor talks to the agent as a *contact*, not as their canopy
-   account — and the agent's own tool calls run as the agent, not as your
-   visitor.** Both matter for what data the agent can reach. Read
-   [§8a](#8a-who-the-agent-acts-as) before you give an agent a tool that reads
-   anything sensitive.
+   account — and the agent's calls into your product run as the agent unless
+   your site issues a grant for the visitor** (`id_jag`, host grant contract
+   v1), in which case they run as the visitor. Both matter for what data the
+   agent can reach. Read [§8a](#8a-who-the-agent-acts-as) before you give an
+   agent a tool that reads anything sensitive.
 
 Design rationale lives in
 [`../superpowers/specs/2026-09-12-embedded-agent-widget-v2-design.md`](../superpowers/specs/2026-09-12-embedded-agent-widget-v2-design.md).
@@ -785,7 +786,7 @@ One request, from a signed-in user on your page.
 | 10 | Session create | Workspace from the user's memberships; the agent must belong to it; the user becomes the owner; the acting app is stamped server-side |
 | 11 | Reading a session | Workspace membership **and** (you created it, or you are a participant, or it is runner-discovered). A co-tenant holding the id cannot read your chat |
 | 12 | WebSocket | The same token, on the query string, since a WS handshake carries no headers. It opens only a chat stream, and only for an agent your site offers |
-| 13 | Page state | Computed in the user's browser, in their session, so it names only what that user can see. It carries a SELECTION (ids + the tool that resolves them); the agent re-reads the rows through that tool — as the **agent**, see §8a |
+| 13 | Page state | Computed in the user's browser, in their session, so it names only what that user can see. It carries a SELECTION (ids + the tool that resolves them); the agent re-reads the rows through that tool — as the **agent**, or as the visitor when your site issued a grant (§8a) |
 | 14 | Invalidation | Sent only to sessions whose declared `resource` matches, and carries the URI alone — never row data. A page that declared nothing is told nothing |
 
 **What a user's token can reach: your site ∩ the user.** When your visitor is
@@ -817,68 +818,84 @@ open.
 
 ## 8a. Who the agent acts as
 
-The chain above governs **who can talk to the agent**. It does not govern what
-the agent can *read* — and the two are different people.
+The chain above governs **who can talk to the agent**. What the agent can *read*
+is a second question, and there are now two answers depending on whether your
+site issues grants.
 
-When the agent calls a tool, the call runs as **the agent's own identity**: the
-credentials configured on the machine that runs it. Nothing in a turn passes
-your visitor's identity through to the agent's tools. So:
+**Without a grant** — the default, and every Slack or email caller — a tool call
+runs as **the agent's own identity**: the credentials configured on the runner.
+`backing_tool` then re-reads your rows *as the agent*: the ids in your page state
+narrow what it looks at, but do not *limit* what it could look at. Give such an
+agent only access that is fine for *every* visitor who can reach it.
 
-- `backing_tool` re-reads your rows **as the agent**. If the agent can see
-  more than your visitor, the ids in your page state narrow what it looks at,
-  but they do not *limit* what it could look at.
-- For canopy's own MCP tools, a visitor who is not the agent's owner or an
-  admin talks to a CONFINED session, and that session reaches canopy's MCP with
-  a caller token scoped to **agent ∩ visitor**: the visitor's own canopy
-  permissions (none, for a contact), limited to the tools the agent's declared
-  interface lists. The owner's token is never used there.
-- For **your** MCP tools, the agent needs its own credential for your product,
-  set up on the runner. That credential is what bounds it.
+**With a grant, the agent calls your tools AS YOUR VISITOR.** Per-visitor tool
+permissions exist, and they are yours to enforce, because you signed the
+visitor in. The wire contract is
+[`host-grant-contract.md`](host-grant-contract.md); the shape is MCP's
+Enterprise-Managed Authorization (an ID-JAG redeemed with the RFC 7523
+jwt-bearer grant), and the principle is: **the site that authenticated the user
+issues the grant; canopy only redeems.** canopy never holds a key you trust to
+assert who a user is.
 
-**What this means in practice:** give an embedded agent tool access that is fine
-for *every* visitor who can reach it, because in effect every visitor can ask it
-to use that access.
+1. **Arrival.** In the same server-to-server call that signs the visitor
+   assertion (§3), also sign an ID-JAG for YOUR OWN MCP server and send it as
+   `id_jag` beside `assertion` to `/api/auth/contact-token`: header
+   `typ: oauth-id-jag+jwt`, signed with the same key; `iss` = `aud` = your OAuth
+   issuer; `sub` = the same `sub` as the assertion; `client_id` = canopy's
+   client id (`{canopy base}/oauth/client.json`); `resource` = your MCP URL;
+   `scope` = what THIS PAGE offers, decided by your server from its own route
+   registry (never from the browser); `exp` ≤ 300s; a unique `jti`. An
+   unregistered page gets no `id_jag`.
+2. **Redeem.** canopy verifies it, discovers your token endpoint from
+   `{issuer}/.well-known/oauth-authorization-server` (checking `issuer`), and
+   POSTs `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a
+   `private_key_jwt` client assertion (verify it against the JWKS named by
+   canopy's metadata document, `{canopy base}/oauth/jwks.json`), a DPoP proof
+   and `resource`. You answer `{"access_token", "token_type": "DPoP",
+   "expires_in": ≤900, "scope"}` — no refresh token — bound to the proof's key
+   (`cnf.jkt`), to the visitor (`sub`), to canopy (`client_id`), with
+   `act: {"sub": <canopy client_id>}`.
+3. **Use.** In that visitor's turn the agent does not call your MCP server
+   directly. It calls canopy's own `site_tools` / `site_call`, and canopy-web
+   attaches the token as `Authorization: DPoP <token>` with a fresh `DPoP` proof
+   per request (`htm`, `htu`, `ath`, `iat`, `jti`) and an informational
+   `Canopy-Actor: <agent slug>` header. Verify the proof, run the tool as `sub`,
+   and allow only what the token's scope maps to. Tokens without `cnf` (your
+   ordinary OAuth sign-ins, PATs) are unaffected.
 
-### Acting as your visitor, when your own API can check
+**What canopy adds on its side.** In your site's Connected-site row
+(`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP
+server** URL. The agent's owner gives the capability that serves your site
+`sites: [<your site's name>]` and a `ceiling:` — the most any page may unlock.
+A call then goes through only if THREE parties allow it: your page's scope and
+your ACL for that person, the owner's ceiling, and the page's declared
+`backing_tool`.
 
-There is now one way to close that, and it is yours to switch on. In a confined
-caller session the agent can ask canopy for a short assertion naming the person
-it is answering, and attach it to a call into YOUR API:
+**No presence, no access, never a fallback.** canopy re-mints the widget's
+token every five minutes while a grant is live, so you issue a fresh ID-JAG on
+that cadence while the visitor is on the page. Once the visitor leaves, the
+access token lapses within minutes, and a call in their turn is REFUSED — the
+agent says it needs them back on the page. It never falls back to the agent's
+own credential. A failed redemption never fails the arrival: the chat opens,
+and the agent simply cannot reach your tools as that visitor.
 
-```json
-{ "iss": "<this canopy's base URL>", "aud": "<your site's registered Name>",
-  "sub": "<YOUR id for that person — the `sub` you asserted at arrival>",
-  "act": { "sub": "agent:<slug>" },
-  "iat": …, "exp": iat + 120, "jti": "<single use, if you track it>" }
-```
+**What a compromise of canopy can do**: use unexpired tokens of visitors with a
+live conversation, within their page's scope, for minutes. It cannot mint a
+grant for anyone (there is no user-signing key to steal), reach a visitor who
+never opened the widget, or use a token anywhere but your MCP server (`aud`).
+A token copied from a log is useless without canopy's DPoP key, and no runner
+ever holds either.
 
-Verify it against `GET /api/tokens/on-behalf-of/jwks` (public, EdDSA, `kid`
-`canopy-on-behalf-of`) and run that call as that person. Check `aud` is your own
-name and `exp`, exactly as canopy does with yours — an assertion addressed to
-another site must not work at yours. `act.sub` says a machine is acting, so your
-audit trail can record "the agent did this, for them" rather than a click your
-visitor never made.
+(canopy used to plan the opposite direction: `act_on_behalf_of_caller`, a 120s
+assertion canopy signed about your visitor. It was never enabled and was
+deleted on 2026-09-26, because whoever held that key could sign for anyone at
+every connected site.)
 
-What it deliberately does not do: it is minted only inside a caller's session
-(an owner talking to their own agent has their own login at your product), only
-for a visitor who ARRIVED from your site — an email correspondent has no account
-of yours to act as, and canopy refuses rather than asserting their address —
-and it names one site, so it cannot be spent anywhere else. Canopy does not
-proxy your tools: the agent calls you directly, as it always did, and this only
-changes who you run the call as.
-
-Until you verify it, nothing changes: the agent keeps calling you with its own
-credential, and the paragraph above still applies.
-
-**Canopy's own agents do not use this yet, deliberately.** An agent's calls into
-a host run as the agent, because running them as the visitor gives the agent
-less than it needs — a contact has no rights to the machinery an agent works
-on, so scoping every call to them breaks the agent rather than securing it. The
-useful version of this is per-operation (the visitor's own data read as them,
-the agent's own work done as itself), and that distinction has to be declared
-somewhere a person can see it before it is worth switching on. If you verify
-assertions on your side, you are ready for that day; you are not waiting on
-anything of ours to start.
+For **canopy's own MCP tools**, unchanged: a visitor who is not the agent's owner
+or an admin talks to a CONFINED session, which reaches canopy's MCP with a
+caller token scoped to **agent ∩ visitor** — the visitor's own canopy
+permissions (none, for a contact), limited to the tools the agent's declared
+interface lists. The owner's token is never used there.
 
 ---
 
@@ -890,8 +907,11 @@ anything of ours to start.
 - **Invalidation reaches attached pages only.** Nothing is queued for a tab that
   is closed; it reads fresh data when it next opens, so this is correct rather
   than a gap.
-- **The agent's tools run as the agent, not your visitor** (§8a). The largest
-  limit on what an embedded agent should be allowed to do.
+- **Without a host grant, the agent's tools run as the agent, not your
+  visitor** (§8a). Issue grants (`id_jag` at arrival) to run them as the
+  visitor; until then this is the largest limit on what an embedded agent
+  should be allowed to do. A grant lives only while the visitor is on the page:
+  there is no unattended work on a visitor's behalf yet.
 - **Visitors are contacts unless they already have a canopy account** (§3).
   With `email` + `email_verified: true` in your assertion, at a domain your
   site is allowed to resolve, an EXISTING canopy user arrives as themselves

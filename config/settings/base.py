@@ -448,13 +448,26 @@ FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 # Secrets Manager entry. Only the client secret is a secret. (GOOGLE_OAUTH_CLIENT_ID
 # is in Secrets Manager for historical uniformity; there is no security reason to
 # copy that here, and keeping it plain removes a manual step per deployment.)
-# The private key canopy signs ON-BEHALF-OF assertions with: the short
-# statement an embedded agent attaches to a call into the HOST's own API,
-# saying which of that host's people it is answering (apps/tokens/onbehalf.py).
-# Asymmetric on purpose — hosts hold only the public half, published at
-# /api/tokens/on-behalf-of/jwks. Empty is a real state: the deployment simply
-# cannot vouch for a caller elsewhere, and says so rather than degrading.
-ONBEHALF_SIGNING_KEY = env("ONBEHALF_SIGNING_KEY", default="").replace("\\n", "\n")
+# canopy as an OAuth CLIENT of a host site (host grant contract v1,
+# docs/architecture/host-grant-contract.md). Two private keys, both EdDSA
+# (Ed25519) or ES256 PEMs, and deliberately two:
+#   * the CLIENT key signs canopy's `private_key_jwt` client assertion when it
+#     redeems a host-issued ID-JAG; its public half is canopy's JWKS
+#     ({CANOPY_PUBLIC_BASE_URL}/oauth/jwks.json), named by canopy's Client ID
+#     Metadata Document ({CANOPY_PUBLIC_BASE_URL}/oauth/client.json);
+#   * the DPoP key sender-constrains the access tokens a host issues to canopy
+#     (RFC 9449). It is never published — a host learns it from each proof.
+# Neither can assert a USER: the host that signed the visitor in issues the
+# grant, canopy only redeems it (apps/tokens/client_identity.py).
+# "PLACEHOLDER" (the CFN birth value) reads as unset. Unset in a deployment
+# means canopy is simply not a client of anyone; with DEBUG (dev, tests) an
+# ephemeral key is generated per process instead.
+CANOPY_OAUTH_CLIENT_KEY = env("CANOPY_OAUTH_CLIENT_KEY", default="").replace("\\n", "\n")
+CANOPY_OAUTH_DPOP_KEY = env("CANOPY_OAUTH_DPOP_KEY", default="").replace("\\n", "\n")
+# Public halves of client keys retired by a rotation, pipe-separated PEMs, kept
+# in the JWKS until every host's cache (<= 1h) has moved on.
+CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS = env("CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS", default="")
+CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DEBUG)
 
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")
 GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")

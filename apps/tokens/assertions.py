@@ -97,11 +97,14 @@ def _unverified_issuer(token: str) -> str:
     return iss
 
 
-def verify(token: str, *, app) -> dict:
-    """Check an assertion against `app`'s registered keys. Returns its claims.
+def keys_for_app(app, token: str) -> list:
+    """Every key that may verify `token` for `app`: its pasted PEMs plus its
+    published JWKS (narrowed by the token's `kid`). Raises `AssertionError_`
+    when there are none, or the JWKS cannot be read.
 
-    Raises `AssertionError_` for every refusal. Never returns a partial result:
-    a caller cannot accidentally use claims from a token that failed.
+    Shared by the arrival assertion and the host's ID-JAG (`host_grants.py`),
+    which the contract signs with the SAME key — one set of rules for whose
+    signature canopy accepts from a site.
     """
     import jwt
 
@@ -131,6 +134,18 @@ def verify(token: str, *, app) -> dict:
             "no_key",
             f"{app.name!r} has no signing key registered, so nothing it signs can be checked",
         )
+    return keys
+
+
+def verify(token: str, *, app) -> dict:
+    """Check an assertion against `app`'s registered keys. Returns its claims.
+
+    Raises `AssertionError_` for every refusal. Never returns a partial result:
+    a caller cannot accidentally use claims from a token that failed.
+    """
+    import jwt
+
+    keys = keys_for_app(app, token)
 
     last_error: Exception | None = None
     for key in keys:

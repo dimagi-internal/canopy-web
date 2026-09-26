@@ -47,7 +47,7 @@ def _allowed(name: str, claims: dict) -> bool:
 
 #: Tools whose `turn_id` argument must name a turn in this token's own
 #: conversation.
-TURN_PINNED = frozenset({"who_is_asking", "act_on_behalf_of_caller"})
+TURN_PINNED = frozenset({"who_is_asking"})
 
 
 class TurnScopeMiddleware(Middleware):
@@ -67,10 +67,10 @@ class TurnScopeMiddleware(Middleware):
             # Every tool that takes a `turn_id` is pinned to THIS token's own
             # conversation. Without it the argument is the whole gate: a caller
             # could name someone else's turn and be told who THEY are
-            # (`who_is_asking`), or be vouched for as them
-            # (`act_on_behalf_of_caller`, which mints a credential). The list is
-            # explicit rather than "any tool with a turn_id argument", so a new
-            # tool is pinned by a person deciding to pin it.
+            # (`who_is_asking`). The list is explicit rather than "any tool
+            # with a turn_id argument", so a new tool is pinned by a person
+            # deciding to pin it. (`site_tools`/`site_call` take no turn at
+            # all: they read it from this token.)
             if name in TURN_PINNED:
                 asked = str((context.message.arguments or {}).get("turn_id") or "")
                 if asked not in set(claims.get("turn_ids") or []):

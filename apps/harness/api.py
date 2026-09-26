@@ -959,22 +959,10 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
         from .caller_tokens import mint
 
         turn.mcp_token = mint(turn)
-        # And, when the caller came from a connected site, what that site needs
-        # to run this agent's calls as them. Best-effort on purpose: a turn is
-        # not worth refusing because a host credential could not be minted, and
-        # every refusal here is a real state (no signing key, an email
-        # correspondent with no host account, a turn with no caller).
-        from apps.tokens import onbehalf
-
-        try:
-            agent = turn.agent if turn.agent_id else (
-                turn.chat_session.agent if turn.chat_session_id else None)
-            out = onbehalf.mint(turn, agent_slug=agent.slug if agent else "")
-            turn.on_behalf_of = {"assertion": out["assertion"],
-                                 "audience": out["audience"],
-                                 "subject": out["subject"]}
-        except onbehalf.OnBehalfError:
-            turn.on_behalf_of = None
+        # Deliberately nothing else. A visitor's host credential (host grant
+        # contract v1) never rides the claim: the agent reaches the host through
+        # canopy's own MCP (`site_call`), which attaches it server-side, so no
+        # runner — where every session is one OS user — ever holds it.
     return Status(200, turn)
 
 

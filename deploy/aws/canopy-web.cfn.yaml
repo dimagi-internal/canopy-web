@@ -192,18 +192,29 @@ Resources:
       Name: canopy-web/github-app-client-secret
       SecretString: "PLACEHOLDER"
 
-  # The key canopy signs ON-BEHALF-OF assertions with — the short statement an
-  # embedded agent attaches to a call into the HOST's own API, saying which of
-  # that host's people it is answering (apps/tokens/onbehalf.py). Born
-  # "PLACEHOLDER", which the app reads as UNCONFIGURED: the feature is simply
-  # absent until somebody puts a real Ed25519 PEM here, and an agent asking for
-  # an assertion is told so rather than getting a signature error. The PUBLIC
-  # half is derived from this and published at /api/tokens/on-behalf-of/jwks;
-  # nothing else needs configuring.
-  OnbehalfSigningKey:
+  # canopy as an OAuth CLIENT of a host site (host grant contract v1,
+  # docs/architecture/host-grant-contract.md; apps/tokens/client_identity.py).
+  # Two Ed25519 (or P-256) private-key PEMs, deliberately separate:
+  #   * the CLIENT key signs canopy's private_key_jwt client assertion; its
+  #     public half is published at /canopy/oauth/jwks.json, named by the
+  #     Client ID Metadata Document at /canopy/oauth/client.json;
+  #   * the DPoP key sender-constrains the access tokens hosts issue canopy.
+  # Neither can assert a USER — the host signs grants, canopy only redeems.
+  # Born "PLACEHOLDER", which the app reads as UNCONFIGURED: both /oauth
+  # documents answer 503 and arrivals carrying an id_jag are served without a
+  # host grant, until somebody puts real keys here.
+  # (Replaces canopy-web/onbehalf-signing-key — the canopy-minted on-behalf-of
+  # assertion, deleted 2026-09-26 before it was ever enabled.)
+  OauthClientKey:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: canopy-web/onbehalf-signing-key
+      Name: canopy-web/oauth-client-key
+      SecretString: "PLACEHOLDER"
+
+  OauthDpopKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/oauth-dpop-key
       SecretString: "PLACEHOLDER"
 
   # Slack front door (apps/slack). Born "PLACEHOLDER", which the app reads as
@@ -370,7 +381,8 @@ Resources:
             - { Name: CANOPY_DRIVE_SA_KEY_JSON, ValueFrom: !Ref DriveSaKeyJson }
             - { Name: VAPID_PRIVATE_KEY, ValueFrom: !Ref VapidPrivateKey }
             - { Name: GITHUB_APP_CLIENT_SECRET, ValueFrom: !Ref GithubAppClientSecret }
-            - { Name: ONBEHALF_SIGNING_KEY, ValueFrom: !Ref OnbehalfSigningKey }
+            - { Name: CANOPY_OAUTH_CLIENT_KEY, ValueFrom: !Ref OauthClientKey }
+            - { Name: CANOPY_OAUTH_DPOP_KEY, ValueFrom: !Ref OauthDpopKey }
             - { Name: SLACK_CLIENT_SECRET, ValueFrom: !Ref SlackClientSecret }
             - { Name: SLACK_SIGNING_SECRET, ValueFrom: !Ref SlackSigningSecret }
           LogConfiguration:

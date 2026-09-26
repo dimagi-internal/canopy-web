@@ -410,3 +410,71 @@ def test_every_documented_theme_variable_and_part_is_real(doc):
     assert documented_fields == real_fields, (
         f"theme fields documented {sorted(documented_fields)} vs real {sorted(real_fields)}"
     )
+
+
+# --- host grant contract v1 (2026-09-26) ------------------------------------
+#
+# §8a hands a host team a wire contract they build against in another repo, so
+# every name in it is pinned to the code that reads it.
+
+
+CONTRACT = REPO / "docs" / "architecture" / "host-grant-contract.md"
+
+
+@pytest.mark.parametrize("route", ["/oauth/client.json", "/oauth/jwks.json"])
+def test_the_client_identity_routes_resolve_and_are_public(doc, route):
+    """canopy's client_id IS the first URL; a host fetches both before it
+    trusts anything, so they must resolve and must not sit behind a login."""
+    from apps.common.middleware import _is_public
+
+    assert route in doc and route in CONTRACT.read_text()
+    resolve(route)
+    assert _is_public(route), f"{route} must be reachable without a login"
+
+
+def test_the_contract_is_published_beside_the_guide_and_linked(doc):
+    assert CONTRACT.exists(), "docs/architecture/host-grant-contract.md is missing"
+    assert "(host-grant-contract.md)" in doc
+
+
+def test_the_documented_arrival_field_is_the_one_the_endpoint_reads(doc):
+    """§8a tells a host to send `id_jag` beside `assertion`."""
+    from apps.tokens.contact_api import ContactTokenIn, ContactTokenOut
+
+    assert "`id_jag`" in doc
+    assert "id_jag" in ContactTokenIn.model_fields
+    assert "host_grant" in ContactTokenOut.model_fields
+
+
+def test_the_documented_wire_constants_are_the_ones_canopy_uses(doc):
+    """The grant type, the ID-JAG typ, the client-assertion type and the
+    metadata document's fields are literals a host implements against."""
+    from apps.tokens import client_identity, host_grants
+
+    contract = CONTRACT.read_text()
+    assert client_identity.JWT_BEARER_GRANT in doc and client_identity.JWT_BEARER_GRANT in contract
+    assert host_grants.ID_JAG_TYP in doc and host_grants.ID_JAG_TYP in contract
+    assert client_identity.CLIENT_ASSERTION_TYPE in contract
+    meta = client_identity.client_metadata()
+    for key in ("client_id", "client_name", "jwks_uri", "token_endpoint_auth_method",
+                "grant_types", "dpop_bound_access_tokens"):
+        assert f'"{key}"' in contract and key in meta
+    assert meta["token_endpoint_auth_method"] == "private_key_jwt"
+    assert "Canopy-Actor" in doc and "Canopy-Actor" in contract
+
+
+def test_the_gateway_tools_the_doc_names_are_served():
+    """§8a says the agent calls `site_tools` / `site_call`. Asserted against the
+    MOUNTED server."""
+    import asyncio
+
+    from apps.mcp.server import mcp
+
+    text = DOC.read_text()
+    names = {t.name for t in asyncio.run(mcp._list_tools())}
+    for tool in ("site_tools", "site_call"):
+        assert tool in text and tool in names
+    # The retired canopy-minted assertion is gone from the server and the doc's
+    # instructions (it may be named once, as history).
+    assert "act_on_behalf_of_caller" not in names
+    assert "/api/tokens/on-behalf-of/jwks" not in text

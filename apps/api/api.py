@@ -137,7 +137,6 @@ from apps.common.api import common_router, public_router  # noqa: E402
 from apps.projects.api import insights_router  # noqa: E402
 from apps.projects.api import router as projects_router  # noqa: E402
 from apps.issues.api import router as issues_router  # noqa: E402
-from apps.tokens.api import onbehalf_router  # noqa: E402
 from apps.tokens.api import router as tokens_router  # noqa: E402
 from apps.reviews.api import router as reviews_router  # noqa: E402
 from apps.runs.api import router as runs_router  # noqa: E402
@@ -179,7 +178,6 @@ api.add_router("", common_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
-api.add_router("/tokens", onbehalf_router)
 api.add_router("/feedback", feedback_router)
 api.add_router("/events", events_router)
 api.add_router("/inbound", inbound_router)

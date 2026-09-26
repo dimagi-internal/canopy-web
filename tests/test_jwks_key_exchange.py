@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from django.core.cache import cache
 from django.test import Client, override_settings
 
-from apps.tokens import jwks, onbehalf
+from apps.tokens import client_identity, jwks
 
 pytestmark = pytest.mark.django_db
 
@@ -196,13 +196,22 @@ def test_with_no_copy_at_all_it_refuses_rather_than_verifying_against_nothing():
             jwks.keys_for("https://keys.partner.test/jwks.json")
 
 
+
 # --- canopy's own keys ----------------------------------------------------------
+#
+# canopy's OAuth CLIENT key (host grant contract v1) is the only key canopy
+# publishes now. The canopy-minted on-behalf-of key these tests once covered
+# was deleted on 2026-09-26; the rotation properties carried over.
 
 
 def _key_settings(active: str, retired: list[str] | None = None):
-    return dict(ONBEHALF_SIGNING_KEY=active,
-                ONBEHALF_RETIRED_PUBLIC_KEYS="|".join(retired or []),
-                EMBED_ASSERTION_AUDIENCE="https://canopy.test")
+    return dict(CANOPY_OAUTH_CLIENT_KEY=active,
+                CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS="|".join(retired or []),
+                CANOPY_OAUTH_EPHEMERAL_KEYS=True)
+
+
+def _active_kid() -> str:
+    return client_identity.published_jwks()["keys"][0]["kid"]
 
 
 def test_the_kid_is_derived_from_the_key_so_two_keys_are_distinguishable():
@@ -211,47 +220,30 @@ def test_the_kid_is_derived_from_the_key_so_two_keys_are_distinguishable():
     a, _ = _keypair()
     b, _ = _keypair()
     with override_settings(**_key_settings(a)):
-        kid_a = onbehalf.active_kid()
+        kid_a = _active_kid()
     with override_settings(**_key_settings(b)):
-        kid_b = onbehalf.active_kid()
+        kid_b = _active_kid()
     assert kid_a and kid_b and kid_a != kid_b
 
 
-def test_the_signature_carries_that_kid_so_a_host_can_pick_the_right_key():
-    from apps.agents.models import Agent
-    from apps.contacts.models import Contact
-    from apps.harness.models import Turn
-    from apps.tokens.models import AppCredential
-    from apps.workspaces.models import Workspace, WorkspaceMembership
-    from django.contrib.auth.models import User
-
+def test_the_client_assertion_carries_that_kid_so_a_host_can_pick_the_right_key():
     a, _ = _keypair()
     with override_settings(**_key_settings(a)):
-        owner = User.objects.create_user("o", "o@dimagi.com", "pw")
-        ws = Workspace.objects.create(slug="w1", display_name="W", created_by=owner)
-        WorkspaceMembership.objects.create(user=owner, workspace=ws,
-                                           role=WorkspaceMembership.OWNER)
-        agent = Agent.objects.create(slug="echo", name="E", workspace=ws)
-        app = AppCredential.create_credential(name="partner", created_by=owner, workspace=ws)
-        contact = Contact.objects.create(workspace=ws, app=app, external_id="u-1")
-        turn = Turn.objects.create(agent=agent, prompt="hi", initiator_contact=contact,
-                                   initiator_kind="contact", capability="ask")
-        out = onbehalf.mint(turn, agent_slug="echo")
-        assert jwt.get_unverified_header(out["assertion"])["kid"] == onbehalf.active_kid()
+        signed = client_identity.client_assertion("https://host.test")
+        assert jwt.get_unverified_header(signed)["kid"] == _active_kid()
 
 
 def test_a_rotation_publishes_both_keys_so_nothing_in_flight_breaks():
-    """Switching signer without this is an outage you schedule: every assertion
-    already issued, and every host with a warm cache, verifies against the key
-    canopy just stopped publishing."""
+    """Switching key without this is an outage you schedule: every host with a
+    warm cache verifies against the key canopy just stopped publishing."""
     old_priv, old_pub = _keypair()
     new_priv, _ = _keypair()
 
     with override_settings(**_key_settings(old_priv)):
-        old_kid = onbehalf.active_kid()
+        old_kid = _active_kid()
     with override_settings(**_key_settings(new_priv, retired=[old_pub])):
-        served = Client().get("/api/tokens/on-behalf-of/jwks").json()["keys"]
-        assert onbehalf.active_kid() == served[0]["kid"]
+        served = Client().get("/oauth/jwks.json").json()["keys"]
+        assert _active_kid() == served[0]["kid"]
     assert {k["kid"] for k in served} == {served[0]["kid"], old_kid}
     assert all("d" not in k for k in served), "public halves only"
 
@@ -259,5 +251,5 @@ def test_a_rotation_publishes_both_keys_so_nothing_in_flight_breaks():
 def test_a_malformed_retired_key_never_takes_the_live_one_down():
     new_priv, _ = _keypair()
     with override_settings(**_key_settings(new_priv, retired=["not a key at all"])):
-        served = Client().get("/api/tokens/on-behalf-of/jwks").json()["keys"]
-        assert len(served) == 1 and served[0]["kid"] == onbehalf.active_kid()
+        served = Client().get("/oauth/jwks.json").json()["keys"]
+        assert len(served) == 1 and served[0]["kid"] == _active_kid()

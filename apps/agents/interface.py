@@ -47,6 +47,26 @@ that lies about its resource reaches exactly the tools that owner already decide
 to expose to that page — and it had to be an allowlisted app, framing from a
 registered origin, to open a conversation at all.
 
+**`pages:` is superseded by `sites:` + `ceiling:`** (host grant contract v1,
+2026-09-26) and kept only so interfaces already published keep working. A
+per-page tool list had to be written by hand, page by page, and every tool on it
+ran as the AGENT. A site capability instead names a registered Connected site
+and the most any page on it may unlock:
+
+    capabilities:
+      connect:
+        callers: [contact, member]
+        sites: [connect-labs]               # a Connected site, by name
+        ceiling: ["mcp__*connect_labs__*"]  # host tools, at most
+
+A conversation held on that site (its server-owned `embed_app`) selects the
+capability, and its confined profile gains canopy's gateway tools (`site_tools`,
+`site_call`) automatically. Through them the agent calls the host's tools AS THE
+VISITOR, with a grant the host issued for the page they are on — so what one
+turn may call is the page's declared `backing_tool` ∩ this ceiling ∩ the host's
+own scopes and ACL (`apps/tokens/host_gateway.py`). Because the calls run as the
+visitor, a broad ceiling is safe; the host's ACL decides what each person gets.
+
 **Default deny.** An agent that has published no interface is reachable by its
 workspace's members (in its full profile, as before) and by nobody else: a
 contact or an unidentified caller is refused. Until 2026-09-26 it ran EVERY
@@ -91,6 +111,10 @@ VERSION = 1
 #: something specific, or for a page whose declared resource matches one's
 #: `pages` — see `_page_capability`.
 ASK = "ask"
+
+#: canopy's gateway to a Connected site's own tools, added to every capability
+#: that names `sites:` (apps/mcp/tools/site.py).
+GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call")
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
@@ -161,7 +185,7 @@ def parse(doc) -> dict:
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "pages"}
+                          "write_paths", "input", "pages", "sites", "ceiling"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -193,9 +217,33 @@ def parse(doc) -> dict:
             # writes at all.
             "write_paths": _strings(cap.get("write_paths"), "write_paths", name),
             "pages": _pages(cap.get("pages"), name),
+            **_sites(cap, name),
         }
     full = _classes(doc.get("full"), "full")
     return {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
+
+
+_SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+
+
+def _sites(cap: dict, name: str) -> dict:
+    """`sites:` (Connected site names) and `ceiling:` (tool globs), validated.
+
+    A ceiling with no site is refused: it would read as a grant and apply to
+    nothing. A site with no ceiling is allowed and unlocks no host tool — the
+    conversation still selects the capability, which is the fail-closed way to
+    stage one.
+    """
+    sites = _strings(cap.get("sites"), "sites", name)
+    for site in sites:
+        if not _SITE.match(site):
+            raise InterfaceError(f"{name}.sites: {site!r} is not a Connected site name — "
+                                 "letters, digits, hyphens and underscores")
+    ceiling = _strings(cap.get("ceiling"), "ceiling", name)
+    if ceiling and not sites:
+        raise InterfaceError(f"{name}.ceiling needs `sites:` — a ceiling bounds the tools of "
+                             "the sites it names")
+    return {"sites": sites, "ceiling": ceiling}
 
 
 def _pages(value, cap: str) -> list[str]:
@@ -253,6 +301,32 @@ def _page_capability(turn, iface: dict, classes: set[str]) -> str | None:
         if not patterns or not (classes & set(cap.get("callers") or [])):
             continue
         if any(fnmatchcase(resource, pattern) for pattern in patterns):
+            return name
+    return None
+
+
+def _conversation_site(turn) -> str:
+    """The Connected site this turn's conversation is held on — the session's
+    server-owned `embed_app`, stamped from the token that created it, never from
+    anything the page or the caller sent."""
+    session = getattr(turn, "chat_session", None)
+    meta = (getattr(session, "metadata", None) or {}) if session is not None else {}
+    site = meta.get("embed_app")
+    return site.strip() if isinstance(site, str) else ""
+
+
+def _site_capability(turn, iface: dict, classes: set[str]) -> str | None:
+    """The capability whose `sites` include the site this conversation is on.
+
+    Tried after `_page_capability` (a page-specific door is the narrower one)
+    and before falling back to `ask`. A capability the caller's class is not
+    listed for is skipped, exactly as for pages.
+    """
+    site = _conversation_site(turn)
+    if not site:
+        return None
+    for name, cap in (iface.get("capabilities") or {}).items():
+        if site in (cap.get("sites") or []) and classes & set(cap.get("callers") or []):
             return name
     return None
 
@@ -341,7 +415,8 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     classes = caller_classes(turn, rel)
     if full_rule(classes, iface):
         return FULL
-    name = requested or _page_capability(turn, iface, classes) or ASK
+    name = (requested or _page_capability(turn, iface, classes)
+            or _site_capability(turn, iface, classes) or ASK)
     cap = iface["capabilities"].get(name)
     if cap and classes & set(cap.get("callers") or []):
         return name
@@ -404,8 +479,14 @@ def profile(agent, capability: str) -> dict | None:
     cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
     cap = cap or {"description": "", "callers": [], "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
-                  "pages": []}
-    return {"name": capability, **{k: cap.get(k) for k in
-                                   ("description", "entry", "tools", "bash", "read_paths",
-                                    "write_paths",
-                                    "input")}}
+                  "pages": [], "sites": [], "ceiling": []}
+    out = {"name": capability, **{k: cap.get(k) for k in
+                                  ("description", "entry", "tools", "bash", "read_paths",
+                                   "write_paths", "input")}}
+    if cap.get("sites"):
+        # A site capability reaches its host ONLY through canopy's gateway, so
+        # the gateway is part of the profile by construction — an owner cannot
+        # publish a site door and forget the one tool that opens it. The host's
+        # own MCP server is not added: a visitor turn does not call it directly.
+        out["tools"] = list(dict.fromkeys([*(out.get("tools") or []), *GATEWAY_TOOLS]))
+    return out

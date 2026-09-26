@@ -37,6 +37,10 @@ export async function connectApp(
     /** Where the site publishes its keys. Preferred over `public_keys`: canopy
      *  follows a rotation instead of needing a new paste. */
     jwks_url: string
+    /** The site's OAuth issuer + MCP resource, when it grants canopy access to
+     *  its tools AS the visitor (host grant contract v1). "" when it does not. */
+    host_issuer: string
+    host_mcp_resource: string
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
@@ -54,6 +58,8 @@ export async function updateConnectedApp(
     agents?: string[]
     public_keys?: string[]
     jwks_url?: string
+    host_issuer?: string
+    host_mcp_resource?: string
     show_on_canopy_pages?: boolean
   },
 ): Promise<ConnectedApp> {

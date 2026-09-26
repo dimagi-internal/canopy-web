@@ -252,11 +252,32 @@ def _clean_jwks_url(url) -> str:
         raise EmbedAppError("bad_jwks_url", str(exc)) from exc
 
 
+def _clean_host_url(url, *, what: str) -> str:
+    """A host-grant URL (issuer or MCP resource), checked before it is stored.
+
+    canopy sends credentials to what these name — a DPoP-bound token to the
+    resource, a client assertion to the issuer's token endpoint — so the same
+    outbound rules apply as at call time: https, and never private address
+    space. Checked here too so the owner who typed it sees why.
+    """
+    from . import outbound
+
+    value = (url if isinstance(url, str) else "").strip()
+    if not value:
+        return ""
+    try:
+        return outbound.check_url(value, what=what)
+    except outbound.OutboundError as exc:
+        raise EmbedAppError("bad_host_url", str(exc)) from exc
+
+
 @transaction.atomic
 def register(*, user, workspace_slug: str, name: str, origins: list[str],
              agents: list[str] | None = None,
              public_keys: list[str] | None = None,
              jwks_url: str | None = None,
+             host_issuer: str | None = None,
+             host_mcp_resource: str | None = None,
              ) -> AppCredential:
     """Register a site in this workspace. It holds no secret: the site proves
     itself by signing, against the keys at `jwks_url` (or pasted)."""
@@ -284,19 +305,25 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     cleaned_origins = _clean_origins(origins)
     cleaned_keys = _clean_keys(public_keys or [])
     cleaned_jwks = _clean_jwks_url(jwks_url or "")
+    cleaned_issuer = _clean_host_url(host_issuer or "", what="host issuer")
+    cleaned_resource = _clean_host_url(host_mcp_resource or "", what="host MCP resource")
 
     app = AppCredential.create_credential(name=name, created_by=user,
                                                workspace=workspace_slug)
     app.allowed_frame_origins = cleaned_origins
     app.public_keys = cleaned_keys
     app.jwks_url = cleaned_jwks
-    app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url"])
+    app.host_issuer = cleaned_issuer
+    app.host_mcp_resource = cleaned_resource
+    app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url",
+                            "host_issuer", "host_mcp_resource"])
     set_agents(app, agents or [])
     return app
 
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
-           public_keys=None, jwks_url=None) -> AppCredential:
+           public_keys=None, jwks_url=None, host_issuer=None,
+           host_mcp_resource=None) -> AppCredential:
     """Change what this workspace's site may do. Every field is this tenant's
     own, so there is one gate — owning the workspace the row belongs to."""
     require_owner(user, workspace_slug)
@@ -313,6 +340,12 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
     if jwks_url is not None:
         app.jwks_url = _clean_jwks_url(jwks_url)
         fields.append("jwks_url")
+    if host_issuer is not None:
+        app.host_issuer = _clean_host_url(host_issuer, what="host issuer")
+        fields.append("host_issuer")
+    if host_mcp_resource is not None:
+        app.host_mcp_resource = _clean_host_url(host_mcp_resource, what="host MCP resource")
+        fields.append("host_mcp_resource")
     if fields:
         app.save(update_fields=fields)
     if agents is not None:
