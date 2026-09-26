@@ -132,3 +132,27 @@ def test_the_credential_bundle_no_longer_stages_github(cr, monkeypatch):
     monkeypatch.setattr(cr, "_apply_claude_credential", lambda i: None)
     assert cr.fetch_and_stage_credential("r1") is True
     assert "GH_TOKEN" not in cr.os.environ
+
+
+def test_a_chat_turn_carries_its_chats_key_and_leaves_it_for_the_mcp_helper(cr, tmp_path, monkeypatch):
+    """The key goes into this turn's env for `canopy secret`, and into a 0600
+    file the MCP headers helper can find — Claude Code strips secret-looking
+    variables from the helper's environment, so the env alone cannot reach it."""
+    import stat
+
+    monkeypatch.setattr(cr, "CHAT_KEY_ROOT", tmp_path / "chat")
+    chat = "eb742bd8-0000-4000-8000-00000000000a"
+    turn = {"id": "echo-turn", "agent_slug": "echo", "chat_key": "chk_abc",
+            "origin_ref": {"chat_session_id": chat}}
+    cr._TURN_ENV.extra = {**cr._github_turn_env("r1", turn), **cr._chat_key_env(turn)}
+    try:
+        env = cr._agent_env("echo")
+    finally:
+        cr._TURN_ENV.extra = {}
+    assert env["CANOPY_CHAT_KEY"] == "chk_abc" and env["CANOPY_CHAT_SESSION"] == chat
+    f = tmp_path / "chat" / "chat" / f"{chat}.key"
+    assert f.read_text() == "chk_abc"
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600
+
+    # A turn that is not a chat's carries no key.
+    assert cr._chat_key_env({"id": "t", "agent_slug": "echo"}) == {}

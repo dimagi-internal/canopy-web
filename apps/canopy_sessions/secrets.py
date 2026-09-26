@@ -9,14 +9,19 @@ The rules, each load-bearing:
 
 * **The value never enters the chat.** Nothing here writes a `Message`, and
   nothing a browser can reach returns a value — the list is names and times.
-* **Only the session the chat is bound to can use it.** The agent side names
-  ITSELF, by its Claude session id (`CLAUDE_CODE_SESSION_ID`, which the runner
-  reports as `RunnerBinding.transcript_id`), never by a chat id it was told. A
-  secret is released only to the conversation bound to the chat that holds it:
-  another session of the same agent, or the same agent in another chat, gets a
-  404 (Jonathan, 2026-09-25: "only accessible to this session"). On top of
-  that the caller must be the chat's agent identity (`Agent.user`) or a writer
-  of the chat, so knowing a session id is not enough on its own.
+* **Only the session driving the chat can use it.** It proves which chat it is
+  with the CHAT KEY canopy issued when its runner claimed the chat's turn
+  (`models.ChatKey`, `/api/session-secrets/key`): a permission canopy hands out,
+  rather than one inferred from who is calling. Another session of the same
+  agent, or the same agent in another chat, holds a different key and gets a
+  404 (Jonathan, 2026-09-25: "only accessible to this session").
+
+  The older path below — the caller must be the chat's agent login
+  (`Agent.user`) or a writer, AND name the chat's Claude session id — stays for
+  one release so sessions started before their runner learned to leave a key
+  keep working. It is an inference from two indirect facts (a login shared by
+  every turn of that agent, and an id that can be found rather than given),
+  which is why the key replaced it (2026-09-26). Delete it next.
 * **Plaintext only to a bearer.** A cookie is refused even for the sharer.
 * **Thirty minutes.** A hand-off, not a store — see `TTL`.
 

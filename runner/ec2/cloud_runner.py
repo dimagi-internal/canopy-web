@@ -1578,6 +1578,40 @@ def github_env(token: str, *, git_name: str = "", git_email: str = "",
     return env
 
 
+#: Where a chat's key (canopy_sessions.ChatKey) is left for the one Claude session
+#: driving that chat — see `_chat_key_env`.
+CHAT_KEY_ROOT = pathlib.Path.home() / ".canopy" / "chat"
+_CHAT_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _chat_key_env(turn: dict) -> dict:
+    """Give this chat turn its chat's key, and only this turn.
+
+    canopy mints a key when a runner claims a chat's turn; presenting it (the
+    `X-Canopy-Chat-Key` header) reaches that chat's secrets and page and nothing
+    else. `canopy secret` reads it from CANOPY_CHAT_KEY. The MCP headers helper
+    cannot — Claude Code strips secret-looking variables from its environment —
+    so the key is also written to `~/.canopy/chat/chat/<chat id>.key` (0600) and
+    the helper finds it through CANOPY_CHAT_SESSION, which is not a secret."""
+    key = str(turn.get("chat_key") or "")
+    chat_id = _chat_session_id(turn)
+    if not key or not _CHAT_ID.match(chat_id):
+        return {}
+    try:
+        _write_private_text(CHAT_KEY_ROOT / "chat" / f"{chat_id}.key", key)
+    except OSError as exc:
+        _log(f"warn: could not leave chat {chat_id[:8]}'s key for its MCP helper: {exc}")
+    return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
+
+
+def _write_private_text(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+
+
 def _requested_by_from(turn: dict) -> str:
     who = ((turn.get("caller_context") or {}).get("who") or {})
     person = who.get("user") or who.get("contact") or {}
@@ -3616,9 +3650,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
     try:
-        # The turn's GitHub identity, first: the cwd's own git pull needs it.
-        github = {**_github_turn_env(runner_id, turn), **_write_envelope(turn)}
-        _TURN_ENV.extra = dict(github)
+        # What this turn alone carries: its GitHub identity (first — the cwd's
+        # own git pull needs it), its caller envelope and, for a chat, that
+        # chat's key.
+        per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
+                    **_chat_key_env(turn)}
+        _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
         resume_id = turn.get("_resume_id") or None
@@ -3632,7 +3669,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 prompt = _confined_prompt(turn)
                 confine_env, caller_path = _confine(turn)
-                _TURN_ENV.extra = {**github, **confine_env}
+                _TURN_ENV.extra = {**per_turn, **confine_env}
                 _TURN_ENV.settings = _native_settings(
                     turn, cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
                     caller_path)

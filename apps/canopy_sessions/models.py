@@ -631,3 +631,37 @@ class SessionSecret(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"secret:{str(self.session_id)[:8]}:{self.name}"
+
+
+class ChatKey(models.Model):
+    """The credential that says "this request comes from THAT chat's session".
+
+    What a chat's own secrets and its page context need to know is whether the
+    caller is the conversation bound to this chat — not which account it signs
+    in as. That used to be pieced together from two indirect facts: the caller
+    was the chat's agent (`Agent.user`, a login shared by EVERY turn of that
+    agent) and knew the chat's Claude session id (a value that can be found,
+    not one that was given). Brittle, and it made an identity link carry a
+    permission (Jonathan, 2026-09-26).
+
+    A chat key inverts it: canopy ISSUES the permission. When a runner claims a
+    chat's turn, canopy mints a key for that chat and hands it only to that
+    runner, which gives it only to the Claude session driving the chat (the
+    turn's environment on a cloud box, a 0600 file on a laptop). Presenting it
+    reaches that chat's secrets and page and nothing else — no other chat, no
+    other session of the same agent, no scheduled job.
+
+    Scoped to the CHAT, not the turn, because Claude Code sets MCP headers once
+    per session connect and a chat's session spans many turns. Minted fresh on
+    every claim and expiring after `chat_keys.LIFETIME`, so a key outlives the
+    conversation it was issued for by at most that long. Stored as a sha256,
+    like every other token here; the raw value exists only in the claim response.
+    """
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="keys")
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"chatkey:{str(self.session_id)[:8]}"

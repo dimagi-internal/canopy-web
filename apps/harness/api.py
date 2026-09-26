@@ -953,6 +953,13 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     turn = services.claim_next_turn(runner, exclude_slugs=exclude or None)
     if turn is None:
         return Status(204, None)
+    if turn.chat_session_id:
+        # The chat's key (canopy_sessions.ChatKey): the one credential that lets
+        # the session driving this chat reach the chat's own secrets and page.
+        # Handed to the claiming runner only, never to a listing.
+        from apps.canopy_sessions import chat_keys
+
+        turn.chat_key = chat_keys.mint(turn.chat_session)
     if turn.capability:
         # A confined turn's credential for canopy's own MCP (models.CallerToken):
         # handed to the claiming runner only, never to a listing.
