@@ -1238,6 +1238,29 @@ def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, djang
     assert not slack.said("chat.postMessage")
 
 
+def test_the_agent_reading_an_image_is_not_someone_typing(bound, slack, django_capture_on_commit_callbacks):
+    # Labs 2026-09-26: after a Slack turn ended, Hal finished waiting on a deploy,
+    # Read its own screenshot, and wrote the answer. Reading an image makes Claude
+    # Code write "[Image: original WxH, ...]" as a `type: "user"` record — which
+    # posted "carrying on directly in the agent's session" AND, by becoming the
+    # latest human message, stopped the answer itself reaching the thread.
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
+    ev = lambda i, kind, text: {"seq": i, "index": i * 1000, "kind": kind, "payload": {"text": text}}  # noqa: E731
+    _stream(runner, pairer, session, [ev(1, "user", "run it")], django_capture_on_commit_callbacks)
+    _stream(runner, pairer, session, [
+        ev(2, "user", "Stop hook feedback:\nYou ended by OFFERING to do something rather than doing it"),
+        ev(3, "user", "[Image: original 1440x3214, displayed at 896x2000. "
+                      "Multiply coordinates by 1.61 to map to original image.]"),
+        ev(4, "assistant", "Both deploys finished, and I checked the live pages."),
+    ], django_capture_on_commit_callbacks)
+    said = [p["text"] for p in slack.said("chat.postMessage")]
+    assert not [t for t in said if "carrying on directly" in t]
+    assert [t for t in said if "Both deploys finished" in t]
+
+
 # ---- a runner that goes away MID-turn --------------------------------------------
 #
 # The laptop-lid case. Unlike a queued turn on an offline box, nothing marks the
