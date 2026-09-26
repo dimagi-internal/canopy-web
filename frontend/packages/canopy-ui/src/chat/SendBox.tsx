@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -11,8 +10,6 @@ import type { Draft } from "./protocol";
 import {
   clearStoredDraft,
   defaultDraftStorage,
-  isDraftIdle,
-  msUntilDraftIdle,
   readStoredDraft,
   writeStoredDraft,
   type DraftStorage,
@@ -34,12 +31,6 @@ interface Props {
   draft: Draft | null;
   /** Live socket. Typing never depends on this; SENDING does — see canSend. */
   connected: boolean;
-  currentUserId: number;
-  holderIsPresent: boolean;
-  /** Display name of the teammate holding the draft, when it is not you.
-   *  The composer is where their words appear, so it is where their name
-   *  belongs — it used to live only in a 28px chip in the opposite corner. */
-  holderName?: string | null;
   isStreaming: boolean;
   streamingMessageId: string | null;
   onUpdate: (body: string) => void;
@@ -52,7 +43,6 @@ interface Props {
    *  button that asked for it, because that is where the person who pressed it
    *  is looking. Undefined = no stop has been asked for on this turn. */
   stopState?: "requested" | "stopped" | "failed";
-  onTakeOver: () => void;
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
   banner?: ReactNode;
@@ -77,16 +67,12 @@ interface Props {
 export function SendBox({
   draft,
   connected,
-  currentUserId,
-  holderIsPresent,
-  holderName,
   isStreaming,
   streamingMessageId,
   onUpdate,
   onSend,
   onStop,
   stopState,
-  onTakeOver,
   banner,
   disabledReason,
   attachments,
@@ -96,36 +82,16 @@ export function SendBox({
   storage,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Force a re-render when the lock transitions from live to idle.
-  // Without this, nothing would trigger a re-render exactly at T+2s
-  // after the last edit, and another user's UI would stay locked
-  // indefinitely until some unrelated event happens to arrive.
-  const [, forceTick] = useState(0);
-
-  useEffect(() => {
-    if (!draft) return;
-    const remaining = msUntilDraftIdle(draft);
-    if (remaining === 0) return;
-    const t = window.setTimeout(() => forceTick((n) => n + 1), remaining + 10);
-    return () => window.clearTimeout(t);
-  }, [draft?.last_edit_at, draft]);
-
-  const holderId = draft?.last_editor ?? null;
-  const isHolder = holderId != null && holderId === currentUserId;
-  const holderIsIdle = isDraftIdle(draft);
 
   // LOCAL-FIRST: the textarea's value is local state, never server state.
   // Rendering `draft.body` directly made every inbound frame a chance to
   // overwrite the user mid-keystroke — a stale echo of your own debounced
   // update, or a `session.state` snapshot on reconnect (which replaces state
-  // wholesale), would rewind the composer to a body from 150ms ago. In
-  // single-player that reconciliation protects against nothing at all, since
-  // there is no co-editor whose edits could be lost.
+  // wholesale), would rewind the composer to a body from 150ms ago.
   //
   // Seeded from persisted storage when there is one, because a body typed
   // before an unmount exists NOWHERE else: single-player never mirrors it to
-  // the server (see drafts.shouldSyncDraftLive), and the adopt rule below
-  // deliberately ignores our own server draft. A stored body wins over
+  // the server (see drafts.shouldSyncDraftLive). A stored body wins over
   // `draft.body` — it is strictly newer, being what was in the box when we
   // last left it.
   const store = storage === undefined ? defaultDraftStorage() : storage;
@@ -141,11 +107,6 @@ export function SendBox({
   const persist = (body: string) => {
     if (persistKey) writeStoredDraft(store, persistKey, body);
   };
-  // Nothing persists a CO-EDITOR's text, deliberately: a draft someone else is
-  // editing is by definition being live-synced to the server, so the existing
-  // adopt rule below restores it from `session.state` on the way back in. The
-  // gap this whole mechanism closes is the single-player one, where the server
-  // is never told at all.
 
   // The panel can swap sessions without remounting (same route, new :id), so
   // the box must follow the key rather than carry one session's text into the
@@ -158,46 +119,25 @@ export function SendBox({
     setLocalBody(readStoredDraft(store, persistKey ?? "") ?? "");
   }
 
-  // The ONE case where the server genuinely knows better than this client:
-  // somebody ELSE edited the shared draft. Our own echo is ignored, which is
-  // also what stops two clients on one account (phone + desktop) from
-  // fighting — each keeps its own text instead of clobbering the other.
-  const theirEdit =
-    draft != null && draft.last_editor !== currentUserId ? draft.body : null;
-  useEffect(() => {
-    if (theirEdit != null) setLocalBody(theirEdit);
-  }, [theirEdit]);
-
-  // Typing is ALWAYS allowed unless a teammate is actively holding the draft.
-  // It used to require `draft != null`, so the composer was disabled until
+  // Typing is ALWAYS allowed now — this box is only ever YOUR OWN draft, and
+  // every editor gets one (see protocol.ts::SessionState.active_draft). It
+  // used to require `draft != null`, so the composer was disabled until
   // session.state landed — locking you out of your own input on first paint
   // and again on every reconnect. Keystrokes typed early are held locally and
   // flushed when the draft exists (see useSessionSocket.sendChat).
-  const canEdit = isHolder || holderIsIdle || !holderIsPresent;
-
-  useEffect(() => {
-    if (canEdit && !isHolder && textareaRef.current) {
-      textareaRef.current.focus();
-    }
-  }, [canEdit, isHolder]);
-
   const body = localBody;
   const blocked = Boolean(disabledReason);
-  // Locked BY SOMEONE ELSE, as opposed to blocked for an unrelated reason.
-  // The two look identical to `disabled` and want opposite treatments: a
-  // blocked box is inert, a co-edited one is showing you live content.
-  const lockedByTeammate = !canEdit && holderIsPresent && !holderIsIdle && !blocked;
   // Sending needs a draft (`chat.send` commits the SERVER's copy, so there must
   // be one) AND a live socket. The socket check is load-bearing now that the
   // composer clears optimistically: `send()` drops every frame but chat.stop
   // when the socket is closed, so an allowed-but-undeliverable send would clear
-  // the box and lose the message outright.
+  // the box and lose the message outright. Sending stays available while the
+  // agent is replying — a send made mid-reply is QUEUED, not blocked, and
+  // <QueuedRows> is what shows it landed.
   const canSend =
-    canEdit &&
     connected &&
     draft != null &&
     body.trim().length > 0 &&
-    !isStreaming &&
     !blocked;
 
   const handleChange = (value: string) => {
@@ -206,7 +146,7 @@ export function SendBox({
     onUpdate(value);
   };
 
-  const canAttach = typeof onAttach === "function" && canEdit && !blocked;
+  const canAttach = typeof onAttach === "function" && !blocked;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -227,8 +167,7 @@ export function SendBox({
 
   const handleSend = () => {
     // Clear locally rather than waiting for the server's cleared draft to
-    // echo back: that echo carries last_editor === us, which the adopt rule
-    // above (correctly) ignores, so nothing else would empty the box.
+    // echo back — a round trip the person sending has no reason to wait on.
     setLocalBody("");
     if (persistKey) clearStoredDraft(store, persistKey);
     onSend();
@@ -253,10 +192,10 @@ export function SendBox({
 
   const placeholder = blocked
     ? disabledReason
-    : !canEdit
-      ? "Another teammate is editing…"
-      : !draft
-        ? "Type a message… (connecting…)"
+    : !draft
+      ? "Type a message… (connecting…)"
+      : isStreaming
+        ? "Type a message — it will be sent after the current reply"
         : "Type a message… (Enter to send, Shift+Enter for newline)";
 
   const staged = attachments ?? [];
@@ -307,39 +246,11 @@ export function SendBox({
             ))}
           </ul>
         )}
-        {/* Co-edit attribution, at the box rather than across the screen.
-            Their text arrives INSIDE this textarea, and a disabled textarea
-            renders it in muted grey — pixel-identical to a placeholder. So the
-            single most important thing multiplayer does (showing you what your
-            teammate is writing) read as an EMPTY box with a hint in it. */}
-        {lockedByTeammate && (
-          <div
-            data-testid="coedit-banner"
-            className="mb-1.5 flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs"
-          >
-            <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-            </span>
-            <span className="text-foreground">
-              <span className="font-medium">{holderName ?? "A teammate"}</span> is
-              writing — you are seeing their draft
-            </span>
-            <button
-              type="button"
-              data-testid="take-over"
-              onClick={onTakeOver}
-              className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
-            >
-              take over
-            </button>
-          </div>
-        )}
         <textarea
           ref={textareaRef}
           data-testid="composer"
           value={body}
-          disabled={!canEdit || blocked}
+          disabled={blocked}
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKey}
           onPaste={handlePaste}
@@ -349,13 +260,7 @@ export function SendBox({
             "w-full resize-none rounded-md border bg-transparent p-2 text-sm shadow-sm",
             "placeholder:text-muted-foreground focus-visible:outline-none",
             "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed",
-            // A teammate's draft is CONTENT, not a disabled control. Dimming it
-            // to `text-muted-foreground` made their sentence look like the
-            // placeholder it sits next to — the one styling choice that made
-            // co-editing appear not to work at all.
-            lockedByTeammate
-              ? "border-primary/40 bg-primary/5 text-foreground"
-              : "border-input text-foreground disabled:bg-muted disabled:text-muted-foreground",
+            "border-input text-foreground disabled:bg-muted disabled:text-muted-foreground",
           ].join(" ")}
         />
         <div className="mt-1 flex items-center justify-end gap-2">

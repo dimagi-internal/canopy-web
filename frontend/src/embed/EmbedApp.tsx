@@ -472,14 +472,11 @@ function EmbedStart({
       <SendBox
         draft={contactDraft(body)}
         connected
-        currentUserId={0}
-        holderIsPresent={false}
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={setBody}
         onSend={send}
         onStop={() => undefined}
-        onTakeOver={() => undefined}
         // Sending is the only thing that can happen here, so "blocked" is
         // exactly "starting" — and it says so where the button is.
         disabledReason={sending ? 'Starting…' : undefined}
@@ -830,7 +827,6 @@ function EmbedChat({
           // frame (or the server's settled status) lowers it.
           awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
-          onTakeOver={isContact ? () => undefined : socket.takeOverDraft}
           onDiscard={isContact ? () => socket.updateDraft('') : socket.discardDraft}
           draftPersistKey={sessionId}
           // A parsed dialog is drawn WHERE the composer would be, so a send

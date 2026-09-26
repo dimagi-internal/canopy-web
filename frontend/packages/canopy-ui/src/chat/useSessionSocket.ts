@@ -128,6 +128,10 @@ export interface UseSessionSocketResult {
   sendChat: () => void;
   stopChat: (messageId: string | null) => void;
   updateDraft: (body: string) => void;
+  /** @deprecated ignored since 0.13 — everyone has their own draft now, so
+   *  there is no lock left to take over. Kept as a no-op so a host still
+   *  passing it through (e.g. ace-web's `onTakeOver={socket.takeOverDraft}`)
+   *  keeps compiling across the upgrade. */
   takeOverDraft: () => void;
   discardDraft: () => void;
   prependMessages: (older: Message[]) => void;
@@ -477,9 +481,10 @@ export function useSessionSocket({
     [send],
   );
 
-  const takeOverDraft = useCallback(() => {
-    send({ action: "draft.take_over", data: {} });
-  }, [send]);
+  // @deprecated no-op since 0.13 — the server accepts and ignores
+  // `draft.take_over` too (see WsAction), so this is kept only so a host
+  // wired to the old prop doesn't need an upgrade-day edit.
+  const takeOverDraft = useCallback(() => undefined, []);
 
   const discardDraft = useCallback(() => {
     send({ action: "draft.discard", data: {} });

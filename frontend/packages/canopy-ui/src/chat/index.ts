@@ -7,9 +7,12 @@
 // Protocol types
 export type {
   Message,
+  MessageAuthor,
   MessageRole,
   MessageStatus,
   Draft,
+  PeerDraft,
+  QueuedMessage,
   Participant,
   SessionMenu,
   SessionState,
@@ -45,9 +48,6 @@ export {
   type TurnNotice,
 } from "./turnStatus";
 
-// Draft idle helpers
-export { IDLE_THRESHOLD_MS, isDraftIdle, msUntilDraftIdle } from "./drafts";
-
 // Composer persistence (survives unmount / tab close)
 export {
   DRAFT_STORAGE_TTL_MS,
@@ -77,6 +77,8 @@ export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";
 export { SendBox, type PendingAttachment } from "./SendBox";
 export { PresenceChips } from "./PresenceChips";
+export { TypingRows } from "./TypingRows";
+export { QueuedRows } from "./QueuedRows";
 export { ConnectionStatus } from "./ConnectionStatus";
 export {
   PlacementBanner,

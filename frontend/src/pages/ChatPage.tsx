@@ -785,7 +785,6 @@ export function ChatPage() {
           onAttach={handleAttach}
           onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
-          onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}
           renderMarkdown={renderMarkdown}
           // Keep a half-typed message across a route change or a closed tab.

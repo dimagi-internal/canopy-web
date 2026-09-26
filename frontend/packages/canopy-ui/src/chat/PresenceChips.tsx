@@ -3,8 +3,6 @@ import type { Participant } from "./protocol";
 interface Props {
   participants: Participant[];
   presenceUserIds: number[];
-  draftHolderId: number | null;
-  draftHolderIdle: boolean;
   /** Who is looking. Required so the row can exclude YOU.
    *
    *  Without it this rendered your own chip and the empty state said "nobody
@@ -40,8 +38,6 @@ const MAX_FACES = 4;
 export function PresenceChips({
   participants,
   presenceUserIds,
-  draftHolderId,
-  draftHolderIdle,
   currentUserId,
 }: Props) {
   const present = participants.filter(
@@ -59,50 +55,28 @@ export function PresenceChips({
     );
   }
 
-  const editor = present.find(
-    (p) => p.user_id === draftHolderId && !draftHolderIdle,
-  );
   const faces = present.slice(0, MAX_FACES);
   const overflow = present.length - faces.length;
 
   return (
     <div className="flex items-center gap-2" data-testid="presence-chips">
-      {/* The one thing worth WORDS rather than a ring: somebody is typing into
-          the box you share, and the old UI said so only in a `title` tooltip —
-          invisible on touch, invisible to a screen reader, and invisible to
-          anyone not hovering the exact 28px circle. */}
-      {editor && (
-        <span
-          className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex"
-          data-testid="presence-editing-label"
-        >
-          <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-          </span>
-          {firstName(editor.display_name)} is typing…
-        </span>
-      )}
       <ul
         className="flex items-center -space-x-1.5"
-        aria-label={describe(present, editor)}
+        aria-label={describe(present)}
         data-testid="presence-list"
       >
         {faces.map((p) => {
-          const isEditor = p.user_id === editor?.user_id;
           return (
             <li
               key={p.user_id}
               data-testid="presence-chip"
               data-user-id={p.user_id}
-              data-editing={isEditor ? "true" : "false"}
-              title={p.display_name + (isEditor ? " — editing…" : "")}
+              title={p.display_name}
               className={[
                 "flex h-7 w-7 items-center justify-center rounded-full",
                 "text-[11px] font-semibold ring-2 ring-background",
                 "transition-transform hover:z-10 hover:scale-110",
                 colorFor(p.user_id),
-                isEditor ? "z-10 !ring-primary" : "",
               ].join(" ")}
             >
               {initials(p.display_name)}
@@ -125,14 +99,10 @@ export function PresenceChips({
 
 /** The accessible name for the row — the same fact the faces carry, in words.
  *  A row of coloured circles is meaningless without this. */
-function describe(present: Participant[], editor?: Participant): string {
+function describe(present: Participant[]): string {
   const names = present.map((p) => p.display_name).join(", ");
   const who = present.length === 1 ? "1 other person here" : `${present.length} other people here`;
-  return editor ? `${who}: ${names}. ${editor.display_name} is editing.` : `${who}: ${names}`;
-}
-
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
+  return `${who}: ${names}`;
 }
 
 function initials(name: string): string {

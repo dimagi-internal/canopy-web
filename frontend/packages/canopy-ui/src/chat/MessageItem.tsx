@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { AlertTriangle, ChevronRight, OctagonX } from "lucide-react";
 
-import type { Message } from "./protocol";
+import type { Message, MessageAuthor } from "./protocol";
 import { ToolCallPair } from "./ToolCallPair";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
@@ -19,6 +19,18 @@ interface Props {
    *  duplicate the rendering logic per row. */
   forceToolOpen?: boolean;
   renderMarkdown?: RenderMarkdown;
+  /** Who is looking, so a `user` row can tell "me" from "someone else" —
+   *  every row persisted before authorship shipped has `author == null` and
+   *  must keep rendering exactly as it always has (right-aligned, no label). */
+  currentUserId?: number;
+}
+
+/** Someone else's line, or null when it's mine (or nobody recorded). A row
+ *  with no `author` predates authorship tracking and is never "someone
+ *  else's" — it renders exactly as it always did. */
+function otherAuthorOf(message: Message, currentUserId?: number): MessageAuthor | null {
+  if (message.role !== "user" || !message.author) return null;
+  return message.author.user_id === currentUserId ? null : message.author;
 }
 
 /** Count visible lines for the "▸ System context (N lines)" header. */
@@ -68,6 +80,7 @@ export function MessageItem({
   message,
   forceToolOpen,
   renderMarkdown = plainText,
+  currentUserId,
 }: Props) {
   const text = message.plaintext;
   const isStreaming = message.status === "streaming";
@@ -109,9 +122,12 @@ export function MessageItem({
     );
   }
 
+  const otherAuthor = otherAuthorOf(message, currentUserId);
   const bubbleClass =
     message.role === "user"
-      ? "ml-auto bg-primary text-primary-foreground"
+      ? otherAuthor
+        ? "mr-auto bg-muted text-foreground"
+        : "ml-auto bg-primary text-primary-foreground"
       : "mr-auto bg-muted text-foreground";
   // Hold the "Thinking…" treatment through the gap between
   // chat.stream_start (status flips to "streaming") and the first
@@ -128,6 +144,11 @@ export function MessageItem({
       className={`my-2 min-w-0 max-w-[80%] rounded-2xl px-4 py-2 [overflow-wrap:anywhere] ${bubbleClass}`}
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
+      {otherAuthor && (
+        <div data-testid="message-author" className="mb-0.5 text-[11px] font-medium text-muted-foreground">
+          {otherAuthor.name}
+        </div>
+      )}
       {showThinking ? (
         <ThinkingIndicator />
       ) : message.role === "assistant" ? (

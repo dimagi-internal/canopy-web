@@ -42,14 +42,11 @@ function setup(props: Partial<Parameters<typeof SendBox>[0]> = {}) {
     <SendBox
       draft={draft()}
       connected
-      currentUserId={ME}
-      holderIsPresent={false}
       isStreaming={false}
       streamingMessageId={null}
       onUpdate={onUpdate}
       onSend={onSend}
       onStop={vi.fn()}
-      onTakeOver={vi.fn()}
       {...props}
     />,
   );
@@ -67,14 +64,11 @@ describe("SendBox — local-first composer", () => {
       <SendBox
         draft={draft({ body: "hel", version: 2, last_editor: ME })}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
-        onTakeOver={vi.fn()}
       />,
     );
 
@@ -91,41 +85,38 @@ describe("SendBox — local-first composer", () => {
       <SendBox
         draft={draft({ id: "d1", body: "a long", version: 9, last_editor: ME })}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
-        onTakeOver={vi.fn()}
       />,
     );
 
     expect(textarea().value).toBe("a long message");
   });
 
-  it("DOES adopt an edit made by someone else", () => {
-    // Multiplayer still works: a teammate's edit is the one case where the
-    // server genuinely knows better than this client.
+  it("never adopts another editor's body — this box is only ever your own draft now", () => {
+    // Everyone gets their own draft (`SessionState.active_draft` is the
+    // CALLER's own); a teammate's live text arrives via `peer_drafts` /
+    // <TypingRows> instead, never through this component's `draft` prop. So a
+    // `last_editor` that isn't you must NOT overwrite what you're typing.
     const { textarea, rerender } = setup();
+    fireEvent.change(textarea(), { target: { value: "my own words" } });
 
     rerender(
       <SendBox
         draft={draft({ body: "from my teammate", version: 3, last_editor: THEM })}
         connected
-        currentUserId={ME}
-        holderIsPresent
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
-        onTakeOver={vi.fn()}
       />,
     );
 
-    expect(textarea().value).toBe("from my teammate");
+    expect(textarea().value).toBe("my own words");
   });
 
   it("still reports every keystroke upstream", () => {
@@ -163,12 +154,13 @@ describe("SendBox — local-first composer", () => {
     expect(textarea().value).toBe("");
   });
 
-  it("still blocks editing while a teammate holds the draft", () => {
+  it("never locks editing for a teammate's draft — this box is never theirs to hold", () => {
+    // There is no shared lock any more: every editor has their own draft, so a
+    // `last_editor` naming someone else describes no state this box renders.
     const { textarea } = setup({
       draft: draft({ last_editor: THEM, body: "theirs" }),
-      holderIsPresent: true,
     });
-    expect(textarea().disabled).toBe(true);
+    expect(textarea().disabled).toBe(false);
   });
 });
 
@@ -207,14 +199,11 @@ describe("SendBox — cancelling a queued turn", () => {
       <SendBox
         draft={draft()}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={onStop}
-        onTakeOver={vi.fn()}
       />,
     );
 
@@ -229,14 +218,11 @@ describe("SendBox — cancelling a queued turn", () => {
       <SendBox
         draft={draft()}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming
         streamingMessageId="m1"
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={onStop}
-        onTakeOver={vi.fn()}
       />,
     );
 
@@ -244,20 +230,39 @@ describe("SendBox — cancelling a queued turn", () => {
 
     expect(onStop).toHaveBeenCalledWith("m1");
   });
+
+  it("stays available to send while the agent is replying", () => {
+    // The composer used to lock Send for the whole reply; a send made while
+    // streaming is QUEUED server-side now, not refused client-side.
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        draft={draft()}
+        connected
+        isStreaming
+        streamingMessageId="m1"
+        onUpdate={vi.fn()}
+        onSend={onSend}
+        onStop={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "queue me up" } });
+
+    expect(screen.getByTestId("send").hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByTestId("send"));
+    expect(onSend).toHaveBeenCalled();
+  });
 });
 
 describe("SendBox — attaching files", () => {
   const attachProps = {
     draft: draft(),
     connected: true,
-    currentUserId: ME,
-    holderIsPresent: false,
     isStreaming: false,
     streamingMessageId: null,
     onUpdate: vi.fn(),
     onSend: vi.fn(),
     onStop: vi.fn(),
-    onTakeOver: vi.fn(),
   };
 
   it("hides attaching entirely when the host provides no handler", () => {
@@ -345,13 +350,14 @@ describe("SendBox — attaching files", () => {
     expect(screen.getByText(/10MB limit/)).toBeTruthy();
   });
 
-  it("does not offer attaching while a teammate holds the draft", () => {
+  it("does not offer attaching while sending is blocked", () => {
+    // Attaching used to be gated on a teammate's draft lock, which no longer
+    // exists; the one real reason to withhold it now is `disabledReason`.
     render(
       <SendBox
         {...attachProps}
-        draft={draft({ last_editor: THEM })}
-        holderIsPresent
         onAttach={vi.fn()}
+        disabledReason="answer the question above to continue"
       />,
     );
     expect(screen.queryByRole("button", { name: /attach/i })).toBeNull();
@@ -385,14 +391,11 @@ describe("SendBox — draft persistence across unmount", () => {
       <SendBox
         draft={draft()}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
-        onTakeOver={vi.fn()}
         persistKey="sess-1"
         storage={storage}
         {...props}
@@ -444,14 +447,11 @@ describe("SendBox — draft persistence across unmount", () => {
       <SendBox
         draft={draft()}
         connected
-        currentUserId={ME}
-        holderIsPresent={false}
         isStreaming={false}
         streamingMessageId={null}
         onUpdate={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
-        onTakeOver={vi.fn()}
         persistKey="sess-2"
         storage={storage}
       />,

@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import type { SessionState } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
+import { QueuedRows } from "./QueuedRows";
+import { TypingRows } from "./TypingRows";
 import { SendBox, type PendingAttachment } from "./SendBox";
-import { isDraftIdle, msUntilDraftIdle, type DraftStorage } from "./drafts";
+import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
 
@@ -24,7 +26,11 @@ export interface ChatPanelProps {
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
   onUpdateDraft: (body: string) => void;
-  onTakeOver: () => void;
+  /** @deprecated ignored since 0.13 — everyone has their own draft now, so
+   *  there is no lock left to take over. Kept optional so a host still
+   *  wiring `useSessionSocket().takeOverDraft` through (e.g. ace-web) keeps
+   *  compiling across the upgrade. */
+  onTakeOver?: () => void;
   onDiscard: () => void;
   renderMarkdown?: RenderMarkdown;
   /** Optional banner rendered above the composer. */
@@ -59,7 +65,6 @@ export function ChatPanel({
   onAttach,
   onRemoveAttachment,
   onUpdateDraft,
-  onTakeOver,
   onDiscard,
   renderMarkdown,
   banner,
@@ -73,31 +78,6 @@ export function ChatPanel({
   // the default composer doesn't render a discard button. Referenced to keep
   // it wired without an unused-var error; a future toolbar can surface it.
   void onDiscard;
-
-  // Force a re-render when the draft lock transitions from live to idle so
-  // PresenceChips' amber-highlight updates at T+2s without waiting for some
-  // unrelated event to arrive.
-  const [, forceIdleTick] = useState(0);
-  useEffect(() => {
-    const draft = state.active_draft;
-    if (!draft) return;
-    const remaining = msUntilDraftIdle(draft);
-    if (remaining === 0) return;
-    const t = window.setTimeout(() => forceIdleTick((n) => n + 1), remaining + 10);
-    return () => window.clearTimeout(t);
-  }, [state.active_draft?.last_edit_at, state.active_draft]);
-
-  const holderId = state.active_draft?.last_editor ?? null;
-  const holderIsPresent =
-    holderId != null && state.presence_user_ids.includes(holderId);
-  // The holder's NAME, for the composer. SendBox has ids and no roster, so
-  // without this the one place a person actually looks — the box their
-  // teammate's words are appearing in — could only say "Another teammate",
-  // while the name sat in a chip at the far corner of the screen.
-  const holderName =
-    holderId != null && holderId !== currentUserId
-      ? (state.participants.find((p) => p.user_id === holderId)?.display_name ?? null)
-      : null;
 
   // A turn is "in flight" from the moment the assistant row appears
   // (status=pending/streaming) until chat.stream_complete flips it to
@@ -154,8 +134,24 @@ export function ChatPanel({
   const messages = state.messages;
   const lastMessageLen =
     messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
-  const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}`;
+  const queuedCount = state.queued?.length ?? 0;
+  const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
   const { containerRef, onScroll } = useStickyBottom(scrollDep);
+
+  // Your own optimistic sends already render in the transcript (as a
+  // "pending" user row keyed by client_id) the instant you press send, so a
+  // queued row for the SAME send would show it twice — once as your bubble,
+  // once as a dashed "queued" placeholder. hideClientIds is every client_id
+  // already on screen in `messages`.
+  const hideClientIds = useMemo(
+    () =>
+      new Set(
+        state.messages
+          .map((m) => m.content?.client_id)
+          .filter((c): c is string => typeof c === "string"),
+      ),
+    [state.messages],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -165,8 +161,6 @@ export function ChatPanel({
           <PresenceChips
             participants={state.participants}
             presenceUserIds={state.presence_user_ids}
-            draftHolderId={holderId}
-            draftHolderIdle={isDraftIdle(state.active_draft)}
             currentUserId={currentUserId}
           />
         </div>
@@ -189,21 +183,24 @@ export function ChatPanel({
           renderMarkdown={renderMarkdown}
           pendingReply={showPendingReply}
           pendingLabel={pendingLabel}
+          currentUserId={currentUserId}
+        />
+        <QueuedRows
+          queued={state.queued ?? []}
+          hideClientIds={hideClientIds}
+          currentUserId={currentUserId}
         />
       </div>
+      <TypingRows peers={state.peer_drafts ?? []} />
       <SendBox
         draft={state.active_draft}
         connected={connected}
-        currentUserId={currentUserId}
-        holderIsPresent={holderIsPresent}
-        holderName={holderName}
         isStreaming={inFlightMessage != null || awaitingReply}
         streamingMessageId={inFlightMessage?.id ?? null}
         onUpdate={onUpdateDraft}
         onSend={onSend}
         onStop={onStop}
         stopState={state.stopState}
-        onTakeOver={onTakeOver}
         banner={
           notice ? (
             <p
