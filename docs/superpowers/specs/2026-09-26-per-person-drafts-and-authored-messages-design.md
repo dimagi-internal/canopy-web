@@ -53,14 +53,24 @@ batching queued messages into one turn, mid-turn steering.
   expected_version, body)` (version guard kept — it still protects one person's two
   tabs), `commit_draft(session, user) -> str`, `discard_draft(session, user)`.
   **Deleted:** `IDLE_WINDOW`, `lock_holder`, `take_over`, `DraftLockHeld`.
-- Protocol (`consumers.py`, `protocol.ts`, `agui.py` passthrough):
+- Protocol (`consumers.py`, `protocol.ts`, `agui.py` passthrough). Designed so an
+  OLDER client (ace-web pins `canopy-ui` 0.12.2 and talks to canopy-web's socket)
+  keeps working — it simply never sees anyone else typing:
   - Client → server: `draft.update {version, body}`, `draft.discard`, `chat.send`
-    — all implicitly "my draft". **Removed:** `draft.take_over`.
-  - Server → client: `draft.updated` carries `author {id, name}`;
-    `draft.committed` / `draft.discarded` carry `author_id`. **Removed:**
-    `draft.lock_changed`, the `draft_lock_held` error.
-  - The connect snapshot (`session_state_dto`) carries `drafts: [...]` — every
-    non-empty open draft in the session — instead of one `draft`.
+    — all implicitly "my draft". `draft.take_over` is accepted and ignored (an old
+    client still sends it).
+  - `draft.updated` (the full draft DTO, now with `author_id`) and `draft.committed`
+    / `draft.discarded` go ONLY to the author's own sockets (their other tabs). An
+    old client's reducer adopts any `draft.updated` into its composer and builds an
+    optimistic user row out of its own box on any `draft.committed`, so a peer's
+    frames must never reach it.
+  - NEW `draft.typing {author: {id, name}, body, at}` goes to everyone EXCEPT the
+    author: the peer view. An empty body means "stopped". Old clients ignore
+    unknown events.
+  - **Removed:** `draft.lock_changed`, the `draft_lock_held` error.
+  - The connect snapshot keeps `active_draft` (now: the connecting user's own
+    draft) and adds `peer_drafts: [{author, body, at}]` for every other non-empty
+    open draft.
 - Live sync keeps today's rule (`shouldSyncDraftLive`): text goes over the wire only
   while someone else is present, plus the one catch-up flush when someone joins.
 
@@ -73,6 +83,11 @@ batching queued messages into one turn, mid-turn steering.
   the body becomes empty, or on `presence.left` for that user.
 - `SendBox` loses `canEdit`, the lock banner and the take-over button.
   `PresenceChips` drops its "is typing" line (the rows say it better).
+- **Send stays enabled while the agent is replying.** Today `canSend` requires
+  `!isStreaming`, so nobody can queue a message during a reply — which would make
+  §3 unreachable from the UI. Send and Stop now sit side by side while a reply
+  streams. `onTakeOver` / `takeOverDraft` stay in the public API as deprecated
+  no-ops so a host upgrading `canopy-ui` does not break.
 
 ### 3. Send: queue only, visible to everyone
 
@@ -102,18 +117,25 @@ batching queued messages into one turn, mid-turn steering.
 
 ### 4. Attribution: a marker in the delivered prompt
 
-`send_message` builds the turn's prompt as
+The runner receives the turn's prompt as
 
 ```
-[canopy from="Alice Smith" user=42 turn=3f2a9c1e]
+[canopy from="Alice Smith" user=42 turn=3f2a9c1e0b7d4c55a1e2f3a4b5c6d7e8]
 <the person's text>
 ```
 
-rather than `prompt=text`. It is one line, machine-parseable, and deliberately
-visible to the agent (it *should* know who is speaking; this complements the caller
-envelope rather than replacing it). The Turn stores the marked prompt; nothing else
-that reads `Turn.prompt` needs the bare text — confirm each reader during planning.
-A contact (no canopy user) gets `from="<contact name>" contact=<id>`.
+It is one line, machine-parseable, and deliberately visible to the agent (it
+*should* know who is speaking; this complements the caller envelope rather than
+replacing it). A contact gets `from="<name>" contact=<id>`.
+
+**The marker is added at CLAIM, never stored.** `Turn.prompt` keeps the bare text,
+because it has other readers that must not see the marker: Slack's "continued in
+canopy" status line (`apps/slack/status.py`) and the lost-turn re-ask
+(`apps/slack/services.py`), which re-sends `turn.prompt` through `send_message`
+and would otherwise stack a second marker. `claim_turn` (`apps/harness/api.py`)
+sets the marked text on the in-memory turn it serializes, only for a chat-session
+turn with a known initiator — the same point that already attaches the claim-only
+`mcp_token`.
 
 - One module, `apps/canopy_sessions/authorship.py`, owns both directions:
   `mark(text, *, name, user_id=None, contact_id=None, turn_short) -> str` and
@@ -128,6 +150,9 @@ A contact (no canopy user) gets `from="<contact name>" contact=<id>`.
   without a marker stay `author=None`).
 - A user row with no marker was typed directly into emdash/Claude Code. It renders
   as "typed in emdash" — attributing it to the session owner would be a guess.
+- The LIVE user frame (`stream_map`, `chat.user_message`) runs the same `parse`, so
+  a watcher sees the stripped text + author before any reload, and the sender's
+  optimistic echo still matches on text.
 - `message_dto` / `MessageOut` gain `author`; regenerate `generated.ts`.
 - `MessageItem`: my messages stay right-aligned primary; anyone else's are
   left-aligned-ish with a name label (exact styling decided in the plan, on design
@@ -147,10 +172,11 @@ A contact (no canopy user) gets `from="<contact name>" contact=<id>`.
 ## Compatibility
 
 - `canopy-ui` `src/chat` changes → version bump required (CI enforces), published on
-  merge; ace-web picks it up via Dependabot. **Check before building:** whether
-  ace-web's chat server emits the draft frames. If it does, the reducer must still
-  accept a `draft.updated` without `author` (treat as the single legacy draft) until
-  ace-web moves.
+  merge; ace-web picks it up via Dependabot. Checked: ace-web retired its own
+  draft server (`ace_sessions/0009_retire_draft_and_sharetoken`) and its
+  `CanopyChatPanel` connects to canopy-web's socket, so the only compatibility
+  that matters is an old `canopy-ui` against the new server — handled by the frame
+  routing above.
 - Old runners need nothing: the marker lives in `Turn.prompt`, which every runner
   already delivers verbatim.
 
