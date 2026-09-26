@@ -963,6 +963,15 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
         # contract v1) never rides the claim: the agent reaches the host through
         # canopy's own MCP (`site_call`), which attaches it server-side, so no
         # runner — where every session is one OS user — ever holds it.
+
+    # Who wrote a chat line rides INSIDE the delivered prompt, because the
+    # transcript that comes back records only what the agent read (spec
+    # 2026-09-26). Set on this in-memory instance only — never saved: Slack's
+    # status line and the lost-turn re-ask read Turn.prompt and must see the
+    # bare words.
+    from apps.canopy_sessions.authorship import for_turn
+
+    turn.prompt = for_turn(turn)
     return Status(200, turn)
 
 
