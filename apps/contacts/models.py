@@ -162,6 +162,14 @@ class Contact(models.Model):
     # signature. What it does not establish is that the account's profile
     # email is the person's real-world identity, hence tier 2 and not 3.
     AUTH_SLACK = "slack"
+    # Tier 3 — a FULL member of the Slack canopy is installed in: not a guest,
+    # not a bot, not deactivated, and homed in that team (not a Slack Connect
+    # visitor from someone else's org). That profile email was provisioned by
+    # the organisation that owns the Slack, which is the same authority DMARC
+    # leans on for mail — so it identifies the person the way an aligned
+    # signature does. A guest or an outside team's member stays `slack` (tier 2):
+    # their email is whatever THEIR org, or they, typed in.
+    AUTH_SLACK_MEMBER = "slack_member"
     # Tier 3 — the signature is also tied to the identity the reader sees.
     AUTH_DMARC = "dmarc"
     # A DKIM signature BY the From: domain itself (`header.d`/`header.i` equal to
@@ -191,6 +199,7 @@ class Contact(models.Model):
         (AUTH_DKIM, "DKIM signed"),
         (AUTH_APP_SIGNED, "Signed assertion from the app"),
         (AUTH_SLACK, "Slack account (event signed by Slack)"),
+        (AUTH_SLACK_MEMBER, "Member of our Slack (event signed by Slack)"),
         (AUTH_DMARC, "DMARC aligned"),
         (AUTH_DKIM_ALIGNED, "DKIM signed by the From: domain"),
     ]
@@ -198,7 +207,7 @@ class Contact(models.Model):
         AUTH_NONE: 0,
         AUTH_SPF: 1, AUTH_APP_SECRET: 1,
         AUTH_DKIM: 2, AUTH_APP_SIGNED: 2, AUTH_SLACK: 2,
-        AUTH_DMARC: 3, AUTH_DKIM_ALIGNED: 3,
+        AUTH_DMARC: 3, AUTH_DKIM_ALIGNED: 3, AUTH_SLACK_MEMBER: 3,
     }
     #: Tier-level aliases. Prefer these in a rule: `auth_at_least(TIER_SIGNED)`
     #: keeps working when a channel adds a label, where naming `AUTH_DKIM`

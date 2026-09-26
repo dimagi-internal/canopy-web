@@ -293,6 +293,7 @@ def record_slack_user(
     slack_user_id: str,
     email: str = "",
     display_name: str = "",
+    grade: str = Contact.AUTH_SLACK,
 ) -> Contact | None:
     """Upsert the contact behind a Slack user who is not a workspace member.
 
@@ -309,7 +310,8 @@ def record_slack_user(
     team_id, slack_user_id = (team_id or "").strip(), (slack_user_id or "").strip()
     if workspace is None or not team_id or not slack_user_id:
         return None
-    grade = Contact.AUTH_SLACK
+    if grade not in (Contact.AUTH_SLACK, Contact.AUTH_SLACK_MEMBER):
+        grade = Contact.AUTH_SLACK
     contact, created = Contact.objects.get_or_create(
         workspace=workspace,
         source=Contact.SOURCE_SLACK,
@@ -331,6 +333,8 @@ def record_slack_user(
                     contact.pk, workspace.pk)
         return contact
     updates = {"last_auth_result": grade, "message_count": F("message_count") + 1}
+    if Contact.AUTH_RANK[grade] > Contact.AUTH_RANK.get(contact.auth_result, 0):
+        updates["auth_result"] = grade
     # Fill blanks only, for the same reason as the widget: a later message must
     # not be able to relabel an established contact.
     if not contact.display_name and (display_name or "").strip():

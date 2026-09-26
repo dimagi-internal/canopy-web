@@ -53,8 +53,10 @@ class FakeSlack:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
         self.users = {
-            ALICE: {"name": "alice", "profile": {"email": "alice@dimagi.com", "real_name": "Alice A"}},
-            BOB: {"name": "bob", "profile": {"email": "bob@dimagi.com", "real_name": "Bob B"}},
+            # `team_id` as real users.info returns it: both are full members of our Slack.
+            ALICE: {"name": "alice", "team_id": TEAM,
+                    "profile": {"email": "alice@dimagi.com", "real_name": "Alice A"}},
+            BOB: {"name": "bob", "team_id": TEAM, "profile": {"email": "bob@dimagi.com", "real_name": "Bob B"}},
         }
         self.installer = ALICE
         self.fail: dict[str, str] = {}
@@ -318,7 +320,8 @@ def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installa
     contact = _is_contact_turn(Turn.objects.get())
     assert contact.workspace == ws and contact.source == Contact.SOURCE_SLACK
     assert contact.external_id == f"{TEAM}:{ALICE}"
-    assert contact.auth_result == Contact.AUTH_SLACK
+    # A full member of our own Slack: the email was provisioned by Dimagi.
+    assert contact.auth_result == Contact.AUTH_SLACK_MEMBER
     assert (contact.email, contact.display_name) == ("alice@dimagi.com", "Alice A")
     # Grants nothing: not a member, and no member can open the conversation.
     assert not WorkspaceMembership.objects.filter(workspace=ws, user__email="alice@dimagi.com").exists()
@@ -337,6 +340,48 @@ def test_the_same_slack_user_is_one_contact(slack, installation, hal):
 
 def test_a_guest_is_a_contact_even_with_a_member_email(slack, installation, hal, alice):
     slack.users[ALICE]["is_restricted"] = True
+    mention("hal hello")
+    _is_contact_turn(Turn.objects.get())
+    assert not SlackUserLink.objects.exists()
+
+
+def test_a_colleague_on_our_slack_is_a_verified_caller(slack, installation, hal, ws):
+    # Labs 2026-09-26: Gillian — a full member of Dimagi's Slack with no canopy
+    # account — drove Hal from Slack, and her envelope said `verified: false`.
+    from apps.harness.caller_context import build
+
+    mention("hal who owns the budget?")
+    turn = Turn.objects.get()
+    assert _is_contact_turn(turn).last_auth_result == Contact.AUTH_SLACK_MEMBER
+    assert build(turn)["verified"] is True
+
+
+@pytest.mark.parametrize("who_they_are", [
+    {"is_restricted": True},                    # a guest
+    {"is_ultra_restricted": True},              # a single-channel guest
+    {"team_id": "T_PARTNER"},                   # Slack Connect: homed in someone else's org
+    {"team_id": None},                          # nothing to show it is ours
+])
+def test_anyone_else_on_slack_stays_unverified(slack, installation, hal, ws, who_they_are):
+    from apps.harness.caller_context import build
+
+    slack.users[ALICE].update(who_they_are)
+    mention("hal who owns the budget?")
+    turn = Turn.objects.get()
+    assert _is_contact_turn(turn).last_auth_result == Contact.AUTH_SLACK
+    assert build(turn)["verified"] is False
+
+
+def test_a_member_matched_by_email_is_verified(slack, installation, hal, alice):
+    from apps.harness.caller_context import build
+
+    mention("hal hello")
+    assert build(Turn.objects.get())["verified"] is True
+
+
+def test_a_slack_connect_visitor_is_never_linked_by_email(slack, installation, hal, alice):
+    # Their org sets their profile email; ours matching it proves nothing.
+    slack.users[ALICE]["team_id"] = "T_PARTNER"
     mention("hal hello")
     _is_contact_turn(Turn.objects.get())
     assert not SlackUserLink.objects.exists()

@@ -33,7 +33,10 @@ VERSION = 1
 #: User assurances that establish the person, not just a claim about them.
 #: `dmarc` is a member resolved from a DMARC-aligned email (harness
 #: `_member_behind_email`), which is only ever done on THIS message's grade.
-_VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED,
+#: `slack_email` is a full member of our own Slack matched by the profile email
+#: that Slack's owning organisation provisioned (`slack.services.auto_link`
+#: refuses guests and other teams' members).
+_VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED, who.SLACK_EMAIL,
                             who.APPROVAL, Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED})
 
 #: Relationships, strongest first. `admin` arrives with `Agent.admins` (§3).
@@ -53,8 +56,8 @@ def _verified(turn) -> bool:
         return grade in _VERIFIED_USER
     if kind == who.CONTACT:
         # Tier 3: the signature is tied to the identity the reader sees, which
-        # for a contact means DMARC-aligned (or domain-signed) MAIL and nothing
-        # else. A visitor from an embedded site tops out at tier 2 by design and
+        # for a contact means DMARC-aligned (or domain-signed) MAIL, or a full
+        # member of our own Slack (`slack_member`). A visitor from an embedded site tops out at tier 2 by design and
         # is therefore never verified here — the host vouches for them, and
         # canopy checks the host's signature, not the human. Gate an embedded
         # agent's interface on `contact`, never `contact:verified`.

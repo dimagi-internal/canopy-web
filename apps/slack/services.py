@@ -242,6 +242,20 @@ def _is_guest(info: dict) -> bool:
     return bool(info.get("is_restricted") or info.get("is_ultra_restricted"))
 
 
+def is_home_member(installation: SlackInstallation, info: dict) -> bool:
+    """A full member of the Slack canopy is installed in — the one case where
+    the profile email names the person, because the organisation that owns
+    this Slack provisioned it.
+
+    Not a guest, a bot or a deactivated account, and homed in THIS team: a
+    Slack Connect visitor posts in our channels with a profile their own org
+    controls, and an org that provisions its own accounts can give one any
+    address it likes. No profile (Slack unreachable) is not a member.
+    """
+    return bool(info) and not info.get("is_bot") and not info.get("deleted") \
+        and not _is_guest(info) and str(info.get("team_id") or "") == installation.team_id
+
+
 def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     """Link a Slack user to the canopy user with the same email, if exactly one.
 
@@ -250,14 +264,14 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     fallback for someone whose two emails differ. Requiring it first is what
     made the first live mention on labs (2026-09-19) look like silence.
 
-    Not for a guest, a bot or a deactivated account: a guest is someone the
-    organisation invited in, and is answered as a CONTACT whatever their email
-    says. Not on an ambiguous match either — two canopy accounts sharing an
+    Only for a full member of this Slack (`is_home_member`): a guest is
+    someone the organisation invited in, and a Slack Connect visitor's email is
+    their own org's to set — both are answered as a CONTACT whatever it says. Not on an ambiguous match either — two canopy accounts sharing an
     address is not something to resolve by picking one.
 
     Grants nothing: membership is still checked on every message.
     """
-    if not info or info.get("is_bot") or info.get("deleted") or _is_guest(info):
+    if not is_home_member(installation, info):
         return None
     email = str((info.get("profile") or {}).get("email") or "").strip()
     if not email:
@@ -318,6 +332,8 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str,
         slack_user_id=slack_user_id,
         email=str(profile.get("email") or ""),
         display_name=str(profile.get("real_name") or profile.get("display_name") or info.get("name") or ""),
+        grade=(contacts.Contact.AUTH_SLACK_MEMBER if is_home_member(installation, info)
+               else contacts.Contact.AUTH_SLACK),
     )
     if contact is None or contact.is_blocked:
         return None, Outcome(BLOCKED, "You can't reach agents from this Slack.", workspace_id=workspace_id)
