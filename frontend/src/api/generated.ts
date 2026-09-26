@@ -1892,7 +1892,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/login": {
+    readonly "/api/agents/{slug}/canopy-user": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -1901,10 +1901,11 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Link the canopy login that is this agent (canopy UI only)
-         * @description Which canopy login this agent calls canopy as. A blank email unlinks it.
+         * Link this agent to the canopy user it is (canopy UI only)
+         * @description The canopy user account this agent's own token signs in as. `user_id`
+         *     null unlinks it.
          */
-        readonly put: operations["apps_agents_api_set_agent_login"];
+        readonly put: operations["apps_agents_api_link_canopy_user"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -8706,7 +8707,7 @@ export interface components {
             readonly slack_enabled: boolean;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
-            readonly login?: components["schemas"]["AgentOwnerOut"] | null;
+            readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
             /**
              * Can Transfer Owner
              * @default false
@@ -8761,10 +8762,10 @@ export interface components {
             /** Email */
             readonly email: string;
         };
-        /** AgentLoginIn */
-        readonly AgentLoginIn: {
-            /** Email */
-            readonly email?: string | null;
+        /** AgentCanopyUserIn */
+        readonly AgentCanopyUserIn: {
+            /** User Id */
+            readonly user_id: number | null;
         };
         /** AgentOwnerIn */
         readonly AgentOwnerIn: {
@@ -15993,7 +15994,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_agent_login: {
+    readonly apps_agents_api_link_canopy_user: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16004,7 +16005,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["AgentLoginIn"];
+                readonly "application/json": components["schemas"]["AgentCanopyUserIn"];
             };
         };
         readonly responses: {
