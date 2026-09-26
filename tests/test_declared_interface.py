@@ -293,7 +293,7 @@ def test_the_same_runner_still_claims_full_turns(w, claimable):
 
 def test_a_runner_reporting_profiles_claims_it(w, claimable):
     c, rid = claimable
-    _beat(c, rid, profiles=1)
+    _beat(c, rid, profiles=3)
     _email(w["agent"], "e1", headers=DMARC)
     r = c.post(f"/api/harness/runners/{rid}/claim")
     assert r.status_code == 200
@@ -308,9 +308,18 @@ def test_a_pin_is_not_a_way_past_it(w, claimable):
     assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204
 
 
+def test_a_runner_whose_guard_predates_write_paths_is_not_given_one(w, claimable):
+    # Guard 2 checked Write against read_paths: a caller could overwrite the
+    # script its bash allowlist runs. Such a runner must not get a caller turn.
+    c, rid = claimable
+    _beat(c, rid, profiles=2)
+    _email(w["agent"], "e1", headers=DMARC)
+    assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204
+
+
 def test_a_downgraded_runner_stops_claiming_on_its_next_beat(w, claimable):
     c, rid = claimable
-    _beat(c, rid, profiles=1)
+    _beat(c, rid, profiles=3)
     _beat(c, rid)                                        # rolled back to an old build
     _email(w["agent"], "e1", headers=DMARC)
     assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204

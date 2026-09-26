@@ -121,8 +121,9 @@ def _plugin(tmp_path, version, registered=True):
 
 
 def test_supported_only_with_a_guard_that_honours_the_env(cloud_runner, tmp_path):
-    assert cloud_runner.profiles_supported(_plugin(tmp_path / "a", 2)) == 2
+    assert cloud_runner.profiles_supported(_plugin(tmp_path / "a", 3)) == 3
     assert cloud_runner.profiles_supported(_plugin(tmp_path / "b", 1)) == 0      # laptop-only guard
+    assert cloud_runner.profiles_supported(_plugin(tmp_path / "v2", 2)) == 0     # writes vs read_paths
     assert cloud_runner.profiles_supported(_plugin(tmp_path / "c", 2, registered=False)) == 0
     assert cloud_runner.profiles_supported(tmp_path / "nothing") == 0
 

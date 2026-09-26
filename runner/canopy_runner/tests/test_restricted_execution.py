@@ -145,12 +145,17 @@ def _plugin(tmp_path, guard: str, hooks: str):
 
 
 def test_supported_only_when_the_installed_guard_enforces_it(tmp_path):
-    ok = _plugin(tmp_path, "PROFILE_ENFORCEMENT_VERSION = 1\n", '{"x": "profile_guard.py"}')
-    assert caller.profiles_supported(plugin_root=ok) == 1
+    ok = _plugin(tmp_path, "PROFILE_ENFORCEMENT_VERSION = 3\n", '{"x": "profile_guard.py"}')
+    assert caller.profiles_supported(plugin_root=ok) == 3
+
+
+def test_a_guard_that_checks_writes_against_read_paths_is_not_enough(tmp_path):
+    old = _plugin(tmp_path, "PROFILE_ENFORCEMENT_VERSION = 2\n", '{"x": "profile_guard.py"}')
+    assert caller.profiles_supported(plugin_root=old) == 0
 
 
 def test_not_supported_without_the_hook_registered(tmp_path):
-    root = _plugin(tmp_path, "PROFILE_ENFORCEMENT_VERSION = 1\n", '{"x": "post_tool_use.py"}')
+    root = _plugin(tmp_path, "PROFILE_ENFORCEMENT_VERSION = 3\n", '{"x": "post_tool_use.py"}')
     assert caller.profiles_supported(plugin_root=root) == 0
 
 

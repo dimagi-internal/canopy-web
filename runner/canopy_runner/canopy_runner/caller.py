@@ -181,6 +181,12 @@ PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
 #: The profile contract this runner implements. Reported only when the installed
 #: canopy plugin's guard implements the same one — see `profiles_supported`.
 PROFILES_VERSION = 1
+#: The oldest installed guard this runner will run a caller's turn under. 3 is the
+#: one that checks Write/Edit against `write_paths` (2026-09-26); an older guard
+#: checks them against read_paths, which lets a caller overwrite the script its
+#: bash allowlist runs. The runner REPORTS the guard's own version, so canopy-web
+#: (harness `PROFILES_VERSION`) decides who gets caller turns.
+MIN_GUARD_VERSION = 3
 _MARKER = re.compile(r"^PROFILE_ENFORCEMENT_VERSION\s*=\s*(\d+)", re.M)
 _supported_cache: tuple[float, int] | None = None
 
@@ -276,7 +282,8 @@ def _canopy_plugin_root() -> pathlib.Path | None:
 
 
 def profiles_supported(*, now=time.monotonic, plugin_root=None) -> int:
-    """PROFILES_VERSION when the installed canopy plugin enforces it, else 0.
+    """The installed guard's PROFILE_ENFORCEMENT_VERSION when it is at least
+    MIN_GUARD_VERSION and registered, else 0.
 
     This is what the runner tells canopy-web on every heartbeat, and 0 means
     "never give me a caller's turn". The runner can open a `cx-` session and write
@@ -295,8 +302,8 @@ def profiles_supported(*, now=time.monotonic, plugin_root=None) -> int:
             guard = (root / "hooks" / "profile_guard.py").read_text()
             hooks = (root / "hooks" / "hooks.json").read_text()
             m = _MARKER.search(guard)
-            if m and int(m.group(1)) >= PROFILES_VERSION and "profile_guard.py" in hooks:
-                version = PROFILES_VERSION
+            if m and int(m.group(1)) >= MIN_GUARD_VERSION and "profile_guard.py" in hooks:
+                version = int(m.group(1))
         except OSError:
             version = 0
     if plugin_root is None:

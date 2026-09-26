@@ -147,7 +147,7 @@ def test_the_claim_hands_the_token_to_the_claiming_runner_only(w):
                                            "capabilities": {"agents": ["ace"], "sessions": True}},
                  content_type="application/json").json()["id"]
     c.post(f"/api/harness/runners/{rid}/heartbeat", {"active_turn_ids": [], "degraded": False,
-                                                    "note": "", "profiles": 1},
+                                                    "note": "", "profiles": 3},
            content_type="application/json")
     RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_EMAIL, idempotency_key="nothread",
