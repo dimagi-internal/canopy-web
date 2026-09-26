@@ -145,6 +145,7 @@ from apps.walkthroughs.api import router as walkthroughs_router  # noqa: E402
 from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
+from apps.agents.a2a_api import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
@@ -199,6 +200,9 @@ api.add_router("/sessions", sessions_router)
 # tenant URL /api/w/{ws}/agents/... is gated + stripped to this flat path by
 # apps.api.tenancy.WorkspaceResolveMiddleware, which also sets request.workspace_slug.
 api.add_router("/agents", agents_router)
+# A2A Agent Card discovery — public in the login middleware; each route
+# self-enforces (apps/agents/a2a_api.py).
+api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI

@@ -58,6 +58,12 @@ PUBLIC_PATH_PREFIXES = (
     # The routes self-enforce via `contact_auth`, which requires the principal
     # this middleware cannot see.
     "/api/contact/",
+    # A2A Agent Card discovery. A client reads a card BEFORE it holds any
+    # credential — that is what the card is for. The public card is served only
+    # for an agent that offers outsiders something (404 otherwise, same as no
+    # such slug); the extended card requires a session or PAT via Ninja's
+    # `session_auth`. See apps/agents/a2a_api.py.
+    "/api/a2a/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)

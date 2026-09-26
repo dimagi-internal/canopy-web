@@ -481,6 +481,10 @@ SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 # (a shell prompt, not an HTTP view). connectlabs.py overrides to the labs URL.
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost:8000")
 
+# The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
+CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")
+CANOPY_A2A_PROVIDER_URL = env("CANOPY_A2A_PROVIDER_URL", default="https://www.dimagi.com")
+
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
 # and ses:SendEmail on the task role, which live in AWS, not here. Off means
