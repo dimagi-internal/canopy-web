@@ -773,7 +773,12 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> boo
 #: The profile-enforcement version a runner must REPORT to be given a restricted
 #: turn. 1 = the runner opens a caller's turn in its own `cx-` session with its
 #: profile written first, AND the installed canopy guard confines that session.
-PROFILES_VERSION = 1
+#: 3 (2026-09-26) = runners now report the installed GUARD's version, and 3 is the
+#: guard that checks writes against `write_paths`. A runner on older code reports
+#: 1 or 2 whatever its guard, so it stops getting caller turns until it updates —
+#: fail closed, rather than trusting a guard that lets a caller overwrite the script
+#: its bash allowlist runs.
+PROFILES_VERSION = 3
 
 
 def profile_q(runner) -> Q:

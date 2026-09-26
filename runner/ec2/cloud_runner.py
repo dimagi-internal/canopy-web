@@ -3466,6 +3466,10 @@ CALLER_ROOT = pathlib.Path.home() / ".canopy" / "caller"
 #: The canopy plugin's guard must implement at least this for a confined turn to be
 #: safe here: version 2 is the one that honours CANOPY_PROFILE.
 CLOUD_PROFILES_VERSION = 2
+#: The oldest guard this box runs a caller's turn under, and what it reports is the
+#: guard's own version — see canopy_runner caller.MIN_GUARD_VERSION (3 = writes
+#: checked against write_paths).
+MIN_GUARD_VERSION = 3
 
 
 class ConfineError(RuntimeError):
@@ -3598,8 +3602,9 @@ def _canopy_plugin_root() -> pathlib.Path | None:
 
 
 def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
-    """CLOUD_PROFILES_VERSION when the installed canopy plugin's guard honours
-    CANOPY_PROFILE, else 0 — and 0 means canopy never gives this box a caller's turn."""
+    """The installed guard's version when it honours CANOPY_PROFILE and checks
+    writes against write_paths (≥ MIN_GUARD_VERSION), else 0 — and 0 means canopy
+    never gives this box a caller's turn."""
     import re as _re
 
     root = plugin_root or _canopy_plugin_root()
@@ -3611,8 +3616,8 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
     except OSError:
         return 0
     m = _re.search(r"^PROFILE_ENFORCEMENT_VERSION\s*=\s*(\d+)", guard, _re.M)
-    ok = m and int(m.group(1)) >= CLOUD_PROFILES_VERSION and "profile_guard.py" in hooks
-    return CLOUD_PROFILES_VERSION if ok else 0
+    ok = m and int(m.group(1)) >= MIN_GUARD_VERSION and "profile_guard.py" in hooks
+    return int(m.group(1)) if ok else 0
 
 
 def _run_turn(runner_id: str, turn: dict) -> None:
