@@ -1083,14 +1083,17 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     return binding, turn
 
 
-def claim_pending_attachments(session, message=None) -> list[dict]:
-    """Mark this session's un-sent attachments as sent, and describe them for the
-    runner.
+def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
+    """Mark the SENDER's un-sent attachments on this session as sent, and
+    describe them for the runner.
 
-    Swept off the SESSION rather than passed by id, so the WebSocket `chat.send`
-    frame needs no new field and REST and WS behave identically. It also matches
-    the draft model: the draft is co-edited and shared, so anything attached to
-    it belongs to the send whoever presses the button.
+    Swept off the session rather than passed by id, so the WebSocket `chat.send`
+    frame needs no new field and REST and WS behave identically. Scoped to
+    `uploaded_by=user` because it matches the draft model: everyone composes in
+    their own box (spec 2026-09-26), so an attachment belongs to its uploader's
+    next send — never to a teammate who happens to press Send first. With no
+    user (a contact send) nothing is claimed: contacts cannot upload, and they
+    must not sweep up a member's half-composed attachments.
 
     `message` is None for a runner-origin session, which writes no user Message
     row — hence the sent_at stamp, without which those rows would ride along on
@@ -1098,7 +1101,10 @@ def claim_pending_attachments(session, message=None) -> list[dict]:
     """
     from .models import Attachment
 
-    pending = list(Attachment.objects.filter(session=session, sent_at__isnull=True))
+    if user is None or getattr(user, "pk", None) is None:
+        return []
+    pending = list(Attachment.objects.filter(
+        session=session, uploaded_by=user, sent_at__isnull=True))
     if not pending:
         return []
     now = timezone.now()
@@ -1233,7 +1239,7 @@ def send_message(
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
         ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
-        attachments = claim_pending_attachments(session, message)
+        attachments = claim_pending_attachments(session, message, user)
         if attachments:
             ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
@@ -1397,7 +1403,7 @@ def _send_transcript_sourced_message(
     ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
     # message=None: this path writes no durable user row, so the sent_at stamp is
     # the only thing stopping these attachments riding along on every later send.
-    attachments = claim_pending_attachments(session, None)
+    attachments = claim_pending_attachments(session, None, user)
     if attachments:
         ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(

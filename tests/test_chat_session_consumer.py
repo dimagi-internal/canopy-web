@@ -176,11 +176,22 @@ async def test_snapshot_has_my_draft_and_peer_drafts():
     comm = await _connect(session, owner)
     await comm.connect()
     snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
-    assert snap["data"]["active_draft"]["author_id"] == owner.id
-    assert snap["data"]["active_draft"]["body"] == ""
+    # Connecting writes nothing: no draft of mine yet, so none is created.
+    assert snap["data"]["active_draft"] is None
     assert [p["body"] for p in snap["data"]["peer_drafts"]] == ["wip"]
     assert snap["data"]["peer_drafts"][0]["author"]["id"] == teammate.id
     await comm.disconnect()
+    from apps.canopy_sessions.models import Draft
+    assert not await database_sync_to_async(
+        Draft.objects.filter(session=session, author=owner).exists)()
+    # Once I have typed, the snapshot carries MY draft.
+    await database_sync_to_async(drafts.update_draft)(session, user=owner, expected_version=0, body="mine")
+    again = await _connect(session, owner)
+    await again.connect()
+    snap = await _recv_match(again, lambda f: f["event"] == "session.state")
+    assert snap["data"]["active_draft"]["author_id"] == owner.id
+    assert snap["data"]["active_draft"]["body"] == "mine"
+    await again.disconnect()
 
 
 async def test_take_over_is_accepted_and_ignored():
@@ -191,6 +202,10 @@ async def test_take_over_is_accepted_and_ignored():
     await comm.send_json_to({"action": "draft.take_over", "data": {}})
     frames = await _received_frames(comm, window=0.8)
     assert not [f for f in frames if f["event"].startswith("draft.") or f["event"] == "session.error"]
+    # The frame was processed and the socket is alive: an edit still echoes.
+    await comm.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "still here"}})
+    echo = await _recv_match(comm, lambda f: f["event"] == "draft.updated")
+    assert echo["data"]["body"] == "still here"
     await comm.disconnect()
 
 

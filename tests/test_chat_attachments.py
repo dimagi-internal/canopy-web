@@ -319,3 +319,36 @@ def test_a_runner_session_stamps_sent_at_without_a_message():
     assert row.sent_at is not None
     assert row.message_id is None
     assert [r["filename"] for r in turn.origin_ref["attachments"]] == ["shot.png"]
+
+
+def test_a_send_claims_only_the_senders_pending_attachments():
+    """Each person composes in their own box (spec 2026-09-26), so A's send must
+    not carry the attachment B has put in B's half-written message."""
+    from apps.canopy_sessions import services
+
+    a, ws, session, _c = _ctx()
+    b = User.objects.create_user("b", "b@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=b, workspace=ws, role=WorkspaceMembership.EDITOR)
+    mine = _pending(session, a, "mine.png")
+    theirs = _pending(session, b, "theirs.png")
+
+    _msg, turn = services.send_message(session=session, text="look", user=a)
+
+    assert [r["filename"] for r in turn.origin_ref["attachments"]] == ["mine.png"]
+    mine.refresh_from_db()
+    theirs.refresh_from_db()
+    assert mine.sent_at is not None
+    assert theirs.sent_at is None and theirs.message_id is None
+
+
+def test_a_send_with_no_user_claims_nobodys_attachments():
+    """A contact (or any send with no canopy user) cannot upload, so it has no
+    attachments of its own — and must not sweep up a member's."""
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    row = _pending(session, user)
+
+    assert services.claim_pending_attachments(session, None, None) == []
+    row.refresh_from_db()
+    assert row.sent_at is None

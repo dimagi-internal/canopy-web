@@ -273,13 +273,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def _broadcast_draft(self, draft):
         """One group message, rendered per socket: the author's own tabs get the
         full draft (`draft.updated`), everyone else the peer view (`draft.typing`).
-        Both are computed here, in the sync context, so the author is loaded once."""
-        payload = await database_sync_to_async(
-            lambda: {"draft": serializers.draft_dto(draft),
-                     "peer": serializers.peer_draft_dto(
-                         type(draft).objects.select_related("author").get(pk=draft.pk))})()
-        await self.channel_layer.group_send(
-            self.group, {"type": "draft.updated", "author_id": draft.author_id, **payload})
+        Every caller serializes the socket user's OWN draft, so the author is
+        `self.user` — set it rather than re-SELECT it on every keystroke."""
+        draft.author = self.user
+        await self.channel_layer.group_send(self.group, {
+            "type": "draft.updated", "author_id": draft.author_id,
+            "draft": serializers.draft_dto(draft),
+            "peer": serializers.peer_draft_dto(draft),
+        })
 
     async def _chat_send(self, data=None):
         # `text` + `client_id` make a send self-contained and retryable. Without
@@ -556,7 +557,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # My own draft, and everyone else's in progress. A contact has no draft
         # and sees every non-empty one as a peer's.
         if self.user is not None:
-            own = drafts.draft_for(self.session, self.user)
+            # A read, not draft_for's get-or-create: connecting (a viewer
+            # included) must write nothing. draft_dto(None) is null.
+            own = Draft.objects.filter(
+                session=self.session, author=self.user, slot="next").first()
             peers = drafts.peer_drafts(self.session, self.user)
         else:
             own = None
