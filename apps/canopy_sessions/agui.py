@@ -278,7 +278,12 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 message_id=str(data.get("message_id") or ""),
                 role="user",
                 delta=data.get("plaintext") or "",
-                metadata=_meta(turn_index=data.get("turn_index")),
+                # `author` survives here for the same reason it exists at all
+                # (spec 2026-09-26): a transcript-sourced session's durable row
+                # carries no user beyond the runner's own login, so canopy's
+                # only chance to say WHO typed this is this metadata, on this
+                # frame, once.
+                metadata=_meta(turn_index=data.get("turn_index"), author=data.get("author")),
             )
         ]
 
@@ -488,6 +493,14 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     # surfaces at once: canopy's chat page and the embedded widget are both on
     # ag-ui. That is how page actions were lost until 2026-09-18.
     if event == "session.turn_status":
+        return [_custom(event, data)]
+
+    # Human sends that have not reached the transcript yet, visible to every
+    # watcher (spec 2026-09-26). No AG-UI spelling for "the ask isn't even a run
+    # yet", so it rides CUSTOM like its `session.turn_status` sibling — and for
+    # the identical reason: dropping it here would be silent, on both surfaces
+    # that ride ag-ui at once.
+    if event == "session.queued":
         return [_custom(event, data)]
 
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent

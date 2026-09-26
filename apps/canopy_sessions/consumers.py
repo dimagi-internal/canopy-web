@@ -478,6 +478,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"event": "session.turn_status",
                               "data": {"status": message.get("status")}})
 
+    async def session_queued(self, message):
+        """The whole list of human sends not yet in the transcript, visible to
+        everyone watching — see `queued_feed`. Whole, never a delta, for the
+        same reason `session.turn_status` is: a just-connected client has no
+        correct prior to apply one to."""
+        await self.send_json({"event": "session.queued", "data": {"queued": message.get("queued") or []}})
+
     async def session_page_action(self, message):
         """The agent is asking the attached page to do something.
 
@@ -594,5 +601,6 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 draft=own,
                 peer_drafts=peers,
                 messages=messages,
+                queued=chat_services.queued_messages(self.session),
             ),
         }

@@ -1270,6 +1270,38 @@ def send_message(
     return message, turn
 
 
+def queued_messages(session: Session) -> list[dict]:
+    """Human sends in this session that have not reached the transcript yet.
+
+    Derived from Turn rows, never stored — the same reasoning as
+    harness.turn_status: it is a function of rows that change on their own clock.
+    A send leaves the list when the transcript row carrying its turn id lands
+    (Message.source_turn_id, parsed from the author marker), or when its turn
+    ends without one (cancelled, failed)."""
+    landed = set(Message.objects.filter(session=session, source_turn_id__isnull=False)
+                 .values_list("source_turn_id", flat=True))
+    turns = (Turn.objects.select_related("initiator_user", "initiator_contact")
+             .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+             .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
+             .order_by("created_at"))
+    prefix = f"chat:{session.id.hex}:"
+    out = []
+    for t in turns:
+        if t.pk in landed:
+            continue
+        author, _bare, _tid = authorship.parse(authorship.for_turn(t))
+        key = t.idempotency_key or ""
+        out.append({
+            "turn_id": str(t.pk),
+            "client_id": key[len(prefix):] if key.startswith(prefix) else "",
+            "author": author,
+            "text": t.prompt or "",
+            "sent_at": t.created_at.isoformat(),
+            "state": "queued" if t.status == Turn.QUEUED else "delivering",
+        })
+    return out
+
+
 def place_queued_turn(*, session: Session, placement: str) -> Turn:
     """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
     directed-placement decision (vs `_resolve_placement`, which only applies to

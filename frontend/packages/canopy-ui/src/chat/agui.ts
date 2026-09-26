@@ -27,7 +27,7 @@
  * standard.
  */
 
-import type { SessionMenu, WsEvent } from "./protocol";
+import type { MessageAuthor, SessionMenu, WsEvent } from "./protocol";
 
 /** Where canopy's own fields ride. Mirrors `agui.METADATA_KEY`. */
 export const METADATA_KEY = "canopy";
@@ -117,6 +117,11 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
             message_id: str(frame.messageId),
             turn_index: num(m.turn_index),
             plaintext: str(frame.delta),
+            // Who typed it — a transcript-sourced session's durable row carries
+            // no user beyond the runner's own login, so this metadata is
+            // canopy's only chance to say (spec 2026-09-26). Absent when the
+            // server sent none (an agent/scheduled/email turn's own send).
+            author: m.author as MessageAuthor | undefined,
           },
         },
       ];

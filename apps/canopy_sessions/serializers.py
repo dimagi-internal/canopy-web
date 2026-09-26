@@ -105,7 +105,7 @@ def participant_dto_for(user, role: str) -> dict:
 
 
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
-                      messages, peer_drafts=()) -> dict:
+                      messages, peer_drafts=(), queued=()) -> dict:
     """The canonical `session.state` snapshot payload."""
     return {
         "messages": [message_dto(m) for m in messages],
@@ -113,6 +113,11 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         "active_draft": draft_dto(draft),
         # Everyone else's draft in progress, as `draft.typing` rows.
         "peer_drafts": [peer_draft_dto(d) for d in peer_drafts],
+        # Human sends that have not reached the transcript yet, visible to
+        # everyone watching — in the snapshot for the same reason `menu` and
+        # `turn_status` are: a client that just connected has no live frame to
+        # have caught it from.
+        "queued": list(queued),
         # Already DTOs: the socket merges rowless readers in (`_snapshot`).
         "participants": [p if isinstance(p, dict) else participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),

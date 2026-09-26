@@ -136,6 +136,29 @@ def test_a_message_typed_into_emdash_arrives_as_a_user_chunk():
     assert event.delta == "hello"
 
 
+def test_a_user_message_carries_its_author():
+    """A transcript-sourced session's durable row carries no user beyond the
+    runner's own login, so this metadata is canopy's only chance to say WHO
+    typed it (spec 2026-09-26)."""
+    [event] = agui.project(
+        {"event": "chat.user_message",
+         "data": {"message_id": "u1", "plaintext": "hello",
+                  "author": {"name": "Jon", "user_id": 7}}},
+        thread_id="t1",
+    )
+
+    assert event.metadata["canopy"]["author"] == {"name": "Jon", "user_id": 7}
+
+
+def test_a_user_message_with_no_author_carries_no_author_key():
+    [event] = agui.project(
+        {"event": "chat.user_message", "data": {"message_id": "u1", "plaintext": "hello"}},
+        thread_id="t1",
+    )
+
+    assert "author" not in (event.metadata or {}).get("canopy", {})
+
+
 # --- tool calls --------------------------------------------------------------
 
 
@@ -344,6 +367,21 @@ def test_a_stream_failure_is_an_error():
     assert event.message == "boom"
 
 
+def test_the_queued_list_rides_custom_like_its_turn_status_sibling():
+    """No AG-UI spelling for "the ask isn't even a run yet" — dropping it here
+    would be silent on both surfaces that ride ag-ui (canopy's chat page and
+    the embedded widget), per session.turn_status's own precedent."""
+    [event] = agui.project(
+        {"event": "session.queued",
+         "data": {"queued": [{"turn_id": "t1", "text": "hi", "author": None,
+                              "state": "queued"}]}},
+        thread_id="t1",
+    )
+
+    assert event.name == "canopy.session.queued"
+    assert event.value["queued"][0]["text"] == "hi"
+
+
 # --- what canopy has and AG-UI does not -------------------------------------
 
 
@@ -409,7 +447,8 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.delta", "data": {"message_id": "m1", "text": "hello"}},
     {"event": "chat.stream_complete", "data": {"message_id": "m1", "plaintext": "hello"}},
     {"event": "chat.user_message",
-     "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there"}},
+     "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there",
+              "author": {"name": "Jon", "user_id": 7}}},
     {"event": "chat.tool_use",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 5,
               "block": {"name": "list_insights", "input": {"limit": 5}}}},
@@ -459,6 +498,11 @@ ROUND_TRIP_FRAMES = [
                          "cloud_runner_id": "8f2e", "last_seen_at": None,
                          "menu_pending": False, "settled": False,
                          "stuck": True}}},
+    {"event": "session.queued",
+     "data": {"queued": [{"turn_id": "8f2e", "client_id": "c9",
+                          "author": {"name": "Jon", "user_id": 7},
+                          "text": "from jj", "sent_at": "2026-09-26T12:00:00+00:00",
+                          "state": "queued"}]}},
     {"event": "session.stop", "data": {"state": "failed"}},
     {"event": "session.activity", "data": {"state": "working"}},
     {"event": "session.menu",

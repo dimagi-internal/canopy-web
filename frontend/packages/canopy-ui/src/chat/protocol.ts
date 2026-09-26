@@ -26,6 +26,14 @@ export type MessageRole =
 // Session + message shapes (the `session.state` snapshot payload)
 // ---------------------------------------------------------------------------
 
+/** Who sent a human line — a canopy user or a contact, never both.
+ * Mirrors `apps/canopy_sessions/authorship.py::parse`'s return shape. */
+export interface MessageAuthor {
+  name: string;
+  user_id?: number;
+  contact_id?: number;
+}
+
 export interface Message {
   /** String PK (canopy sends `str(msg.pk)`), or a synthetic stream id. */
   id: string;
@@ -238,8 +246,11 @@ export type WsEvent =
   // offline box, unroutable) are ones activity has no way to spell.
   | { event: "session.turn_status"; data: { status: TurnStatus | null } }
   // A human typed into emdash rather than into this page. No client echoed it,
-  // so this is the only way it reaches the browser before a reload.
-  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string } }
+  // so this is the only way it reaches the browser before a reload. `author`
+  // rides here for the same reason it rides the queued list (spec 2026-09-26):
+  // a transcript-sourced session's durable row carries no user beyond the
+  // runner's own login, so this is canopy's only chance to say who typed it.
+  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will

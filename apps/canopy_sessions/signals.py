@@ -11,6 +11,7 @@ from django.dispatch import receiver
 
 from apps.harness.signals import (
     sessions_reported,
+    transcript_rows_streamed,
     turn_events_appended,
     turn_status_changed,
 )
@@ -43,6 +44,23 @@ def _status_on_enqueue(sender, turn, **kwargs):
     from .status_feed import publish_for_turn
 
     publish_for_turn(turn)
+
+
+@receiver(transcript_rows_streamed, dispatch_uid="chat_queued_on_transcript")
+def _queued_on_transcript(sender, session, rows, **kwargs):
+    """A user row landed in the transcript, so the send it carries drops off the
+    queued list — re-derive and push it rather than waiting for the next status
+    transition, which may be a while behind a streamed reply."""
+    if not any(kind == "user" for _index, kind, _text in rows):
+        return
+    from .queued_feed import publish_queued
+
+    try:
+        publish_queued(session.pk)
+    except Exception:  # noqa: BLE001 — never break a runner's stream over the list
+        import logging
+
+        logging.getLogger(__name__).exception("queued-list push failed on transcript stream")
 
 
 @receiver(sessions_reported, dispatch_uid="chat_turn_status_sweep")

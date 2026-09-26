@@ -148,7 +148,9 @@ async def test_peer_never_receives_my_draft_frames():
     await a.send_json_to({"action": "draft.discard", "data": {}})
     await a.send_json_to({"action": "chat.send", "data": {"text": "x", "client_id": "c1"}})
     # The sender's own receipt proves the send happened before we inspect b.
-    await _recv_match(a, lambda f: f["event"] == "draft.committed")
+    # tries bumped: the stub's claim/run/finish each now also emit a
+    # session.queued frame (queued_feed) alongside session.turn_status.
+    await _recv_match(a, lambda f: f["event"] == "draft.committed", tries=20)
     seen = [f["event"] for f in await _received_frames(b, window=1.5)]
     assert "draft.typing" in seen
     assert "draft.updated" not in seen
@@ -726,3 +728,33 @@ async def test_a_send_carries_its_text_and_a_resend_is_the_same_turn():
     )()
     assert prompts == ["ship it"]
     await a.disconnect()
+
+
+async def test_everyone_sees_a_teammates_queued_send():
+    """The queued list (spec 2026-09-26): every watcher sees a send that has
+    not reached the transcript yet, with its author, in send order.
+
+    Transcript-sourced (see test_chat_queued.py's own rationale): the
+    ledger-sourced path writes its durable Message row's `source_turn_id`
+    within the SAME outer transaction that enqueues the turn, so by the time
+    `turn_status_changed` fires post-commit the send has already "landed" and
+    the entry is never queued at all. A transcript-sourced session writes no
+    such row, so the entry stays queued until its turn reaches a terminal
+    status."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+
+    def _mark_transcript_sourced():
+        session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+        session.save(update_fields=["metadata"])
+
+    await database_sync_to_async(_mark_transcript_sourced)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    snap = await _recv_match(b, lambda f: f["event"] == "session.state")
+    assert snap["data"]["queued"] == []
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "chat.send", "data": {"text": "from jj", "client_id": "c9"}})
+    q = await _recv_match(b, lambda f: f["event"] == "session.queued"
+                          and any(e["text"] == "from jj" for e in f["data"]["queued"]), tries=20)
+    assert q["data"]["queued"][-1]["author"]["user_id"] == owner.id
+    await a.disconnect(); await b.disconnect()
