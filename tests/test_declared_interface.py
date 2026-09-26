@@ -82,6 +82,23 @@ def test_parse_normalises():
     assert got["capabilities"]["ask"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
 
+def test_write_paths_are_their_own_list_and_reach_the_profile():
+    # One list for read and write let a caller overwrite the script its bash
+    # allowlist runs (bin/ace-email) and then run it. Writes get their own list;
+    # none published means none allowed (the guard reads an empty list as deny).
+    from apps.agents.interface import profile
+
+    got = parse({"capabilities": {"ask": {**IFACE["capabilities"]["ask"],
+                                          "write_paths": ["{cwd}/.ace-ask/*"]}}})
+    assert got["capabilities"]["ask"]["write_paths"] == ["{cwd}/.ace-ask/*"]
+    assert parse(IFACE)["capabilities"]["ask"]["write_paths"] == []
+
+    class _A:
+        interface = got
+    assert profile(_A(), "ask")["write_paths"] == ["{cwd}/.ace-ask/*"]
+    assert profile(_A(), "gone")["write_paths"] == []   # unpublished → deny everything
+
+
 # --- no interface: default deny, except the people the workspace let in ------------
 
 def test_without_an_interface_a_contact_is_refused(w):

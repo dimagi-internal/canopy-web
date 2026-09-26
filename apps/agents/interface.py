@@ -19,6 +19,7 @@ runs in its capability's profile, where everything not listed is denied:
         tools: [Read, Grep, "mcp__canopy-web__who_is_asking"]
         bash: ["canopy email read --repo . {thread_id}"]
         read_paths: ["{cwd}/**"]
+        write_paths: ["{cwd}/.ace-ask/*"]    # where Write/Edit may land (none → no writes)
     callers_default: none
 
 **A page can pick the door.** A capability may name the resources it serves,
@@ -160,7 +161,7 @@ def parse(doc) -> dict:
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
-                          "input", "pages"}
+                          "write_paths", "input", "pages"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -185,6 +186,12 @@ def parse(doc) -> dict:
             "tools": _strings(cap.get("tools"), "tools", name),
             "bash": _strings(cap.get("bash"), "bash", name),
             "read_paths": _strings(cap.get("read_paths"), "read_paths", name),
+            # Separate from read_paths on purpose (2026-09-26): with one list, a
+            # caller who may Write anywhere they may Read could overwrite the very
+            # script their `bash` allowlist lets them run (`bin/ace-email`), and
+            # then run it. The guard refuses Write/Edit outside these; none → no
+            # writes at all.
+            "write_paths": _strings(cap.get("write_paths"), "write_paths", name),
             "pages": _pages(cap.get("pages"), name),
         }
     full = _classes(doc.get("full"), "full")
@@ -396,7 +403,9 @@ def profile(agent, capability: str) -> dict | None:
         return None
     cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
     cap = cap or {"description": "", "callers": [], "entry": None,
-                  "tools": [], "bash": [], "read_paths": [], "input": {}, "pages": []}
+                  "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
+                  "pages": []}
     return {"name": capability, **{k: cap.get(k) for k in
                                    ("description", "entry", "tools", "bash", "read_paths",
+                                    "write_paths",
                                     "input")}}

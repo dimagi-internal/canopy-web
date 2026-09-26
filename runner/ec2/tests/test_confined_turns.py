@@ -100,6 +100,18 @@ def test_an_entry_needing_a_thread_fails_the_turn_instead_of_running_it(cr):
     assert finish and finish[0]["status"] == "failed" and "not run" in finish[0]["result_note"]
 
 
+def test_a_chat_turn_with_no_thread_runs_the_persons_own_words_confined(cr):
+    # A Slack or web-chat caller has no thread; a thread-bound entry is for email.
+    # Refusing broke every confined chat turn here (found building Hal's `ask`).
+    mod, calls = cr
+    t = _turn(prompt="how does routing work?",
+              origin_ref={"chat_session_id": "s-1"},
+              caller_context={"profile": "restricted", "capability": CAP, "conversation": {}})
+    mod._run_turn("r-1", t)
+    assert calls["exec"]["prompt"] == "how does routing work?"
+    assert calls["exec"]["profile"]            # still confined
+
+
 def _plugin(tmp_path, version, registered=True):
     root = tmp_path / "canopy"
     (root / "hooks").mkdir(parents=True)

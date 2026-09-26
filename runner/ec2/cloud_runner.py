@@ -3472,7 +3472,7 @@ def _capability(turn: dict) -> dict | None:
         return None
     cap = env.get("capability")
     return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],
-                                              "read_paths": [], "entry": None}
+                                              "read_paths": [], "write_paths": [], "entry": None}
 
 
 def _confined_prompt(turn: dict) -> str:
@@ -3484,6 +3484,14 @@ def _confined_prompt(turn: dict) -> str:
     tid = str(((turn.get("caller_context") or {}).get("conversation") or {}).get("thread_id")
               or (turn.get("origin_ref") or {}).get("thread_id") or "")
     if "{thread_id}" in entry and not tid:
+        # A thread-bound entry is how an EMAIL caller's session starts. A chat or
+        # Slack turn has no thread, and its prompt is the person's own question —
+        # which the laptop runner delivers as-is on that path. Refusing here
+        # broke every confined chat turn on this box; substituting an entry with
+        # no thread would silently drop the question. The profile confines the
+        # session either way. Anything that is not a chat turn still refuses.
+        if _chat_session_id(turn):
+            return prompt
         raise ConfineError(f"capability '{cap.get('name')}' starts on a thread, and this turn has none")
     return entry.replace("{thread_id}", tid)
 
