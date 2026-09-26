@@ -25,7 +25,8 @@ def _run(tmp: pathlib.Path, call: str, *, agents=None, fail=False) -> str:
     bindir = tmp / "bin"
     bindir.mkdir(exist_ok=True)
     body = json.dumps({"items": agents or []})
-    (bindir / "curl").write_text(f"#!/bin/sh\n{'exit 22' if fail else f'cat <<JSON\n{body}\nJSON'}\n")
+    script = "exit 22" if fail else "cat <<JSON\n" + body + "\nJSON"
+    (bindir / "curl").write_text("#!/bin/sh\n" + script + "\n")
     (bindir / "curl").chmod(0o755)
     env = {"PATH": f"{bindir}:/usr/bin:/bin", "CANOPY_BASE_URL": "https://canopy.test/canopy",
            "CANOPY_TOKEN": "t0ken"}
