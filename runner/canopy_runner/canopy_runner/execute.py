@@ -19,11 +19,13 @@ the turn; a duplicate is worse than a retry, because it orphans the live context
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import time
 from pathlib import Path
 
-from . import caller, cdp_control, chat_bridge, dialog, emdash, hooks, readiness, session_naming, transcript
+from . import (caller, cdp_control, chat_bridge, dialog, emdash, hooks, native_permissions, readiness,
+               session_naming, transcript)
 from .client import ClientError
 from .tail import TailReader
 
@@ -110,7 +112,56 @@ def _confine(client, turn: dict, task: str) -> bool:
         return False
 
 
-def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt):
+#: How long to wait for emdash to record a NEW session's worktree before giving up
+#: on the native layer for it (profile_guard still confines it either way).
+NATIVE_WAIT_SECONDS = 10.0
+
+
+def _native_confine(cfg, client, turn: dict, task: str) -> bool:
+    """The SECOND layer for a caller's session: Claude Code's own permission rules,
+    written into the session worktree's `.claude/settings.json` (native_permissions).
+
+    Best-effort by design, unlike `_confine`: `profile_guard` is the fail-closed layer
+    and has already been armed, so a worktree emdash cannot name costs a layer of
+    defence, not the turn. Loud when it happens — a missing second layer should be
+    visible, not discovered. Returns whether it was written.
+    """
+    cap = caller.capability(turn)
+    if cap is None or not task:
+        return False
+    target = _target(turn)
+    deadline = time.monotonic() + NATIVE_WAIT_SECONDS
+    worktree = emdash.task_worktree(cfg.emdash_db, target, task)
+    while worktree is None and os.path.exists(cfg.emdash_db) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        worktree = emdash.task_worktree(cfg.emdash_db, target, task)
+    written = False
+    detail = ""
+    # emdash names the worktree dir after the task (`emdash-<task>-<suffix>` or
+    # `<task>-<suffix>`); anything else is not this session's, and settings written
+    # into the wrong directory would confine — or fail to confine — the wrong one.
+    if worktree is None:
+        detail = "emdash did not name the session's worktree"
+    elif task not in os.path.basename(os.path.normpath(worktree)):
+        detail = f"worktree {worktree!r} is not named for {task!r}"
+    else:
+        try:
+            native_permissions.confine_worktree(
+                cap, worktree, caller_path=str(caller.CALLER_ROOT / f"{turn.get('id')}.json"),
+                thread_id=caller.thread_id(turn))
+            written = True
+        except OSError as exc:
+            detail = f"could not write settings: {exc}"
+    if not written:
+        logger.warning("caller turn=%s: native permission layer NOT written for %r (%s) — "
+                       "profile_guard alone confines it", turn.get("id"), task, detail)
+    _post_events_best_effort(client, turn["id"], [{"kind": "status", "payload": {
+        "status": "native_permissions", "task": task, "written": written,
+        **({"detail": detail[:200]} if detail else {})}}])
+    return written
+
+
+def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt, envelope=None):
     """Deliver a turn into the linked LIVE emdash session `task`.
 
     Returns a terminal action string (``reused:`` / ``failed:`` / ``deferred:``) when the
@@ -129,9 +180,12 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
     agent = _target(turn)
     thread_key = _thread_key(turn)
 
+    # Who is asking, for the plugin's UserPromptSubmit hook — BEFORE the text lands.
+    caller.write_pending(task, turn, envelope)
     try:
         res = cdp_control.open_and_send(task, work_prompt, port=cfg.cdp_port)
     except cdp_control.CDPError as exc:
+        caller.clear_pending(task)
         if state == "unknown" and "TASK_NOT_FOUND" in str(exc):
             # Degraded: emdash's DB was unreadable, so CDP's verdict is all we have.
             # Loud, because reuse is running blind until the db path is fixed.
@@ -169,8 +223,10 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
             "payload": {"status": "collision", "task": task, "choice": choice,
                         "line": _preview(line)}}])
         if choice == dialog.NEW:
+            caller.clear_pending(task)
             return None                         # leave the prompt untouched; create fresh
         if choice == dialog.CANCEL:
+            caller.clear_pending(task)
             _note = f"collision on session '{task}': cancelled by human; will retry"
             readiness.mark_ok(cfg)              # not a runner fault — a human deferral
             client.fail_turn(turn_id, _note)
@@ -179,6 +235,7 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
         try:
             cdp_control.open_and_send(task, work_prompt, clear_first=True, port=cfg.cdp_port)
         except cdp_control.CDPError as exc:
+            caller.clear_pending(task)
             logger.error("collision clear-and-send failed on '%s': %s", task, str(exc)[:200])
             _note = f"collision clear-and-send failed on '{task}'; retry"
             readiness.mark_failed(cfg, _note)
@@ -198,6 +255,14 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
     client.finish(turn_id, note=f"delivered to existing session '{task}'",
                   emdash_task_id=task)
     return f"reused:{turn_id}"
+
+
+def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
+    """emdash named the task differently from what was asked: the hook derives the
+    REAL name, so move the pointer there. This races the session's first prompt — a
+    lost race costs that one prompt its summary, never the turn."""
+    caller.write_pending(got, turn, envelope)
+    caller.clear_pending(asked)
 
 
 def _resolve_transcript_path(target: str, task: str, *, emdash_db: str | None = None):
@@ -411,7 +476,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     prompt = prompt_with_attachments(prompt, fetch_attachments(client, turn))
     # The envelope lands on disk for `who_is_asking` and the agent's skills; the
     # prompt itself is the person's words and stays exactly as they wrote it.
-    caller.write_caller_file(turn)
+    envelope = caller.write_caller_file(turn)
 
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace
@@ -435,9 +500,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     if task and not _confine(client, turn, task):
         return f"failed:{turn_id}"
     if task:
+        _native_confine(cfg, client, turn, task)
+        # Who is asking reaches the agent beside the words, never inside them (caller.py).
+        caller.write_pending(task, turn, envelope)
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
+            caller.clear_pending(task)
             logger.error("chat reuse send failed turn=%s task=%s: %s", turn_id, task, exc)
             client.fail_turn(
                 turn_id, _blocking_dialog_note(cfg, client, runner_id, turn, task, exc)
@@ -459,12 +528,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             elif choice == dialog.CANCEL:
                 # Deliver nothing and let the turn be retried, rather than finishing
                 # a turn whose message never arrived.
+                caller.clear_pending(task)
                 client.fail_turn(turn_id, _undelivered_note(task, cancelled=True))
                 return f"cancelled:{turn_id}"
             else:
                 # NEW (and the timeout default): never destroy what the human typed.
                 # A fresh session is wrong for a CHAT — the conversation lives in this
                 # one — so the honest outcome is to leave it and retry.
+                caller.clear_pending(task)
                 client.fail_turn(turn_id, _undelivered_note(task))
                 return f"deferred:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
@@ -472,17 +543,22 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         name = _task_name(target, turn)
         if not _confine(client, turn, name):
             return f"failed:{turn_id}"
+        caller.write_pending(name, turn, envelope)
         try:
             res = cdp_control.create_task(
                 target, prompt, task_name=name, port=cfg.cdp_port
             )
         except cdp_control.CDPError as exc:
+            caller.clear_pending(name)
             logger.error("chat create failed turn=%s agent=%s: %s", turn_id, target, exc)
             client.fail_turn(turn_id, f"chat create failed: {str(exc)[:200]}")
             return f"failed:{turn_id}"
         task = res.get("task") or ""
-        if task and task != name and not _confine(client, turn, task):
-            return f"failed:{turn_id}"
+        if task and task != name:
+            _repoint(name, task, turn, envelope)
+            if not _confine(client, turn, task):
+                return f"failed:{turn_id}"
+        _native_confine(cfg, client, turn, task)
         client.record_session(
             runner_id, agent_slug, thread_key, project=project, workspace=workspace,
             emdash_task_id=task, summary=None,
@@ -545,7 +621,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         client.fail_turn(turn_id, f"a caller's turn was not run: {exc}")
         return f"failed:{turn_id}"
     # Who asked, as data beside the turn — never in the prompt body (see caller.py).
-    work_prompt = caller.with_caller_flag(work_prompt, caller.write_caller_file(turn))
+    envelope = caller.write_caller_file(turn)
+    work_prompt = caller.with_caller_flag(work_prompt, envelope)
     # Log the plan: "why did it create a new session?" must be answerable from the log
     # alone. Without this the reuse decision was invisible and every diagnosis started
     # by guessing (see the 2026-07-15 eva org-research investigation).
@@ -572,7 +649,9 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
             # means "route to a fresh session" and falls through to create below.
             if not _confine(client, turn, task):
                 return f"failed:{turn_id}"
-            outcome = _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt)
+            _native_confine(cfg, client, turn, task)
+            outcome = _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
+                                           envelope)
             if outcome is not None:
                 return outcome
 
@@ -590,9 +669,11 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     name = _task_name(agent, turn)
     if not _confine(client, turn, name):
         return f"failed:{turn_id}"
+    caller.write_pending(name, turn, envelope)
     try:
         res = cdp_control.create_task(agent, prompt, task_name=name, port=cfg.cdp_port)
     except cdp_control.CDPError as exc:
+        caller.clear_pending(name)
         logger.error("CREATE failed turn=%s agent=%s: %s", turn_id, agent, exc)
         _note = f"emdash create failed: {exc}"
         readiness.mark_failed(cfg, _note)
@@ -603,8 +684,11 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # emdash may name the task differently from what was asked; the guard keys on
     # the REAL name. Until this lands, a renamed caller session's tool calls find
     # no profile and are refused — closed, never open.
-    if task and task != name and not _confine(client, turn, task):
-        return f"failed:{turn_id}"
+    if task and task != name:
+        _repoint(name, task, turn, envelope)
+        if not _confine(client, turn, task):
+            return f"failed:{turn_id}"
+    _native_confine(cfg, client, turn, task)
     logger.info("CREATE turn=%s agent=%s thread=%s -> new session '%s' rehydrated=%s "
                 "(NEW claude session = tokens)", turn_id, agent, thread_key, task, bool(summary))
     _post_events_best_effort(client, turn_id, [{"kind": "status",

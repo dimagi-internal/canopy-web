@@ -87,6 +87,84 @@ def with_caller_flag(prompt: str, path: pathlib.Path | None) -> str:
     return f"{first} --caller {path}{sep}{rest}"
 
 
+# --- the pending pointer: who is asking, for a FREE-TEXT prompt -----------------------
+#
+# A chat prompt (Slack, the web chat, the widget) is the person's own words, so it
+# never carries `--caller`. The agent still has to KNOW who it is talking to — on
+# 2026-09-26 Hal, driven from Slack by a non-member, pushed and deployed code with an
+# envelope on disk that said relationship=caller, verified=false, turn_mode=manual,
+# and never read it. So before the runner types a turn's text into a session it
+# leaves a POINTER keyed by that session's emdash task name, and the canopy plugin's
+# UserPromptSubmit hook (`caller_context.py`) consumes it and adds a short summary of
+# the envelope to Claude's context — beside the prompt, never inside it.
+#
+# Keyed by TASK NAME because it is the one handle both ends have: the runner knows it
+# before it sends (it names the task, or reuse hands it one), and the hook derives it
+# from its own transcript path — the same anchor `profile_guard` confines cx- sessions
+# by (`…-worktrees-<repo>-emdash-<task>-<suffix>`). The worktree path would be the
+# obvious key, but a NEW session's worktree does not exist until emdash creates it,
+# which is the same click that submits the prompt.
+#
+# One-shot and short-lived: the hook consumes the pointer on the first prompt it
+# sees, and ignores one older than `PENDING_FRESH_SECONDS` — a pointer the send never
+# followed (a collision, a failed send) must not attach a stranger's name to the next
+# thing a human types into that session.
+
+PENDING_FRESH_SECONDS = 120
+_TASK_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+
+
+def pending_root() -> pathlib.Path:
+    # Derived at call time so a test (or anything) that moves CALLER_ROOT moves this too.
+    return CALLER_ROOT / "pending"
+
+
+def write_pending(task: str, turn: dict, envelope: pathlib.Path | None, *,
+                  root: pathlib.Path | None = None, now=time.time) -> pathlib.Path | None:
+    """Leave the hook a pointer to this turn's envelope, keyed by `task`. Best-effort.
+
+    None — and nothing written — when there is no envelope, or `task` is not a name
+    the hook could have derived. A failure here costs the agent the summary, never
+    the turn: `who_is_asking` and the envelope file are still there.
+    """
+    if envelope is None or not task or not _TASK_KEY.match(task):
+        return None
+    tid = str(turn.get("id") or "")
+    if not _TURN_ID.match(tid):
+        return None
+    root = root or pending_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        for p in root.glob("*.json"):           # prune pointers nobody consumed
+            try:
+                if now() - p.stat().st_mtime > KEEP_SECONDS:
+                    p.unlink()
+            except OSError:
+                continue
+        path = root / f"{task}.json"
+        tmp = root / f".{task}.json.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"version": 1, "turn_id": tid, "task": task,
+                       "envelope": str(envelope), "written_at": now()}, fh)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        logger.warning("could not leave the caller pointer for task %s", task, exc_info=True)
+        return None
+
+
+def clear_pending(task: str, *, root: pathlib.Path | None = None) -> None:
+    """Withdraw a pointer whose prompt was NOT delivered. Never raises."""
+    if not task or not _TASK_KEY.match(task):
+        return
+    try:
+        ((root or pending_root()) / f"{task}.json").unlink()
+    except OSError:
+        pass
+
+
 # --- restricted execution: a caller's turn, confined to its capability ---------------
 #
 # canopy-web decides per turn whether the asker gets the agent's FULL profile (its

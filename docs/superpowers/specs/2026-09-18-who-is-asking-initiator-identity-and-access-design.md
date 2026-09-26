@@ -269,6 +269,24 @@ chat turn's prompt is the person's own words and becomes the transcript, so it
 would appear as something they typed. The envelope informs the agent's
 judgement; enforcement is §6 and §7.
 
+**Every delivered prompt still reaches the agent WITH a summary (2026-09-26).**
+Leaving a free-text prompt untouched had a cost: the agent never learned who was
+asking. Hal, driven from Slack by a non-member, pushed and deployed code while
+its envelope said `relationship=caller, verified=false, turn_mode=manual`. So
+before the runner types a turn's text into a session it leaves a one-shot
+pointer, `~/.canopy/caller/pending/<emdash task>.json` (turn id, envelope path,
+written_at), and the canopy plugin's `caller_context` UserPromptSubmit hook
+claims it and returns a short summary as `additionalContext` — beside the
+prompt, never in it. Keyed by TASK NAME because it is the one handle both ends
+have before the send: the runner names the task (or reuse hands it one) and the
+hook derives it from its transcript path, the same anchor `profile_guard` uses;
+a new session's worktree does not exist until the click that submits its first
+prompt. A pointer older than two minutes is ignored, and one whose send failed
+is withdrawn, so a human typing into that session later is never introduced as
+the caller. The cloud runner, which spawns `claude -p` itself, sets
+`CANOPY_CALLER=<envelope>` instead. No pointer → no output: a human at the
+keyboard is the machine's owner.
+
 ## 6. Execution: every run is still a turn on a canopy runner, under routing
 
 There is no second execution path. **Every run — admin or caller — is a `Turn`,
@@ -314,6 +332,35 @@ agent reaches while answering — both are needed.
   agent — never anyone who is not. Closing that fully means isolating sessions on
   the box, a much larger change; accepted for now, and the cloud runner can
   isolate per session earlier.
+- **Two enforcement layers in a confined session (2026-09-26).** (1) canopy's
+  `profile_guard` PreToolUse hook — the EXACT layer: argv token for token,
+  `{thread_id}`-pinned, paths realpath'd, fail closed. (2) Claude Code's own
+  permission rules, written by the runner (`runner/canopy_runner/canopy_runner/
+  native_permissions.py`) — into the cx- worktree's `.claude/settings.json` on a
+  laptop, via `--settings` on the cloud runner. What holds natively, precisely:
+  emdash launches fleet sessions with `--dangerously-skip-permissions` (its
+  "Auto-approve permissions" switch is one localStorage value shared with every
+  human-created task, so the runner does not flip it), and a CLI flag outranks
+  `defaultMode`, so the session stays in bypass. In bypass, **deny rules still
+  block** and need no workspace trust; allow rules do nothing. So the native
+  layer is a DENY list: every built-in tool the capability does not grant
+  (Bash when it lists no `bash`, Edit, Write, WebFetch, WebSearch, Agent, Glob,
+  …), every MCP server no tool pattern reaches (`mcp__*` when it grants none),
+  high-risk programs its Bash patterns do not start with (`git`, `gh`, `curl`,
+  `ssh`, `rm`, `aws`, `npm`, `python`, …), and credential stores (`~/.ssh`,
+  `~/.aws`, `~/.canopy/profiles`, …). It cannot narrow a GRANTED tool to exact
+  arguments — an allow cannot carve an exception out of a deny, and a Bash deny
+  "isn't a security boundary around the program" — which stays the hook's job.
+  `defaultMode: dontAsk` plus allow rules normalised to real server names (a glob
+  in an allow rule's server segment is skipped by Claude Code) are written too,
+  and take over the day a cx- session starts without bypass. Gaps, honestly: a
+  NEW laptop session's worktree exists only after the click that also submits
+  its prompt, so for its first few seconds (until Claude Code hot-reloads the
+  file) the hook is the only layer; a claude.ai connector cannot be enumerated
+  offline, so it is denied natively only when the capability grants no MCP; the
+  cloud runner's ACP executor (off by default) does not pass `--settings`. A
+  runner that cannot write the file posts a `native_permissions` status event
+  with `written: false` and runs the turn under the hook alone.
 
 ## 8. What changes where
 
