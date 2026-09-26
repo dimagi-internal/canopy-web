@@ -75,8 +75,12 @@ def page_tool_specs(user) -> list[tuple]:
     better guess at which one the user means. The chosen session's id is in the
     tool description, so a wrong guess is visible rather than silent.
     """
+    return _specs_of(_attached_sessions(user))
+
+
+def _specs_of(sessions) -> list[tuple]:
     seen: dict[str, tuple] = {}
-    for session in _attached_sessions(user):
+    for session in sessions:
         for spec in session.page_actions_available or []:
             name = f"{TOOL_PREFIX}{spec.get('name', '')}"
             if not spec.get("name") or name in seen:
@@ -169,11 +173,26 @@ class PageActionProvider(Provider):
     """
 
     async def _list_tools(self):
+        # A chat key narrows it to that one chat's page: an agent's login is in
+        # every chat the agent is in, and "the page I am talking about" is this one.
+        chat = await sync_to_async(_current_chat, thread_sensitive=True)()
+        if chat is not None:
+            specs = _specs_of([chat])
+            return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
         user = await sync_to_async(_current_user, thread_sensitive=True)()
         if user is None:
             return []
         specs = await sync_to_async(page_tool_specs, thread_sensitive=True)(user)
         return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
+
+
+def _current_chat():
+    try:
+        from apps.mcp.chat_scope import current_chat_session
+
+        return current_chat_session()
+    except Exception:  # noqa: BLE001 - no request context is not an error here
+        return None
 
 
 def _current_user():
