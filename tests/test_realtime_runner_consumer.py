@@ -525,3 +525,60 @@ async def test_ws_heartbeat_survives_malformed_health():
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.status == Runner.ONLINE and fresh.health == {}
     await comm.disconnect()
+
+
+# The cloud runner claims over this socket. The REST claim route used to ADD three
+# things to the turn that `_serialize_turn` never did: the caller envelope, a
+# confined turn's caller token, and a chat's key. The runner decides whether to
+# CONFINE a turn from `caller_context` — so a confined turn claimed here arrived
+# looking like an ordinary one and ran in the agent's full profile (found
+# 2026-09-26 while a chat key failed to reach cloud-ec2-1). Both channels now
+# return the one claim payload.
+async def test_a_confined_turn_claimed_over_ws_carries_its_confinement():
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue_confined():
+        runner.capabilities = {**runner.capabilities, "profiles": services.PROFILES_VERSION}
+        runner.save(update_fields=["capabilities"])
+        return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_EMAIL, prompt="p",
+                                   idempotency_key="confined-1", capability="ask")
+
+    turn = await _enqueue_confined()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "claim"})
+    claimed = (await comm.receive_json_from(timeout=2))["turn"]
+    assert claimed is not None and claimed["id"] == str(turn.id)
+    assert claimed["caller_context"]["profile"] == "restricted"
+    assert claimed["mcp_token"].startswith("cct_")
+    await comm.disconnect()
+
+
+async def test_a_chat_turn_claimed_over_ws_carries_its_chats_key():
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue_session_turn():
+        from apps.canopy_sessions import services as chat
+
+        runner.capabilities = {**runner.capabilities, "sessions": True}
+        runner.save(update_fields=["capabilities"])
+        session = chat.create_session(workspace=ws, created_by=user, agent=agent)
+        chat.send_message(session=session, text="hello", user=user)
+        return session
+
+    session = await _enqueue_session_turn()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "claim"})
+    claimed = (await comm.receive_json_from(timeout=2))["turn"]
+
+    @database_sync_to_async
+    def _resolves(key):
+        from apps.canopy_sessions import chat_keys
+
+        return chat_keys.resolve(key)
+
+    assert (await _resolves(claimed["chat_key"])) == session
+    await comm.disconnect()

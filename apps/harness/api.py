@@ -953,24 +953,11 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     turn = services.claim_next_turn(runner, exclude_slugs=exclude or None)
     if turn is None:
         return Status(204, None)
-    if turn.chat_session_id:
-        # The chat's key (canopy_sessions.ChatKey): the one credential that lets
-        # the session driving this chat reach the chat's own secrets and page.
-        # Handed to the claiming runner only, never to a listing.
-        from apps.canopy_sessions import chat_keys
+    # The same credentials the WebSocket claim carries — see `claiming.py`,
+    # which exists because the two channels once disagreed about them.
+    from .claiming import issue_credentials
 
-        turn.chat_key = chat_keys.mint(turn.chat_session)
-    if turn.capability:
-        # A confined turn's credential for canopy's own MCP (models.CallerToken):
-        # handed to the claiming runner only, never to a listing.
-        from .caller_tokens import mint
-
-        turn.mcp_token = mint(turn)
-        # Deliberately nothing else. A visitor's host credential (host grant
-        # contract v1) never rides the claim: the agent reaches the host through
-        # canopy's own MCP (`site_call`), which attaches it server-side, so no
-        # runner — where every session is one OS user — ever holds it.
-    return Status(200, turn)
+    return Status(200, issue_credentials(turn))
 
 
 def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
