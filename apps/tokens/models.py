@@ -270,11 +270,27 @@ class AppCredential(models.Model):
     #: constraint, because the useful behaviour is an error naming the app
     #: that already has it rather than an IntegrityError.
     show_on_canopy_pages = models.BooleanField(default=False)
+    #: The site's OWN OAuth authorization server (RFC 8414 `issuer`), when it
+    #: grants canopy access to its MCP server as a visitor (host grant contract
+    #: v1, `docs/architecture/host-grant-contract.md`). canopy discovers the
+    #: token endpoint from `{issuer}/.well-known/oauth-authorization-server`
+    #: and checks the document's `issuer` equals this. Blank = the site issues
+    #: no grants, and an agent's calls into it cannot run as the visitor.
+    #:
+    #: Fetched by canopy, so the same rules as `jwks_url`: https only, never
+    #: into private address space (`apps/tokens/outbound.py`).
+    host_issuer = models.URLField(blank=True, default="", max_length=500)
+    #: The site's MCP server as its RFC 9728 `resource` — the ONE URL a grant is
+    #: audience-bound to, and the only URL canopy's gateway will call with it.
+    host_mcp_resource = models.URLField(blank=True, default="", max_length=500)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+
+    def issues_host_grants(self) -> bool:
+        return bool(self.host_issuer and self.host_mcp_resource)
 
     class Meta:
         db_table = "app_credentials"
@@ -696,3 +712,62 @@ class ContactToken(models.Model):
             )
             .first()
         )
+
+
+class HostGrant(models.Model):
+    """A host's access token for ONE visitor, held by canopy and used by no one else.
+
+    Host grant contract v1. At arrival the host issues an ID-JAG naming its own
+    visitor; canopy redeems it at the host's token endpoint (`host_grants.py`)
+    and gets back a short DPoP-bound access token for the host's MCP server.
+    That token is this row. canopy-web's gateway (`host_gateway.py`, reached
+    from canopy's MCP as `site_call`) attaches it — with a fresh DPoP proof —
+    to calls the agent makes on that visitor's turn.
+
+    **It never leaves canopy-web.** Not in the claim response, the caller
+    envelope, the runner's profile, a log line or an audit row: on a laptop
+    every session is the same OS user, so anything a runner holds is one hook
+    away from the agent. Encrypted at rest (Fernet, like every stored
+    credential here), and bound to canopy's DPoP key besides, so the
+    ciphertext AND the key would both be needed.
+
+    **Keyed to (site, the host's id for the visitor)** — the one identifier both
+    sides agree on, asserted by the host in the same signed call. `contact` and
+    `user` say which canopy principal that is, so a turn resolves its grant from
+    who asked (`turn.initiator_*`), never from a session id a caller supplied.
+
+    There is no refresh token and no fallback: when `expires_at` passes, the
+    host is out of reach for that visitor until they are back on the page and
+    the widget re-mints (a fresh ID-JAG arrives with it).
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="host_grants")
+    #: The host's own id for the visitor — the ID-JAG's `sub`, which the
+    #: contract requires to equal the arrival assertion's `sub`.
+    subject = models.CharField(max_length=200)
+    contact = models.ForeignKey("contacts.Contact", on_delete=models.CASCADE, null=True,
+                                blank=True, related_name="host_grants")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True,
+                             blank=True, related_name="host_grants")
+    #: Fernet ciphertext (apps.common.encryption). Never logged, never returned.
+    access_token_enc = models.TextField()
+    #: What the host granted for the page the visitor was on (space-separated).
+    scope = models.CharField(max_length=500, blank=True, default="")
+    #: The resource the token is audience-bound to, as redeemed. The gateway
+    #: refuses when it no longer equals the site's configured resource.
+    resource = models.URLField(max_length=500)
+    #: The thumbprint of the DPoP key the token is bound to. A rotated DPoP key
+    #: makes every stored token useless, and this says so instead of a 401.
+    dpop_jkt = models.CharField(max_length=64)
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "host_grants"
+        constraints = [
+            models.UniqueConstraint(fields=["app", "subject"], name="one_host_grant_per_visitor"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - never shows the token
+        return f"host grant {self.app_id}:{self.subject} scope={self.scope!r}"

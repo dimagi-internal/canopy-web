@@ -529,32 +529,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/tokens/on-behalf-of/jwks": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Public keys for canopy's on-behalf-of assertions
-         * @description The public keys that verify canopy's on-behalf-of assertions.
-         *
-         *     A canopy agent answering someone on your site can attach a short assertion
-         *     saying who it is answering: `iss` is this canopy, `aud` is your site's
-         *     registered name, `sub` is YOUR id for that person, and `act.sub` is the
-         *     agent. Verify it against these keys and act as that person, for that call
-         *     only — `exp` is 120 seconds and `jti` is single-use if you track it.
-         */
-        readonly get: operations["apps_tokens_api_onbehalf_jwks"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/feedback/": {
         readonly parameters: {
             readonly query?: never;
@@ -7517,6 +7491,11 @@ export interface components {
              * @default contact
              */
             readonly kind: string;
+            /**
+             * Host Grant
+             * @default false
+             */
+            readonly host_grant: boolean;
         };
         /** ContactTokenIn */
         readonly ContactTokenIn: {
@@ -7527,6 +7506,11 @@ export interface components {
              * @default
              */
             readonly agent_slug: string;
+            /**
+             * Id Jag
+             * @default
+             */
+            readonly id_jag: string;
         };
         /**
          * ReviewListItemOut
@@ -11280,6 +11264,12 @@ export interface components {
             readonly signs_assertions: boolean;
             /** Jwks Url */
             readonly jwks_url: string;
+            /** Host Issuer */
+            readonly host_issuer: string;
+            /** Host Mcp Resource */
+            readonly host_mcp_resource: string;
+            /** Issues Host Grants */
+            readonly issues_host_grants: boolean;
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */
@@ -11314,6 +11304,16 @@ export interface components {
              */
             readonly jwks_url: string;
             /**
+             * Host Issuer
+             * @default
+             */
+            readonly host_issuer: string;
+            /**
+             * Host Mcp Resource
+             * @default
+             */
+            readonly host_mcp_resource: string;
+            /**
              * Show On Canopy Pages
              * @default false
              */
@@ -11329,6 +11329,10 @@ export interface components {
             readonly agents?: readonly string[] | null;
             /** Public Keys */
             readonly public_keys?: readonly string[] | null;
+            /** Host Issuer */
+            readonly host_issuer?: string | null;
+            /** Host Mcp Resource */
+            readonly host_mcp_resource?: string | null;
             /** Show On Canopy Pages */
             readonly show_on_canopy_pages?: boolean | null;
         };
@@ -12063,19 +12067,6 @@ export interface components {
             };
             /** Mcp Token */
             readonly mcp_token?: string | null;
-            readonly on_behalf_of?: components["schemas"]["OnBehalfOut"] | null;
-        };
-        /**
-         * OnBehalfOut
-         * @description What a connected site needs to act as the caller for one conversation.
-         */
-        readonly OnBehalfOut: {
-            /** Assertion */
-            readonly assertion: string;
-            /** Audience */
-            readonly audience: string;
-            /** Subject */
-            readonly subject: string;
         };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {
@@ -14223,28 +14214,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["GitHubInstallationOut"][];
-                };
-            };
-        };
-    };
-    readonly apps_tokens_api_onbehalf_jwks: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
                 };
             };
         };

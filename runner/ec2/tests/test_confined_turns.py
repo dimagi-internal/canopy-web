@@ -133,36 +133,21 @@ def test_every_heartbeat_says_so(cloud_runner, monkeypatch):
     assert cloud_runner._heartbeat_body([])["profiles"] == 2
 
 
-def test_a_callers_host_credential_rides_the_profile(tmp_path, monkeypatch):
-    """The site's own headers helper reads it from here. It must not reach the
-    session any other way: the session cannot read this file, so it cannot lift
-    the assertion and spend it itself."""
+def test_no_host_credential_ever_rides_the_profile(tmp_path, monkeypatch):
+    """A visitor's host credential never reaches a runner (host grant contract
+    v1): canopy-web's gateway attaches it server-side. Even if a claim response
+    carried something extra, the profile writes only what it names."""
     import runner.ec2.cloud_runner as cr
 
     monkeypatch.setattr(cr, "PROFILE_ROOT", tmp_path / "profiles")
     monkeypatch.setattr(cr, "CALLER_ROOT", tmp_path / "caller")
     turn = {"id": TID, "agent_slug": "ace", "prompt": "/ace:turn --thread 18c9",
             "mcp_token": "cct_x", "capability": {"name": "ask", "entry": "/ace:turn"},
-            "on_behalf_of": {"assertion": "eyJ…", "audience": "ace-web",
-                             "subject": "someone@dimagi.com"}}
+            "on_behalf_of": {"assertion": "eyJ…"}}
     cr._confine(turn)
     doc = json.loads((tmp_path / "profiles" / f"cloud-{TID}.json").read_text())
-    assert doc["on_behalf_of"]["audience"] == "ace-web"
-    assert doc["on_behalf_of"]["assertion"] == "eyJ…"
-
-
-def test_no_host_credential_is_a_normal_state_not_an_error(tmp_path, monkeypatch):
-    """An email correspondent has no account at any site to act as. The turn
-    still runs; the agent simply keeps its own credentials."""
-    import runner.ec2.cloud_runner as cr
-
-    monkeypatch.setattr(cr, "PROFILE_ROOT", tmp_path / "profiles")
-    monkeypatch.setattr(cr, "CALLER_ROOT", tmp_path / "caller")
-    turn = {"id": TID, "agent_slug": "ace", "prompt": "/ace:turn --thread 18c9",
-            "mcp_token": "cct_x", "capability": {"name": "ask", "entry": "/ace:turn"}}
-    cr._confine(turn)
-    doc = json.loads((tmp_path / "profiles" / f"cloud-{TID}.json").read_text())
-    assert doc["on_behalf_of"] is None
+    assert "on_behalf_of" not in doc
+    assert "eyJ" not in json.dumps(doc)
 
 
 # --- who is asking, for every turn; the native layer, for a caller's ------------------

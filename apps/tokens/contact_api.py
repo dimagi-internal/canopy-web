@@ -50,6 +50,13 @@ log = logging.getLogger(__name__)
 #: There is no refresh: a contact's session is a visit, not a login.
 CONTACT_TOKEN_TTL_SECONDS = 30 * 60
 
+#: When the arrival carried a host grant, the token lives only this long, so
+#: the widget re-mints — and the host issues a fresh ID-JAG — on this cadence
+#: while the visitor is using it (host grant contract v1, "Freshness"). A host
+#: access token lives at most 15 minutes and is never refreshed, so a visitor's
+#: host access ends within minutes of them leaving the page.
+HOST_GRANT_REMINT_SECONDS = 5 * 60
+
 
 class ContactAuth(HttpBearer):
     """Requires a resolved contact — never a user, never an app on its own."""
@@ -81,6 +88,11 @@ class ContactTokenIn(Schema):
     #: 409 `ambiguous_issuer` once a second tenant registers the same name.
     #: Send it.
     agent_slug: str = ""
+    #: Optional: an ID-JAG the site issued for its OWN MCP server, naming the
+    #: same visitor (host grant contract v1). canopy redeems it so the agent can
+    #: call the site's tools AS this visitor. Absent, or refused, the chat opens
+    #: exactly as before and the agent simply cannot reach the site as them.
+    id_jag: str = ""
 
 
 class ContactTokenOut(Schema):
@@ -93,6 +105,10 @@ class ContactTokenOut(Schema):
     #: otherwise. The widget does not need this (it discovers its principal),
     #: but a host that behaves differently for its canopy users can read it.
     kind: str = "contact"
+    #: Whether a host grant was redeemed on this arrival — i.e. whether the
+    #: agent can reach this site's tools as this visitor until the token next
+    #: needs re-minting. Never the grant itself.
+    host_grant: bool = False
 
 
 class ContactAgentOut(Schema):
@@ -192,32 +208,68 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(400, "the assertion does not identify a visitor")
 
     user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
+    granted = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
+                                 contact=contact, user=user)
+    ttl = HOST_GRANT_REMINT_SECONDS if granted else CONTACT_TOKEN_TTL_SECONDS
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
         # the same short-lived revocable row canopy's own widget mints. Never a
         # new account — resolve_arrival only finds, it does not create.
         from .models import DelegatedToken
 
-        raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=CONTACT_TOKEN_TTL_SECONDS,
+        raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
                                           assurance=DelegatedToken.ASSURANCE_HOST_SIGNED)
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
               detail=f"contact={contact.identity} arrived as user {user.pk} "
-                     f"(assurance=host_signed) ttl={CONTACT_TOKEN_TTL_SECONDS}s")
+                     f"(assurance=host_signed) ttl={ttl}s host_grant={granted}")
         return ContactTokenOut(token=raw, expires_at=token.expires_at.isoformat(),
                                contact_id=contact.pk, display_name=contact.display_name,
-                               kind="user")
+                               kind="user", host_grant=granted)
 
-    raw, token = ContactToken.issue(
-        app=app, contact=contact, ttl_seconds=CONTACT_TOKEN_TTL_SECONDS
-    )
+    raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
-          detail=f"contact={contact.identity} grade=app_signed ttl={CONTACT_TOKEN_TTL_SECONDS}s")
+          detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}")
     return ContactTokenOut(
         token=raw,
         expires_at=token.expires_at.isoformat(),
         contact_id=contact.pk,
         display_name=contact.display_name,
+        host_grant=granted,
     )
+
+
+def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user) -> bool:
+    """Redeem the site's ID-JAG, if it sent one. Never fails the arrival.
+
+    Only ever called AFTER the arrival assertion verified, so the visitor it
+    names is one the site has just vouched for; `check_id_jag` then requires
+    the grant to name that same `sub`. Every refusal is an Event (and a log
+    line with the code — never the token), because "the agent could not reach
+    the site as me" otherwise has nowhere to be seen.
+    """
+    from . import host_grants
+
+    if not (id_jag or "").strip():
+        return False
+    subject = str(claims.get("sub") or "").strip()
+    if len(id_jag) > host_grants.MAX_ID_JAG_BYTES:
+        host_grants.record_outcome(app, ok=False, subject=subject, code="too_large")
+        return False
+    try:
+        grant = host_grants.redeem(app, id_jag.strip(), subject=subject,
+                                   contact=contact, user=user)
+    except host_grants.HostGrantError as exc:
+        log.warning("host grant refused for %s: %s", app.name, exc.code)
+        host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code,
+                                   detail=exc.message)
+        return False
+    except Exception as exc:  # noqa: BLE001 - a bug here must not close the chat
+        log.exception("host grant redemption failed for %s", app.name)
+        host_grants.record_outcome(app, ok=False, subject=subject, code="error",
+                                   detail=type(exc).__name__)
+        return False
+    host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
+    return True
 
 
 @contact_router.get("/me", response=ContactMeOut, summary="Who canopy thinks I am")

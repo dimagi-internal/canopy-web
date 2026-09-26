@@ -7,6 +7,10 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = True
 
+# No real OAuth client keys here: generate throwaway ones per process
+# (apps/tokens/client_identity.py). A deployment never does this.
+CANOPY_OAUTH_EPHEMERAL_KEYS = True
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",

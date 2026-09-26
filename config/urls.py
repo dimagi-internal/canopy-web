@@ -12,6 +12,8 @@ from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.tokens.github_views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
+from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
+from apps.tokens.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import csrf_view, health_check, spa_view
 
@@ -29,6 +31,13 @@ urlpatterns = [
     # renamed without editing the app registration too.
     path("auth/github/start/", github_connect_start, name="github_connect_start"),
     path("auth/github/callback/", github_connect_callback, name="github_connect_callback"),
+    # canopy's OAuth CLIENT identity (host grant contract v1): the Client ID
+    # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
+    # names. Bare views because the URL is the identifier a host allowlists;
+    # public (a host must read them before trusting anything) and carrying
+    # public keys only. See apps/tokens/views_oauth.py.
+    path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
+    path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
     # The embed shell — the ONE framable canopy page. A bare view because it
     # sets per-request response headers (frame-ancestors from the app's
     # registered origins) and is X-Frame-Options-exempt; see
@@ -77,7 +86,7 @@ urlpatterns = [
     # A 404 is the honest answer to "that bundle is gone", and it is one the
     # client can handle: the request fails visibly rather than half-succeeding.
     re_path(
-        r"^(?!api/|admin/|accounts/|health/|static/|auth/|assets/).*$",
+        r"^(?!api/|admin/|accounts/|health/|static/|auth/|assets/|oauth/).*$",
         spa_view,
         name="spa",
     ),

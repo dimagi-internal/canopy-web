@@ -12,6 +12,7 @@ from . import (
     page,  # noqa: F401
     schedules,  # noqa: F401
     sessions,  # noqa: F401
+    site,  # noqa: F401
     skill_history,  # noqa: F401
     slack,  # noqa: F401
 )

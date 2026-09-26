@@ -8,6 +8,9 @@ from .base import *  # noqa: F401, F403
 from .base import INSECURE_DEV_SECRET_KEY, SECRET_KEY
 
 DEBUG = False
+# Never generate throwaway OAuth client keys in a deployment, whatever the env
+# says: a host would cache a key that dies with this process.
+CANOPY_OAUTH_EPHEMERAL_KEYS = False
 
 # Refuse to boot on the insecure dev default. base.py keeps that default so local
 # `runserver` works with no setup, but in production it must come from the

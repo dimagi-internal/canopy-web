@@ -34,6 +34,7 @@ _STATUS = {
     "bad_origin": 422,
     "bad_key": 422,
     "bad_jwks_url": 422,
+    "bad_host_url": 422,
     "already_shown": 409,
     "unknown_agent": 422,
 }
@@ -63,6 +64,13 @@ class ConnectedAppOut(Schema):
     #: Where the site publishes its keys, if it does. `signs_assertions` is
     #: true for either door — a published JWKS or a pasted key.
     jwks_url: str
+    #: The site's OAuth issuer (RFC 8414) and MCP resource (RFC 9728), when it
+    #: grants canopy access to its tools as the visitor (host grant contract
+    #: v1). Both blank = it does not, and an agent cannot act for a visitor there.
+    host_issuer: str
+    host_mcp_resource: str
+    #: Both are set, so arrivals carrying an `id_jag` are redeemed.
+    issues_host_grants: bool
     shows_on_canopy_pages: bool
     created_at: str
     last_used_at: str | None
@@ -75,6 +83,8 @@ class ConnectIn(Schema):
     agents: list[str] = []
     public_keys: list[str] = []
     jwks_url: str = ""
+    host_issuer: str = ""
+    host_mcp_resource: str = ""
     show_on_canopy_pages: bool = False
 
 
@@ -83,6 +93,8 @@ class UpdateIn(Schema):
     jwks_url: str | None = None
     agents: list[str] | None = None
     public_keys: list[str] | None = None
+    host_issuer: str | None = None
+    host_mcp_resource: str | None = None
     show_on_canopy_pages: bool | None = None
 
 
@@ -97,6 +109,9 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         public_keys=list(app.public_keys or []),
         jwks_url=app.jwks_url or "",
         signs_assertions=bool(app.public_keys) or bool(app.jwks_url),
+        host_issuer=app.host_issuer or "",
+        host_mcp_resource=app.host_mcp_resource or "",
+        issues_host_grants=app.issues_host_grants(),
         agents=[
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
@@ -151,6 +166,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             user=request.user, workspace_slug=slug, name=payload.name,
             origins=payload.origins, agents=payload.agents,
             public_keys=payload.public_keys, jwks_url=payload.jwks_url,
+            host_issuer=payload.host_issuer, host_mcp_resource=payload.host_mcp_resource,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -174,7 +190,8 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
         embed_apps.update(
             user=request.user, app=app, workspace_slug=slug, origins=payload.origins,
             agents=payload.agents, public_keys=payload.public_keys,
-            jwks_url=payload.jwks_url,
+            jwks_url=payload.jwks_url, host_issuer=payload.host_issuer,
+            host_mcp_resource=payload.host_mcp_resource,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(

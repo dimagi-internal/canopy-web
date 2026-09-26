@@ -45,11 +45,12 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
-    # canopy's PUBLIC key, for a host verifying the on-behalf-of assertions
-    # canopy signs about who its agent is answering. A verifier must be able to
-    # fetch it before it trusts anything, and it is public by nature — the
-    # private half never leaves Secrets Manager.
-    "/api/tokens/on-behalf-of/jwks",
+    # canopy's OAuth CLIENT identity — the metadata document whose URL is its
+    # client_id, and the public client key it names. A host reads both before
+    # it trusts a redemption, so they cannot sit behind a login; neither holds
+    # anything that can sign (apps/tokens/views_oauth.py). Exact paths.
+    "/oauth/client.json",
+    "/oauth/jwks.json",
     # The contact surface. A contact token deliberately produces no
     # `request.user`, so every one of these would bounce to a login page that
     # a person with no canopy account can never complete. Listed as a PREFIX
