@@ -1892,6 +1892,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/login": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Link the canopy login that is this agent (canopy UI only)
+         * @description Which canopy login this agent calls canopy as. A blank email unlinks it.
+         */
+        readonly put: operations["apps_agents_api_set_agent_login"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/owner": {
         readonly parameters: {
             readonly query?: never;
@@ -8686,6 +8706,7 @@ export interface components {
             readonly slack_enabled: boolean;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
+            readonly login?: components["schemas"]["AgentOwnerOut"] | null;
             /**
              * Can Transfer Owner
              * @default false
@@ -8739,6 +8760,11 @@ export interface components {
             readonly name: string;
             /** Email */
             readonly email: string;
+        };
+        /** AgentLoginIn */
+        readonly AgentLoginIn: {
+            /** Email */
+            readonly email?: string | null;
         };
         /** AgentOwnerIn */
         readonly AgentOwnerIn: {
@@ -15964,6 +15990,32 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_agents_api_set_agent_login: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentLoginIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
             };
         };
     };

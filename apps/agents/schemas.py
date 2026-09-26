@@ -279,6 +279,9 @@ class AgentDetailOut(AgentOut):
     # history) read through THIS person's GitHub grant, so it is shown and
     # transferable in the UI. None when nobody has been assigned.
     owner: AgentOwnerOut | None = None
+    #: The canopy login that IS this agent (`Agent.user`) — what it calls canopy
+    #: as. None when unlinked.
+    login: AgentOwnerOut | None = None
     # Whether the CALLER may transfer ownership (a workspace owner, or the
     # agent's current owner). Drives whether the UI offers the control.
     can_transfer_owner: bool = False
@@ -353,6 +356,11 @@ class AgentInterfaceOut(StrictModel):
     source: str = ""
     published_at: dt.datetime | None = None
     published_by_email: str | None = None
+
+
+class AgentLoginIn(StrictModel):
+    # Blank or None unlinks.
+    email: str | None = None
 
 
 class AgentOwnerIn(StrictModel):

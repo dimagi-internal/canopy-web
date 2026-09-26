@@ -24,6 +24,7 @@ from .schemas import (
     AgentCommandApplyIn,
     AgentCredentialsIn,
     AgentGitHubIn,
+    AgentLoginIn,
     AgentGitHubOut,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
@@ -277,6 +278,25 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
 @router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
 def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
+    return _detail(request, agent)
+
+
+# Browser-only, like owner and admin changes: linking a login makes whoever
+# holds its token count as the agent itself (chat secrets, page context), so it
+# is a decision a PERSON makes in the canopy UI. The agent's owner or an admin.
+@router.put("/{slug}/login", response=AgentDetailOut,
+            summary="Link the canopy login that is this agent (canopy UI only)")
+def set_agent_login(request: HttpRequest, slug: str, payload: AgentLoginIn) -> AgentDetailOut:
+    """Which canopy login this agent calls canopy as. A blank email unlinks it."""
+    agent = _get_agent_or_404(request, slug)
+    if is_machine(request):
+        raise HttpError(403, "an agent's login can only be changed from the canopy web app")
+    if not agent.is_admin(request.user):
+        raise HttpError(403, "only the agent's owner or an admin can change its login")
+    try:
+        services.set_agent_login(agent, payload.email)
+    except services.AgentLoginError as exc:
+        raise HttpError(422, str(exc)) from exc
     return _detail(request, agent)
 
 
