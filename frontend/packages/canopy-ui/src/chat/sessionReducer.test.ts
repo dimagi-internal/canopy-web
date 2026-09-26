@@ -727,3 +727,57 @@ describe("session.stop — whether the stop actually landed", () => {
     expect(out.stopState).toBeUndefined();
   });
 });
+
+describe("per-person drafts", () => {
+  it("draft.typing upserts a peer by author and an empty body removes it", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "hi", at: null },
+    } as WsEvent);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "hi there", at: null },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([{ author: { id: 2, name: "Bo" }, body: "hi there", at: null }]);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
+  it("presence.left drops that person's typing row", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "x", at: null },
+    } as WsEvent);
+    s = sessionReducer(s, { event: "presence.left", data: { user_id: 2 } } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
+  it("session.queued replaces the whole list", () => {
+    const q = {
+      turn_id: "t1",
+      client_id: "c1",
+      author: { name: "Bo", user_id: 2 },
+      text: "yo",
+      sent_at: "2026-09-26T00:00:00Z",
+      state: "queued" as const,
+    };
+    let s = sessionReducer(makeState(), {
+      event: "session.queued",
+      data: { queued: [q] },
+    } as WsEvent);
+    expect(s.queued).toEqual([q]);
+    s = sessionReducer(s, { event: "session.queued", data: { queued: [] } } as WsEvent);
+    expect(s.queued).toEqual([]);
+  });
+
+  it("chat.user_message keeps the author", () => {
+    const s = sessionReducer(makeState(), {
+      event: "chat.user_message",
+      data: { message_id: "m1", turn_index: 5, plaintext: "hi", author: { name: "Bo", user_id: 2 } },
+    } as WsEvent);
+    expect(s.messages.at(-1)?.author).toEqual({ name: "Bo", user_id: 2 });
+  });
+});

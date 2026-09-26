@@ -46,6 +46,9 @@ export interface Message {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  /** Who typed this line — a canopy user or a contact. Absent/null on rows
+   *  from before authorship was tracked, or on the agent's own messages. */
+  author?: MessageAuthor | null;
 }
 
 export interface Draft {
@@ -57,6 +60,34 @@ export interface Draft {
   version: number;
   last_editor: number;
   last_edit_at: string;
+  /** The draft's OWNER — distinct from `last_editor`, which is whoever most
+   *  recently typed in it. Since a `draft.updated` frame now only ever
+   *  reaches its author's own sockets, this is the reliable field to compare
+   *  against `current_user_id` for echo-suppression; `last_editor` is kept
+   *  for servers that don't send it yet. */
+  author_id?: number;
+}
+
+/** A peer's live, uncommitted draft — everyone else's box, broadcast as they
+ *  type. Keyed by author, never by draft id: a client only ever needs "what
+ *  is this person typing right now", and an empty `body` means they sent,
+ *  discarded, or cleared it. */
+export interface PeerDraft {
+  author: { id: number; name: string };
+  body: string;
+  at: string | null;
+}
+
+/** A send that landed on the server but hasn't reached the agent's turn yet
+ *  — the server-derived queue, replacing whatever a client used to infer
+ *  locally from its own optimistic sends. */
+export interface QueuedMessage {
+  turn_id: string;
+  client_id: string;
+  author: MessageAuthor | null;
+  text: string;
+  sent_at: string;
+  state: "queued" | "delivering";
 }
 
 export interface Participant {
@@ -205,7 +236,15 @@ export interface SessionState {
    *  changed. Null/undefined when nothing has been asked on this session yet —
    *  which is distinct from "finished", and must stay distinct. */
   turn_status?: TurnStatus | null;
+  /** The CALLER's own draft — null for a viewer, who has nothing to draft. */
   active_draft: Draft | null;
+  /** Everyone else's live drafts, server-derived. Absent on an older server. */
+  peer_drafts?: PeerDraft[];
+  /** Sends that landed but haven't reached the agent's turn yet, server-
+   *  derived and replaced wholesale on every frame — like `turn_status`, a
+   *  client that just connected has no correct prior to merge a delta into.
+   *  Absent on an older server. */
+  queued?: QueuedMessage[];
   participants: Participant[];
   presence_user_ids: number[];
   current_user_id: number;
@@ -219,6 +258,8 @@ export type WsAction =
   | { action: "chat.send"; data: Record<string, never> }
   | { action: "chat.stop"; data: { message_id: string } }
   | { action: "draft.update"; data: { version: number; body: string } }
+  /** @deprecated accepted and ignored by the server since 0.13 — every editor
+   *  gets their own draft now, so there is no lock left to take over. */
   | { action: "draft.take_over"; data: Record<string, never> }
   | { action: "draft.discard"; data: Record<string, never> }
   | { action: "presence.heartbeat"; data: Record<string, never> };
@@ -261,7 +302,13 @@ export type WsEvent =
   | { event: "chat.stream_error"; data: { message_id: string; detail: string } }
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }
   | { event: "draft.updated"; data: Draft }
-  | { event: "draft.lock_changed"; data: { draft_id: string; holder_user_id: number | null; expires_at: number | null } }
+  // Someone else's box, live — keyed by author, not draft id, because a peer's
+  // draft is never addressable by this client and never needs to be: only
+  // "what are they typing right now" does. An empty `body` means they sent,
+  // discarded, or cleared it. Replaces `draft.lock_changed`, which existed
+  // only because a session had one shared next-draft to fight over; now
+  // everyone has their own, so there is no lock left to report.
+  | { event: "draft.typing"; data: PeerDraft }
   // `client_id` is the sender's receipt for a send that carried one (see
   // useSessionSocket.sendChat); absent from older servers.
   | { event: "draft.committed"; data: { draft_id: string; user_message_id: string; client_id?: string } }
@@ -281,4 +328,7 @@ export type WsEvent =
         display_name?: string;
       };
     }
-  | { event: "presence.left"; data: { user_id: number } };
+  | { event: "presence.left"; data: { user_id: number } }
+  // The whole queue, wholesale, like `session.turn_status` — a client that
+  // just connected has no correct prior to merge a delta into.
+  | { event: "session.queued"; data: { queued: QueuedMessage[] } };
