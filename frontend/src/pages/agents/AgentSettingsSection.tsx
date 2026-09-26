@@ -9,6 +9,7 @@ import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
+import { AgentLoginControl } from '@/components/agents/AgentLoginControl'
 import { CountStat } from '@/components/agents/cards'
 import { WorkbenchSubHeader } from 'canopy-ui'
 
@@ -82,6 +83,17 @@ export function AgentSettingsSection() {
               workspace={agent.workspace ?? ''}
               initialOwner={agent.owner ?? null}
               canTransfer={agent.can_transfer_owner ?? false}
+            />
+          </Setting>
+          <Setting
+            title="Its own login"
+            who="The agent's owner and admins"
+            description={`The canopy account ${agent.name} calls canopy as — the one its own token belongs to. Linking it is what lets canopy recognise ${agent.name} acting as itself (secrets shared in its chats, the page a chat is on). One login belongs to one agent instance.`}
+          >
+            <AgentLoginControl
+              agentSlug={agent.slug}
+              initialLogin={agent.login ?? null}
+              canEdit={agent.is_admin ?? false}
             />
           </Setting>
           <Setting

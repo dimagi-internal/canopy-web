@@ -97,6 +97,64 @@ def _owner_summary(agent: Agent) -> dict | None:
     return {"user_id": owner.pk, "name": owner.get_full_name() or owner.email, "email": owner.email}
 
 
+def _login_summary(agent: Agent) -> dict | None:
+    login = agent.user
+    if login is None:
+        return None
+    return {"user_id": login.pk, "name": login.get_full_name() or login.email, "email": login.email}
+
+
+class AgentLoginError(Exception):
+    """The login cannot be this agent's; the message says why, as shown."""
+
+
+def set_agent_login(agent: Agent, email: str | None) -> Agent:
+    """Link (or, with a blank email, unlink) the canopy login that IS this agent.
+
+    `Agent.user` was only ever set by `agents/0022`, which matched on
+    `Agent.email` — so an agent created with a blank email (echo, ace and eva)
+    had no link and no way to get one, and every "is this caller the agent
+    itself" check (chat secrets, the page a chat is on, readiness reports)
+    refused the agent's own token.
+
+    One login is ONE instance: the column is one-to-one, so of several ACE
+    instances exactly one can be `ace@dimagi-ai.com`, and a second attempt says
+    which instance already is. The login must be a member of the agent's
+    workspace — the checks it unlocks are all tenant-scoped, and a login from
+    elsewhere would satisfy none of them. The agent's `email` is filled from the
+    login when it was blank, since for these agents they are the same mailbox.
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.workspaces import services as wsvc
+
+    email = (email or "").strip()
+    if not email:
+        agent.user = None
+        agent.save(update_fields=["user", "updated_at"])
+        return agent
+    matches = list(get_user_model().objects.filter(email__iexact=email, is_active=True)[:2])
+    if not matches:
+        raise AgentLoginError(f"no canopy login uses {email} — it has to sign in (or be given a "
+                              "token) once before it can be linked")
+    if len(matches) > 1:
+        raise AgentLoginError(f"more than one canopy login uses {email}; cannot tell which")
+    login = matches[0]
+    other = Agent.objects.filter(user=login).exclude(pk=agent.pk).first()
+    if other is not None:
+        raise AgentLoginError(f"{email} is already the login of '{other.slug}' — one login is one "
+                              "agent instance; unlink it there first")
+    if not wsvc.is_member(login, agent.workspace_id):
+        raise AgentLoginError(f"{email} is not a member of this agent's workspace")
+    agent.user = login
+    fields = ["user", "updated_at"]
+    if not agent.email:
+        agent.email = login.email
+        fields.append("email")
+    agent.save(update_fields=fields)
+    return agent
+
+
 def agent_detail(agent: Agent) -> dict:
     latest = agent.syncs.order_by("-period_end").first()
     return {
@@ -110,6 +168,7 @@ def agent_detail(agent: Agent) -> dict:
         "workspace_id": agent.workspace_id,
         "definition": _definition_summary(agent),
         "owner": _owner_summary(agent),
+        "login": _login_summary(agent),
         "runner_preference": list(agent.runner_preference or []),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
