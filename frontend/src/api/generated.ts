@@ -9999,6 +9999,11 @@ export interface components {
              * @default
              */
             readonly github_token: string;
+            /**
+             * Mailbox
+             * @default
+             */
+            readonly mailbox: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {

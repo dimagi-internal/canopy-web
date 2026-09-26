@@ -1901,25 +1901,55 @@ def test_the_shared_reader_is_exposed_off_the_clone(cloud_runner):
     assert '_expose_repo_package(repo_dir, "canopy_runner"' in src
 
 
-def test_the_mailbox_map_comes_from_the_agent_clones(cloud_runner, tmp_path, monkeypatch):
-    """`/api/inbound/runner-mailboxes` serves address + topic only — the runner
-    "intersects this with the mailboxes it actually holds credentials for", and
-    on this box that intersection is the clone bootstrap provisioned."""
+def test_the_mailbox_is_the_instances_from_canopy_not_the_repos(cloud_runner, tmp_path, monkeypatch):
+    """canopy-web#984: the repo is the DEFINITION, shared by every instance, so
+    its config/agent.json names one address for all of them. The instance's own
+    mailbox (Agent.email) comes from canopy; the gog client from the clone."""
     for slug, email, client in (("ace", "ace@dimagi-ai.com", "canopy"),
-                                ("hal", "hal@dimagi-ai.com", "canopy")):
+                                ("ace-staging", "ace@dimagi-ai.com", "canopy"),
+                                ("hal", "hal@dimagi-ai.com", "")):
         d = tmp_path / slug / "config"
         d.mkdir(parents=True)
-        (d / "agent.json").write_text(
-            f'{{"email": "{email}", "gog_client": "{client}"}}')
-    (tmp_path / "nomail" / "config").mkdir(parents=True)
-    (tmp_path / "nomail" / "config" / "agent.json").write_text('{"name": "no mailbox"}')
+        (d / "agent.json").write_text(f'{{"email": "{email}", "gog_client": "{client}"}}')
     monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
-    monkeypatch.setattr(cloud_runner, "AGENT_SLUGS", "ace,hal,nomail,missing")
+    monkeypatch.setattr(cloud_runner, "AGENT_SLUGS", "ace,ace-staging,hal,missing")
+    monkeypatch.setattr(cloud_runner, "_INSTANCE_MAILBOX", {})
+    canopy = {"ace": "ace@dimagi-ai.com", "ace-staging": "", "hal": "hal@dimagi-ai.com",
+              "missing": "missing@dimagi-ai.com"}
+    monkeypatch.setattr(cloud_runner, "_api", lambda m, path, b=None, **k:
+                        (200, {"email": canopy[path.strip("/")]}))
+    logged = []
+    monkeypatch.setattr(cloud_runner, "_log", logged.append)
+
     boxes = cloud_runner._agent_mailboxes()
+
     assert boxes == {
         "ace": {"account": "ace@dimagi-ai.com", "client": "canopy"},
-        "hal": {"account": "hal@dimagi-ai.com", "client": "canopy"},
-    }, "an agent with no mailbox, or no clone, must simply not appear"
+        # No client declared: the agent's own slug, as bootstrap names it.
+        "hal": {"account": "hal@dimagi-ai.com", "client": "hal"},
+    }, ("a second instance with no mailbox of its own must NOT inherit the repo's, "
+        "and an agent with no clone yet has nothing to read with")
+
+
+def test_canopys_record_wins_over_the_repo_and_the_difference_is_said(cloud_runner, tmp_path,
+                                                                       monkeypatch):
+    d = tmp_path / "ace" / "config"
+    d.mkdir(parents=True)
+    (d / "agent.json").write_text('{"email": "ace@dimagi-ai.com", "gog_client": "canopy"}')
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    monkeypatch.setattr(cloud_runner, "AGENT_SLUGS", "ace")
+    monkeypatch.setattr(cloud_runner, "_INSTANCE_MAILBOX", {})
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (200, {"email": "ace2@dimagi-ai.com"}))
+    logged = []
+    monkeypatch.setattr(cloud_runner, "_log", logged.append)
+    assert cloud_runner._agent_mailboxes()["ace"]["account"] == "ace2@dimagi-ai.com"
+    assert any("polling ace2@dimagi-ai.com" in m for m in logged)
+
+
+def test_a_failed_lookup_keeps_the_last_known_mailbox(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_INSTANCE_MAILBOX", {"ace": (0.0, "ace@dimagi-ai.com")})
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (0, None))
+    assert cloud_runner._instance_mailbox("ace") == "ace@dimagi-ai.com"
 
 
 def test_a_doorbell_frame_marks_the_mailbox_due(cloud_runner, monkeypatch):
