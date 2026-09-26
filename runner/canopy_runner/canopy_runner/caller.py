@@ -119,7 +119,7 @@ def capability(turn: dict) -> dict | None:
     cap = env.get("capability")
     # A restricted envelope with no capability is still restricted: deny-all.
     return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],
-                                               "read_paths": [], "entry": None}
+                                               "read_paths": [], "write_paths": [], "entry": None}
 
 
 def thread_id(turn: dict) -> str:
