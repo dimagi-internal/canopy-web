@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -474,9 +475,15 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         return deleted
 
 
-def persist_transcript_rows(session, rows) -> int:
+def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
+
+    `attribute=False` (used only by `write_backfill`) skips the text-match
+    half of server-side attribution below — see that half's docstring for
+    why a full-history ship cannot use it safely. The vouched-marker path is
+    unaffected either way: it names an exact turn id, so it carries no
+    ordering risk.
 
     `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see
     `canopy_transcript.compose_index`, imported above so this scheme has exactly
@@ -502,7 +509,49 @@ def persist_transcript_rows(session, rows) -> int:
     upstream would mean applying it three times and forgetting it once. The
     identity property the docstring above rests on survives — a given
     (transcript ordinal, epoch) still maps to exactly one `turn_index`, so
-    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition."""
+    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition.
+
+    **Server-side attribution (2026-09-27), the primary path now that canopy no
+    longer marks a chat send's prompt at claim** (authorship.py). A USER row
+    with no vouched marker is matched to the EARLIEST of this session's
+    claimed, unlinked chat-send turns whose `prompt` equals the row's text
+    with ALL whitespace ignored (`_squash` — the laptop runner delivers a
+    prompt via CDP `keyboard.insertText`, which drops newlines, so a
+    multi-line send comes back with none; `.strip()` alone still needed the
+    newline to survive) — lazily loaded and consumed within the batch via
+    `_MatchPool` — one query, only when a row actually needs it, so a batch
+    of entirely vouched or entirely unmatched rows costs nothing extra). No
+    match leaves `author=None`, exactly the right answer for a line typed
+    straight into emdash. The vouched-marker path (m3) is checked first and
+    wins when present — it is a stronger claim (the transcript named a turn,
+    and the turn's own initiator agrees) than a text match ever is.
+
+    **Only the LIVE stream path attributes; a backfill never does**
+    (`attribute=False`, above). `_MatchPool` orders candidates by
+    `Turn.created_at`, which has no relation to when a transcript ROW
+    happened — a backfill ships a session's full history in one shot, and
+    neither `canopy_transcript.conversational_messages`/`row_payload` nor
+    `write_backfill`'s own `messages` shape carries a per-row timestamp on
+    the wire today. Without one, an old backfilled "yes" from last week could
+    link to a turn created TODAY, and today's real "yes" would then miss it —
+    a live-shipped row has no such gap (it ships as it happens, so ordering
+    by claim time is sound). Revisit if the wire ever carries a row
+    timestamp: the tighter fix is bounding candidates to
+    `claimed_at <= row_ts + 2min` and `created_at >= row_ts - 7d`, not
+    disabling the match outright.
+
+    **`held` (which rows are already persisted) is computed BEFORE any
+    matching, never after.** It used to run once, on `prepared`'s indices,
+    right before `bulk_create` — by which point every row, including one
+    whose index already exists (a re-ship: reconnect, catch-up, backfill
+    overlap — routine, not an error), had already called `pool.claim`. A
+    re-shipped row is dropped at `bulk_create` and so was never going to
+    consume a candidate — but it did, stealing the match a genuinely NEW row
+    in the same batch with the same (squashed) text needed, which then got
+    `author=None` or the wrong turn. Only an explicit ordinal (`index >= 0`)
+    can already be held: a row with none always gets a FRESH one from
+    `_next_index`, one past the session's high-water mark, so it can never
+    collide — the precomputed set below only needs to check those."""
     offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
@@ -510,10 +559,20 @@ def persist_transcript_rows(session, rows) -> int:
         # transcript's first record) and `x or -1` would read it as "no ordinal".
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
             _ensure_current_ordinal_scheme(locked, offset)
+        held = set(
+            Message.objects.filter(
+                session=locked,
+                turn_index__in=[
+                    int(r["index"]) + offset for r in rows
+                    if r.get("index") is not None and int(r["index"]) >= 0
+                ],
+            ).values_list("turn_index", flat=True)
+        )
         next_index = None
         prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
         vouched = _vouched_markers(locked, rows)
+        pool = _MatchPool(locked) if attribute else None
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -568,6 +627,15 @@ def persist_transcript_rows(session, rows) -> int:
                     # naming a turn that is not this session's, or a person who
                     # did not send that turn, stays exactly what it was typed as.
                     author = turn_hex = None
+                    # A row whose index is already `held` will be dropped at
+                    # bulk_create below (it's a re-ship) — never spend a
+                    # match candidate on it.
+                    if pool is not None and index not in held:
+                        matched = pool.claim(text)
+                        if matched is not None:
+                            matched_author = authorship.author_of(matched)
+                            if matched_author is not None:
+                                author, turn_hex = matched_author, matched.pk.hex
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
@@ -576,11 +644,8 @@ def persist_transcript_rows(session, rows) -> int:
             prepared.append((index, role, text, content, author, turn_hex))
         if not prepared:
             return 0
-        held = set(
-            Message.objects.filter(
-                session=locked, turn_index__in=[p[0] for p in prepared]
-            ).values_list("turn_index", flat=True)
-        )
+        # `held` was computed above, before matching — reused here, not
+        # re-queried.
         fresh = [
             Message(session=locked, turn_index=i, role=r, plaintext=t, content=c,
                     author=a, source_turn_id=uuid.UUID(h) if h else None)
@@ -623,16 +688,95 @@ def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
     return {pk.hex: (uid, cid) for pk, uid, cid in found}
 
 
+def _squash(text: str) -> str:
+    """Whitespace-blind comparison key. The laptop runner delivers a prompt via
+    CDP `keyboard.insertText` into emdash's Claude Code TUI, which DROPS
+    newlines — a two-line send ("line one\nline two") comes back in the
+    transcript as "line oneline two", so a plain `.strip()` equality (which
+    still requires the newline to survive) missed every multi-line message.
+    Squashing ALL whitespace out of both sides makes the match blind to
+    exactly the characters the delivery path is known to mangle, at the cost
+    of conflating "a b" and "ab" — accepted, because `_MatchPool.claim` still
+    resolves that ambiguity the same way as an exact duplicate: earliest
+    unlinked candidate, consumed in send order."""
+    return re.sub(r"\s+", "", text or "")
+
+
+class _MatchPool:
+    """Server-side attribution's candidate pool for ONE `persist_transcript_rows`
+    call — the earliest of this session's claimed, unlinked chat-send turns,
+    each matched against a row's text at most once.
+
+    Lazily loaded on the FIRST `claim()` call, never in `__init__`: a batch
+    that is entirely vouched-marker or entirely genuinely-unattributable rows
+    (the common cases) must cost nothing beyond that check, and a batch with
+    no user rows at all must issue no query — matching a `_vouched_markers`'s
+    own "only when the batch has user rows" rule. One query however many rows
+    need it, because every `claim()` after the first is served from the same
+    in-memory list.
+
+    `claim()` removes a match from the pool — "consumed within the batch" —
+    so two identical-text rows in one batch map to two different turns, in
+    the order they appear, exactly like two identical replies from two
+    different people ("yes", "yes") should. The same consumption order is
+    what resolves the ambiguity `_squash` introduces (a turn "a b" and a turn
+    "ab" now compare equal): whichever of the two is earliest and still
+    unlinked wins, which is the best any text-only match can do — the marker
+    path (m3, checked first and always preferred) is the exact answer for
+    when that is not good enough."""
+
+    def __init__(self, session):
+        self._session = session
+        self._loaded = False
+        self._candidates: list[Turn] = []
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        cutoff = timezone.now() - _dt.timedelta(days=7)
+        already_linked = Message.objects.filter(
+            session=self._session, source_turn_id__isnull=False
+        ).values("source_turn_id")
+        turns = (
+            Turn.objects.filter(
+                chat_session=self._session, claimed_at__isnull=False, created_at__gte=cutoff,
+            )
+            .exclude(pk__in=already_linked)
+            .select_related("initiator_user", "initiator_contact")
+            .order_by("created_at")
+        )
+        self._candidates = [t for t in turns if authorship.is_chat_send(t)]
+
+    def claim(self, text: str) -> Turn | None:
+        """The earliest remaining candidate whose prompt matches `text` with
+        ALL whitespace ignored (see `_squash`) — or None. Removes it from the
+        pool."""
+        self._load()
+        target = _squash(text)
+        for i, turn in enumerate(self._candidates):
+            if _squash(turn.prompt or "") == target:
+                return self._candidates.pop(i)
+        return None
+
+
 def write_backfill(session, messages) -> int:
     """Write a runner's shipped full transcript as Message rows. Ordinal-keyed
     payloads (a current runner) upsert-fill: they add the older rows the live
     stream never saw and skip anything already persisted. A legacy payload (no
     ordinals) keeps the old write-once contract — sequential, and only into an
-    empty session. messages: [{"role","text"[,"index"]}] chronological."""
+    empty session. messages: [{"role","text"[,"index"]}] chronological.
+
+    `attribute=False`: a backfill ships a session's full history in one shot
+    with no per-row timestamp, so server-side attribution's "earliest claimed
+    turn" match (`persist_transcript_rows`) has no way to tell an old row from
+    a new one — see that function's docstring. The vouched-marker path still
+    runs (it names an exact turn id, not a guess), so a legacy marked row
+    backfilled from before this change is still attributed correctly."""
     ordinal = any(int(m.get("index", -1)) >= 0 for m in messages)
     if not ordinal and Message.objects.filter(session=session).exists():
         return 0
-    return persist_transcript_rows(session, messages)
+    return persist_transcript_rows(session, messages, attribute=False)
 
 
 def _set_stream_desired(session, desired: bool) -> bool:

@@ -54,6 +54,13 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # Same parse as the durable path, so a watcher sees the stripped text and
         # the author before any reload — and the sender's echo matches on text.
         author, text, _turn = authorship.parse(str(payload.get("text", "")))
+        if author is None:
+            # No marker (the common case since 2026-09-27): the durable write
+            # that just ran alongside this frame (persist_transcript_rows)
+            # already matched the row to its turn — post_session_stream hands
+            # the result back in the payload so a watcher does not have to
+            # wait for a reload to see it.
+            author = payload.get("author")
         return [{"event": "chat.user_message",
                  "data": {"message_id": mid, "turn_index": seq,
                           "plaintext": text, "author": author}}]

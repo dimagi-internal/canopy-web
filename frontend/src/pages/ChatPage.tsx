@@ -310,6 +310,9 @@ export function ChatPage() {
           paused: boundPaused,
           blockedOnMenu: menuBlocksComposer(visibleMenu),
         })
+  // "Others see" moved from the composer into the ⋯ menu (canopy-web#1004) —
+  // an owner/editor has a composer for it to describe; a viewer does not.
+  const canEditTypingVisibility = meta?.my_role === 'owner' || meta?.my_role === 'editor'
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -767,6 +770,13 @@ export function ChatPage() {
               resetting={resetting}
               onClose={() => void closeThisSession()}
               closing={closing}
+              // A viewer was given this chat to read, not to type into — the
+              // control changes what a person's OWN composer shows others,
+              // which a viewer has no composer for.
+              typingVisibility={canEditTypingVisibility ? socket.typingVisibility : undefined}
+              onTypingVisibilityChange={
+                canEditTypingVisibility ? socket.setTypingVisibility : undefined
+              }
             />
           )}
         </div>
@@ -790,8 +800,8 @@ export function ChatPage() {
           onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
           onDiscard={socket.discardDraft}
-          typingVisibility={socket.typingVisibility}
-          onTypingVisibilityChange={socket.setTypingVisibility}
+          // "Others see" moved into the ⋯ menu (ChatSessionMenu, above) — not
+          // passed here, so the composer control disappears.
           renderMarkdown={renderMarkdown}
           // Keep a half-typed message across a route change or a closed tab.
           // Nothing else holds it: alone in a session the body is never

@@ -850,12 +850,12 @@ function EmbedChat({
           awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
           onDiscard={isContact ? () => socket.updateDraft('') : socket.discardDraft}
-          // A contact has no draft sync (their socket only listens — see
-          // `isContact` above), so there is nothing for this control to
-          // change; omitting both props for a contact hides it entirely
-          // (see SendBox).
-          typingVisibility={isContact ? undefined : socket.typingVisibility}
-          onTypingVisibilityChange={isContact ? undefined : socket.setTypingVisibility}
+          // The widget has no ⋯ menu (canopy-web#1004) — the composer control
+          // it used to sit on is gone from ChatPage too, so this stays
+          // omitted rather than pointing at a control nobody can reach. The
+          // session keeps whatever mode is already stored
+          // (readStoredTypingVisibility) or defaults to "live"; nothing here
+          // needs to change it.
           draftPersistKey={sessionId}
           // A parsed dialog is drawn WHERE the composer would be, so a send
           // bounces as COMPOSER_NOT_VISIBLE. Same rule and same helper as

@@ -146,7 +146,10 @@ test.describe('multiplayer chat', () => {
   test('switching to "Typing…" withholds the words — the other sees the fact of typing, not the text', async ({ page, browser }) => {
     const second = await bothInTheRoom(page, browser)
 
-    await page.getByTestId('typing-visibility').selectOption('typing')
+    // "Others see" lives in the ⋯ menu now, not on the composer.
+    await page.getByTestId('chat-session-menu').click()
+    await page.getByRole('menuitemradio', { name: 'Typing…' }).click()
+    await page.keyboard.press('Escape')
     await page.getByTestId('composer').fill('a secret sentence nobody else should read')
 
     // B sees that Alex is typing, but never the words.

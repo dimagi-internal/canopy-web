@@ -8,9 +8,13 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "canopy-ui/ui";
+import type { TypingVisibility } from "canopy-ui/chat";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
@@ -38,6 +42,8 @@ export function ChatSessionMenu({
   resetting,
   onClose,
   closing,
+  typingVisibility,
+  onTypingVisibilityChange,
 }: {
   sessionId: string;
   myRole: string | null;
@@ -51,6 +57,9 @@ export function ChatSessionMenu({
   resetting: boolean;
   onClose: () => void;
   closing: boolean;
+  /** Both undefined for a viewer (nothing to choose) — the section hides. */
+  typingVisibility?: TypingVisibility;
+  onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
 }) {
   const [panel, setPanel] = useState<"people" | "slack" | "secret" | null>(null);
   // Every item is inset to the checkbox item's gutter, so the list is one column.
@@ -75,6 +84,22 @@ export function ChatSessionMenu({
             >
               Notify on every reply
             </DropdownMenuCheckboxItem>
+          )}
+          {typingVisibility != null && onTypingVisibilityChange != null && (
+            <>
+              <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
+                Others see while you type
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={typingVisibility}
+                onValueChange={(value) => onTypingVisibilityChange(value as TypingVisibility)}
+              >
+                <DropdownMenuRadioItem value="live">My text</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="typing">Typing…</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="hidden">Nothing</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+            </>
           )}
           <DropdownMenuItem inset onClick={() => setPanel("people")}>People…</DropdownMenuItem>
           <DropdownMenuItem

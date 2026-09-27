@@ -6,9 +6,9 @@ from django.contrib.auth.models import User
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.canopy_sessions import authorship
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Message
+from apps.canopy_sessions.testing import legacy_marker
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -43,7 +43,7 @@ def test_a_send_leaves_the_list_when_its_transcript_row_lands():
     owner, session = _runner_session()
     _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
     chat.persist_transcript_rows(session, [{"index": 10, "role": "user",
-        "text": authorship.mark("first", name="Jon", user_id=owner.id, turn_id=turn.pk)}])
+        "text": legacy_marker("first", name="Jon", user_id=owner.id, turn_id=turn.pk)}])
     assert chat.queued_messages(session) == []
 
 

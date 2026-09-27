@@ -1,4 +1,12 @@
-"""The author marker: the ONE syntax that carries who-said-it through Claude's transcript."""
+"""The author marker: the ONE syntax that carries who-said-it through Claude's transcript.
+
+Production no longer WRITES this marker (canopy no longer prepends it to a
+delivered prompt — see authorship.py's module docstring, updated 2026-09-27).
+`parse` still reads it, forever, because rows already recorded — and any
+transcript backfilled around the change — still carry it. `legacy_marker`
+(apps/canopy_sessions/testing.py) builds a realistic marked string the way the
+old `authorship.mark` used to, so these tests keep exercising the real format.
+"""
 from __future__ import annotations
 
 import uuid
@@ -6,12 +14,13 @@ import uuid
 import pytest
 
 from apps.canopy_sessions import authorship
+from apps.canopy_sessions.testing import legacy_marker
 
 TID = uuid.UUID("3f2a9c1e0b7d4c55a1e2f3a4b5c6d7e8")
 
 
 def test_round_trip_user():
-    marked = authorship.mark("hello there", name="Alice Smith", user_id=42, turn_id=TID)
+    marked = legacy_marker("hello there", name="Alice Smith", user_id=42, turn_id=TID)
     assert marked.splitlines()[0] == '[canopy from="Alice Smith" user=42 turn=3f2a9c1e0b7d4c55a1e2f3a4b5c6d7e8]'
     author, bare, tid = authorship.parse(marked)
     assert author == {"name": "Alice Smith", "user_id": 42}
@@ -20,14 +29,14 @@ def test_round_trip_user():
 
 
 def test_round_trip_contact():
-    marked = authorship.mark("hi", name="Beth", contact_id=7, turn_id=TID)
+    marked = legacy_marker("hi", name="Beth", contact_id=7, turn_id=TID)
     author, bare, _ = authorship.parse(marked)
     assert author == {"name": "Beth", "contact_id": 7}
     assert bare == "hi"
 
 
 def test_multiline_body_survives():
-    marked = authorship.mark("line one\nline two", name="A", user_id=1, turn_id=TID)
+    marked = legacy_marker("line one\nline two", name="A", user_id=1, turn_id=TID)
     assert authorship.parse(marked)[1] == "line one\nline two"
 
 
@@ -46,13 +55,13 @@ def test_marker_mid_text_is_not_parsed():
     '[canopy from="A" turn=' + TID.hex + ']',               # no id
     ' [canopy from="A" user=1 turn=' + TID.hex + ']',       # leading space
 ])
-def test_parse_requires_exact_first_line(line):
+def test_parse_rejects_malformed_marker(line):
     text = line + "\nbody"
     assert authorship.parse(text) == (None, text, None)
 
 
 def test_name_with_quote_and_newline_round_trips():
-    marked = authorship.mark("x", name='Pat "PJ" O\\Brien\nJr', user_id=3, turn_id=TID)
+    marked = legacy_marker("x", name='Pat "PJ" O\\Brien\nJr', user_id=3, turn_id=TID)
     assert len(marked.splitlines()) == 2  # marker stays ONE line
     author, bare, _ = authorship.parse(marked)
     assert author == {"name": 'Pat "PJ" O\\Brien Jr', "user_id": 3}
@@ -60,8 +69,24 @@ def test_name_with_quote_and_newline_round_trips():
 
 
 def test_marker_only_no_body():
-    marked = authorship.mark("", name="A", user_id=1, turn_id=TID)
+    marked = legacy_marker("", name="A", user_id=1, turn_id=TID)
     assert authorship.parse(marked) == ({"name": "A", "user_id": 1}, "", TID.hex)
+
+
+# -- the live bug this file's rewrite fixes (2026-09-27) --------------------
+# The laptop runner types a prompt into emdash as ONE line, so a marker's
+# trailing "\n" is lost in transit and the row arrives as
+# `[canopy from="…" user=N turn=…]Are you working?` — marker and body glued
+# together with no separator. `parse` must still find the marker and recover
+# the bare body: the marker itself is still exactly at the start of the text,
+# just not followed by a newline.
+
+def test_parse_accepts_marker_with_no_trailing_newline():
+    glued = '[canopy from="X" user=1 turn=' + TID.hex + ']Are you working?'
+    author, bare, tid = authorship.parse(glued)
+    assert author == {"name": "X", "user_id": 1}
+    assert bare == "Are you working?"
+    assert tid == TID.hex
 
 
 from types import SimpleNamespace
@@ -75,26 +100,11 @@ def _turn(**kw):
     return SimpleNamespace(**base)
 
 
-def test_for_turn_leaves_non_chat_turns_alone():
-    assert authorship.for_turn(_turn()) == "do it"
-
-
-def test_for_turn_marks_a_chat_turn_with_its_initiator():
-    user = SimpleNamespace(get_full_name=lambda: "Alice Smith", email="a@x")
-    out = authorship.for_turn(_turn(chat_session_id=uuid.uuid4(), initiator_user_id=42, initiator_user=user,
-                                    origin="canopy_web_chat", idempotency_key="chat:abc:c1"))
-    assert authorship.parse(out) == ({"name": "Alice Smith", "user_id": 42}, "do it", TID.hex)
-
-
-def test_for_turn_without_initiator_is_unmarked():
-    assert authorship.for_turn(_turn(chat_session_id=uuid.uuid4())) == "do it"
-
-
-# -- which turns are marked (final review C1) --------------------------------
-# Only a PERSON'S chat send carries the marker. An email turn is bound to a chat
-# session too (email_thread_session) and has an initiator, but its prompt is a
-# slash command (`/echo:turn --thread …`) and Claude Code runs a slash command
-# only from the FIRST line — a marker above it silently turns it into prose.
+# -- which turns are chat sends (final review C1) ---------------------------
+# `is_chat_send` still decides which turns are a PERSON'S chat line — used by
+# `queued_messages` and by the new server-side attribution match in
+# `services.persist_transcript_rows`. It no longer feeds a marking function
+# (that function is gone), but the predicate itself is unchanged.
 
 def _chat_turn(**kw):
     user = SimpleNamespace(get_full_name=lambda: "Alice Smith", email="a@x")
@@ -105,27 +115,33 @@ def _chat_turn(**kw):
 
 
 @pytest.mark.parametrize("origin", ["canopy_web_chat", "slack", "ace_web"])
-def test_chat_origins_are_marked(origin):
-    assert authorship.parse(authorship.for_turn(_chat_turn(origin=origin)))[0] is not None
+def test_chat_origins_are_chat_sends(origin):
+    assert authorship.is_chat_send(_chat_turn(origin=origin)) is True
 
 
 @pytest.mark.parametrize("origin", ["email", "canopy_scheduler", "api"])
-def test_non_chat_origins_are_never_marked(origin):
-    assert authorship.for_turn(_chat_turn(origin=origin)) == "do it"
+def test_non_chat_origins_are_never_chat_sends(origin):
+    assert authorship.is_chat_send(_chat_turn(origin=origin)) is False
 
 
-def test_a_contacts_widget_send_naming_api_is_still_marked():
+def test_a_contacts_widget_send_naming_api_is_still_a_chat_send():
     contact = SimpleNamespace(display_name="Beth", email="b@x")
     t = _chat_turn(origin="api", initiator_user_id=None, initiator_user=None,
                    initiator_contact_id=7, initiator_contact=contact)
-    assert authorship.parse(authorship.for_turn(t))[0] == {"name": "Beth", "contact_id": 7}
+    assert authorship.is_chat_send(t) is True
 
 
-def test_a_session_turn_that_is_not_a_send_is_not_marked():
+def test_a_session_turn_that_is_not_a_send_is_not_a_chat_send():
     # A transfer's preamble is canopy's words, not the person's.
-    assert authorship.for_turn(_chat_turn(idempotency_key="transfer:a:b:1")) == "do it"
+    assert authorship.is_chat_send(_chat_turn(idempotency_key="transfer:a:b:1")) is False
 
 
-@pytest.mark.parametrize("prompt", ["/compact", "  /ace:status opp-1", "\n/echo:turn --thread abc"])
-def test_a_slash_command_is_delivered_bare(prompt):
-    assert authorship.for_turn(_chat_turn(prompt=prompt)) == prompt
+def test_author_of_reads_the_initiator():
+    user = SimpleNamespace(get_full_name=lambda: "Alice Smith", email="a@x")
+    assert authorship.author_of(_turn(initiator_user_id=42, initiator_user=user)) == {
+        "name": "Alice Smith", "user_id": 42,
+    }
+
+
+def test_author_of_is_none_with_no_initiator():
+    assert authorship.author_of(_turn()) is None
