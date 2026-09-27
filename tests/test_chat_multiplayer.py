@@ -109,5 +109,8 @@ def test_peer_drafts_excludes_me_and_empty():
     owner, other, session = _two()
     drafts.update_draft(session, user=other, expected_version=0, body="typing")
     drafts.draft_for(session, owner)  # exists, empty
+    # Only a PRESENT author's draft is someone typing (final review I4).
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
     assert [d.author_id for d in drafts.peer_drafts(session, owner)] == [other.id]
     assert drafts.peer_drafts(session, other) == []

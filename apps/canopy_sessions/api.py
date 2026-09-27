@@ -543,6 +543,11 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
+    # The socket path commits the sender's server draft; this one did not, so a
+    # line sent here stayed in the draft and came back on every later connect
+    # as "<you> is typing". Clear it and tell the room, same frame the socket
+    # sends (`draft.updated`, rendered per recipient by the consumer).
+    services.clear_draft_after_http_send(session, request.user, payload.text)
     # Dev/test: run the stub inline. Production: leave it queued for a cloud runner.
     services.maybe_execute_inline(turn)
     return {"turn_id": turn.id if turn else None, "message": MessageOut.from_orm(message)}

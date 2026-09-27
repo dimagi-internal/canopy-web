@@ -1339,6 +1339,27 @@ def _publish_user_message(session_id, message: Message, client_id: str = "") -> 
     )
 
 
+def clear_draft_after_http_send(session: Session, user, text: str) -> None:
+    """See `drafts.clear_after_http_send`; publishes the cleared draft to the
+    session group in the consumer's own `draft.updated` shape, so the author's
+    other tabs reset and every peer's typing row clears."""
+    from apps.realtime.groups import publish, session_group
+
+    from . import drafts, serializers
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return
+    draft = drafts.clear_after_http_send(session, user, text)
+    if draft is None:
+        return
+    message = {
+        "type": "draft.updated", "author_id": user.id,
+        "draft": serializers.draft_dto(draft),
+        "peer": serializers.peer_draft_dto(draft),
+    }
+    transaction.on_commit(lambda: publish(session_group(session.id), message))
+
+
 def queued_messages(session: Session) -> list[dict]:
     """Human sends in this session that have not reached the transcript yet.
 

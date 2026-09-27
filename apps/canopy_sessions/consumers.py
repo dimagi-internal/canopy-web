@@ -584,9 +584,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             peers = drafts.peer_drafts(self.session, self.user)
         else:
             own = None
-            peers = list(Draft.objects.select_related("author")
-                         .filter(session=self.session, slot="next").exclude(body="")
-                         .order_by("updated_at"))
+            peers = drafts.peer_drafts(self.session, None)
         # Tail-first: the connect snapshot ships the last N messages (the same
         # SESSION_TAIL_DEFAULT the REST load uses), never the head. Scroll-back
         # for earlier history is REST (GET /{id}/messages?before=); Plan 4 wires

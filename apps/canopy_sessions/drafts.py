@@ -5,9 +5,17 @@ anybody. The optimistic `version` survives only to reconcile one person's own
 tabs (desktop + phone on the same account)."""
 from __future__ import annotations
 
-from django.db import transaction
+import datetime as dt
 
+from django.db import transaction
+from django.utils import timezone
+
+from . import presence
 from .models import Draft, Session
+
+# How long an untouched draft still reads as someone typing. A body outlives
+# the tab that typed it; past this it is a leftover, not a person mid-thought.
+PEER_DRAFT_FRESH = dt.timedelta(minutes=10)
 
 
 class DraftVersionMismatch(Exception):
@@ -58,10 +66,45 @@ def _clear(session, user) -> Draft:
     return draft
 
 
-def peer_drafts(session: Session, user) -> list[Draft]:
-    """Other authors' non-empty open drafts, oldest edit first."""
+def peer_drafts(session: Session, user=None) -> list[Draft]:
+    """Other authors' drafts that are LIVE: non-empty, written by someone
+    present in the session right now, and touched within `PEER_DRAFT_FRESH`.
+    Oldest edit first. `user` None (a contact) excludes nobody.
+
+    Both filters are needed. Presence alone keeps a box someone opened an hour
+    ago and walked away from while the tab stayed open; freshness alone brings
+    back a line sent over HTTP (which never cleared the server copy) the moment
+    its author reconnects anywhere. Without either, `presence.left` cleared the
+    row live and the next connect snapshot put it straight back."""
+    present = presence.present_ids(session.id)
+    if user is not None:
+        present.discard(user.id)
+    if not present:
+        return []
     return list(
         Draft.objects.select_related("author")
-        .filter(session=session, slot="next").exclude(author=user).exclude(body="")
+        .filter(session=session, slot="next", author_id__in=present,
+                updated_at__gte=timezone.now() - PEER_DRAFT_FRESH)
+        .exclude(body="")
         .order_by("updated_at")
     )
+
+
+def clear_after_http_send(session: Session, user, text: str) -> Draft | None:
+    """An HTTP send (the socket's fallback) commits text the server draft may
+    still hold. Clear it when it is what was sent — or the start of it, since the
+    last keystroke frames are exactly what a dead socket loses — and return the
+    cleared draft so the caller can tell the room. A draft holding something
+    ELSE is the next line, typed in another tab while this send was in flight,
+    and is left alone. None when there was nothing to clear."""
+    sent = (text or "").strip()
+    with transaction.atomic():
+        draft = Draft.objects.select_for_update().filter(
+            session=session, author=user, slot="next").first()
+        if draft is None or not draft.body.strip() or not sent.startswith(draft.body.strip()):
+            return None
+        draft.body = ""
+        draft.version += 1
+        draft.save(update_fields=["body", "version", "updated_at"])
+    draft.author = user
+    return draft

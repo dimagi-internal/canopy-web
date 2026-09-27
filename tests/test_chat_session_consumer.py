@@ -175,6 +175,9 @@ async def test_snapshot_has_my_draft_and_peer_drafts():
     owner, teammate, session = await database_sync_to_async(_seed)()
     from apps.canopy_sessions import drafts
     await database_sync_to_async(drafts.update_draft)(session, user=teammate, expected_version=0, body="wip")
+    # Shown only while its author is here (final review I4).
+    from apps.canopy_sessions import presence
+    await database_sync_to_async(presence.touch)(session.id, teammate.id)
     comm = await _connect(session, owner)
     await comm.connect()
     snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
