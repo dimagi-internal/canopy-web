@@ -113,7 +113,7 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
     return ctx
 
 
-def panel_options(ctx: dict, csrf_token: str = "") -> dict:
+def panel_options(ctx: dict) -> dict:
     """The widget's options as ONE JSON-serialisable dict — what the template
     renders through ``json_script``, so every value reaches the page literally."""
     return {
@@ -125,5 +125,4 @@ def panel_options(ctx: dict, csrf_token: str = "") -> dict:
         "mode": ctx.get("mode", "overlay"),
         "launcherLabel": ctx.get("launcher_label", "Ask an agent"),
         "theme": ctx.get("theme") or {},
-        "csrfToken": csrf_token or "",
     }

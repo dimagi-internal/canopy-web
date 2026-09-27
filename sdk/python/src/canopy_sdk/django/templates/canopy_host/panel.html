@@ -17,8 +17,11 @@ browser.
   {{ canopy_panel.page_state|json_script:"canopy-page-state" }}
   {{ canopy_panel.options|json_script:"canopy-panel-options" }}
   <script src="{{ canopy_panel.base_url }}/embed/widget.js"></script>
-  <script>
+  {# The CSRF fallback rides an attribute (autoescaped for exactly that context), so it #}
+  {# works from {% canopy_panel %} and from {% include %} with the page's own context.  #}
+  <script data-csrf="{{ csrf_token|default:'' }}">
     (function () {
+      var fallbackCsrf = (document.currentScript && document.currentScript.getAttribute("data-csrf")) || "";
       if (!window.canopy) return;
       function read(id) {
         var el = document.getElementById(id);
@@ -40,7 +43,7 @@ browser.
         // with no form on it.
         csrfToken: function () {
           var field = document.querySelector("[name=csrfmiddlewaretoken]");
-          return field ? field.value : (config.csrfToken || "");
+          return field ? field.value : fallbackCsrf;
         },
         // Somebody else changed the data this page shows. A server-rendered
         // page IS its query: reloading is the honest refresh, and the one where

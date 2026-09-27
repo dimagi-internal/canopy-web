@@ -154,6 +154,16 @@ def test_the_rendered_token_url_is_literal(host, user):
     assert "\\u003D" not in body and "escapejs" not in body
 
 
+def test_the_csrf_fallback_is_rendered_into_an_attribute(host, user):
+    import re
+
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    match = re.search(r'<script data-csrf="([^"]*)">', body)
+    assert match and len(match.group(1)) >= 32
+
+
 def test_a_hostile_value_cannot_end_the_script_block(host, user):
     settings = {**conf.raw(), "PANEL": {"launcher_label": "</script><script>alert(1)</script>"}}
     client = Client()
