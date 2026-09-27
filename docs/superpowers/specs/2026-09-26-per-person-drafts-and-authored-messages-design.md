@@ -117,6 +117,33 @@ batching queued messages into one turn, mid-turn steering.
 
 ### 4. Attribution: a marker in the delivered prompt
 
+> **Superseded 2026-09-27.** The marker below broke live: the laptop runner
+> types a prompt into emdash as ONE line, so the marker's trailing `\n` never
+> survived the trip, and a row arrived as
+> `[canopy from="Jonathan Jackson" user=1 turn=…]Are you working?` — marker
+> and body glued together with no separator. `parse` required the marker to
+> be the WHOLE first line, so it rejected the row, saving it with
+> `author=None` and the marker itself visible on `/supervisor` and the chat
+> page. The user's call: the prompt must reach the agent EXACTLY as typed
+> anyway — it already learns who is asking from canopy's `caller_context`
+> hook (the caller envelope), which never touches the prompt, so marking it
+> was redundant there. `claiming._mark_author` and `authorship.mark`/`for_turn`
+> are deleted; the claim delivers `Turn.prompt` unchanged, for every turn kind.
+> Attribution moved server-side: `persist_transcript_rows` matches an
+> unmarked user row to the earliest of this session's claimed, unlinked
+> chat-send turns whose prompt is byte-for-byte the row's text (consumed
+> within the batch, in send order — two identical "yes" rows map to two
+> different turns), and takes the author from that turn's initiator.
+> `authorship.parse` stays, tolerant of the lost-newline case (the marker
+> matches at the start of the text followed by an OPTIONAL `\n`) — rows
+> already recorded, and anything backfilled around the change, still carry
+> the marker forever. Migration `canopy_sessions/0036_strip_legacy_author_markers`
+> swept those once. The "Others see while you type" control (§2 below) moved
+> off the composer into the chat's ⋯ menu (`ChatSessionMenu`) in the same
+> change, so a viewer (who has no composer) never sees a control with nothing
+> to describe. The rest of this section is kept for the historical record of
+> what shipped first.
+
 The runner receives the turn's prompt as
 
 ```
