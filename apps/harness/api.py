@@ -971,7 +971,20 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     # bare words.
     from apps.canopy_sessions.authorship import for_turn
 
+    bare = turn.prompt or ""
     turn.prompt = for_turn(turn)
+    if turn.prompt != bare:
+        # A laptop runner names a NEW emdash session from the prompt's first line
+        # unless origin_ref carries a `subject` (session_naming's ladder). A
+        # runner older than its marker-skipping rule would name every new chat
+        # `c-canopy-from-<name>-user-…`, and canopy's Chats list copies that key
+        # into the title. So hand it the bare first line — in memory, like the
+        # prompt, and never over a subject the turn already had.
+        ref = dict(turn.origin_ref or {})
+        first = next((ln.strip() for ln in bare.splitlines() if ln.strip()), "")
+        if first and not ref.get("subject"):
+            ref["subject"] = first[:80]
+            turn.origin_ref = ref
     return Status(200, turn)
 
 

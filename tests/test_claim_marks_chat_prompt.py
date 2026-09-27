@@ -126,3 +126,22 @@ def test_claimed_chat_slash_command_is_bare(paired_runner_client, chat_session_w
     body = _claim(paired_runner_client)
     assert body["id"] == str(turn.id)
     assert body["prompt"] == "/compact"
+
+
+def test_a_marked_claim_carries_a_subject_so_an_old_runner_names_it_sensibly(
+        paired_runner_client, chat_session_with_agent, owner):
+    """An older laptop runner names a new emdash session from the prompt's first
+    line — which is now the author marker. It reads `origin_ref["subject"]`
+    first, so the claim supplies the bare first line there (in memory only)."""
+    long = "Why is the deploy stuck " + "x" * 200
+    _msg, turn = chat.send_message(session=chat_session_with_agent, text=f"{long}\nmore", user=owner,
+                                   client_id="c1")
+    body = _claim(paired_runner_client)
+    assert body["origin_ref"]["subject"] == long[:80]
+    assert "subject" not in (Turn.objects.get(pk=turn.id).origin_ref or {})
+
+
+def test_a_claim_keeps_a_subject_it_already_had(paired_runner_client, chat_session_with_agent, owner):
+    _msg, turn = chat.send_message(session=chat_session_with_agent, text="hi", user=owner,
+                                   client_id="c1", origin_ref={"subject": "The thread"})
+    assert _claim(paired_runner_client)["origin_ref"]["subject"] == "The thread"

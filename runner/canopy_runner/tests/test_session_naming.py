@@ -78,6 +78,24 @@ def test_falls_back_to_the_first_real_line_of_the_brief():
     assert sn.build_task_name("connect-labs", t) == "c-re-validate-the-stall-classifier-e4a7"
 
 
+def test_a_chat_line_is_named_from_its_words_not_its_author_marker():
+    """canopy puts `[canopy from="…" user=… turn=…]` on the first line of a
+    chat send (apps/canopy_sessions/authorship.py). Named from that line, every
+    new chat read `c-canopy-from-jonathan-jackson-user-…` in the sidebar — and
+    in canopy's Chats list, which copies the session key into the title."""
+    t = _turn(origin="canopy_web_chat", origin_ref={"thread_id": "wwwwab12"}, prompt=(
+        '[canopy from="Jonathan Jackson" user=12 turn=3f2a9c1e0b7d4c55a1e2f3a4b5c6d7e8]\n'
+        "Why is the deploy stuck?"
+    ))
+    assert sn.build_task_name("hal", t) == "c-why-is-the-deploy-stuck-ab12"
+
+
+def test_a_marker_mid_brief_is_just_prose():
+    t = _turn(origin_ref={"thread_id": "wwwwab12"},
+              prompt='look at [canopy from="X" user=1 turn=3f2a9c1e0b7d4c55a1e2f3a4b5c6d7e8]')
+    assert sn.build_task_name("hal", t).startswith("c-look-at-canopy-from")
+
+
 def test_the_dispatch_stamp_never_becomes_the_name():
     """A dispatched brief ends in the marker + provenance. Naming a session after
     boilerplate every dispatched turn shares would make them indistinguishable."""

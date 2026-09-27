@@ -80,6 +80,12 @@ _REPLY_NOISE = re.compile(r"^(?:re|fwd|fw|aw|sv)\s*[:\-]\s*", re.IGNORECASE)
 # A leading slash command: `/ada:turn`, `/canopy:issue-triage`, plain `/turn`.
 _SLASH_COMMAND = re.compile(r"^/(?:(?P<ns>[A-Za-z0-9_-]+):)?(?P<cmd>[A-Za-z0-9_-]+)")
 
+# The author line canopy puts on the FIRST line of a person's chat send. A
+# minimal duplicate of `apps/canopy_sessions/authorship.py::_MARKER` in
+# canopy-web — the runner imports nothing from the server — so keep the two in
+# step. It says who is talking, never what about, so it can never be a name.
+_AUTHOR_MARKER = re.compile(r'^\[canopy from="(?:[^"\\]|\\.)*" (?:user|contact)=\d+ turn=[0-9a-f]{32}\]$')
+
 # Markdown/list scaffolding at the head of a line — bullets, quotes, numbering.
 _LINE_SCAFFOLD = re.compile(r"^\s*(?:[-*+>]\s+|\d+[.)]\s+)")
 
@@ -153,7 +159,10 @@ def _from_prompt_body(prompt: str) -> str:
     Skips the dispatch boilerplate and any markdown scaffolding, and requires two
     word characters so a stray `ok` or a bare delimiter cannot name a session.
     """
-    for raw in (prompt or "").splitlines():
+    lines = (prompt or "").splitlines()
+    if lines and _AUTHOR_MARKER.match(lines[0]):
+        lines = lines[1:]                  # exact first line only, as canopy parses it
+    for raw in lines:
         line = _LINE_SCAFFOLD.sub("", raw.strip())
         if not line or _BOILERPLATE.match(line) or line.startswith("/"):
             continue
