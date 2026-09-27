@@ -82,8 +82,10 @@ ORGANISATION-owned repo — the blocker while this was `jjackson/canopy-web`, wh
 rule TYPE was rejected, not any parameter; established 2026-07-26 across three parameter
 shapes, don't re-spend that twenty minutes). The repo moved to
 `dimagi-internal/canopy-web` and the rule went in. Current parameters: `SQUASH`,
-`ALLGREEN` grouping, up to 5 entries, and a **5-minute minimum wait** — so a merged PR
-does not land instantly even with everything green.
+`ALLGREEN` grouping, up to 5 entries, and **no minimum wait** (`min_entries_to_merge_wait_minutes: 0`,
+since 2026-09-26). It was 5 minutes, which held every PR — even one alone in the queue with
+everything green — for the full wait, and bought nothing: with a minimum group of 1, batching
+comes from PRs that are queued together anyway. So a PR lands once its queue run is green.
 
 **A queue failure ejects your PR AND disarms auto-merge.** The queue builds your branch
 merged with `main` and runs CI on THAT, so it fails on things your PR alone never shows —

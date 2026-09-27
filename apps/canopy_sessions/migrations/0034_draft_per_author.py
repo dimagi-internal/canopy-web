@@ -14,7 +14,7 @@ def _drop_shared_drafts(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("canopy_sessions", "0032_message_author"),
+        ("canopy_sessions", "0033_message_author"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

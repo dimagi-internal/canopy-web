@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("canopy_sessions", "0031_session_secret"),
+        ("canopy_sessions", "0032_chat_key"),
     ]
 
     operations = [

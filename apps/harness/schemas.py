@@ -543,6 +543,11 @@ class ClaimedTurnOut(TurnOut):
     # For a CONFINED turn only: the token the session uses for canopy's MCP in
     # place of the runner owner's PAT (harness.models.CallerToken). Null otherwise.
     mcp_token: str | None = None
+    # For a CHAT turn: the chat's key (canopy_sessions.ChatKey), which the runner
+    # gives only to the Claude session driving this chat. Presented in the
+    # `X-Canopy-Chat-Key` header, it reaches this chat's secrets and page and
+    # nothing else. Null for a turn that is not a chat's.
+    chat_key: str | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -553,6 +558,10 @@ class ClaimedTurnOut(TurnOut):
     @staticmethod
     def resolve_mcp_token(obj) -> str | None:
         return getattr(obj, "mcp_token", None)
+
+    @staticmethod
+    def resolve_chat_key(obj) -> str | None:
+        return getattr(obj, "chat_key", None)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:

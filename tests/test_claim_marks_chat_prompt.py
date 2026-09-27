@@ -145,3 +145,17 @@ def test_a_claim_keeps_a_subject_it_already_had(paired_runner_client, chat_sessi
     _msg, turn = chat.send_message(session=chat_session_with_agent, text="hi", user=owner,
                                    client_id="c1", origin_ref={"subject": "The thread"})
     assert _claim(paired_runner_client)["origin_ref"]["subject"] == "The thread"
+
+
+def test_the_websocket_claim_payload_marks_the_same_way(chat_session_with_agent, owner):
+    """A cloud runner claims over its control socket, which builds its answer
+    through `claiming.claim_payload` rather than the REST route. Both must deliver
+    the same prompt, or chats run by the cloud box lose their authors."""
+    from apps.harness.claiming import claim_payload
+
+    _msg, turn = chat.send_message(session=chat_session_with_agent, text="over the socket",
+                                   user=owner, client_id="ws1")
+    turn = Turn.objects.select_related("initiator_user", "chat_session").get(pk=turn.pk)
+    author, bare, tid = authorship.parse(claim_payload(turn)["prompt"])
+    assert author["user_id"] == owner.id and bare == "over the socket" and tid == turn.pk.hex
+    assert Turn.objects.get(pk=turn.pk).prompt == "over the socket"

@@ -348,14 +348,13 @@ describe('the page is declared BEFORE the turn is queued', () => {
     expect(seq.indexOf(first)).toBeLessThan(seq.indexOf(second))
   }
 
-  it('folds the DECLARED page state into the first message', async () => {
-    // The guide promises two paths "and the redundancy is the point": the state
-    // rides the first message AND the agent can re-read it with `current_page`.
-    // Only the legacy `provideContext` snapshot ever rode, so a host that had
-    // moved to `setPageState` — as the guide tells them to — sent nothing with
-    // the opening question. Measured on connect-labs: asked "what am I looking
-    // at?", the agent answered "I can't see your screen" and made no tool call,
-    // because its MCP tools arrive deferred and nothing prompted it to look.
+  it('sends the person\'s words alone when the page has declared its state', async () => {
+    // Until 2026-09-26 the declared state was pasted under the first message so
+    // the agent would know to look — and every transcript showed a JSON dump
+    // under the question the person typed. The agent now learns the page exists
+    // from the caller envelope (canopy-web `caller_context.build()["page"]`,
+    // surfaced by the canopy plugin's UserPromptSubmit hook), outside the
+    // person's words; the state itself is declared before the send (below).
     render(<EmbedApp link={withPage()} app="canopy-web" />)
 
     await say('what am I looking at?')
@@ -363,14 +362,12 @@ describe('the page is declared BEFORE the turn is queued', () => {
     await waitFor(() => expect(order()).toContain('send'))
     const sent = calls.find((c) => c.url.includes('/send'))
     const body = JSON.parse(String(sent!.init?.body))
-    expect(body.text).toContain('what am I looking at?')
-    expect(body.text).toContain('Context from the page I am on')
-    expect(body.text).toContain('list_insights')
+    expect(body.text).toBe('what am I looking at?')
   })
 
-  it('reads the declared state at send time, not at mount', async () => {
+  it('declares the state as it is at send time, not at mount', async () => {
     // `setPageState` pushes on every change, so a filter applied after the panel
-    // opened must be what the agent is told about.
+    // opened must be what the agent can read.
     let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_insights' }
     const link = fakeLink({
       waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
@@ -382,9 +379,9 @@ describe('the page is declared BEFORE the turn is queued', () => {
     await say('and now?')
 
     await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
-    const body = JSON.parse(String(calls.find((c) => c.url.includes('/send'))!.init?.body))
-    expect(body.text).toContain('7')
-    expect(body.text).not.toContain('"visible_ids": [\n    1\n  ]')
+    const declared = calls.find((c) => c.url.includes('/page-state'))
+    expect(declared).toBeTruthy()
+    expect(String(declared!.init?.body)).toContain('7')
   })
 
   it('declares what is on screen before sending', async () => {

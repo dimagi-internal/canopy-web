@@ -24,8 +24,8 @@ import pathlib
 import time
 from pathlib import Path
 
-from . import (caller, cdp_control, chat_bridge, dialog, emdash, hooks, native_permissions, readiness,
-               session_naming, transcript)
+from . import (caller, cdp_control, chat_bridge, chat_key, dialog, emdash, hooks, native_permissions,
+               readiness, session_naming, transcript)
 from .client import ClientError
 from .tail import TailReader
 
@@ -503,6 +503,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         _native_confine(cfg, client, turn, task)
         # Who is asking reaches the agent beside the words, never inside them (caller.py).
         caller.write_pending(task, turn, envelope)
+        # Before delivery, so the agent's first `canopy secret` cannot race it.
+        chat_key.write(turn, task=task)
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
@@ -544,6 +546,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         if not _confine(client, turn, name):
             return f"failed:{turn_id}"
         caller.write_pending(name, turn, envelope)
+        chat_key.write(turn, task=name)
         try:
             res = cdp_control.create_task(
                 target, prompt, task_name=name, port=cfg.cdp_port
@@ -565,7 +568,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         )
         logger.info("chat turn=%s created emdash task=%s (agent=%s)", turn_id, task, target)
 
+    # The chat's key was left under the task name before delivery (emdash may
+    # have renamed the task, so again under the real one); once the transcript
+    # names the Claude session, under that id too — `canopy secret` reads
+    # CLAUDE_CODE_SESSION_ID.
+    chat_key.write(turn, task=task)
     path = _wait_for_transcript(target, task, emdash_db=cfg.emdash_db)
+    if path is not None:
+        chat_key.write(turn, task=task, transcript_id=pathlib.Path(path).stem)
     if path is None:
         logger.warning("chat turn=%s: no transcript for task=%s (agent=%s) — reply not bridged",
                        turn_id, task, target)

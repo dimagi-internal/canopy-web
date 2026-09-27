@@ -318,3 +318,15 @@ def test_the_drill_probes_pull_request_permission_on_the_agents_repo(agent, runn
     prompt = drill.turn.prompt
     assert "https://api.github.com/repos/dimagi-internal/echo/pulls" in prompt
     assert "422 = PASS" in prompt and "403 = FAIL" in prompt
+
+
+def test_bootstrap_resolve_carries_this_instances_mailbox(agent, runner):
+    """canopy-web#984: the box sets Gmail up for the INSTANCE's mailbox, never an
+    address derived from the slug or read from the shared repo."""
+    from apps.tokens.models import PersonalToken
+
+    agent.email = "echo@dimagi-ai.com"
+    agent.save(update_fields=["email"])
+    raw, _ = PersonalToken.create_for_user(user=runner.paired_by, label="runner")
+    r = Client().get("/api/agents/echo/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.json()["mailbox"] == "echo@dimagi-ai.com"

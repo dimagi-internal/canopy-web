@@ -1135,6 +1135,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         values=values, op_vault=vault, op_sa_token=op_token,
         shared_op_vault=shared_vault, shared_op_sa_token=shared_token,
         github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
+        mailbox=agent.email or "",
     )
 
 

@@ -953,39 +953,11 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     turn = services.claim_next_turn(runner, exclude_slugs=exclude or None)
     if turn is None:
         return Status(204, None)
-    if turn.capability:
-        # A confined turn's credential for canopy's own MCP (models.CallerToken):
-        # handed to the claiming runner only, never to a listing.
-        from .caller_tokens import mint
+    # The same credentials the WebSocket claim carries — see `claiming.py`,
+    # which exists because the two channels once disagreed about them.
+    from .claiming import issue_credentials
 
-        turn.mcp_token = mint(turn)
-        # Deliberately nothing else. A visitor's host credential (host grant
-        # contract v1) never rides the claim: the agent reaches the host through
-        # canopy's own MCP (`site_call`), which attaches it server-side, so no
-        # runner — where every session is one OS user — ever holds it.
-
-    # Who wrote a chat line rides INSIDE the delivered prompt, because the
-    # transcript that comes back records only what the agent read (spec
-    # 2026-09-26). Set on this in-memory instance only — never saved: Slack's
-    # status line and the lost-turn re-ask read Turn.prompt and must see the
-    # bare words.
-    from apps.canopy_sessions.authorship import for_turn
-
-    bare = turn.prompt or ""
-    turn.prompt = for_turn(turn)
-    if turn.prompt != bare:
-        # A laptop runner names a NEW emdash session from the prompt's first line
-        # unless origin_ref carries a `subject` (session_naming's ladder). A
-        # runner older than its marker-skipping rule would name every new chat
-        # `c-canopy-from-<name>-user-…`, and canopy's Chats list copies that key
-        # into the title. So hand it the bare first line — in memory, like the
-        # prompt, and never over a subject the turn already had.
-        ref = dict(turn.origin_ref or {})
-        first = next((ln.strip() for ln in bare.splitlines() if ln.strip()), "")
-        if first and not ref.get("subject"):
-            ref["subject"] = first[:80]
-            turn.origin_ref = ref
-    return Status(200, turn)
+    return Status(200, issue_credentials(turn))
 
 
 def _project_workspace_or_404(request: HttpRequest, ws_slug: str):

@@ -1578,6 +1578,40 @@ def github_env(token: str, *, git_name: str = "", git_email: str = "",
     return env
 
 
+#: Where a chat's key (canopy_sessions.ChatKey) is left for the one Claude session
+#: driving that chat — see `_chat_key_env`.
+CHAT_KEY_ROOT = pathlib.Path.home() / ".canopy" / "chat"
+_CHAT_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _chat_key_env(turn: dict) -> dict:
+    """Give this chat turn its chat's key, and only this turn.
+
+    canopy mints a key when a runner claims a chat's turn; presenting it (the
+    `X-Canopy-Chat-Key` header) reaches that chat's secrets and page and nothing
+    else. `canopy secret` reads it from CANOPY_CHAT_KEY. The MCP headers helper
+    cannot — Claude Code strips secret-looking variables from its environment —
+    so the key is also written to `~/.canopy/chat/chat/<chat id>.key` (0600) and
+    the helper finds it through CANOPY_CHAT_SESSION, which is not a secret."""
+    key = str(turn.get("chat_key") or "")
+    chat_id = _chat_session_id(turn)
+    if not key or not _CHAT_ID.match(chat_id):
+        return {}
+    try:
+        _write_private_text(CHAT_KEY_ROOT / "chat" / f"{chat_id}.key", key)
+    except OSError as exc:
+        _log(f"warn: could not leave chat {chat_id[:8]}'s key for its MCP helper: {exc}")
+    return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
+
+
+def _write_private_text(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+
+
 def _requested_by_from(turn: dict) -> str:
     who = ((turn.get("caller_context") or {}).get("who") or {})
     person = who.get("user") or who.get("contact") or {}
@@ -2827,28 +2861,58 @@ class _InboxClient:
         return {**(payload or {}), "_created": status == 201}
 
 
-def _agent_mailboxes() -> dict:
-    """{agent_slug: {"account": ..., "client": ...}} from the agent clones.
+#: slug -> (fetched_at, the INSTANCE's mailbox per canopy-web, "" for none).
+_INSTANCE_MAILBOX: dict = {}
+_INSTANCE_MAILBOX_TTL_SECONDS = 600
 
-    `/api/inbound/runner-mailboxes` deliberately serves only address + topic —
-    "the runner intersects this with the mailboxes it actually holds credentials
-    for". On this box that intersection IS the clone: bootstrap provisions gog
-    per agent, and each repo's config/agent.json names its mailbox and the gog
-    client its turns DECLARE. That client is intent, not fact — see
-    `_resolve_mailbox_clients`, which replaces it with the one whose token
-    actually authenticates before anything is read.
+
+def _instance_mailbox(slug: str) -> str:
+    """The mailbox canopy-web records for THIS instance of the agent
+    (`Agent.email`), or "" when it records none. Cached briefly; on a failed
+    lookup the last known answer is kept rather than dropping a live inbox."""
+    now = time.time()
+    hit = _INSTANCE_MAILBOX.get(slug)
+    if hit and now - hit[0] < _INSTANCE_MAILBOX_TTL_SECONDS:
+        return hit[1]
+    status, body = _api("GET", f"/{slug}/", prefix="/api/agents")
+    if status != 200 or not isinstance(body, dict):
+        return hit[1] if hit else ""
+    mailbox = str(body.get("email") or "").strip()
+    _INSTANCE_MAILBOX[slug] = (now, mailbox)
+    return mailbox
+
+
+def _agent_mailboxes() -> dict:
+    """{agent_slug: {"account": ..., "client": ...}} for the agents this box runs.
+
+    THE MAILBOX IS THE INSTANCE'S, from canopy-web (`Agent.email`) — never the
+    repo's. An agent's repo is its DEFINITION, shared by every instance of it
+    (apps/agents/definition.py), so its `config/agent.json` names the same
+    address for all of them: two ACE instances on two boxes would both poll
+    ace@ and enqueue its mail as their own turns (canopy-web#984). An instance
+    with no mailbox recorded in canopy is not polled at all, rather than
+    inheriting the definition's.
+
+    The gog CLIENT still comes from the clone: that is the definition's intent
+    (which OAuth app its turns present), and `_resolve_mailbox_clients` replaces
+    it with the one whose token actually authenticates before anything is read.
     """
     boxes: dict = {}
     for slug in [s.strip() for s in AGENT_SLUGS.split(",") if s.strip()]:
         cfg = pathlib.Path(AGENT_ROOT) / slug / "config" / "agent.json"
         try:
             data = json.loads(cfg.read_text())
-        except Exception:  # noqa: BLE001 — an agent without one simply has no mailbox
+        except Exception:  # noqa: BLE001 — no clone yet: nothing provisioned to read with
             continue
-        account = (data.get("email") or "").strip()
-        client = (data.get("gog_client") or "").strip()
-        if account and client:
-            boxes[slug] = {"account": account, "client": client}
+        account = _instance_mailbox(slug)
+        if not account:
+            continue
+        declared = (data.get("email") or "").strip()
+        if declared and declared.lower() != account.lower():
+            _log(f"inbox {slug}: its repo names {declared}, but this instance's mailbox in "
+                 f"canopy-web is {account} — polling {account}")
+        client = (data.get("gog_client") or "").strip() or slug
+        boxes[slug] = {"account": account, "client": client}
     return boxes
 
 
@@ -3585,9 +3649,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
     try:
-        # The turn's GitHub identity, first: the cwd's own git pull needs it.
-        github = {**_github_turn_env(runner_id, turn), **_write_envelope(turn)}
-        _TURN_ENV.extra = dict(github)
+        # What this turn alone carries: its GitHub identity (first — the cwd's
+        # own git pull needs it), its caller envelope and, for a chat, that
+        # chat's key.
+        per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
+                    **_chat_key_env(turn)}
+        _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
         resume_id = turn.get("_resume_id") or None
@@ -3601,7 +3668,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 prompt = _confined_prompt(turn)
                 confine_env, caller_path = _confine(turn)
-                _TURN_ENV.extra = {**github, **confine_env}
+                _TURN_ENV.extra = {**per_turn, **confine_env}
                 _TURN_ENV.settings = _native_settings(
                     turn, cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
                     caller_path)

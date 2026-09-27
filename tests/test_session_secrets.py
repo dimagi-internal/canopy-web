@@ -1,10 +1,10 @@
 """Secrets shared with a chat (`models.SessionSecret`).
 
 The contract: a person hands a value to one chat without it entering the chat,
-and ONLY the session bound to that chat can spend it. The agent side names
-itself by its Claude session id (RunnerBinding.transcript_id); there is no route
-that takes a chat id. Values never come back to a browser, and a secret dies 30
-minutes after it was shared.
+and ONLY the session driving that chat can spend it. That session proves which
+chat it is with the chat's KEY (`ChatKey`), which canopy issued when its runner
+claimed the chat's turn; there is no route that takes a chat id. Values never
+come back to a browser, and a secret dies 30 minutes after it was shared.
 """
 from __future__ import annotations
 
@@ -58,8 +58,11 @@ def world():
     other = chat(OTHER, "task-b")
     browser = Client()
     browser.force_login(owner)
+    from apps.canopy_sessions import chat_keys
+
     return {"owner": owner, "ws": ws, "bot": bot, "agent": agent, "runner": runner,
-            "session": session, "other": other, "browser": browser}
+            "session": session, "other": other, "browser": browser,
+            "keys": {"mine": chat_keys.mint(session), "other": chat_keys.mint(other)}}
 
 
 def _share(world, name="gh token", value=TOKEN, session=None):
@@ -75,8 +78,14 @@ def _agent(world, user=None):
     return Client(HTTP_AUTHORIZATION=f"Bearer {_pat(user or world['bot'])}")
 
 
-def _value(world, transcript=MINE, name="GH_TOKEN", user=None):
-    return _agent(world, user).get(f"/api/session-secrets/{transcript}/{name}")
+def _listed(world, chat="mine", user=None):
+    return _agent(world, user).get("/api/session-secrets/key",
+                                   HTTP_X_CANOPY_CHAT_KEY=world["keys"].get(chat, chat))
+
+
+def _value(world, chat="mine", name="GH_TOKEN", user=None):
+    return _agent(world, user).get(f"/api/session-secrets/key/{name}",
+                                   HTTP_X_CANOPY_CHAT_KEY=world["keys"].get(chat, chat))
 
 
 # ---- sharing -----------------------------------------------------------------
@@ -110,11 +119,11 @@ def test_names_are_env_var_shaped(world):
     assert _share(world, name="x", value="   ").status_code == 422
 
 
-# ---- only the bound session --------------------------------------------------
+# ---- only the session holding the chat's key ---------------------------------
 
-def test_the_bound_session_lists_and_spends_its_secrets(world):
+def test_the_keyed_session_lists_and_spends_its_secrets(world):
     _share(world)
-    listed = _agent(world).get(f"/api/session-secrets/{MINE}")
+    listed = _listed(world)
     assert listed.status_code == 200
     assert [s["name"] for s in listed.json()] == ["GH_TOKEN"]
     assert TOKEN not in listed.content.decode()
@@ -124,42 +133,38 @@ def test_the_bound_session_lists_and_spends_its_secrets(world):
     assert SessionSecret.objects.get(name="GH_TOKEN").last_used_at is not None
 
 
-def test_another_session_of_the_same_agent_cannot_see_or_spend_it(world):
+def test_another_chat_of_the_same_agent_cannot_see_or_spend_it(world):
     _share(world)
-    assert _agent(world).get(f"/api/session-secrets/{OTHER}").json() == []
-    assert _value(world, transcript=OTHER).status_code == 404
+    assert _listed(world, "other").json() == []
+    assert _value(world, "other").status_code == 404
 
 
-def test_each_session_sees_only_its_own_chats_secrets(world):
+def test_each_key_sees_only_its_own_chats_secrets(world):
     _share(world, name="MINE_ONLY")
     _share(world, name="THEIRS_ONLY", session=world["other"])
-    assert [s["name"] for s in _agent(world).get(f"/api/session-secrets/{MINE}").json()] == ["MINE_ONLY"]
-    assert [s["name"] for s in _agent(world).get(f"/api/session-secrets/{OTHER}").json()] == ["THEIRS_ONLY"]
+    assert [s["name"] for s in _listed(world).json()] == ["MINE_ONLY"]
+    assert [s["name"] for s in _listed(world, "other").json()] == ["THEIRS_ONLY"]
 
 
-def test_an_unknown_session_gets_a_404(world):
+def test_no_key_or_a_wrong_key_gets_a_404(world):
     _share(world)
-    assert _agent(world).get("/api/session-secrets/not-a-bound-session").status_code == 404
+    assert _agent(world).get("/api/session-secrets/key/GH_TOKEN").status_code == 404
+    assert _value(world, "chk_not-a-key").status_code == 404
 
 
-def test_knowing_the_session_id_is_not_enough_for_another_identity(world):
+def test_the_agent_login_alone_is_not_enough(world):
+    """The old rule — the chat's agent login plus the chat's Claude session id —
+    is gone. Neither identity nor a session id reaches a secret; only the key."""
     _share(world)
-    ada = User.objects.create_user("ada", "ada@dimagi-ai.com", "pw")
-    Agent.objects.create(slug="ada", name="Ada", workspace=world["ws"], user=ada)
-    assert _value(world, user=ada).status_code == 404
-    co_tenant = User.objects.create_user("x", "x@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(user=co_tenant, workspace=world["ws"], role=WorkspaceMembership.EDITOR)
-    assert _value(world, user=co_tenant).status_code == 404
-
-
-def test_a_writer_of_the_chat_may_spend_it_from_its_session(world):
-    _share(world)
-    assert _value(world, user=world["owner"]).status_code == 200
+    assert _agent(world).get(f"/api/session-secrets/{MINE}").status_code == 404
+    assert _agent(world).get(f"/api/session-secrets/{MINE}/GH_TOKEN").status_code == 404
 
 
 def test_a_browser_session_is_refused_even_for_the_sharer(world):
     _share(world)
-    assert world["browser"].get(f"/api/session-secrets/{MINE}/GH_TOKEN").status_code == 403
+    r = world["browser"].get("/api/session-secrets/key/GH_TOKEN",
+                             HTTP_X_CANOPY_CHAT_KEY=world["keys"]["mine"])
+    assert r.status_code == 403
 
 
 def test_forgetting_a_secret_removes_it(world):
@@ -194,7 +199,7 @@ def test_both_lists_drop_expired_secrets(world):
     assert world["browser"].get(f"/api/canopy-sessions/{world['session'].id}/secrets").json() == []
     _share(world)
     _age(31)
-    assert _agent(world).get(f"/api/session-secrets/{MINE}").json() == []
+    assert _listed(world).json() == []
 
 
 def test_resharing_restarts_the_clock(world):

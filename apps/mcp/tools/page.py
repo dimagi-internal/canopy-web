@@ -15,13 +15,13 @@ only once (by turn three the agent is reasoning about a page the user has left).
 A tool inverts all three: the agent asks when it needs to know, and gets the
 current view. "Close the ones I'm looking at" is answerable on turn nine.
 
-**Two ways of asking, because there are two kinds of caller.** A PAT names a
-USER, and the question is "which of this person's open pages" — several, if they
-have tabs. A confined caller token names a CONVERSATION, and the question is
-"this screen"; that path exists because a widget's visitor is a contact with no
-canopy account, so the user-scoped predicate matches nothing and the page a host
-declared for that very conversation was invisible to the agent it was declared
-for. The conversation-scoped answer is the narrower of the two.
+**Three ways of asking, one per kind of caller, narrowest first.** A session
+driving a chat presents that chat's KEY (`X-Canopy-Chat-Key`) and gets that
+chat's page — this is how an agent sees the screen of the person it is talking
+to. A confined caller token names its own CONVERSATION and gets that. Anything
+else is a USER asking about their own open tabs — several, if they have more
+than one. An agent's login alone is the third case and matches nothing: it is
+in every chat the agent is in, so it cannot say which screen is meant.
 
 **It returns a selection, not data.** The state names which rows are on screen
 and which tool resolves them; the agent then calls THAT tool, so the rows arrive
@@ -88,6 +88,17 @@ def _pages_of_turns(turn_ids: list[str]) -> list[dict]:
     return [_page_out(session) for session in sessions if session.page_state]
 
 
+def _page_of_chat() -> list[dict] | None:
+    """The page of the chat this request's chat key names — or None when the
+    request carries no key, so the caller falls through to the older paths."""
+    from apps.mcp.chat_scope import current_chat_session
+
+    session = current_chat_session()
+    if session is None:
+        return None
+    return [_page_out(session)] if session.page_state else []
+
+
 def _page_out(session) -> dict:
     state = dict(session.page_state or {})
     return {
@@ -131,6 +142,13 @@ async def current_page() -> list[dict]:
     # A confined caller's turn answers about its OWN conversation. Checked first
     # because such a caller may also be a canopy user, and in that turn the
     # question is "this screen", not "every page I have open elsewhere".
+    # A session driving a chat names that chat with its key, and the answer is
+    # that chat's page — not every chat its agent's login happens to be in.
+    pages = await sync_to_async(_page_of_chat, thread_sensitive=True)()
+    if pages is not None:
+        await write_audit(user_id=user_id, tool="current_page",
+                          args_summary=f"{len(pages)} page(s) on this chat (chat key)")
+        return pages
     turn_ids = caller_turn_ids()
     if turn_ids is not None:
         pages = await sync_to_async(_pages_of_turns, thread_sensitive=True)(turn_ids)

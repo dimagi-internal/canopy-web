@@ -5358,15 +5358,15 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/session-secrets/{transcript_id}": {
+    readonly "/api/session-secrets/key": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Secrets shared with the chat this session is bound to (names only) */
-        readonly get: operations["apps_canopy_sessions_secrets_api_list_for_session"];
+        /** Secrets shared with the chat this key was issued for (names only) */
+        readonly get: operations["apps_canopy_sessions_secrets_api_list_for_key"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5375,15 +5375,15 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/session-secrets/{transcript_id}/{name}": {
+    readonly "/api/session-secrets/key/{name}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** PLAINTEXT — for `canopy secret exec` inside the bound session only */
-        readonly get: operations["apps_canopy_sessions_secrets_api_value_for_session"];
+        /** PLAINTEXT — for `canopy secret exec` in the session holding this chat's key */
+        readonly get: operations["apps_canopy_sessions_secrets_api_value_for_key"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -10003,6 +10003,11 @@ export interface components {
              * @default
              */
             readonly github_token: string;
+            /**
+             * Mailbox
+             * @default
+             */
+            readonly mailbox: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {
@@ -12071,6 +12076,8 @@ export interface components {
             };
             /** Mcp Token */
             readonly mcp_token?: string | null;
+            /** Chat Key */
+            readonly chat_key?: string | null;
         };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {
@@ -20796,13 +20803,11 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_secrets_api_list_for_session: {
+    readonly apps_canopy_sessions_secrets_api_list_for_key: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
-            readonly path: {
-                readonly transcript_id: string;
-            };
+            readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;
@@ -20818,12 +20823,11 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_secrets_api_value_for_session: {
+    readonly apps_canopy_sessions_secrets_api_value_for_key: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly transcript_id: string;
                 readonly name: string;
             };
             readonly cookie?: never;

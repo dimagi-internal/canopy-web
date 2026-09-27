@@ -55,11 +55,10 @@ def _attached_sessions(user):
     "the pages this caller can reach". Ordered newest-first so the most recent
     attachment wins a name collision.
 
-    The predicate is `page_access.page_visible_q`, not `created_by=user`. That
-    older filter was right for a human asking about their own tabs and wrong for
-    the only case that happens in production: the AGENT is the caller, holding
-    its own PAT, while the session was created by the human it is talking to —
-    so it matched nothing and the agent silently had no page tools at all.
+    This is the USER path: a person's own tabs (`page_access.page_visible_q`).
+    An agent's session reaches the page of the chat it is driving through that
+    chat's key instead (`_list_tools` checks it first) — its login alone is in
+    every chat the agent is in, so it matches nothing here.
     """
     from apps.canopy_sessions.page_access import sessions_with_page_for
 
@@ -75,8 +74,12 @@ def page_tool_specs(user) -> list[tuple]:
     better guess at which one the user means. The chosen session's id is in the
     tool description, so a wrong guess is visible rather than silent.
     """
+    return _specs_of(_attached_sessions(user))
+
+
+def _specs_of(sessions) -> list[tuple]:
     seen: dict[str, tuple] = {}
-    for session in _attached_sessions(user):
+    for session in sessions:
         for spec in session.page_actions_available or []:
             name = f"{TOOL_PREFIX}{spec.get('name', '')}"
             if not spec.get("name") or name in seen:
@@ -169,11 +172,26 @@ class PageActionProvider(Provider):
     """
 
     async def _list_tools(self):
+        # A chat key narrows it to that one chat's page: an agent's login is in
+        # every chat the agent is in, and "the page I am talking about" is this one.
+        chat = await sync_to_async(_current_chat, thread_sensitive=True)()
+        if chat is not None:
+            specs = _specs_of([chat])
+            return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
         user = await sync_to_async(_current_user, thread_sensitive=True)()
         if user is None:
             return []
         specs = await sync_to_async(page_tool_specs, thread_sensitive=True)(user)
         return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
+
+
+def _current_chat():
+    try:
+        from apps.mcp.chat_scope import current_chat_session
+
+        return current_chat_session()
+    except Exception:  # noqa: BLE001 - no request context is not an error here
+        return None
 
 
 def _current_user():

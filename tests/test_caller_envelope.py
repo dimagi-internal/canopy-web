@@ -135,6 +135,29 @@ def test_an_email_thread_names_its_session(ctx):
     assert env["agent"] == "ace"          # derived through the session
 
 
+def test_the_page_the_person_is_on_is_the_selection_not_the_rows(ctx):
+    # The widget used to paste the page state under the person's message, so the
+    # agent had it on turn one. The envelope now carries the selection instead
+    # (the hook puts it in context, outside the transcript); rows stay behind
+    # the backing tool.
+    _o, _ws, agent = ctx
+    t = _email(agent, thread="t-9")
+    t.chat_session.page_state = {"resource": "labs-marketplace://orgs",
+                                 "visible_ids": ["org-alpha", "org-beta", "org-gamma"],
+                                 "backing_tool": "marketplace_orgs_get", "path": "/labs/marketplace/"}
+    t.chat_session.save()
+    page = caller_context.build(t)["page"]
+    assert page == {"resource": "labs-marketplace://orgs",
+                    "visible_ids": ["org-alpha", "org-beta", "org-gamma"], "visible_count": 3,
+                    "filters": None, "backing_tool": "marketplace_orgs_get",
+                    "path": "/labs/marketplace/", "read_with": "current_page"}
+
+
+def test_no_page_declared_is_null(ctx):
+    _o, _ws, agent = ctx
+    assert caller_context.build(_email(agent, thread="t-8"))["page"] is None
+
+
 # --- how it reaches the runner ----------------------------------------------------
 
 def test_the_claim_response_carries_the_envelope(ctx):
