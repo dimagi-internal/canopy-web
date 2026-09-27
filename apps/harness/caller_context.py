@@ -73,9 +73,39 @@ def relationship(turn, agent) -> str:
     if kind in (who.SYSTEM, who.AGENT):
         return SYSTEM
     user = turn.initiator_user if kind == who.USER else None
-    if user is None or agent is None:
+    if user is None:
         return CALLER
+    if agent is None:
+        return _relationship_without_agent(turn, user)
     return relationship_for_user(user, agent)
+
+
+def _relationship_without_agent(turn, user) -> str:
+    """What someone is to a turn with NO agent — a repo chat, a project turn.
+
+    There is no agent to own, so the question is whose conversation and whose
+    machine it is. It used to fall through to CALLER, so the owner of a repo
+    chat on their own laptop was told, in the "who is asking" note on every
+    message, that they did not hold the agent's authority and must not push or
+    deploy (2026-09-27, on Jonathan's own canopy-web session).
+
+    OWNER: the human who paired the runner doing the work (it is their box and
+    their Claude login), or the session's owner by the session ACL. MEMBER:
+    anyone else the session ACL lets write. Everyone else stays a CALLER.
+    """
+    runner = getattr(turn, "claimed_by", None)
+    if runner is not None and getattr(runner, "paired_by_id", None) == user.pk:
+        return OWNER
+    session = getattr(turn, "chat_session", None)
+    if session is None:
+        return CALLER
+    from apps.canopy_sessions import access
+    from apps.canopy_sessions.models import SessionParticipant
+
+    role = access.role_for(user, session)
+    if role == SessionParticipant.OWNER:
+        return OWNER
+    return MEMBER if access.can_write(user, session) else CALLER
 
 
 def relationship_for_user(user, agent) -> str:

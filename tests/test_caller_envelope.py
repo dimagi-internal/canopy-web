@@ -416,3 +416,46 @@ def test_a_pat_still_answers_about_the_users_own_pages(ctx):
         pages = _current_page()
 
     assert [p["session_id"] for p in pages] == [str(mine.id)]
+
+
+# --- a turn with no agent: a repo chat ------------------------------------------------
+#
+# 2026-09-27: the "who is asking" note on Jonathan's own canopy-web repo chat called
+# him a CALLER "not the agent's owner" and told the session not to push or deploy —
+# because a turn with no agent fell straight through to CALLER.
+
+def _repo_turn(ws, asker, *, creator=None, runner=None):
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=ws, title="repo chat", project="canopy-web",
+                                     created_by=creator)
+    turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                               idempotency_key=f"repo-{session.pk}", prompt="still going?",
+                               claimed_by=runner, **who.for_user(asker, via="chat",
+                                                                 assurance="session").fields())
+    return turn
+
+
+def test_the_person_whose_runner_does_the_work_owns_a_repo_chat(ctx):
+    from apps.harness.models import Runner
+
+    owner, ws, _agent = ctx
+    laptop = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, paired_by=owner)
+    env = caller_context.build(_repo_turn(ws, owner, runner=laptop))
+    assert env["relationship"] == caller_context.OWNER
+
+
+def test_the_creator_of_a_repo_chat_owns_it(ctx):
+    owner, ws, _agent = ctx
+    assert caller_context.build(_repo_turn(ws, owner, creator=owner))["relationship"] == \
+        caller_context.OWNER
+
+
+def test_someone_elses_repo_chat_on_someone_elses_box_is_not_theirs(ctx):
+    from apps.harness.models import Runner
+
+    owner, ws, _agent = ctx
+    stranger = User.objects.create_user("x", "x@example.org", "pw")
+    box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, paired_by=owner)
+    env = caller_context.build(_repo_turn(ws, stranger, creator=owner, runner=box))
+    assert env["relationship"] == caller_context.CALLER
