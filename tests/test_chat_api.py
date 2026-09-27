@@ -426,3 +426,21 @@ def test_send_refuses_a_server_only_origin(client):
                         data={"text": "hi", "origin": bad},
                         content_type="application/json")
         assert r.status_code == 422, f"{bad}: {r.status_code} {r.content}"
+
+
+def test_send_client_id_over_100_chars_is_truncated(client):
+    """Capped the same way the WS path caps it (consumers.py's `chat.send`
+    handler does `str(data.get("client_id") or "")[:100]`) — a client_id this
+    long is not a real nonce, and an unbounded one becoming the turn's
+    idempotency_key is the one place it would actually matter."""
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
+                      content_type="application/json").json()["id"]
+    long_id = "x" * 150
+    r = client.post(f"/api/canopy-sessions/{sid}/send",
+                    data={"text": "hi", "client_id": long_id},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+
+    turn = Turn.objects.get(pk=r.json()["turn_id"])
+    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
+    assert not turn.idempotency_key.endswith(f":{long_id}")

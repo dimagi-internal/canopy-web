@@ -134,6 +134,29 @@ def test_a_contacts_client_id_reaches_the_turns_idempotency_key():
     assert Turn.objects.filter(chat_session_id=sid).count() == before
 
 
+def test_a_contacts_client_id_over_100_chars_is_truncated():
+    """Same cap as the WS path (consumers.py's `chat.send`:
+    `str(data.get("client_id") or "")[:100]`) and the member REST path
+    (`test_chat_api.py::test_send_client_id_over_100_chars_is_truncated`) —
+    the contact endpoint had neither before this."""
+    from apps.harness.models import Turn
+
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                 content_type="application/json", **hdr).json()["id"]
+
+    long_id = "y" * 150
+    r = c.post(f"/api/contact/sessions/{sid}/send",
+               data={"text": "hello", "client_id": long_id},
+               content_type="application/json", **hdr)
+    assert r.status_code == 200, r.content
+
+    turn = Turn.objects.filter(chat_session_id=sid).latest("created_at")
+    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
+    assert not turn.idempotency_key.endswith(f":{long_id}")
+
+
 def test_only_agents_the_site_was_allowed_to_offer():
     """Not "agents the contact can reach" — a contact reaches nothing, having
     no membership. The app's allowlist is the whole gate."""

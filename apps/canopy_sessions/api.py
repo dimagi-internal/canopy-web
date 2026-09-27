@@ -533,7 +533,11 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     try:
         message, turn = services.send_message(
             session=session, text=payload.text, user=request.user,
-            client_id=payload.client_id, placement=payload.placement,
+            # Capped the same way the WS path caps it (consumers.py's
+            # `chat.send` handler) — the schema field itself stays an
+            # unbounded `str` so `generated.ts` needs no regen; the length
+            # limit is enforced where the id is actually used.
+            client_id=payload.client_id[:100], placement=payload.placement,
             origin=payload.origin,
             initiator=who.for_request(request, via=who.channel(request, "chat")),
         )

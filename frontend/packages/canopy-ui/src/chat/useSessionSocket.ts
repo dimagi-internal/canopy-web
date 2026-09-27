@@ -548,6 +548,28 @@ export function useSessionSocket({
     });
   }, []);
 
+  // A failed send's restore, NOT the same as `updateLocalDraft`: this is a
+  // stale write racing whatever the person typed while the request was in
+  // flight, so it must never overwrite it. A functional update reads the
+  // CURRENT draft rather than one closed over at send time — sendChatOverHttp
+  // cleared the draft to null before the request even went out, so "the local
+  // draft is still null or empty" means nothing newer has been typed since,
+  // and only then is it safe to put the failed body back. If the person has
+  // already started something else, that stays exactly as they left it; the
+  // failed send is simply lost rather than clobbering live typing (2026-09-26
+  // review: "contact sends hello, starts typing world, hello's failure
+  // overwrote world").
+  const restoreFailedLocalDraft = useCallback((body: string) => {
+    setLocalDraft((prev) =>
+      prev == null || prev.body === ""
+        ? {
+            id: "local", slot: "next", status: "open", body, version: 0,
+            last_editor: 0, last_edit_at: new Date().toISOString(),
+          }
+        : prev,
+    );
+  }, []);
+
   const noteLocalSend = useCallback((text: string, clientId?: string) => {
     setAwaitingReply(true);
     const body = text.trim();
@@ -587,10 +609,12 @@ export function useSessionSocket({
     sendOverHttp(body, clientId).catch((err: unknown) => {
       setAwaitingReply(false);
       setLastError(err instanceof Error ? err.message : "the message could not be sent");
-      // Put the words back, so a failed send never costs what was typed.
-      updateLocalDraft(body);
+      // Put the words back, so a failed send never costs what was typed —
+      // but only if nothing NEWER has been typed since (see
+      // `restoreFailedLocalDraft`).
+      restoreFailedLocalDraft(body);
     });
-  }, [localDraft, sendOverHttp, noteLocalSend, updateLocalDraft]);
+  }, [localDraft, sendOverHttp, noteLocalSend, restoreFailedLocalDraft]);
 
   const exposedState = useMemo(
     () => (sendOverHttp ? { ...state, active_draft: localDraft } : state),
