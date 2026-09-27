@@ -1,0 +1,50 @@
+{% comment %}
+The canopy agent panel (from connect-labs `labs/includes/canopy_panel.html`).
+
+The page state goes through `json_script` rather than into the script body, so a
+value containing `</script>` cannot end the block. `page` in the token URL is the
+host's own signature over which page this is: it decides whether canopy may act
+as the visitor here, and with which scopes — read from the host's registry,
+never from the browser.
+{% endcomment %}
+{% if canopy_panel.ready %}
+  {{ canopy_panel.page_state|json_script:"canopy-page-state" }}
+  {{ canopy_panel.theme|json_script:"canopy-panel-theme" }}
+  <script src="{{ canopy_panel.base_url }}/embed/widget.js"></script>
+  <script>
+    (function () {
+      if (!window.canopy) return;
+      function read(id) {
+        var el = document.getElementById(id);
+        if (!el) return null;
+        try { return JSON.parse(el.textContent); } catch (e) { return null; }
+      }
+      var declared = read("canopy-page-state");
+      var theme = read("canopy-panel-theme") || {};
+      var options = {
+        baseUrl: "{{ canopy_panel.base_url|escapejs }}",
+        app: "{{ canopy_panel.app_name|escapejs }}",
+        agent: "{{ canopy_panel.agent|escapejs }}",
+        tokenUrl: "{{ canopy_panel.token_url|escapejs }}",
+        mode: "{{ canopy_panel.mode|escapejs }}",
+        launcherLabel: "{{ canopy_panel.launcher_label|escapejs }}",
+        // A function, not a string: the token rotates on login. The DOM field
+        // wins (it is current); the rendered token is the fallback for a page
+        // with no form on it.
+        csrfToken: function () {
+          var field = document.querySelector("[name=csrfmiddlewaretoken]");
+          return field ? field.value : "{{ csrf_token|default:''|escapejs }}";
+        },
+        // Somebody else changed the data this page shows. A server-rendered
+        // page IS its query: reloading is the honest refresh, and the one where
+        // the host's own access rules apply again.
+        onInvalidate: function (resource) {
+          if (declared && resource === declared.resource) window.location.reload();
+        },
+      };
+      if (theme && Object.keys(theme).length) options.theme = theme;
+      var widget = window.canopy.init(options);
+      if (declared) widget.setPageState(declared);
+    })();
+  </script>
+{% endif %}

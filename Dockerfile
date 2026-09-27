@@ -42,6 +42,9 @@ WORKDIR /app
 # plain `pip install .` can't find canopy-runs on PyPI.
 COPY pyproject.toml uv.lock ./
 COPY packages/ ./packages/
+# The canopy SDK's Python half (`dimagi-canopy`, import `canopy_sdk`) is the same
+# kind of path source: apps/tokens imports the host grant contract from it.
+COPY sdk/python/ ./sdk/python/
 RUN pip install uv && uv pip install --system .
 
 # Application code. This includes ./canopy when the deploy step has cloned the

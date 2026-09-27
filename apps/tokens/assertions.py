@@ -33,32 +33,33 @@ from __future__ import annotations
 
 import logging
 
+from canopy_sdk import consumer, contract
 from django.conf import settings
 from django.core.cache import cache
 
 log = logging.getLogger(__name__)
 
+# The contract's values live in the SDK (`canopy_sdk.contract`), which a host
+# builds against too — so canopy and every host read ONE definition. Re-exported
+# under the names this module has always had.
+
 #: Signature algorithms canopy will accept. Asymmetric ONLY: with a symmetric
 #: alg the verification key is the signing key, so publishing a "public" key
 #: would publish the ability to sign.
-ALLOWED_ALGORITHMS = ["EdDSA", "ES256", "RS256"]
+ALLOWED_ALGORITHMS = list(contract.ASSERTION_ALGORITHMS)
 
 #: The longest an assertion may live. Short because it is used once, at the
 #: start of a session, and a longer window is only useful to someone who
 #: captured it.
-MAX_LIFETIME_SECONDS = 120
+MAX_LIFETIME_SECONDS = contract.ASSERTION_MAX_LIFETIME
 
 #: Tolerance for clock skew between the host and canopy, both directions.
-LEEWAY_SECONDS = 30
+LEEWAY_SECONDS = contract.LEEWAY_SECONDS
 
-
-class AssertionError_(Exception):
-    """A refusal, with a code the caller can branch on without parsing prose."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+#: A refusal, with a code the caller can branch on without parsing prose. The
+#: SDK's class, so a refusal raised inside `consumer.verify_visitor_assertion`
+#: and one raised here are the same type.
+AssertionError_ = consumer.AssertionRefused
 
 
 def audience() -> str:
@@ -85,16 +86,7 @@ def _unverified_issuer(token: str) -> str:
     which key to verify against. Nothing else is read from the token until the
     signature has been checked.
     """
-    import jwt
-
-    try:
-        claims = jwt.decode(token, options={"verify_signature": False})
-    except Exception as exc:  # noqa: BLE001
-        raise AssertionError_("malformed", f"not a readable assertion: {exc}") from exc
-    iss = (claims.get("iss") or "").strip()
-    if not iss:
-        raise AssertionError_("no_issuer", "the assertion does not say which app issued it")
-    return iss
+    return consumer.unverified_issuer(token)
 
 
 def keys_for_app(app, token: str) -> list:
@@ -141,66 +133,21 @@ def verify(token: str, *, app) -> dict:
     """Check an assertion against `app`'s registered keys. Returns its claims.
 
     Raises `AssertionError_` for every refusal. Never returns a partial result:
-    a caller cannot accidentally use claims from a token that failed.
+    a caller cannot accidentally use claims from a token that failed. The checks
+    themselves (our algorithm list, `aud`, the lifetime cap, `sub`) are the
+    SDK's `consumer.verify_visitor_assertion` — the same code a host's CI runs
+    its assertions through — and the single-use spend is ours, below.
     """
-    import jwt
-
     keys = keys_for_app(app, token)
-
-    last_error: Exception | None = None
-    for key in keys:
-        try:
-            claims = jwt.decode(
-                token,
-                key,
-                # OURS, not the token's. This one argument is the difference
-                # between a verifier and a forgery oracle.
-                algorithms=ALLOWED_ALGORITHMS,
-                audience=audience(),
-                leeway=LEEWAY_SECONDS,
-                options={
-                    "require": ["iss", "sub", "aud", "exp", "iat", "jti"],
-                    "verify_exp": True,
-                    "verify_aud": True,
-                    "verify_iat": True,
-                },
-            )
-            break
-        except jwt.InvalidAudienceError as exc:
-            raise AssertionError_(
-                "wrong_audience",
-                f"the assertion is addressed elsewhere; this canopy is {audience()!r}",
-            ) from exc
-        except jwt.ExpiredSignatureError as exc:
-            raise AssertionError_("expired", "the assertion has expired") from exc
-        except jwt.MissingRequiredClaimError as exc:
-            raise AssertionError_("incomplete", str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - try the next key
-            last_error = exc
-    else:
-        # Every registered key rejected it. Rotation is why there is more than
-        # one; exhausting them means this was not signed by this app.
-        raise AssertionError_(
-            "bad_signature",
-            f"no registered key for {app.name!r} verifies this assertion ({last_error})",
-        )
-
-    # Lifetime cap. `exp` alone only proves the host chose an end; a host
-    # issuing year-long assertions has rebuilt the standing secret this exists
-    # to remove.
-    lifetime = int(claims["exp"]) - int(claims["iat"])
-    if lifetime > MAX_LIFETIME_SECONDS + LEEWAY_SECONDS:
-        raise AssertionError_(
-            "too_long",
-            f"assertions may live at most {MAX_LIFETIME_SECONDS}s; this one lives {lifetime}s",
-        )
-
-    _spend_jti(app, claims)
-
-    subject = str(claims.get("sub") or "").strip()
-    if not subject:
-        raise AssertionError_("no_subject", "the assertion does not say who it is about")
-    return claims
+    return consumer.verify_visitor_assertion(
+        token, keys,
+        audience=audience(),
+        label=app.name,
+        spend_jti=lambda claims: _spend_jti(app, claims),
+        algorithms=ALLOWED_ALGORITHMS,
+        leeway=LEEWAY_SECONDS,
+        max_lifetime=MAX_LIFETIME_SECONDS,
+    )
 
 
 def _spend_jti(app, claims: dict) -> None:

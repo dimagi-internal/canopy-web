@@ -43,12 +43,14 @@ import fnmatch
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from canopy_sdk import consumer, contract
 from django.utils import timezone
 
 #: A grant this close to expiry is treated as expired: the call would race it.
 EXPIRY_MARGIN = timedelta(seconds=10)
 #: Header the host logs as the acting agent. Informational: not trusted for authz.
-ACTOR_HEADER = "Canopy-Actor"
+#: The SDK's constant — the host's side reads the same one.
+ACTOR_HEADER = contract.ACTOR_HEADER
 BACK_ON_THE_PAGE = ("I need you back on the page to do that — ask again from the site "
                     "and I will try once more.")
 
@@ -213,13 +215,13 @@ def _auth(ctx: SiteContext):
 
         def auth_flow(self, request):
             htu = str(request.url.copy_with(query=None, fragment=None))
-            request.headers["Authorization"] = f"DPoP {token}"
-            request.headers["DPoP"] = client_identity.dpop_proof(
+            request.headers["Authorization"] = consumer.dpop_authorization(token)
+            request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
                 request.method, htu, access_token=token)
             response = yield request
-            nonce = response.headers.get("DPoP-Nonce")
+            nonce = response.headers.get(contract.DPOP_NONCE_HEADER)
             if response.status_code == 401 and nonce:
-                request.headers["DPoP"] = client_identity.dpop_proof(
+                request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
                     request.method, htu, access_token=token, nonce=nonce)
                 yield request
 

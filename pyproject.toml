@@ -68,6 +68,14 @@ dependencies = [
     # runner and was restated in a server comment, which is exactly how the two
     # runners' copies drifted apart in the first place.
     "canopy-transcript",
+    # The Python half of the canopy SDK (sdk/python, import name `canopy_sdk`):
+    # the host grant contract defined ONCE, and canopy's consumer half of it.
+    # apps/tokens/{assertions,host_grants,host_gateway,client_identity}.py import
+    # their constants and checks from it instead of keeping copies, and
+    # tests/test_sdk_round_trip.py runs its HOST half against canopy's real
+    # arrival + redemption code — so the two sides a host and canopy each
+    # implement cannot drift. Editable path dep via [tool.uv.sources] below.
+    "dimagi-canopy",
     "pywebpush>=2.3.0",
     "canopy-agent-factory>=1,<2",
     "pyyaml>=6.0.3",
@@ -119,6 +127,9 @@ canopy-cron = { path = "packages/canopy_cron", editable = true }
 # The transcript core: in-repo, standalone, installable. Both runners depend on it
 # directly; the server uses it for the ordinal scheme.
 canopy-transcript = { path = "packages/canopy_transcript", editable = true }
+# The canopy SDK (Python half): in-repo, standalone, installable, released on its
+# own tag (`dimagi-canopy-v<version>`) for hosts to pin.
+dimagi-canopy = { path = "sdk/python", editable = true }
 # Test-only (see the dev extra): the cross-seam menu test imports it.
 canopy-runner = { path = "runner/canopy_runner", editable = true }
 
@@ -148,4 +159,7 @@ asyncio_mode = "auto"
 # would sail through here (Django is installed) and fail on the EC2 box. Collecting
 # it here therefore doesn't just re-run 58 tests we already run, it re-runs them in
 # the one environment that cannot check the invariant they exist to protect.
-addopts = "--ignore=packages --ignore=deploy --ignore=runner"
+#
+# sdk/python is ignored for the same reason as packages/: it has its own suite
+# (plain pytest + its own minimal Django settings), run from its own dir in CI.
+addopts = "--ignore=packages --ignore=deploy --ignore=runner --ignore=sdk"
