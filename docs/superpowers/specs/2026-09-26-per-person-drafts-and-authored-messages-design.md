@@ -234,3 +234,37 @@ turn with a known initiator — the same point that already attaches the claim-o
   Deliberately scoped to the ledger branch only: publishing it from the
   transcript-sourced branch too would double the row once the runner's own
   `post_session_stream` ships the same text.
+- **Only a person's chat send is marked, and never a slash command** (final
+  review C1). §4 marked every chat-session turn with an initiator, which
+  included EMAIL turns — `email_thread_session` binds each inbound thread to a
+  session, with the sender as initiator — whose prompt is `/echo:turn --thread
+  …`. Claude Code runs a slash command only from the FIRST line, and both
+  runners' `--caller` injection tests `prompt.startswith("/")`, so the marker
+  silently turned the command into prose. The rule is `authorship.is_chat_send`:
+  a `send_message` send (idempotency key `chat:…`, which excludes transfer
+  preambles) from `canopy_web_chat`, `slack` or `ace_web`, or a contact's widget
+  send (which may name `api`); never email, scheduler, API/MCP or dispatch.
+  And a prompt whose first non-blank character is `/` is delivered bare and
+  unattributed — an accepted cost, since a `/compact` has no reply to attribute.
+  `queued_messages` applies the same rule (an email turn is not a line anybody
+  typed), reads its author from the turn rather than the marked prompt, and
+  reports a `client_id` only when the send had one (kept on `origin_ref`; the
+  key's suffix is an index or a server nonce otherwise).
+- **A marker is a claim the durable path checks** (final review m3). Anyone who
+  can type into emdash can write the syntax, so `persist_transcript_rows`
+  believes a marker only when the turn it names is on this session and was
+  initiated by the person it names — one query per batch. The live frame is not
+  checked; the durable row replaces it on the next load.
+- **A peer's draft is shown only while it is live** (final review I4). A draft
+  outlives the tab that typed it, and an HTTP send never cleared the server copy,
+  so every later connect showed "<name> is typing" for a line long sent or
+  abandoned. `drafts.peer_drafts` keeps only authors currently present and drafts
+  touched in the last 10 minutes, and the REST send clears the sender's draft
+  (when it holds what was sent, or its start — a draft holding something else is
+  the next line, typed in another tab) and publishes the cleared draft in the
+  consumer's `draft.updated` shape.
+- **The snapshot names a contact viewer** (`current_contact_id`, final review
+  C2): a widget visitor has no user id, so "is this line mine" compares user id
+  OR contact id (`canopy-ui/chat/identity.ts::isMine`), and
+  `SessionState.current_user_id` is typed `number | null` as it always was on
+  the wire.
