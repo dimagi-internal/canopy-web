@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -99,16 +99,31 @@ def jwks(request):
         return _json({"keys": []}, 503)
 
 
+def _grant_config_or_404():
+    """The host config while the grant is on; 404 otherwise — a server does not
+    advertise a way in it does not offer, and "not configured" is never a 500."""
+    try:
+        config = conf.get_host_config()
+    except HostNotConfigured:
+        raise Http404("the jwt-bearer grant is not configured here") from None
+    except Exception:  # noqa: BLE001 - a malformed key is a deployment fault
+        log.exception("CANOPY_HOST['SIGNING_KEY'] could not be read")
+        raise Http404("the jwt-bearer grant is not configured here") from None
+    if not config.grant_enabled:
+        raise Http404("the jwt-bearer grant is not configured here")
+    return config
+
+
 @require_GET
 def authorization_server_metadata_view(request):
     """RFC 8414, for a host that serves no metadata document of its own."""
-    return _json(authorization_server_metadata(conf.get_host_config()))
+    return _json(authorization_server_metadata(_grant_config_or_404()))
 
 
 @require_GET
 def protected_resource_metadata_view(request):
     """RFC 9728, for a host that serves no metadata document of its own."""
-    return _json(protected_resource_metadata(conf.get_host_config()))
+    return _json(protected_resource_metadata(_grant_config_or_404()))
 
 
 @login_required
@@ -117,23 +132,32 @@ def panel_token(request):
     """Mint a canopy token for the person whose session this is.
 
     The subject is ``request.user`` and can be nothing else: the request body is
-    never read. The one thing read is ``?page=``, the page token the panel was
-    rendered with — this host's own signature over the page's route and this
-    user, so it can say which registered page the panel is on and nothing more.
-    Missing, forged, expired or another user's means no grant; the mint goes
-    ahead without one.
+    never read. The one thing read is ``?page=``, which names the page the panel
+    is on — in signed mode the page token it was rendered with (this host's own
+    signature over the route and this user), in key mode a page key or path the
+    browser names. Either way it can only SELECT among the pages registered in
+    ``PAGE_SCOPES``; unknown, forged, expired or another user's means no grant,
+    and the mint goes ahead without one.
     """
     if not conf.is_configured():
         return _json({"error": "the canopy panel is not configured here"}, 503)
     try:
-        scopes = conf.page_tokens().scopes(request.GET.get("page"), request.user.pk)
-        payload = arrival_payload(conf.get_host_config(), conf.subject_for_user(request.user),
+        config = conf.get_host_config()
+        scopes = conf.page_scopes(request.GET.get("page"), request.user)
+    except Exception:  # noqa: BLE001 - HostNotConfigured, a malformed key or registry
+        log.exception("CANOPY_HOST could not be read for the panel")
+        return _json({"error": "the canopy panel is not configured here"}, 503)
+    try:
+        payload = arrival_payload(config, conf.subject_for_user(request.user),
                                   scopes=scopes, agent_slug=conf.agent_slug(),
                                   **conf.user_claims(request.user))
-        vouched = mint_contact_token(conf.get_host_config(), payload)
+        vouched = mint_contact_token(config, payload)
     except MintFailed as exc:
         # canopy's own words name the cause; logged, not returned — the visitor
         # cannot act on them.
         log.warning("canopy declined to mint a token for user %s: %s", request.user.pk, exc)
         return _json({"error": "could not reach the agent service"}, 502)
-    return _json({"token": vouched["token"], "expires_at": vouched["expires_at"]})
+    # Only what a browser needs: the token, its expiry, and `kind` (a user or a
+    # contact), which canopy-client routes on.
+    return _json({"token": vouched["token"], "expires_at": vouched.get("expires_at", ""),
+                  "kind": vouched.get("kind", "contact")})

@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.2.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.3.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.2.0/dimagi_canopy-0.2.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.3.0/dimagi_canopy-0.3.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
@@ -41,7 +41,7 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
@@ -83,12 +83,17 @@ urlpatterns += [
 
 ```python
 # asgi.py — in front of your MCP app
-from canopy_sdk.django.asgi import dpop_gate, resource_verifier
+from canopy_sdk.django.asgi import dpop_gate
 from canopy_sdk.host import presented_dpop_jkt
 mcp_app = dpop_gate(mcp_app)
 
-# ...and in your MCP bearer-token verifier, after your own PATs/OAuth tokens:
-principal = resource_verifier().resolve(raw_token, presented_dpop_jkt.get())
+# The gate is safe to install unconditionally: while the grant is off a DPoP
+# request is refused 401 invalid_dpop_proof and everything else passes through.
+
+# ...and in your MCP bearer-token verifier, after your own PATs/OAuth tokens
+# (None while the grant is off; never raises for configuration):
+from canopy_sdk.django.asgi import resolve_delegated
+principal = resolve_delegated(raw_token, presented_dpop_jkt.get())
 if principal:            # a delegated token: run AS principal.subject,
     ...                  # limited to principal.allowed_tools (principal.filter_tools(tools))
 ```
@@ -98,6 +103,65 @@ if principal:            # a delegated token: run AS principal.subject,
 {% load canopy_host %}
 {% canopy_panel resource="labs-marketplace://orgs" backing_tool="marketplace_orgs_get" visible_ids=slugs %}
 ```
+
+### `CANOPY_HOST` as a callable
+
+When the values derive from settings a later module overrides (a public URL per
+environment) or that tests override one at a time, make `CANOPY_HOST` a
+callable — resolved on every read — instead of a dict:
+
+```python
+def canopy_host():
+    from django.conf import settings
+    public = settings.PUBLIC_URL.rstrip("/")
+    return {"SIGNING_KEY": settings.CANOPY_SIGNING_KEY, "ISSUER": public,
+            "RESOURCE": f"{public}/mcp/", "TOKEN_ENDPOINT": f"{public}/o/token/", ...}
+
+CANOPY_HOST = canopy_host          # or the dotted path "myapp.canopy.canopy_host"
+```
+
+A plain dict still works. Prefer a callable to a custom `Mapping`: Django's
+debug page masks secrets only inside a real dict, and shows a callable by name.
+
+The panel mints at `PANEL_TOKEN_URL` (a literal), else `reverse(PANEL_TOKEN_URL_NAME)`
+(a URL name of your own, e.g. `"labs:canopy_token"`), else the SDK's
+`canopy_host:panel_token`.
+
+### Which page is the visitor on? Two modes, one API
+
+A page grants scopes only if it is in `PAGE_SCOPES`, and the registry — not the
+browser — decides which. What differs is how a mint names its page;
+`registry.scopes_for(value, user_id)` (`canopy_sdk.host.PageRegistry` /
+`PageTokens`, or `canopy_sdk.django.conf.page_scopes(value, user)`) answers
+either way.
+
+| `PAGE_MODE` | For | The mint's `?page=` is | Class |
+|---|---|---|---|
+| `"signed"` (default) | a server-rendered page | a token the server signed over the route's URL name and the user, rendered into the page by `{% canopy_panel %}` | `PageTokens` |
+| `"key"` | a single-page app | a page KEY the browser names (`"opp-workbench"`), or its path when `PAGE_PATTERNS` maps key → regex | `PageRegistry` |
+
+Why key mode is safe without a signature — the server of an SPA never renders
+a route, so a signature would only sign whatever the browser asked for:
+
+- a page key can only **select** among scopes the host registered; an unknown
+  key gets no grant, and scopes the browser sends are never read;
+- key mode is **read-only by default**: a scope not ending in `:read` is refused
+  at construction unless listed in `WRITABLE_SCOPES` on purpose;
+- the delegated token runs **as the visitor**, so every tool still applies the
+  visitor's own ACL.
+
+A browser naming the wrong page picks among read-only views of its own data.
+
+```python
+CANOPY_HOST = {..., "PAGE_MODE": "key",
+               "PAGE_SCOPES": {"opp-workbench": ["opps:read"]},
+               "PAGE_PATTERNS": {"opp-workbench": r"/w/[^/]+/opps/[^/]+/?"}}  # optional
+# the SPA: canopy.init({tokenUrl: () => `/canopy/panel-token/?page=${key}`, ...})
+```
+
+`mint_contact_token` returns canopy's whole response — `token`, `expires_at`,
+`kind` (`"user"` or `"contact"`), `host_grant`, … — so a host that routes on
+`kind` needs no client of its own.
 
 Then `migrate`, merge `canopy_sdk.host.authorization_server_metadata(config, your_doc)`
 into your RFC 8414 document (and `protected_resource_metadata` into RFC 9728), and
@@ -139,14 +203,20 @@ That is what canopy-web's **Connected sites → Test connection** runs, beside
 `check_metadata` and `check_jwks`, from canopy's own server.
 
 Network is used only inside those calls, through replaceable transports. For
-your own CI, opt in to the fixtures:
+your own CI, opt in to the fixtures with `-p` — on the command line or in
+`addopts`:
 
-```python
-# conftest.py
-pytest_plugins = ["canopy_sdk.conformance.pytest_plugin"]
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+addopts = "-p canopy_sdk.conformance.pytest_plugin"
 # fixtures: canopy_client, canopy_client_documents, canopy_redeem, canopy_mcp_headers,
 #           canopy_live (skipped unless --canopy-issuer / --canopy-resource are given)
 ```
+
+(`pytest -p canopy_sdk.conformance.pytest_plugin` does the same for one run.)
+Not `pytest_plugins = [...]` in a conftest: pytest accepts that only in the
+rootdir's top-level `conftest.py` and refuses it anywhere else.
 
 canopy-web's own CI runs this package's host half against its real arrival and
 redemption code (`tests/test_sdk_round_trip.py`), so the two sides cannot drift.
@@ -202,7 +272,7 @@ ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant):
   - `iat`, `exp` (≤ 300s after iat), `jti` (unique)
 - The page's identity reaches the host's token endpoint as a SERVER-signed page
   token embedded in the rendered HTML (host-internal; canopy never sees it —
-  `canopy_sdk.host.PageTokens`).
+  `canopy_sdk.host.PageTokens`) — or, for a single-page app, a page KEY the browser names that only selects among the host's registered read-only scopes (`canopy_sdk.host.PageRegistry`).
 
 ### 2. Canopy redeems it (RFC 7523 jwt-bearer + private_key_jwt + DPoP)
 `POST {host token_endpoint}` form-encoded:

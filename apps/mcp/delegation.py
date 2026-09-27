@@ -25,7 +25,7 @@ ACL and a read-only scope — never more than their own PAT would.
 from __future__ import annotations
 
 from asgiref.sync import sync_to_async
-from canopy_sdk.host import DPoPGate, DPoPRefused, HostNotConfigured, presented_dpop_jkt
+from canopy_sdk.host import DPoPGate, HostNotConfigured, presented_dpop_jkt
 from fastmcp.exceptions import ResourceError, ToolError
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.dependencies import get_access_token
@@ -41,14 +41,11 @@ def _run_sync(fn, *args):
 
 
 def _verifier():
+    # Raises HostNotConfigured on a canopy that is not a host; the SDK's gate
+    # (>= 0.3.0) answers that DPoP request 401 invalid_dpop_proof, never a 500.
     from apps.tokens import self_host
 
-    try:
-        return self_host.resource_verifier()
-    except HostNotConfigured:
-        # A DPoP request to a canopy that is not a host: refused as the gate
-        # refuses any proof it cannot accept (401), never a 500.
-        raise DPoPRefused("not_configured", "this server issues no DPoP-bound tokens") from None
+    return self_host.resource_verifier()
 
 
 def gate(app):

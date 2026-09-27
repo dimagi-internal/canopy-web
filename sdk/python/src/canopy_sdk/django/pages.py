@@ -15,7 +15,10 @@ MAX_VISIBLE_IDS = 400
 
 
 def page_token(request) -> str:
-    """This page's token for this user, or "" for an unregistered route."""
+    """This page's token for this user, or "" for an unregistered route — and
+    always "" in key mode, where the browser names its page instead."""
+    if conf.page_mode() != conf.SIGNED:
+        return ""
     match = getattr(request, "resolver_match", None)
     view_name = getattr(match, "view_name", "") or ""
     user = getattr(request, "user", None)
@@ -38,13 +41,27 @@ def _fit_ids(state: dict) -> list[str]:
     return kept
 
 
-def _token_url(page: str) -> str:
-    base = conf.raw().get("PANEL_TOKEN_URL") or ""
-    if not base:
+def panel_token_url() -> str:
+    """Where the panel mints: ``PANEL_TOKEN_URL`` (a literal), else the host URL
+    named by ``PANEL_TOKEN_URL_NAME``, else this app's ``canopy_host:panel_token``
+    — reversed per request, so a host's ``FORCE_SCRIPT_NAME`` / prefix applies.
+    ``""`` when none resolves."""
+    cfg = conf.raw()
+    literal = cfg.get("PANEL_TOKEN_URL") or ""
+    if literal:
+        return str(literal)
+    for name in (cfg.get("PANEL_TOKEN_URL_NAME") or "", "canopy_host:panel_token"):
+        if not name:
+            continue
         try:
-            base = reverse("canopy_host:panel_token")
+            return reverse(name)
         except NoReverseMatch:
-            base = ""
+            continue
+    return ""
+
+
+def _token_url(page: str) -> str:
+    base = panel_token_url()
     if base and page:
         from urllib.parse import quote
 
@@ -77,7 +94,7 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
     options = conf.panel_options()
     cfg = conf.raw()
     token = page_token(request) if request is not None else ""
-    return {
+    ctx = {
         "ready": True,
         "base_url": str(cfg.get("CANOPY_BASE_URL", "")).rstrip("/"),
         "app_name": cfg.get("APP_NAME", ""),
@@ -85,7 +102,27 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
         "page_state": state,
         "page_token": token,
         "token_url": _token_url(token),
+        # Key mode (an SPA shell rendering the panel): the widget names the page
+        # on screen at each mint, as its path; PAGE_PATTERNS resolves it.
+        "page_from_path": conf.page_mode() == conf.KEY,
         "mode": options.get("mode", "overlay"),
         "launcher_label": options.get("launcher_label", "Ask an agent"),
         "theme": options.get("theme") or {},
+    }
+    ctx["options"] = panel_options(ctx)
+    return ctx
+
+
+def panel_options(ctx: dict) -> dict:
+    """The widget's options as ONE JSON-serialisable dict — what the template
+    renders through ``json_script``, so every value reaches the page literally."""
+    return {
+        "baseUrl": ctx.get("base_url", ""),
+        "app": ctx.get("app_name", ""),
+        "agent": ctx.get("agent", ""),
+        "tokenUrl": ctx.get("token_url", ""),
+        "pageFromPath": bool(ctx.get("page_from_path")),
+        "mode": ctx.get("mode", "overlay"),
+        "launcherLabel": ctx.get("launcher_label", "Ask an agent"),
+        "theme": ctx.get("theme") or {},
     }

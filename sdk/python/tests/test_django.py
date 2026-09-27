@@ -9,6 +9,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command
+from django.http import Http404
 from django.test import Client, override_settings
 
 from canopy_sdk import contract
@@ -129,14 +130,48 @@ def test_the_gate_resolves_a_token_issued_through_the_view(host, user):
 # --- the panel ---------------------------------------------------------------------------------
 
 
+def _rendered_options(body: str) -> dict:
+    start = body.index('<script id="canopy-panel-options" type="application/json">')
+    start = body.index(">", start) + 1
+    return json.loads(body[start:body.index("</script>", start)])
+
+
 def _rendered_token(body: str) -> str:
     from urllib.parse import parse_qs, urlsplit
 
-    start = body.index('tokenUrl: "') + len('tokenUrl: "')
-    url = body[start:body.index('"', start)].encode().decode("unicode_escape")
-    query = parse_qs(urlsplit(url).query)
+    query = parse_qs(urlsplit(_rendered_options(body)["tokenUrl"]).query)
     assert "page" in query, "the registered page carries its token to the widget"
     return query["page"][0]
+
+
+def test_the_rendered_token_url_is_literal(host, user):
+    # `escapejs` rendered `=` as `\u003D`; json_script leaves the URL as it is.
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    url = _rendered_options(body)["tokenUrl"]
+    assert url.startswith("/canopy/panel-token/?page=") and url in body
+    assert "\\u003D" not in body and "escapejs" not in body
+
+
+def test_the_csrf_fallback_is_rendered_into_an_attribute(host, user):
+    import re
+
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    match = re.search(r'<script data-csrf="([^"]*)">', body)
+    assert match and len(match.group(1)) >= 32
+
+
+def test_a_hostile_value_cannot_end_the_script_block(host, user):
+    settings = {**conf.raw(), "PANEL": {"launcher_label": "</script><script>alert(1)</script>"}}
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST=settings):
+        body = client.get("/marketplace/network/").content.decode()
+    assert "</script><script>alert(1)" not in body
+    assert _rendered_options(body)["launcherLabel"] == "</script><script>alert(1)</script>"
 
 
 def test_a_registered_page_renders_a_token_that_yields_its_scopes(host, user):
@@ -152,7 +187,7 @@ def test_an_unregistered_page_renders_the_panel_without_a_token(host, user):
     client.force_login(user)
     body = client.get("/elsewhere/").content.decode()
     assert "/embed/widget.js" in body
-    assert "page" not in body[body.index("tokenUrl"):].split(",")[0]
+    assert "page" not in _rendered_options(body)["tokenUrl"]
 
 
 def test_nothing_renders_when_unconfigured(user):
@@ -167,7 +202,7 @@ def test_the_panel_token_endpoint_turns_the_page_token_into_scopes(host, user):
     token = _rendered_token(client.get("/marketplace/network/").content.decode())
     with mock.patch.object(views, "mint_contact_token", return_value={"token": "t", "expires_at": ""}) as mint:
         response = client.post(f"/canopy/panel-token/?page={token}")
-    assert response.json() == {"token": "t", "expires_at": ""}
+    assert response.json() == {"token": "t", "expires_at": "", "kind": "contact"}
     payload = mint.call_args.args[1]
     assert payload["agent_slug"] == "ace" and payload["id_jag"]
     import jwt
@@ -197,3 +232,204 @@ def test_a_failed_mint_is_a_502_without_canopys_words(host, user):
 
 def test_the_panel_token_endpoint_needs_a_session(host):
     assert Client().post("/canopy/panel-token/").status_code in (302, 401, 403)
+
+
+def test_the_panel_passes_kind_to_the_browser_and_nothing_else(host, user):
+    client = Client()
+    client.force_login(user)
+    vouched = {"token": "t", "expires_at": "x", "kind": "user", "host_grant": True, "contact_id": 3}
+    with mock.patch.object(views, "mint_contact_token", return_value=vouched):
+        assert client.post("/canopy/panel-token/").json() == {"token": "t", "expires_at": "x",
+                                                                "kind": "user"}
+
+
+# --- fix: the gate and siblings never 500 on configuration ------------------------------
+
+
+@pytest.mark.parametrize("canopy_host", [{}, "no-grant"])
+def test_the_gate_refuses_dpop_401_while_the_grant_is_off(world, canopy_host):
+    if canopy_host == "no-grant":  # a signing key (assertions work) but no grant
+        canopy_host = {"SIGNING_KEY": private_pem(world.host_key), "CANOPY_BASE_URL": CANOPY,
+                       "APP_NAME": "connect-labs"}
+    seen = []
+    with override_settings(CANOPY_HOST=canopy_host):
+        status, headers, body = call_asgi(dpop_gate(echo_app(seen)), "POST", "/mcp/",
+                                          headers={"Authorization": "DPoP abc", "DPoP": "x.y.z"})
+    assert status == 401 and not seen
+    assert json.loads(body)["error"] == "invalid_dpop_proof"
+
+
+def test_the_gate_passes_ordinary_traffic_through_while_the_grant_is_off(world):
+    seen = []
+    with override_settings(CANOPY_HOST={}):
+        status, _, _ = call_asgi(dpop_gate(echo_app(seen), require_principal=True), "POST", "/mcp/",
+                                 headers={"Authorization": "Bearer pat-123"})
+    assert status == 200 and seen and seen[0]["principal"] is None
+
+
+def test_an_unreadable_signing_key_is_a_401_not_a_500(world):
+    seen = []
+    bad = {"SIGNING_KEY": "not a pem", "CANOPY_BASE_URL": CANOPY, "APP_NAME": "x",
+           "CLIENT_ID": CLIENT_ID, "ISSUER": ISSUER, "RESOURCE": RESOURCE,
+           "TOKEN_ENDPOINT": "http://testserver/o/token/"}
+    with override_settings(CANOPY_HOST=bad):
+        status, _, _ = call_asgi(dpop_gate(echo_app(seen)), "POST", "/mcp/",
+                                 headers={"Authorization": "DPoP abc", "DPoP": "x.y.z"})
+    assert status == 401 and not seen
+
+
+def test_resolve_delegated_is_none_not_an_error_while_off(world):
+    from canopy_sdk.django.asgi import resolve_delegated
+
+    with override_settings(CANOPY_HOST={}):
+        assert resolve_delegated("anything", "jkt") is None
+    with override_settings(CANOPY_HOST={"SIGNING_KEY": "not a pem"}):
+        assert resolve_delegated("anything", None) is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_turning_the_grant_off_stops_tokens_issued_while_it_was_on(host, user):
+    from canopy_sdk.django.asgi import resolve_delegated
+
+    from canopy_sdk.keys import public_jwk
+
+    access = _grant(host, user).json()["access_token"]
+    jkt = public_jwk(host.client.dpop_key.public_key())["kid"]
+    assert resolve_delegated(access, jkt).subject == str(user.pk)
+    settings = {k: v for k, v in conf.raw().items() if k != "CLIENT_ID"}
+    with override_settings(CANOPY_HOST=settings):
+        assert resolve_delegated(access, jkt) is None
+
+
+def test_the_metadata_views_404_while_the_grant_is_off(rf):
+    for canopy_host in ({}, {"SIGNING_KEY": "not a pem"}):
+        with override_settings(CANOPY_HOST=canopy_host):
+            for view in (views.authorization_server_metadata_view,
+                         views.protected_resource_metadata_view):
+                with pytest.raises(Http404):
+                    view(rf.get("/.well-known/x"))
+
+
+def test_the_metadata_views_serve_while_the_grant_is_on(host, rf):
+    assert json.loads(views.authorization_server_metadata_view(rf.get("/")).content)["issuer"] == ISSUER
+
+
+# --- fix: CANOPY_HOST as a callable --------------------------------------------------------
+
+
+def canopy_host_from_settings():
+    """What a host whose values derive from later-overridden settings writes."""
+    from django.conf import settings
+
+    return {**settings.CANOPY_TEST_BASE, "AGENT_SLUG": settings.CANOPY_TEST_AGENT}
+
+
+def test_canopy_host_may_be_a_callable_resolved_on_every_read(host):
+    base = conf.raw()
+    with override_settings(CANOPY_HOST=canopy_host_from_settings, CANOPY_TEST_BASE=base,
+                           CANOPY_TEST_AGENT="ace"):
+        assert conf.agent_slug() == "ace" and conf.is_configured()
+        assert type(conf.raw()) is dict
+        with override_settings(CANOPY_TEST_AGENT="hal"):
+            assert conf.agent_slug() == "hal", "resolved per read, not frozen at import"
+
+
+def test_canopy_host_may_be_a_dotted_path(host):
+    with override_settings(CANOPY_HOST="tests.test_django.canopy_host_from_settings",
+                           CANOPY_TEST_BASE=conf.raw(), CANOPY_TEST_AGENT="eva"):
+        assert conf.agent_slug() == "eva"
+        assert conf.get_host_config().kid == host.config.kid
+
+
+def test_a_plain_dict_and_a_mapping_still_work(host):
+    from types import MappingProxyType
+
+    assert conf.agent_slug() == "ace"
+    with override_settings(CANOPY_HOST=MappingProxyType(conf.raw())):
+        assert conf.agent_slug() == "ace" and type(conf.raw()) is dict
+
+
+def test_the_debug_page_never_shows_the_signing_key(host):
+    from django.views.debug import SafeExceptionReporterFilter
+
+    pem = conf.raw()["SIGNING_KEY"]
+    safe = SafeExceptionReporterFilter().get_safe_settings()
+    assert pem not in repr(safe["CANOPY_HOST"])
+    with override_settings(CANOPY_HOST=canopy_host_from_settings, CANOPY_TEST_BASE={},
+                           CANOPY_TEST_AGENT="x"):
+        safe = SafeExceptionReporterFilter().get_safe_settings()
+        assert pem not in repr(safe["CANOPY_HOST"])
+
+
+# --- fix: the panel's token URL may name a host URL -----------------------------------------
+
+
+def test_panel_token_url_name_names_a_host_url(host):
+    from canopy_sdk.django.pages import panel_token_url
+
+    assert panel_token_url() == "/canopy/panel-token/"
+    with override_settings(CANOPY_HOST={**conf.raw(), "PANEL_TOKEN_URL_NAME": "elsewhere"}):
+        assert panel_token_url() == "/elsewhere/"
+    with override_settings(CANOPY_HOST={**conf.raw(), "PANEL_TOKEN_URL_NAME": "no-such-url"}):
+        assert panel_token_url() == "/canopy/panel-token/", "an unknown name falls back"
+    with override_settings(CANOPY_HOST={**conf.raw(), "PANEL_TOKEN_URL": "/literal/",
+                                        "PANEL_TOKEN_URL_NAME": "elsewhere"}):
+        assert panel_token_url() == "/literal/", "a literal wins"
+
+
+# --- SPA mode: the browser names a page key ---------------------------------------------------
+
+
+@pytest.fixture
+def spa(host):
+    settings = {**conf.raw(), "PAGE_MODE": "key", "PAGE_SCOPES": {"network": ["marketplace:read"]},
+                "PAGE_PATTERNS": {"network": r"/marketplace/network/?"}}
+    with override_settings(CANOPY_HOST=settings):
+        yield host
+
+
+def test_key_mode_mints_with_the_scopes_the_key_selects(spa, user):
+    client = Client()
+    client.force_login(user)
+    for page in ("network", "/marketplace/network/"):
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post(f"/canopy/panel-token/?page={page}")
+        payload = mint.call_args.args[1]
+        import jwt
+
+        claims = jwt.decode(payload["id_jag"], options={"verify_signature": False})
+        assert claims["scope"] == "marketplace:read" and claims["sub"] == str(user.pk)
+
+
+def test_key_mode_ignores_an_unknown_key_and_any_scope_sent(spa, user):
+    client = Client()
+    client.force_login(user)
+    with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+        client.post("/canopy/panel-token/?page=admin&scope=marketplace:read")
+    assert "id_jag" not in mint.call_args.args[1]
+
+
+def test_key_mode_renders_no_page_token_and_names_the_path_at_mint(spa, user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    options = _rendered_options(body)
+    assert options["tokenUrl"] == "/canopy/panel-token/" and options["pageFromPath"] is True
+
+
+def test_key_mode_refuses_a_write_scope_unless_listed(spa):
+    tools = {"marketplace:read": ["a"], "orgs:write": ["b"]}
+    with override_settings(CANOPY_HOST={**conf.raw(), "SCOPE_TOOLS": tools,
+                                        "PAGE_SCOPES": {"network": ["orgs:write"]}}):
+        with pytest.raises(ValueError):
+            conf.page_registry()
+    with override_settings(CANOPY_HOST={**conf.raw(), "SCOPE_TOOLS": tools,
+                                        "PAGE_SCOPES": {"network": ["orgs:write"]},
+                                        "WRITABLE_SCOPES": ["orgs:write"]}):
+        assert conf.page_scopes("network", None) == ("orgs:write",)
+
+
+def test_an_unknown_page_mode_is_a_configuration_error(host):
+    with override_settings(CANOPY_HOST={**conf.raw(), "PAGE_MODE": "trust-me"}):
+        with pytest.raises(ValueError):
+            conf.page_registry()
