@@ -758,3 +758,27 @@ async def test_everyone_sees_a_teammates_queued_send():
                           and any(e["text"] == "from jj" for e in f["data"]["queued"]), tries=20)
     assert q["data"]["queued"][-1]["author"]["user_id"] == owner.id
     await a.disconnect(); await b.disconnect()
+
+
+async def test_a_ledger_sourced_send_reaches_the_peer_as_chat_user_message():
+    """The gap the two-browser check (spec 2026-09-26) found: a ledger-sourced
+    session (the dev-stub default `_seed()` uses — no runner is ever bound)
+    persists the sender's Message directly and, before this fix, published
+    nothing beyond `draft.committed` to the SENDER'S OWN tabs. B never saw A's
+    line without a reload. A transcript-sourced session gets this for free
+    (`apps.harness.api.post_session_stream` fans out every "user" ledger row
+    live); `services._publish_user_message` + `consumers.chat_user_message` is
+    the ledger-path equivalent."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    assert (await a.connect())[0]
+    assert (await b.connect())[0]
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+
+    await a.send_json_to({"action": "chat.send", "data": {"text": "hi from jj", "client_id": "um-1"}})
+
+    seen = await _recv_match(b, lambda f: f.get("event") == "chat.user_message")
+    assert seen["data"]["plaintext"] == "hi from jj"
+    assert seen["data"]["author"]["user_id"] == owner.id
+    await a.disconnect(); await b.disconnect()

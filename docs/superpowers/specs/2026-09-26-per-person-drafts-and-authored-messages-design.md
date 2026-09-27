@@ -215,3 +215,22 @@ turn with a known initiator — the same point that already attaches the claim-o
 - **REST and contact sends carry a `client_id`** so the sender's own optimistic
   queued row dedupes against the `queued_messages` entry the socket delivers for
   the same send, instead of showing the same message twice.
+- **A ledger-sourced send now fans `chat.user_message` out on commit, to
+  everyone.** Not in the original design, and found only by actually running
+  the two-browser Playwright check (Task 9): §3's `queued_messages` mechanism
+  and the marker parsing in §4 both assume a transcript-sourced session.
+  Ledger-sourced sessions (the dev stub `CHAT_STUB_EXECUTOR` uses, and any
+  pre-unification session not yet reset via `manage.py reset_chat_state`)
+  write their `Message` row directly in `send_message` and, before this fix,
+  published nothing beyond `draft.committed` to the sender's own tabs — a peer
+  never saw the line without a reload. A transcript-sourced session gets this
+  for free (`apps.harness.api.post_session_stream` fans out every "user"
+  ledger row live, sender included). `services._publish_user_message` +
+  `consumers.chat_user_message` is the ledger-path equivalent, built directly
+  from the already-saved `Message` (no ledger round trip, so no risk of a
+  second `project_events` write) and reusing the exact `chat.user_message`
+  frame shape `stream_map.turn_event_to_frames` already produces for the
+  transcript path — the reducer and the AG-UI projection needed no changes.
+  Deliberately scoped to the ledger branch only: publishing it from the
+  transcript-sourced branch too would double the row once the runner's own
+  `post_session_stream` ships the same text.

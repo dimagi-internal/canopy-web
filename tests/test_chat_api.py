@@ -444,3 +444,71 @@ def test_send_client_id_over_100_chars_is_truncated(client):
     turn = Turn.objects.get(pk=r.json()["turn_id"])
     assert turn.idempotency_key.endswith(f":{long_id[:100]}")
     assert not turn.idempotency_key.endswith(f":{long_id}")
+
+
+# ---- ledger-path peer visibility (spec 2026-09-26 Deviations) ----
+#
+# A transcript-sourced session gets peer visibility of a user's own send for
+# free: `apps.harness.api.post_session_stream` fans out every "user" ledger row
+# live, sender included. A ledger-sourced session (the dev stub used by every
+# test in this file, and any pre-unification session not yet reset) writes its
+# Message directly and used to publish nothing beyond `draft.committed` to the
+# sender's own tabs — a peer never saw the line without a reload. Fixed by
+# `services._publish_user_message`, called once from the ledger branch of
+# `send_message` only: the transcript-sourced branch (`_send_transcript_sourced_
+# message`) must NOT also publish it, or the row doubles with the runner's own
+# `post_session_stream` fan-out.
+
+
+def _publish_calls(monkeypatch):
+    from apps.realtime import groups
+
+    calls = []
+    original = groups.publish
+
+    def spy(group, message):
+        calls.append((group, message))
+        return original(group, message)
+
+    monkeypatch.setattr(groups, "publish", spy)
+    return calls
+
+
+def test_send_message_publishes_chat_user_message_on_a_ledger_sourced_session(
+        monkeypatch, ctx, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as chat_services
+
+    user, ws, agent = ctx
+    session = chat_services.create_session(workspace=ws, created_by=user, agent=agent)
+    assert not chat_services.transcript_sourced(session)  # the dev-stub default
+
+    calls = _publish_calls(monkeypatch)
+    with django_capture_on_commit_callbacks(execute=True):
+        message, _turn = chat_services.send_message(session=session, text="hi there", user=user)
+
+    user_message_calls = [m for _g, m in calls if m.get("type") == "chat.user_message"]
+    assert len(user_message_calls) == 1
+    data = user_message_calls[0]["data"]
+    assert data["plaintext"] == "hi there"
+    assert data["message_id"] == str(message.pk)
+    assert data["author"]["user_id"] == user.id
+
+
+def test_send_message_does_not_publish_chat_user_message_on_a_transcript_sourced_session(
+        monkeypatch, ctx, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as chat_services
+
+    user, ws, agent = ctx
+    session = chat_services.create_session(workspace=ws, created_by=user, agent=agent)
+    session.metadata = {**(session.metadata or {}), chat_services.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    assert chat_services.transcript_sourced(session)
+
+    calls = _publish_calls(monkeypatch)
+    with django_capture_on_commit_callbacks(execute=True):
+        chat_services.send_message(session=session, text="hi there", user=user)
+
+    # Not merely fewer calls: NONE of them may be a chat.user_message, or the
+    # line would render twice once a runner ships the same text through
+    # `post_session_stream`.
+    assert not [m for _g, m in calls if m.get("type") == "chat.user_message"]

@@ -146,6 +146,9 @@ ada_agent, _ = Agent.objects.update_or_create(slug="ada", defaults=dict(
 Agent.objects.update_or_create(slug="hal", defaults=dict(
     name="Hal", email="hal@dimagi-ai.com", description="Inbox agent.",
     persona="Triages email.", workspace=ws))
+# Narrowed to this batch's own rows, not `ada_agent.tasks.all().delete()`: unlike
+# the old dedicated Item model, AgentTask is the SAME table ordinary board tasks
+# live in, so an unscoped delete here would also wipe any of Ada's non-ask tasks.
 ada_agent.tasks.filter(origin="api", batch_key__startswith="fleet-audit").delete()
 AgentTask.objects.create(
     agent=ada_agent, ext_id="fa-hal-inbox", ask_kind=AgentTask.ASK_REVIEW,
