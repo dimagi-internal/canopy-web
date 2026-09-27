@@ -33,9 +33,9 @@ def supervisor_user_group(user_id: int) -> str:
 
 
 def runner_group(runner_id) -> str:
-    """Per-runner control-channel group — targeted server→runner frames (a specific
-    interject, a cancel). The runner's WS consumer joins this plus its workspaces'
-    runnable groups."""
+    """Per-runner control-channel group — targeted server→runner frames (a
+    cancel, a session interrupt). The runner's WS consumer joins this plus its
+    workspaces' runnable groups."""
     hexid = runner_id.hex if hasattr(runner_id, "hex") else str(runner_id).replace("-", "")
     return f"runner.{hexid}"
 

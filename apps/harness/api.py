@@ -1169,10 +1169,17 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
             for e in payload.events if e.index >= 0
         ])
-        streamed = [(e.index, e.kind, str((e.payload or {}).get("text") or ""))
+        from apps.canopy_sessions.authorship import parse as parse_marker
+
+        # A user row's text is the prompt AS DELIVERED — marker line included —
+        # and the receivers compare it with the bare Turn.prompt (Slack's
+        # "carrying on elsewhere" check), so they get the words without it.
+        streamed = [(e.index, e.kind,
+                     parse_marker(text)[1] if e.kind == "user" else text)
                     for e in payload.events
                     if e.index >= 0 and e.kind in ("user", "assistant")
-                    and (e.payload or {}).get("text")]
+                    for text in [str((e.payload or {}).get("text") or "")]
+                    if text]
         if created and streamed:
             from apps.harness.signals import transcript_rows_streamed
 

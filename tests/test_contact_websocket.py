@@ -123,6 +123,25 @@ async def test_a_contact_can_listen_to_their_own_session():
     await comm.disconnect()
 
 
+async def test_a_contacts_snapshot_names_the_contact():
+    """The widget needs to know which messages are the contact's own. A contact
+    has no user id (`current_user_id` is null), so without this every line they
+    wrote rendered as someone else's, labelled with their own name."""
+    from asgiref.sync import sync_to_async
+
+    _owner, _ws, _app, priv = await sync_to_async(_world)()
+    token = await sync_to_async(_contact_token)(priv)
+    sid = await sync_to_async(_start_session)(token)
+    contact = await sync_to_async(Contact.objects.get)()
+
+    comm, connected = await _connect(sid, contact)
+    assert connected
+    snapshot = await comm.receive_json_from()
+    assert snapshot["data"]["current_user_id"] is None
+    assert snapshot["data"]["current_contact_id"] == contact.pk
+    await comm.disconnect()
+
+
 async def test_a_contact_cannot_listen_to_someone_elses_session():
     from asgiref.sync import sync_to_async
 

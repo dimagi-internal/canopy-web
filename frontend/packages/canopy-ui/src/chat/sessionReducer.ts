@@ -1,4 +1,5 @@
-import type { Draft, Message, SessionState, WsEvent } from "./protocol";
+import type { Draft, Message, MessageAuthor, SessionState, WsEvent } from "./protocol";
+import { isUnconfirmed, sameAuthor } from "./identity";
 
 // Pure reducer for SessionState — extracted from useSessionSocket so it
 // can be unit-tested without WebSocket plumbing. Side-effect events
@@ -39,10 +40,10 @@ const UNBLOCKING_FRAMES = new Set([
  */
 export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
   "session.state", "session.activity", "session.stop", "session.menu",
-  "session.turn_status", "session.error", "session.title_updated",
+  "session.turn_status", "session.error", "session.title_updated", "session.queued",
   "chat.stream_start", "chat.user_message", "chat.delta", "chat.stream_complete",
   "chat.stream_error", "chat.stream_cancelled", "chat.tool_use", "chat.tool_result",
-  "draft.updated", "draft.lock_changed", "draft.committed", "draft.discarded",
+  "draft.updated", "draft.typing", "draft.committed", "draft.discarded",
   "presence.joined", "presence.left",
 ]);
 
@@ -151,11 +152,31 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // Deliberately narrow: same role, same text, and only against the tail, so
       // a genuine repeat of a short message ("yes") sent much later still lands
       // as its own row.
+      //
+      // And only against a row that can still be THIS line (final review I5):
+      // two people answering "yes" are two lines, so the fallback never lets a
+      // different author's frame adopt a row. A row is a candidate while it is
+      // unconfirmed (an optimistic or receipted send still waiting for the line
+      // the agent read) or when it already names the same person — the ledger
+      // path's authored row meeting its transcript echo. An unauthored optimistic
+      // row is the viewer's own, so it is compared as the viewer.
       const RECENT_USER_ROWS = 6;
-      const sameText = (m: Message) =>
-        m.role === "user" &&
-        m.plaintext.trim() !== "" &&
-        m.plaintext.trim() === frame.data.plaintext.trim();
+      const incomingAuthor = frame.data.author ?? null;
+      const me: MessageAuthor | null =
+        prev.current_user_id != null
+          ? { name: "", user_id: prev.current_user_id }
+          : prev.current_contact_id != null
+            ? { name: "", contact_id: prev.current_contact_id }
+            : null;
+      const sameText = (m: Message) => {
+        if (
+          m.role !== "user" ||
+          m.plaintext.trim() === "" ||
+          m.plaintext.trim() !== frame.data.plaintext.trim()
+        ) return false;
+        if (isUnconfirmed(m)) return sameAuthor(m.author ?? me, incomingAuthor);
+        return m.author != null && incomingAuthor != null && sameAuthor(m.author, incomingAuthor);
+      };
       const recentUsers = prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS);
       const existing =
         prev.messages.find(
@@ -174,6 +195,12 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                   // is the durable one, so the row sorts where a reload puts it.
                   turn_index: frame.data.turn_index,
                   plaintext: frame.data.plaintext,
+                  // A transcript-sourced session's durable row carries no user
+                  // beyond the runner's own login, so this frame is the only
+                  // chance to say who actually typed it — keep it if we already
+                  // had it (an optimistic send knows its own author) and the
+                  // frame is silent, but let the frame win otherwise.
+                  author: frame.data.author ?? m.author ?? null,
                   // The agent read it, so a pending or unconfirmed row is sent.
                   ...(m.role === "user" ? { status: "complete" as const, error_detail: null } : {}),
                 }
@@ -186,13 +213,19 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         id: frame.data.message_id,
         turn_index: frame.data.turn_index,
         role: "user",
-        content: { text: frame.data.plaintext },
+        // `client_id` (when the caller has one — an HTTP send) lets
+        // `QueuedRows.hideClientIds` recognise the server's queued-turn
+        // projection as THIS row rather than a duplicate.
+        content: frame.data.client_id
+          ? { text: frame.data.plaintext, client_id: frame.data.client_id }
+          : { text: frame.data.plaintext },
         plaintext: frame.data.plaintext,
         status: "complete",
         error_detail: null,
         started_at: null,
         completed_at: null,
         created_at: nowIso,
+        author: frame.data.author ?? null,
       };
       return { ...prev, messages: [...prev.messages, user] };
     }
@@ -326,9 +359,13 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // If we're the current editor, keep our local body — the server
       // echo is stale relative to keystrokes that happened since the
       // debounced send. Only accept metadata (version, last_editor, etc).
+      // This frame now only ever carries MY OWN draft (everyone else's live
+      // typing arrives as `draft.typing` instead), so `author_id` — the
+      // draft's actual owner — is the reliable field to compare; fall back to
+      // `last_editor` for a server that doesn't send it yet.
       if (
         prev.active_draft &&
-        incoming.last_editor === prev.current_user_id
+        (incoming.author_id ?? incoming.last_editor) === prev.current_user_id
       ) {
         return {
           ...prev,
@@ -343,17 +380,17 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return { ...prev, active_draft: incoming };
     }
 
-    case "draft.lock_changed":
-      if (prev.active_draft && prev.active_draft.id === frame.data.draft_id) {
-        return {
-          ...prev,
-          active_draft: {
-            ...prev.active_draft,
-            last_editor: frame.data.holder_user_id ?? prev.active_draft.last_editor,
-          },
-        };
-      }
-      return prev;
+    case "draft.typing": {
+      // Someone else's box, live. Keyed by author; an empty body means they
+      // sent, discarded or cleared it.
+      const rest = (prev.peer_drafts ?? []).filter((d) => d.author.id !== frame.data.author.id);
+      return { ...prev, peer_drafts: frame.data.body ? [...rest, frame.data] : rest };
+    }
+
+    case "session.queued":
+      // Wholesale, like session.turn_status: a client that just connected has
+      // no correct prior to merge a delta into.
+      return { ...prev, queued: frame.data.queued };
 
     case "draft.committed": {
       // The sender already shows its line (a pending row stamped with this
@@ -439,6 +476,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         presence_user_ids: prev.presence_user_ids.filter(
           (id) => id !== frame.data.user_id,
         ),
+        // A closed tab is the retirement path for its typing row too — without
+        // this a peer who left mid-keystroke leaves a stale "is typing" behind
+        // with nothing left to clear it.
+        peer_drafts: (prev.peer_drafts ?? []).filter((d) => d.author.id !== frame.data.user_id),
       };
 
     case "session.error": {

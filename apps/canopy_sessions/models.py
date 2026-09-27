@@ -179,6 +179,14 @@ class Message(models.Model):
     role = models.CharField(max_length=12, choices=ROLE_CHOICES)
     content = models.JSONField(default=dict, blank=True)
     plaintext = models.TextField(blank=True, default="")
+    # WHO wrote a user line: {"name", "user_id"} or {"name", "contact_id"}, parsed
+    # from the marker canopy puts at the top of the delivered prompt
+    # (`authorship.py`). Null for a line typed straight into emdash — attributing
+    # that to the session owner would be a guess.
+    author = models.JSONField(null=True, blank=True)
+    # The Turn a user line was delivered by, from the same marker. What lets the
+    # queued list (`services.queued_messages`) know a send has landed.
+    source_turn_id = models.UUIDField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -283,26 +291,26 @@ class PageAction(models.Model):
 
 
 class Draft(models.Model):
-    """The shared, co-edited outgoing message (SP3 multiplayer). One OPEN draft
-    (slot='next') per session; an optimistic `version` guards concurrent edits, and
-    the soft-lock holder is derived (last_editor + updated_at + presence), not stored."""
+    """One person's outgoing message in a session. One OPEN draft (slot='next')
+    per (session, author) — everyone types in their own box, and the others see
+    it live as a `draft.typing` row (spec 2026-09-26). It replaced a single shared
+    draft with a 2s soft lock, which made two people who wanted to speak at once
+    queue for the keyboard. `version` still guards one person's own tabs."""
 
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="drafts")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     slot = models.CharField(max_length=16, default="next")
     body = models.TextField(blank=True, default="")
     version = models.PositiveIntegerField(default=0)
-    last_editor = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["session"],
+                fields=["session", "author"],
                 condition=models.Q(slot="next"),
-                name="one_open_draft_per_session",
+                name="one_open_draft_per_session_author",
             )
         ]
 

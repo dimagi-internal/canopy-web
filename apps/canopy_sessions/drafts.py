@@ -1,6 +1,8 @@
-"""The co-edited outgoing draft. Optimistic `version` guard + a DERIVED soft-lock
-(holder = last_editor, while edited within the idle window AND still present). No
-CRDT — coarse single-draft locking, right for a few teammates per session."""
+"""Each person's outgoing draft in a session (spec 2026-09-26).
+
+One open draft per (session, author). There is no lock: nobody waits for
+anybody. The optimistic `version` survives only to reconcile one person's own
+tabs (desktop + phone on the same account)."""
 from __future__ import annotations
 
 import datetime as dt
@@ -11,7 +13,9 @@ from django.utils import timezone
 from . import presence
 from .models import Draft, Session
 
-IDLE_WINDOW = dt.timedelta(seconds=2)
+# How long an untouched draft still reads as someone typing. A body outlives
+# the tab that typed it; past this it is a leftover, not a person mid-thought.
+PEER_DRAFT_FRESH = dt.timedelta(minutes=10)
 
 
 class DraftVersionMismatch(Exception):
@@ -21,63 +25,86 @@ class DraftVersionMismatch(Exception):
         super().__init__("draft version mismatch")
 
 
-class DraftLockHeld(Exception):
-    def __init__(self, holder_id: int):
-        self.holder_id = holder_id
-        super().__init__("draft lock held by another editor")
-
-
-def active_draft(session: Session) -> Draft:
-    draft, _ = Draft.objects.get_or_create(session=session, slot="next")
+def draft_for(session: Session, user) -> Draft:
+    draft, _ = Draft.objects.get_or_create(session=session, author=user, slot="next")
     return draft
 
 
-def lock_holder(draft: Draft) -> int | None:
-    """The soft-lock holder id, or None when the draft is free (idle past the window,
-    or the last editor is no longer present)."""
-    if draft.last_editor_id is None:
-        return None
-    if timezone.now() - draft.updated_at > IDLE_WINDOW:
-        return None
-    if not presence.is_present(draft.session_id, draft.last_editor_id):
-        return None
-    return draft.last_editor_id
-
-
-def update_draft(session: Session, *, expected_version: int, body: str, editor) -> Draft:
+def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
     with transaction.atomic():
-        draft = Draft.objects.select_for_update().get(pk=active_draft(session).pk)
-        holder = lock_holder(draft)
-        if holder is not None and holder != editor.id:
-            raise DraftLockHeld(holder)
+        draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
             raise DraftVersionMismatch(draft.version, draft.body)
         draft.body = body
         draft.version += 1
-        draft.last_editor = editor
-        draft.save(update_fields=["body", "version", "last_editor", "updated_at"])
+        draft.save(update_fields=["body", "version", "updated_at"])
     return draft
 
 
-def take_over(session: Session, *, editor) -> Draft:
+def commit_draft(session: Session, user) -> str:
+    """Take MY draft's text and reset it. Returns the committed text."""
     with transaction.atomic():
-        draft = Draft.objects.select_for_update().get(pk=active_draft(session).pk)
-        holder = lock_holder(draft)
-        if holder is not None and holder != editor.id:
-            raise DraftLockHeld(holder)
-        draft.last_editor = editor
-        draft.save(update_fields=["last_editor", "updated_at"])
-    return draft
-
-
-def commit_active_draft(session: Session) -> str:
-    """Take the active draft's text and reset it (bump version, clear body) so the
-    next message starts fresh. Returns the committed text."""
-    with transaction.atomic():
-        draft = Draft.objects.select_for_update().get(pk=active_draft(session).pk)
+        draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         text = draft.body
         draft.body = ""
         draft.version += 1
-        draft.last_editor = None
-        draft.save(update_fields=["body", "version", "last_editor", "updated_at"])
+        draft.save(update_fields=["body", "version", "updated_at"])
     return text
+
+
+def discard_draft(session: Session, user) -> Draft:
+    return _clear(session, user)
+
+
+def _clear(session, user) -> Draft:
+    with transaction.atomic():
+        draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
+        if draft.body:
+            draft.body = ""
+            draft.version += 1
+            draft.save(update_fields=["body", "version", "updated_at"])
+    return draft
+
+
+def peer_drafts(session: Session, user=None) -> list[Draft]:
+    """Other authors' drafts that are LIVE: non-empty, written by someone
+    present in the session right now, and touched within `PEER_DRAFT_FRESH`.
+    Oldest edit first. `user` None (a contact) excludes nobody.
+
+    Both filters are needed. Presence alone keeps a box someone opened an hour
+    ago and walked away from while the tab stayed open; freshness alone brings
+    back a line sent over HTTP (which never cleared the server copy) the moment
+    its author reconnects anywhere. Without either, `presence.left` cleared the
+    row live and the next connect snapshot put it straight back."""
+    present = presence.present_ids(session.id)
+    if user is not None:
+        present.discard(user.id)
+    if not present:
+        return []
+    return list(
+        Draft.objects.select_related("author")
+        .filter(session=session, slot="next", author_id__in=present,
+                updated_at__gte=timezone.now() - PEER_DRAFT_FRESH)
+        .exclude(body="")
+        .order_by("updated_at")
+    )
+
+
+def clear_after_http_send(session: Session, user, text: str) -> Draft | None:
+    """An HTTP send (the socket's fallback) commits text the server draft may
+    still hold. Clear it when it is what was sent — or the start of it, since the
+    last keystroke frames are exactly what a dead socket loses — and return the
+    cleared draft so the caller can tell the room. A draft holding something
+    ELSE is the next line, typed in another tab while this send was in flight,
+    and is left alone. None when there was nothing to clear."""
+    sent = (text or "").strip()
+    with transaction.atomic():
+        draft = Draft.objects.select_for_update().filter(
+            session=session, author=user, slot="next").first()
+        if draft is None or not draft.body.strip() or not sent.startswith(draft.body.strip()):
+            return None
+        draft.body = ""
+        draft.version += 1
+        draft.save(update_fields=["body", "version", "updated_at"])
+    draft.author = user
+    return draft

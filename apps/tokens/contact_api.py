@@ -488,7 +488,11 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
             raise HttpError(422, f"origin {payload.origin!r} is not one a caller may name")
         message, turn = session_services.send_message(
             session=session, text=payload.text, user=request.user,
-            client_id=payload.client_id, origin=payload.origin or None,
+            # Capped the same way the WS path caps it (canopy_sessions'
+            # consumers.py `chat.send` handler) — `ContactSendIn.client_id`
+            # stays an unbounded `str` so `generated.ts` needs no regen; the
+            # length limit is enforced where the id is actually used.
+            client_id=payload.client_id[:100], origin=payload.origin or None,
             initiator=who.for_request(request, via=who.channel(request, "contact")),
         )
     except ValueError as exc:

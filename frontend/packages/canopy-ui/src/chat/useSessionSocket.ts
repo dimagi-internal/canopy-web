@@ -23,17 +23,37 @@ const SEND_RECEIPT_TIMEOUT_MS = 4_000;
 const NOT_SENT =
   "Not sent: the connection dropped before canopy got it. Your words are kept here, so copy them and send again.";
 
-function newClientId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  return c?.randomUUID ? c.randomUUID() : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+/**
+ * A client-generated nonce for a send's `client_id` — exported so a host
+ * driving its own HTTP send (the widget's opening message, before a socket
+ * exists to send over; `ChatPage`'s `/share` command) can mint the SAME id
+ * for both the REST body and the matching `noteLocalSend` call, which is what
+ * lets `QueuedRows.hideClientIds` recognise the two as one send rather than
+ * rendering it twice.
+ */
+export function newClientId(): string {
+  // An idempotency nonce, not a secret — but it rides a request, so it comes
+  // from the platform CSPRNG, never Math.random (CodeQL js/insecure-randomness).
+  // randomUUID needs a secure context; getRandomValues does not.
+  const c = (globalThis as {
+    crypto?: { randomUUID?: () => string; getRandomValues?: (a: Uint8Array) => Uint8Array };
+  }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  if (c?.getRandomValues) {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return `c${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return `c${Date.now().toString(36)}${(clientIdCounter++).toString(36)}`;
 }
+
+let clientIdCounter = 0;
 
 const INITIAL_STATE: SessionState = {
   messages: [],
   active_draft: null,
   participants: [],
   presence_user_ids: [],
-  current_user_id: 0,
+  current_user_id: null,
 };
 
 export interface UseSessionSocketOptions {
@@ -84,8 +104,15 @@ export interface UseSessionSocketOptions {
    * Everything else is unchanged — the same `state`, the same pending row, the
    * same "waiting for a reply" — so one chat UI serves a user and a contact
    * without a second send path in every host. Omit for a user (the default).
+   *
+   * Must pass `clientId` through as the send's `client_id` (both `/api/canopy-
+   * sessions/{id}/send` and `/api/contact/sessions/{id}/send` accept it) — it
+   * is the SAME id `sendChatOverHttp` stamps on the optimistic row, and without
+   * it the server's queued-turn projection has no way to recognise that row as
+   * the one it already showed, so the sender's own send rendered a second time
+   * as an unowned "queued" placeholder.
    */
-  sendOverHttp?: (text: string) => Promise<unknown>;
+  sendOverHttp?: (text: string, clientId: string) => Promise<unknown>;
   /**
    * The HTTP route for a USER's send, used only when a socket send gets no
    * receipt (see `SEND_RECEIPT_TIMEOUT_MS`). Must pass `clientId` through as the
@@ -128,6 +155,10 @@ export interface UseSessionSocketResult {
   sendChat: () => void;
   stopChat: (messageId: string | null) => void;
   updateDraft: (body: string) => void;
+  /** @deprecated ignored since 0.13 — everyone has their own draft now, so
+   *  there is no lock left to take over. Kept as a no-op so a host still
+   *  passing it through (e.g. ace-web's `onTakeOver={socket.takeOverDraft}`)
+   *  keeps compiling across the upgrade. */
   takeOverDraft: () => void;
   discardDraft: () => void;
   prependMessages: (older: Message[]) => void;
@@ -144,8 +175,15 @@ export interface UseSessionSocketResult {
    *  by `sendChat` alone, and the user's own line is not a server row until
    *  the agent's transcript ships it back. So you typed, pressed send, and got
    *  an empty panel — for as long as the reply took, and forever if its runner
-   *  was offline. */
-  noteLocalSend: (text: string) => void;
+   *  was offline.
+   *
+   *  Pass the SAME `clientId` the matching REST body sent (`sendChatOverHttp`
+   *  does this internally; a host driving its own HTTP send — the widget's
+   *  first message, `ChatPage`'s `/share` command — must generate one and pass
+   *  it to both), so the optimistic row's `content.client_id` matches the
+   *  server's queued-turn projection and `QueuedRows.hideClientIds` can tell
+   *  they're the same send rather than rendering it twice. */
+  noteLocalSend: (text: string, clientId?: string) => void;
   lastError: string | null;
 }
 
@@ -477,9 +515,10 @@ export function useSessionSocket({
     [send],
   );
 
-  const takeOverDraft = useCallback(() => {
-    send({ action: "draft.take_over", data: {} });
-  }, [send]);
+  // @deprecated no-op since 0.13 — the server accepts and ignores
+  // `draft.take_over` too (see WsAction), so this is kept only so a host
+  // wired to the old prop doesn't need an upgrade-day edit.
+  const takeOverDraft = useCallback(() => undefined, []);
 
   const discardDraft = useCallback(() => {
     send({ action: "draft.discard", data: {} });
@@ -521,7 +560,29 @@ export function useSessionSocket({
     });
   }, []);
 
-  const noteLocalSend = useCallback((text: string) => {
+  // A failed send's restore, NOT the same as `updateLocalDraft`: this is a
+  // stale write racing whatever the person typed while the request was in
+  // flight, so it must never overwrite it. A functional update reads the
+  // CURRENT draft rather than one closed over at send time — sendChatOverHttp
+  // cleared the draft to null before the request even went out, so "the local
+  // draft is still null or empty" means nothing newer has been typed since,
+  // and only then is it safe to put the failed body back. If the person has
+  // already started something else, that stays exactly as they left it; the
+  // failed send is simply lost rather than clobbering live typing (2026-09-26
+  // review: "contact sends hello, starts typing world, hello's failure
+  // overwrote world").
+  const restoreFailedLocalDraft = useCallback((body: string) => {
+    setLocalDraft((prev) =>
+      prev == null || prev.body === ""
+        ? {
+            id: "local", slot: "next", status: "open", body, version: 0,
+            last_editor: 0, last_edit_at: new Date().toISOString(),
+          }
+        : prev,
+    );
+  }, []);
+
+  const noteLocalSend = useCallback((text: string, clientId?: string) => {
     setAwaitingReply(true);
     const body = text.trim();
     if (!body) return;
@@ -539,6 +600,7 @@ export function useSessionSocket({
           message_id: `local:${Date.now()}`,
           turn_index: prev.messages.reduce((acc, m) => Math.max(acc, m.turn_index), 0) + 1,
           plaintext: body,
+          client_id: clientId,
         },
       }),
     );
@@ -547,15 +609,24 @@ export function useSessionSocket({
   const sendChatOverHttp = useCallback(() => {
     const body = (localDraft?.body ?? "").trim();
     if (!body || !sendOverHttp) return;
-    noteLocalSend(body);
+    // ONE id for both halves of this send — the optimistic row and the REST
+    // body — so the server's queued-turn projection and this row compare
+    // equal (`QueuedRows.hideClientIds`) instead of rendering the same send
+    // twice, once as the sender's own bubble and once as an unowned "queued"
+    // placeholder (a contact's `author.user_id` is never set, so without a
+    // shared id that placeholder didn't even read as "mine").
+    const clientId = newClientId();
+    noteLocalSend(body, clientId);
     setLocalDraft(null);
-    sendOverHttp(body).catch((err: unknown) => {
+    sendOverHttp(body, clientId).catch((err: unknown) => {
       setAwaitingReply(false);
       setLastError(err instanceof Error ? err.message : "the message could not be sent");
-      // Put the words back, so a failed send never costs what was typed.
-      updateLocalDraft(body);
+      // Put the words back, so a failed send never costs what was typed —
+      // but only if nothing NEWER has been typed since (see
+      // `restoreFailedLocalDraft`).
+      restoreFailedLocalDraft(body);
     });
-  }, [localDraft, sendOverHttp, noteLocalSend, updateLocalDraft]);
+  }, [localDraft, sendOverHttp, noteLocalSend, restoreFailedLocalDraft]);
 
   const exposedState = useMemo(
     () => (sendOverHttp ? { ...state, active_draft: localDraft } : state),

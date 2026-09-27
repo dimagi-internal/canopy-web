@@ -62,7 +62,11 @@
       "data": {
         "message_id": "u1",
         "turn_index": 3,
-        "plaintext": "hi there"
+        "plaintext": "hi there",
+        "author": {
+          "name": "Jon",
+          "user_id": 7
+        }
       }
     },
     "agui": [
@@ -70,7 +74,11 @@
         "type": "TEXT_MESSAGE_CHUNK",
         "metadata": {
           "canopy": {
-            "turn_index": 3
+            "turn_index": 3,
+            "author": {
+              "name": "Jon",
+              "user_id": 7
+            }
           }
         },
         "messageId": "u1",
@@ -194,6 +202,33 @@
           "id": "d1",
           "body": "x",
           "version": 2
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
+      "event": "draft.typing",
+      "data": {
+        "author": {
+          "id": 7,
+          "name": "Beth"
+        },
+        "body": "wip",
+        "at": "2026-09-26T12:00:00+00:00"
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.draft.typing",
+        "value": {
+          "author": {
+            "id": 7,
+            "name": "Beth"
+          },
+          "body": "wip",
+          "at": "2026-09-26T12:00:00+00:00"
         }
       }
     ]
@@ -443,6 +478,47 @@
   },
   {
     "canopy": {
+      "event": "session.queued",
+      "data": {
+        "queued": [
+          {
+            "turn_id": "8f2e",
+            "client_id": "c9",
+            "author": {
+              "name": "Jon",
+              "user_id": 7
+            },
+            "text": "from jj",
+            "sent_at": "2026-09-26T12:00:00+00:00",
+            "state": "queued"
+          }
+        ]
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.session.queued",
+        "value": {
+          "queued": [
+            {
+              "turn_id": "8f2e",
+              "client_id": "c9",
+              "author": {
+                "name": "Jon",
+                "user_id": 7
+              },
+              "text": "from jj",
+              "sent_at": "2026-09-26T12:00:00+00:00",
+              "state": "queued"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "session.stop",
       "data": {
         "state": "failed"
@@ -610,27 +686,6 @@
         "name": "canopy.draft.discarded",
         "value": {
           "draft_id": "d1"
-        }
-      }
-    ]
-  },
-  {
-    "canopy": {
-      "event": "draft.lock_changed",
-      "data": {
-        "draft_id": "d1",
-        "holder_user_id": 7,
-        "expires_at": "2026-09-18T12:01:00+00:00"
-      }
-    },
-    "agui": [
-      {
-        "type": "CUSTOM",
-        "name": "canopy.draft.lock_changed",
-        "value": {
-          "draft_id": "d1",
-          "holder_user_id": 7,
-          "expires_at": "2026-09-18T12:01:00+00:00"
         }
       }
     ]

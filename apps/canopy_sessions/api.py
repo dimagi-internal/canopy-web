@@ -533,12 +533,21 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     try:
         message, turn = services.send_message(
             session=session, text=payload.text, user=request.user,
-            client_id=payload.client_id, placement=payload.placement,
+            # Capped the same way the WS path caps it (consumers.py's
+            # `chat.send` handler) — the schema field itself stays an
+            # unbounded `str` so `generated.ts` needs no regen; the length
+            # limit is enforced where the id is actually used.
+            client_id=payload.client_id[:100], placement=payload.placement,
             origin=payload.origin,
             initiator=who.for_request(request, via=who.channel(request, "chat")),
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))
+    # The socket path commits the sender's server draft; this one did not, so a
+    # line sent here stayed in the draft and came back on every later connect
+    # as "<you> is typing". Clear it and tell the room, same frame the socket
+    # sends (`draft.updated`, rendered per recipient by the consumer).
+    services.clear_draft_after_http_send(session, request.user, payload.text)
     # Dev/test: run the stub inline. Production: leave it queued for a cloud runner.
     services.maybe_execute_inline(turn)
     return {"turn_id": turn.id if turn else None, "message": MessageOut.from_orm(message)}

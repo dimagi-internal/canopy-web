@@ -28,6 +28,11 @@ interface Props {
   /** Wording for that bubble — the caller knows whether the turn is still
    *  queued for a runner or the agent is actually working. */
   pendingLabel?: string;
+  /** Threaded to MessageItem so a `user` row can tell "me" from "someone
+   *  else" for the authored-bubble treatment. */
+  currentUserId?: number | null;
+  /** The viewer when it is a contact; see MessageItem. */
+  currentContactId?: number | null;
 }
 
 // Show the bulk expand/collapse toolbar once a session has more than this
@@ -42,6 +47,8 @@ export function MessageList({
   renderMarkdown,
   pendingReply = false,
   pendingLabel,
+  currentUserId,
+  currentContactId,
 }: Props) {
   const paired = useMemo(() => pairToolMessages(messages), [messages]);
   // Collapse back-to-back tool calls into one row. An agent mid-task emits long
@@ -156,6 +163,8 @@ export function MessageList({
               message={row.message}
               forceToolOpen={forceToolOpen}
               renderMarkdown={renderMarkdown}
+              currentUserId={currentUserId}
+              currentContactId={currentContactId}
             />
           );
         })}

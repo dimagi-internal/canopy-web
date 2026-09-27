@@ -1,7 +1,8 @@
 """SP3 Task 3 — the per-session multiplayer SessionConsumer.
 
-Two sockets on one session: a draft edit by one is broadcast to the other, and a
-commit sends + streams the assistant response to everyone (the stub executes).
+Two sockets on one session: each person drafts in their own box (the others see
+it as `draft.typing`), and a commit sends + streams the assistant response to
+everyone (the stub executes).
 """
 from __future__ import annotations
 
@@ -88,27 +89,135 @@ async def test_snapshot_is_canonical():
     assert set(data) >= {"messages", "active_draft", "participants",
                          "presence_user_ids", "current_user_id"}
     assert data["current_user_id"] == owner.id
+    assert data["current_contact_id"] is None
     assert owner.id in data["presence_user_ids"]
     # participants carry full identity, not just {user_id, role}
     assert data["participants"][0]["email"] == owner.email
     await comm.disconnect()
 
 
-async def test_draft_update_broadcasts_to_other_socket():
-    owner, teammate, session = await database_sync_to_async(_seed)()
-    a = await _connect(session, owner)
-    assert (await a.connect())[0]
-    b = await _connect(session, teammate)
-    assert (await b.connect())[0]
+async def _received_frames(comm, window: float = 1.0, interval: float = 0.02) -> list[dict]:
+    """Collect whatever frames arrive within `window` by polling the
+    communicator's output queue. NOT `receive_json_from(timeout=...)`: in this
+    asgiref/channels combination its timeout cancels the communicator's own
+    consumer task, so a call made to prove a frame does NOT arrive leaves the
+    socket dead (same helper as tests/test_realtime_runner_consumer.py)."""
+    import asyncio as _asyncio
+    import json as _json
+    import time as _time
 
-    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hello team"}})
-    frame = await _recv_match(b, lambda f: f.get("event") == "draft.updated")
-    assert frame["data"]["body"] == "hello team"
-    assert frame["data"]["last_editor"] == owner.id
-    # canonical draft.updated is the full DraftSerializer shape
-    assert {"id", "slot", "status", "last_edit_at"} <= set(frame["data"])
-    await a.disconnect()
-    await b.disconnect()
+    frames = []
+    start = _time.monotonic()
+    while _time.monotonic() - start < window:
+        try:
+            msg = comm.output_queue.get_nowait()
+        except _asyncio.QueueEmpty:
+            await _asyncio.sleep(interval)
+            continue
+        assert msg["type"] == "websocket.send"
+        frames.append(_json.loads(msg["text"]))
+    return frames
+
+
+async def test_my_typing_reaches_others_as_draft_typing():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hi there"}})
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["author"]["id"] == owner.id
+    assert typing["data"]["body"] == "hi there"
+    # The author's own sockets get the full draft shape, peers never do.
+    own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
+    assert {"id", "slot", "status", "last_edit_at", "author_id"} <= set(own["data"])
+    assert own["data"]["last_editor"] == owner.id
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_peer_never_receives_my_draft_frames():
+    """canopy-ui <= 0.12 (ace-web) adopts ANY `draft.updated` into its own
+    composer and builds a message out of its OWN box on ANY `draft.committed`,
+    so a peer must see neither — only `draft.typing`."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "x"}})
+    await a.send_json_to({"action": "draft.discard", "data": {}})
+    await a.send_json_to({"action": "chat.send", "data": {"text": "x", "client_id": "c1"}})
+    # The sender's own receipt proves the send happened before we inspect b.
+    # tries bumped: the stub's claim/run/finish each now also emit a
+    # session.queued frame (queued_feed) alongside session.turn_status.
+    await _recv_match(a, lambda f: f["event"] == "draft.committed", tries=20)
+    seen = [f["event"] for f in await _received_frames(b, window=1.5)]
+    assert "draft.typing" in seen
+    assert "draft.updated" not in seen
+    assert "draft.committed" not in seen
+    assert "draft.discarded" not in seen
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_own_tabs_share_one_draft_and_see_no_peer_row():
+    owner, _t, session = await database_sync_to_async(_seed)()
+    t1, t2 = await _connect(session, owner), await _connect(session, owner)
+    await t1.connect(); await t2.connect()
+    await _recv_match(t1, lambda f: f["event"] == "session.state")
+    await _recv_match(t2, lambda f: f["event"] == "session.state")
+    await t1.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "from desk"}})
+    upd = await _recv_match(t2, lambda f: f["event"] in ("draft.updated", "draft.typing"))
+    assert upd["event"] == "draft.updated" and upd["data"]["body"] == "from desk"
+    await t1.disconnect(); await t2.disconnect()
+
+
+async def test_snapshot_has_my_draft_and_peer_drafts():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    from apps.canopy_sessions import drafts
+    await database_sync_to_async(drafts.update_draft)(session, user=teammate, expected_version=0, body="wip")
+    # Shown only while its author is here (final review I4).
+    from apps.canopy_sessions import presence
+    await database_sync_to_async(presence.touch)(session.id, teammate.id)
+    comm = await _connect(session, owner)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    # An editor always gets a draft to type into (old clients need one).
+    assert snap["data"]["active_draft"]["author_id"] == owner.id
+    assert snap["data"]["active_draft"]["body"] == ""
+    assert [p["body"] for p in snap["data"]["peer_drafts"]] == ["wip"]
+    assert snap["data"]["peer_drafts"][0]["author"]["id"] == teammate.id
+    await comm.disconnect()
+
+
+async def test_a_viewer_connecting_writes_no_draft():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    await database_sync_to_async(
+        lambda: SessionParticipant.objects.filter(session=session, user=teammate)
+        .update(role=SessionParticipant.VIEWER))()
+    comm = await _connect(session, teammate)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    assert snap["data"]["active_draft"] is None
+    await comm.disconnect()
+    from apps.canopy_sessions.models import Draft
+    assert not await database_sync_to_async(
+        Draft.objects.filter(session=session, author=teammate).exists)()
+
+
+async def test_take_over_is_accepted_and_ignored():
+    owner, _t, session = await database_sync_to_async(_seed)()
+    comm = await _connect(session, owner)
+    await comm.connect()
+    await _recv_match(comm, lambda f: f["event"] == "session.state")
+    await comm.send_json_to({"action": "draft.take_over", "data": {}})
+    frames = await _received_frames(comm, window=0.8)
+    assert not [f for f in frames if f["event"].startswith("draft.") or f["event"] == "session.error"]
+    # The frame was processed and the socket is alive: an edit still echoes.
+    await comm.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "still here"}})
+    echo = await _recv_match(comm, lambda f: f["event"] == "draft.updated")
+    assert echo["data"]["body"] == "still here"
+    await comm.disconnect()
 
 
 async def test_commit_sends_and_streams_assistant_to_all():
@@ -623,3 +732,57 @@ async def test_a_send_carries_its_text_and_a_resend_is_the_same_turn():
     )()
     assert prompts == ["ship it"]
     await a.disconnect()
+
+
+async def test_everyone_sees_a_teammates_queued_send():
+    """The queued list (spec 2026-09-26): every watcher sees a send that has
+    not reached the transcript yet, with its author, in send order.
+
+    Transcript-sourced (see test_chat_queued.py's own rationale): the
+    ledger-sourced path writes its durable Message row's `source_turn_id`
+    within the SAME outer transaction that enqueues the turn, so by the time
+    `turn_status_changed` fires post-commit the send has already "landed" and
+    the entry is never queued at all. A transcript-sourced session writes no
+    such row, so the entry stays queued until its turn reaches a terminal
+    status."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+
+    def _mark_transcript_sourced():
+        session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+        session.save(update_fields=["metadata"])
+
+    await database_sync_to_async(_mark_transcript_sourced)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    snap = await _recv_match(b, lambda f: f["event"] == "session.state")
+    assert snap["data"]["queued"] == []
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "chat.send", "data": {"text": "from jj", "client_id": "c9"}})
+    q = await _recv_match(b, lambda f: f["event"] == "session.queued"
+                          and any(e["text"] == "from jj" for e in f["data"]["queued"]), tries=20)
+    assert q["data"]["queued"][-1]["author"]["user_id"] == owner.id
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_a_ledger_sourced_send_reaches_the_peer_as_chat_user_message():
+    """The gap the two-browser check (spec 2026-09-26) found: a ledger-sourced
+    session (the dev-stub default `_seed()` uses — no runner is ever bound)
+    persists the sender's Message directly and, before this fix, published
+    nothing beyond `draft.committed` to the SENDER'S OWN tabs. B never saw A's
+    line without a reload. A transcript-sourced session gets this for free
+    (`apps.harness.api.post_session_stream` fans out every "user" ledger row
+    live); `services._publish_user_message` + `consumers.chat_user_message` is
+    the ledger-path equivalent."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    assert (await a.connect())[0]
+    assert (await b.connect())[0]
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+
+    await a.send_json_to({"action": "chat.send", "data": {"text": "hi from jj", "client_id": "um-1"}})
+
+    seen = await _recv_match(b, lambda f: f.get("event") == "chat.user_message")
+    assert seen["data"]["plaintext"] == "hi from jj"
+    assert seen["data"]["author"]["user_id"] == owner.id
+    await a.disconnect(); await b.disconnect()

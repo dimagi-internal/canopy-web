@@ -187,16 +187,6 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # runnable.{ws} group_send type="runner.wake" dispatches here.
         await self.send_json({"type": "wake"})
 
-    async def runner_interject(self, message):
-        # runner.{id} group_send type="runner.interject" — a human message for a
-        # turn this runner is running. Pushed down so the live agent sees it.
-        await self.send_json({
-            "type": "interject",
-            "turn_id": message.get("turn_id"),
-            "session_id": message.get("session_id"),
-            "message": message.get("message"),
-        })
-
     async def runner_cancel(self, message):
         # runner.{id} group_send type="runner.cancel" — the user asked to stop a turn
         # this runner is executing. Forwarded down the socket; the executor checks its

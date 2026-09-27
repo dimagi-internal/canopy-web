@@ -1,4 +1,4 @@
-"""SP3 Task 2 — participants, presence, and co-edited draft services."""
+"""SP3 Task 2 — participants, presence, and per-author draft services."""
 from __future__ import annotations
 
 import pytest
@@ -73,60 +73,44 @@ def test_presence_expiry():
 
 # -- draft co-editing --
 
-def test_update_bumps_version_and_records_editor():
-    owner, _ws, session = _ctx()
-    d = drafts.update_draft(session, expected_version=0, body="hello", editor=owner)
-    assert d.version == 1
-    assert d.body == "hello"
-    assert d.last_editor_id == owner.id
+def _two():
+    owner, ws, session = _ctx()
+    other = User.objects.create_user("o", "o@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=other, workspace=ws, role=WorkspaceMembership.EDITOR)
+    return owner, other, session
 
 
-def test_version_mismatch_raises_with_authoritative_state():
-    owner, _ws, session = _ctx()
-    drafts.update_draft(session, expected_version=0, body="a", editor=owner)
+def test_two_people_draft_at_once_without_blocking():
+    owner, other, session = _two()
+    a = drafts.update_draft(session, user=owner, expected_version=0, body="mine")
+    b = drafts.update_draft(session, user=other, expected_version=0, body="theirs")
+    assert (a.body, b.body) == ("mine", "theirs")
+    assert a.pk != b.pk
+
+
+def test_version_guard_is_per_author():
+    owner, _other, session = _two()
+    drafts.update_draft(session, user=owner, expected_version=0, body="a")
     with pytest.raises(drafts.DraftVersionMismatch) as exc:
-        drafts.update_draft(session, expected_version=0, body="stale", editor=owner)
-    assert exc.value.current_version == 1
+        drafts.update_draft(session, user=owner, expected_version=0, body="stale")
     assert exc.value.current_body == "a"
 
 
-def test_live_lock_blocks_others_then_take_over_after_release():
-    owner, ws, session = _ctx()
-    other = User.objects.create_user("o", "o@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(user=other, workspace=ws, role=WorkspaceMembership.EDITOR)
-    participants.ensure_participant(session, other)
-    presence.touch(session.id, owner.id)
+def test_commit_takes_only_my_text():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=owner, expected_version=0, body="send me")
+    drafts.update_draft(session, user=other, expected_version=0, body="not yet")
+    assert drafts.commit_draft(session, owner) == "send me"
+    assert drafts.draft_for(session, owner).body == ""
+    assert drafts.draft_for(session, other).body == "not yet"
+
+
+def test_peer_drafts_excludes_me_and_empty():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=other, expected_version=0, body="typing")
+    drafts.draft_for(session, owner)  # exists, empty
+    # Only a PRESENT author's draft is someone typing (final review I4).
     presence.touch(session.id, other.id)
-    # owner edits and is present -> holds a LIVE lock; other is blocked
-    drafts.update_draft(session, expected_version=0, body="mine", editor=owner)
-    with pytest.raises(drafts.DraftLockHeld):
-        drafts.update_draft(session, expected_version=1, body="theirs", editor=other)
-    # you can't yank a live lock either
-    with pytest.raises(drafts.DraftLockHeld):
-        drafts.take_over(session, editor=other)
-    # owner leaves -> lock frees -> other takes the baton and edits
-    presence.leave(session.id, owner.id)
-    drafts.take_over(session, editor=other)
-    d = drafts.update_draft(session, expected_version=1, body="theirs", editor=other)
-    assert d.body == "theirs"
-
-
-def test_lock_frees_when_holder_not_present():
-    owner, ws, session = _ctx()
-    other = User.objects.create_user("o", "o@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(user=other, workspace=ws, role=WorkspaceMembership.EDITOR)
-    participants.ensure_participant(session, other)
-    # owner edits but is NOT present -> lock is not held; other can edit freely
-    drafts.update_draft(session, expected_version=0, body="mine", editor=owner)
-    d = drafts.update_draft(session, expected_version=1, body="theirs", editor=other)
-    assert d.body == "theirs"
-
-
-def test_commit_returns_text_and_resets_draft():
-    owner, _ws, session = _ctx()
-    drafts.update_draft(session, expected_version=0, body="send me", editor=owner)
-    text = drafts.commit_active_draft(session)
-    assert text == "send me"
-    d = drafts.active_draft(session)
-    assert d.body == ""
-    assert d.version == 2
+    presence.touch(session.id, owner.id)
+    assert [d.author_id for d in drafts.peer_drafts(session, owner)] == [other.id]
+    assert drafts.peer_drafts(session, other) == []

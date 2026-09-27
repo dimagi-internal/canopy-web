@@ -21,7 +21,7 @@ from django.utils import timezone
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
-from . import attach
+from . import attach, authorship
 from .models import Message, RunnerBinding, Session
 from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
 
@@ -229,6 +229,7 @@ class TailMessage:
     plaintext: str
     content: dict
     created_at: object
+    author: dict | None = None
 
 
 def tail_as_messages(session, binding) -> list[TailMessage]:
@@ -269,13 +270,19 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
         # assistant text quoting a marker is still the agent talking.
         if role == Message.USER and is_system_noise(text):
             continue
+        author = None
+        if role == Message.USER:
+            # Same marker, same parse, as the durable path — a tail row is a
+            # message like any other and must not show a person the marker
+            # syntax while their conversation is still local-only.
+            author, text, _turn = authorship.parse(text)
         # Derived from the ORIGINAL position, never a running counter — a dropped
         # row leaves its slot empty rather than shifting its neighbours, so the
         # tail keeps ordering consistently against itself.
         idx = i - n
         rows.append(TailMessage(
             pk=f"tail:{idx}", turn_index=idx, role=role,
-            plaintext=text, content={"text": text}, created_at=ts,
+            plaintext=text, content={"text": text}, created_at=ts, author=author,
         ))
     return rows
 
@@ -504,8 +511,9 @@ def persist_transcript_rows(session, rows) -> int:
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
             _ensure_current_ordinal_scheme(locked, offset)
         next_index = None
-        prepared: list[tuple[int, str, str, dict]] = []
+        prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
+        vouched = _vouched_markers(locked, rows)
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -544,12 +552,28 @@ def persist_transcript_rows(session, rows) -> int:
             content = row.get("content")
             if not isinstance(content, dict):
                 content = {}
+            author = turn_hex = None
+            if role == Message.USER:
+                # The marker canopy prepended at claim (authorship.py). Stripped
+                # here, the single funnel for live stream, backfill and reset, so
+                # every path gets the same text and the same author.
+                author, bare, turn_hex = authorship.parse(text)
+                if author is not None and vouched.get(turn_hex) == _marker_identity(author):
+                    text = bare
+                    if isinstance(content.get("text"), str):
+                        content = {**content, "text": authorship.parse(content["text"])[1]}
+                else:
+                    # Unmarked, or a marker nobody can vouch for: anyone who can
+                    # type into the transcript can write the syntax, so a line
+                    # naming a turn that is not this session's, or a person who
+                    # did not send that turn, stays exactly what it was typed as.
+                    author = turn_hex = None
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
-            prepared.append((index, role, text, content))
+            prepared.append((index, role, text, content, author, turn_hex))
         if not prepared:
             return 0
         held = set(
@@ -558,8 +582,9 @@ def persist_transcript_rows(session, rows) -> int:
             ).values_list("turn_index", flat=True)
         )
         fresh = [
-            Message(session=locked, turn_index=i, role=r, plaintext=t, content=c)
-            for (i, r, t, c) in prepared
+            Message(session=locked, turn_index=i, role=r, plaintext=t, content=c,
+                    author=a, source_turn_id=uuid.UUID(h) if h else None)
+            for (i, r, t, c, a, h) in prepared
             if i not in held
         ]
         if not fresh:
@@ -569,6 +594,33 @@ def persist_transcript_rows(session, rows) -> int:
         # skipped row rather than a failed batch.
         Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
         return len(fresh)
+
+
+def _marker_identity(author: dict) -> tuple[int | None, int | None]:
+    return author.get("user_id"), author.get("contact_id")
+
+
+def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
+    """turn hex -> (initiator_user_id, initiator_contact_id), for every turn a
+    user row's marker names that really is one of THIS session's turns. One
+    query for the whole batch, whatever its size.
+
+    The live frame (`stream_map`) is deliberately not checked the same way — it
+    has no cheap query, and the durable row written here is what every reload
+    shows."""
+    hexes = set()
+    for row in rows:
+        if row.get("role") != Message.USER:
+            continue
+        _author, _bare, turn_hex = authorship.parse(str(row.get("text", "")))
+        if turn_hex:
+            hexes.add(turn_hex)
+    if not hexes:
+        return {}
+    found = Turn.objects.filter(
+        chat_session=session, pk__in=[uuid.UUID(h) for h in hexes],
+    ).values_list("pk", "initiator_user_id", "initiator_contact_id")
+    return {pk.hex: (uid, cid) for pk, uid, cid in found}
 
 
 def write_backfill(session, messages) -> int:
@@ -1067,14 +1119,17 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     return binding, turn
 
 
-def claim_pending_attachments(session, message=None) -> list[dict]:
-    """Mark this session's un-sent attachments as sent, and describe them for the
-    runner.
+def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
+    """Mark the SENDER's un-sent attachments on this session as sent, and
+    describe them for the runner.
 
-    Swept off the SESSION rather than passed by id, so the WebSocket `chat.send`
-    frame needs no new field and REST and WS behave identically. It also matches
-    the draft model: the draft is co-edited and shared, so anything attached to
-    it belongs to the send whoever presses the button.
+    Swept off the session rather than passed by id, so the WebSocket `chat.send`
+    frame needs no new field and REST and WS behave identically. Scoped to
+    `uploaded_by=user` because it matches the draft model: everyone composes in
+    their own box (spec 2026-09-26), so an attachment belongs to its uploader's
+    next send — never to a teammate who happens to press Send first. With no
+    user (a contact send) nothing is claimed: contacts cannot upload, and they
+    must not sweep up a member's half-composed attachments.
 
     `message` is None for a runner-origin session, which writes no user Message
     row — hence the sent_at stamp, without which those rows would ride along on
@@ -1082,7 +1137,10 @@ def claim_pending_attachments(session, message=None) -> list[dict]:
     """
     from .models import Attachment
 
-    pending = list(Attachment.objects.filter(session=session, sent_at__isnull=True))
+    if user is None or getattr(user, "pk", None) is None:
+        return []
+    pending = list(Attachment.objects.filter(
+        session=session, uploaded_by=user, sent_at__isnull=True))
     if not pending:
         return []
     now = timezone.now()
@@ -1217,7 +1275,12 @@ def send_message(
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
         ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
-        attachments = claim_pending_attachments(session, message)
+        if client_id:
+            # The one place a send's client nonce survives as itself: the
+            # idempotency key's suffix is an index when there is none, and
+            # `queued_messages` must not report an index as a client_id.
+            ref["client_id"] = client_id
+        attachments = claim_pending_attachments(session, message, user)
         if attachments:
             ref["attachments"] = attachments
         turn, _created = harness_services.enqueue_turn(
@@ -1237,13 +1300,112 @@ def send_message(
             initiator=_initiator(initiator, user, origin),
             capability=capability,
         )
-    # RC4 — multiplayer interjection: if a turn is ALREADY running for this session,
-    # the human's message is an interjection. Push it down to the runner executing
-    # that turn (over its control channel) so the live agent sees it, on top of the
-    # new turn that queues behind it. Post-commit + null-safe (a realtime hiccup
-    # never breaks the send).
-    _maybe_interject(session, message)
+        # The ledger path writes its own row, so it records the author directly
+        # rather than through the transcript marker.
+        if user is not None and getattr(user, "is_authenticated", False):
+            message.author = {"name": (user.get_full_name() or "").strip() or user.email,
+                              "user_id": user.pk}
+        if turn is not None:
+            message.source_turn_id = turn.pk
+        message.save(update_fields=["author", "source_turn_id"])
+        # Fan the row out to every OTHER watcher on the session socket. The
+        # sender's own client already has it (the optimistic echo off
+        # `draft.committed` / the REST response), but nobody said so to anyone
+        # else: unlike the transcript-sourced path (`post_session_stream`
+        # publishes every "user" ledger row live, sender included — the client
+        # upserts on turn_index/text so a duplicate collapses instead of
+        # doubling), a ledger-sourced send (the dev stub, and any
+        # pre-unification session not yet reset) wrote the durable Message
+        # directly and published nothing, so a peer's transcript never
+        # gained the line until they reloaded. Same frame shape
+        # (`stream_map.turn_event_to_frames`'s "user" case), built directly
+        # since the real id is already in hand — no ledger round trip needed.
+        _publish_user_message(session.id, message, client_id)
     return message, turn
+
+
+def _publish_user_message(session_id, message: Message, client_id: str = "") -> None:
+    from apps.realtime.groups import publish, session_group
+
+    payload = {
+        "message_id": str(message.pk),
+        "turn_index": message.turn_index,
+        "plaintext": message.plaintext,
+        "author": message.author,
+        "client_id": client_id,
+    }
+    transaction.on_commit(
+        lambda: publish(session_group(session_id), {"type": "chat.user_message", "data": payload})
+    )
+
+
+def clear_draft_after_http_send(session: Session, user, text: str) -> None:
+    """See `drafts.clear_after_http_send`; publishes the cleared draft to the
+    session group in the consumer's own `draft.updated` shape, so the author's
+    other tabs reset and every peer's typing row clears."""
+    from apps.realtime.groups import publish, session_group
+
+    from . import drafts, serializers
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return
+    draft = drafts.clear_after_http_send(session, user, text)
+    if draft is None:
+        return
+    message = {
+        "type": "draft.updated", "author_id": user.id,
+        "draft": serializers.draft_dto(draft),
+        "peer": serializers.peer_draft_dto(draft),
+    }
+    transaction.on_commit(lambda: publish(session_group(session.id), message))
+
+
+def queued_messages(session: Session) -> list[dict]:
+    """Human sends in this session that have not reached the transcript yet.
+
+    Derived from Turn rows, never stored — the same reasoning as
+    harness.turn_status: it is a function of rows that change on their own clock.
+    A send leaves the list when the transcript row carrying its turn id lands
+    (Message.source_turn_id, parsed from the author marker), or when its turn
+    ends without one (cancelled, failed).
+
+    Bounded by the NON-TERMINAL turns, never by the session's whole history:
+    this runs on every status transition and every streamed transcript batch,
+    so a long-lived session must not make it scan every Message it has ever
+    landed. `select_related` on the initiator FKs is load-bearing too — dropped,
+    `authorship.author_of` (called once per turn below) turns back into an N+1."""
+    turns = list(
+        Turn.objects.select_related("initiator_user", "initiator_contact")
+        .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+        .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
+        .order_by("created_at")
+    )
+    if not turns:
+        return []
+    # A person's chat sends only — the same rule the claim marks by. An email or
+    # scheduled turn bound to this session is the agent's work, not a line
+    # somebody typed.
+    turns = [t for t in turns if authorship.is_chat_send(t)]
+    if not turns:
+        return []
+    landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
+                 .values_list("source_turn_id", flat=True))
+    out = []
+    for t in turns:
+        if t.pk in landed:
+            continue
+        # From the turn, not its delivered prompt: a slash command goes
+        # unmarked but somebody still typed it.
+        author = authorship.author_of(t)
+        out.append({
+            "turn_id": str(t.pk),
+            "client_id": str((t.origin_ref or {}).get("client_id") or ""),
+            "author": author,
+            "text": t.prompt or "",
+            "sent_at": t.created_at.isoformat(),
+            "state": "queued" if t.status == Turn.QUEUED else "delivering",
+        })
+    return out
 
 
 def place_queued_turn(*, session: Session, placement: str) -> Turn:
@@ -1377,9 +1539,11 @@ def _send_transcript_sourced_message(
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
     ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
+    if client_id:
+        ref["client_id"] = client_id   # see send_message: the key suffix may be a nonce
     # message=None: this path writes no durable user row, so the sent_at stamp is
     # the only thing stopping these attachments riding along on every later send.
-    attachments = claim_pending_attachments(session, None)
+    attachments = claim_pending_attachments(session, None, user)
     if attachments:
         ref["attachments"] = attachments
     turn, _created = harness_services.enqueue_turn(
@@ -1399,30 +1563,7 @@ def _send_transcript_sourced_message(
         initiator=_initiator(initiator, user, origin),
         capability=capability,
     )
-    _maybe_interject(session, message)
     return message, turn
-
-
-def _maybe_interject(session: Session, message: Message) -> None:
-    from apps.realtime import groups
-
-    running = (
-        Turn.objects.filter(
-            chat_session=session,
-            status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
-            claimed_by__isnull=False,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-    if running is None:
-        return
-    groups.publish(groups.runner_group(running.claimed_by_id), {
-        "type": "runner.interject",
-        "turn_id": str(running.id),
-        "session_id": str(session.id),
-        "message": message.plaintext,
-    })
 
 
 def maybe_execute_inline(turn: Turn | None) -> None:

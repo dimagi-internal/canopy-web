@@ -74,6 +74,9 @@ def publish_for_turn(turn) -> None:
         return
     publish(session_group(turn.chat_session_id),
             {"type": "session.turn_status", "status": payload})
+    from .queued_feed import publish_queued
+
+    publish_queued(turn.chat_session_id)
 
 
 def publish_for_session(session_id) -> None:

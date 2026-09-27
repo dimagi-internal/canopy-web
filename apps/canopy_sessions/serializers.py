@@ -40,6 +40,7 @@ def message_dto(msg: Message) -> dict:
         "role": msg.role,
         "content": msg.content or {},
         "plaintext": msg.plaintext,
+        "author": msg.author,
         "status": "complete",
         "error_detail": None,
         "started_at": None,
@@ -57,8 +58,23 @@ def draft_dto(draft: Draft | None) -> dict | None:
         "status": "open",
         "body": draft.body,
         "version": draft.version,
-        "last_editor": draft.last_editor_id,
+        # `last_editor` kept for canopy-ui <= 0.12, which treats a draft whose
+        # last_editor is itself as its own. This DTO only ever reaches its author.
+        "last_editor": draft.author_id,
+        "author_id": draft.author_id,
         "last_edit_at": _iso(draft.updated_at),
+    }
+
+
+def peer_draft_dto(draft: Draft) -> dict:
+    """Someone ELSE's draft, as the live `draft.typing` row. Deliberately not the
+    `draft_dto` shape: an old client adopts any draft-shaped frame as its own."""
+    user = draft.author
+    return {
+        "author": {"id": draft.author_id,
+                   "name": (user.get_full_name() or "").strip() or user.email},
+        "body": draft.body,
+        "at": _iso(draft.updated_at),
     }
 
 
@@ -88,15 +104,28 @@ def participant_dto_for(user, role: str) -> dict:
     }
 
 
-def session_state_dto(*, session, current_user_id, participants, present_ids, draft, messages) -> dict:
+def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
+                      messages, peer_drafts=(), queued=(), current_contact_id=None) -> dict:
     """The canonical `session.state` snapshot payload."""
     return {
         "messages": [message_dto(m) for m in messages],
+        # The CONNECTING user's own draft (None for a contact, who has none).
         "active_draft": draft_dto(draft),
+        # Everyone else's draft in progress, as `draft.typing` rows.
+        "peer_drafts": [peer_draft_dto(d) for d in peer_drafts],
+        # Human sends that have not reached the transcript yet, visible to
+        # everyone watching — in the snapshot for the same reason `menu` and
+        # `turn_status` are: a client that just connected has no live frame to
+        # have caught it from.
+        "queued": list(queued),
         # Already DTOs: the socket merges rowless readers in (`_snapshot`).
         "participants": [p if isinstance(p, dict) else participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),
         "current_user_id": current_user_id,
+        # The connecting principal when it is a CONTACT (a widget visitor), who
+        # has no user id: without it a client cannot tell which authored lines
+        # are the viewer's own. Null for a member.
+        "current_contact_id": current_contact_id,
         # The dialog the agent is waiting on, if any. In the SNAPSHOT and not
         # only in a live frame, because `session.activity` is view-only and
         # reaches a client only if it was already connected when the agent

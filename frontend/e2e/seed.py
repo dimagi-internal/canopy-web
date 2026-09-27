@@ -11,7 +11,6 @@ from django.contrib.sessions.backends.db import SessionStore
 from apps.agents.models import (
     Agent, AgentSkill, AgentSync, AgentTask, AgentTaskCommand, AgentWorkProduct,
 )
-from apps.harness.models import Item
 from apps.reviews.models import ReviewRequest
 from apps.workspaces import services as wsvc
 
@@ -86,7 +85,7 @@ AgentSkill.objects.create(
 # An open emdash session the runner reported — drives /supervisor's Open sessions
 # section. status ONLINE + a fresh heartbeat so GET /api/harness/sessions includes it.
 from apps.harness.models import Runner
-from apps.canopy_sessions.models import Session as CanopySession, RunnerBinding
+from apps.canopy_sessions.models import Session as CanopySession, RunnerBinding, SessionParticipant
 from django.utils import timezone as _tz
 _runner = Runner.objects.create(
     name="e2e-mbp", kind=Runner.EMDASH, host="e2e-host", paired_by=user, workspace=ws,
@@ -135,45 +134,55 @@ fleet_audit = ReviewRequest.objects.create(
     },
 )
 
-# Ada's fleet audit as ITEMS — the surface that replaces the borrowed DDD review
-# page. Two open items in her queue, both dispatching to another agent (the
-# manager case: target_agent != self). hal must exist for dispatch to resolve.
+# Ada's fleet audit as ASKS ON A TASK — the surface that replaces the borrowed
+# DDD review page (and, since #948, the borrowed `harness.Item` model itself:
+# the ask lives on `AgentTask.{ask_kind,ask_body,...}` now — see CLAUDE.md
+# "Item ⊕ Turn"). Two open asks in her queue, both dispatching to another
+# agent (the manager case: target_agent != self). hal must exist for dispatch
+# to resolve.
 ada_agent, _ = Agent.objects.update_or_create(slug="ada", defaults=dict(
     name="Ada", email="ada@dimagi-ai.com", description="Fleet conductor.",
     persona="Conducts the fleet.", workspace=ws))
 Agent.objects.update_or_create(slug="hal", defaults=dict(
     name="Hal", email="hal@dimagi-ai.com", description="Inbox agent.",
     persona="Triages email.", workspace=ws))
-Item.objects.filter(agent=ada_agent).delete()
-Item.objects.create(
-    agent=ada_agent, kind="review", origin="api", batch_key=FLEET_AUDIT_BATCH,
+# Narrowed to this batch's own rows, not `ada_agent.tasks.all().delete()`: unlike
+# the old dedicated Item model, AgentTask is the SAME table ordinary board tasks
+# live in, so an unscoped delete here would also wipe any of Ada's non-ask tasks.
+ada_agent.tasks.filter(origin="api", batch_key__startswith="fleet-audit").delete()
+AgentTask.objects.create(
+    agent=ada_agent, ext_id="fa-hal-inbox", ask_kind=AgentTask.ASK_REVIEW,
+    origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-hal-inbox", title="hal: discard 81 junk/stale unread emails",
-    body="All 81 are automated or older than 1 week.",
+    ask_body="All 81 are automated or older than 1 week.",
     dispatch=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
 )
-Item.objects.create(
-    agent=ada_agent, kind="review", origin="api", batch_key=FLEET_AUDIT_BATCH,
+AgentTask.objects.create(
+    agent=ada_agent, ext_id="fa-lily", ask_kind=AgentTask.ASK_REVIEW,
+    origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-lily", title="hal: ONE buried HUMAN email — Lily Olson",
-    body="A real person who never got an answer.",
+    ask_body="A real person who never got an answer.",
     dispatch=[{"target_agent": "hal", "prompt": "/hal:turn --thread lily", "origin": "email"}],
 )
-# A QUESTION item — the other kind. Its card is the only thing that renders the
+# A QUESTION ask — the other kind. Its card is the only thing that renders the
 # answer input, and without one seeded the placeholder-contrast guard had nothing
 # to inspect and passed while the bug was live. (Verified: reintroducing the
 # invisible-placeholder class now turns that test red.)
-Item.objects.create(
-    agent=ada_agent, kind="question", origin="api", batch_key=FLEET_AUDIT_BATCH,
+AgentTask.objects.create(
+    agent=ada_agent, ext_id="fa-question", ask_kind=AgentTask.ASK_QUESTION,
+    origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-question", title="hal: should the 81 be archived or deleted?",
-    body="Archiving is reversible; deleting is not.",
+    ask_body="Archiving is reversible; deleting is not.",
     dispatch=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
 )
-# A settled card from an OLDER sitting. Items are never deleted, so this is what
+# A settled card from an OLDER sitting. Tasks are never deleted, so this is what
 # accumulates: the unfiltered view must keep it out of the way of the open ones.
 # Deliberately in a different batch, so the batch-permalink tests don't see it.
-Item.objects.create(
-    agent=ada_agent, kind="review", origin="api", batch_key="fleet-audit-2026-06-30",
+AgentTask.objects.create(
+    agent=ada_agent, ext_id="fa-old-settled", ask_kind=AgentTask.ASK_REVIEW,
+    origin="api", batch_key="fleet-audit-2026-06-30",
     idempotency_key="fa-old-settled", title="hal: an old finding nobody needs to see again",
-    body="Long since dismissed.", state=Item.DISMISSED,
+    ask_body="Long since dismissed.", ask_dismissed=True, decided_at=_tz.now(),
 )
 
 # ── Multiplayer: a SECOND human, and one chat session they both open ──────────
@@ -200,10 +209,17 @@ Agent.objects.update_or_create(slug="ace", defaults=dict(
     persona="Runs the Connect opportunity lifecycle.", workspace=ws))
 
 _hal = Agent.objects.get(slug="hal")
+# `access.visible_session_q` (the sole ACL, apps/canopy_sessions/access.py) has
+# no "workspace owner may open any web session" leg — leg 1 is the creator,
+# leg 2 an explicit `SessionParticipant`, and legs 3/4 apply only to
+# `origin=ORIGIN_RUNNER`. A web session with neither `created_by` nor a
+# participant row is invisible to EVERYONE, e2e user included, so both
+# identities need an explicit way in.
 mp_session = CanopySession.objects.create(
-    workspace=ws, agent=_hal, title="Multiplayer e2e",
+    workspace=ws, agent=_hal, title="Multiplayer e2e", created_by=user,
     status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_WEB,
 )
+SessionParticipant.objects.create(session=mp_session, user=mp_user, role=SessionParticipant.EDITOR)
 
 
 def _mint(u):

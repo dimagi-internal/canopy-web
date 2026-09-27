@@ -756,8 +756,12 @@ export function ChatPage() {
               onShare={async (command) => {
                 // Sent over REST like any message; `noteLocalSend` is what shows
                 // the line and the working state until the transcript echoes it.
-                await sendMessage(id, command, `share-${Date.now()}`)
-                socket.noteLocalSend(command)
+                // The SAME id rides both calls, so `QueuedRows.hideClientIds`
+                // recognises the queued-turn projection as this row rather than
+                // rendering the command a second time as an unowned placeholder.
+                const clientId = `share-${Date.now()}`
+                await sendMessage(id, command, clientId)
+                socket.noteLocalSend(command, clientId)
               }}
               onReset={() => void resetFromTranscript()}
               resetting={resetting}
@@ -785,7 +789,6 @@ export function ChatPage() {
           onAttach={handleAttach}
           onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
-          onTakeOver={socket.takeOverDraft}
           onDiscard={socket.discardDraft}
           renderMarkdown={renderMarkdown}
           // Keep a half-typed message across a route change or a closed tab.

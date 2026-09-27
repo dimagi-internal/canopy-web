@@ -19,9 +19,11 @@ from apps.realtime.groups import session_group
 
 from . import access, agui, attach, drafts, presence, serializers, stream_map
 from . import services as chat_services
-from .models import Message, Session, SessionParticipant
+from .models import Draft, Message, Session, SessionParticipant
 
 _EDIT_ROLES = {SessionParticipant.OWNER, SessionParticipant.EDITOR}
+# `draft.take_over` is a no-op now (everyone has their own draft) but stays
+# listed so a viewer's old client is still told `forbidden`.
 _EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send")
 
 
@@ -232,7 +234,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if action == "draft.update":
             await self._draft_update(data)
         elif action == "draft.take_over":
-            await self._draft_take_over()
+            # Nothing to take: everyone has their own draft (spec 2026-09-26).
+            # Still accepted because canopy-ui <= 0.12 sends it.
+            return
         elif action == "draft.discard":
             await self._draft_discard()
         elif action == "chat.send":
@@ -248,10 +252,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def _draft_update(self, data):
         try:
             draft = await database_sync_to_async(drafts.update_draft)(
-                self.session,
+                self.session, user=self.user,
                 expected_version=int(data.get("version", 0)),
                 body=str(data.get("body", "")),
-                editor=self.user,
             )
         except drafts.DraftVersionMismatch as exc:
             await self._error(
@@ -259,33 +262,25 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 {"current_version": exc.current_version, "current_body": exc.current_body},
             )
             return
-        except drafts.DraftLockHeld as exc:
-            await self._error(
-                "draft_lock_held", "Another teammate is editing.",
-                {"holder_user_id": exc.holder_id, "expires_at": None},
-            )
-            return
-        await self._broadcast_draft(draft)
-
-    async def _draft_take_over(self):
-        try:
-            draft = await database_sync_to_async(drafts.take_over)(self.session, editor=self.user)
-        except drafts.DraftLockHeld as exc:
-            await self._error(
-                "draft_lock_held", "Another teammate is editing.",
-                {"holder_user_id": exc.holder_id, "expires_at": None},
-            )
-            return
-        await self._broadcast({
-            "type": "draft.lock_changed", "draft_id": str(draft.pk),
-            "holder_user_id": self.user.id, "expires_at": None,
-        })
         await self._broadcast_draft(draft)
 
     async def _draft_discard(self):
-        draft = await database_sync_to_async(self._discard_active)()
-        await self._broadcast({"type": "draft.discarded", "draft_id": str(draft.pk)})
+        draft = await database_sync_to_async(drafts.discard_draft)(self.session, self.user)
+        await self._broadcast({"type": "draft.discarded", "draft_id": str(draft.pk),
+                               "author_id": self.user.id})
         await self._broadcast_draft(draft)
+
+    async def _broadcast_draft(self, draft):
+        """One group message, rendered per socket: the author's own tabs get the
+        full draft (`draft.updated`), everyone else the peer view (`draft.typing`).
+        Every caller serializes the socket user's OWN draft, so the author is
+        `self.user` — set it rather than re-SELECT it on every keystroke."""
+        draft.author = self.user
+        await self.channel_layer.group_send(self.group, {
+            "type": "draft.updated", "author_id": draft.author_id,
+            "draft": serializers.draft_dto(draft),
+            "peer": serializers.peer_draft_dto(draft),
+        })
 
     async def _chat_send(self, data=None):
         # `text` + `client_id` make a send self-contained and retryable. Without
@@ -300,17 +295,19 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         text = data.get("text") if isinstance(data.get("text"), str) else None
         client_id = str(data.get("client_id") or "")[:100]
         user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
-        draft = await database_sync_to_async(drafts.active_draft)(self.session)
+        draft = await database_sync_to_async(drafts.draft_for)(self.session, self.user)
         if user_message_id is not None:
-            # Any editor may send the shared draft (commit ignores lock/version).
-            # Broadcast draft.committed + the cleared draft FIRST so co-editors'
-            # UI resets even if execution below is a no-op / races a concurrent
-            # turn. `client_id` is the sender's receipt: it is how the sender
-            # knows THIS send landed, and how the reducer avoids inserting a
-            # second copy of a line it already shows.
+            # A send commits the SENDER's own draft. Broadcast draft.committed +
+            # the cleared draft FIRST so the sender's other tabs reset (and
+            # peers' typing row clears) even if execution below is a no-op /
+            # races a concurrent turn. `client_id` is the sender's receipt: it is
+            # how the sender knows THIS send landed, and how the reducer avoids
+            # inserting a second copy of a line it already shows. It reaches
+            # only the author (`draft_committed`).
             await self._broadcast({
                 "type": "draft.committed", "draft_id": str(draft.pk),
                 "user_message_id": user_message_id, "client_id": client_id,
+                "author_id": self.user.id,
             })
         await self._broadcast_draft(draft)
         # turn events fan out to the session group automatically (realtime signal).
@@ -341,7 +338,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     # -- sync DB helpers --
     def _commit_and_send(self, text=None, client_id=""):
-        committed = drafts.commit_active_draft(self.session)
+        committed = drafts.commit_draft(self.session, self.user)
         # The text the sender SAW is the one to send. The server draft is only a
         # copy it may or may not have received.
         text = committed if text is None else text
@@ -353,14 +350,6 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         )
         chat_services.maybe_execute_inline(turn)
         return str(msg.pk)
-
-    def _discard_active(self):
-        draft = drafts.active_draft(self.session)
-        if draft.body:
-            draft.body = ""
-            draft.version += 1
-            draft.save(update_fields=["body", "version", "updated_at"])
-        return draft
 
     def _stop_session(self) -> str:
         """Stop this session, by whichever route actually owns the running work.
@@ -418,6 +407,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         for frame in stream_map.turn_event_to_frames(evt, lambda _seq: mid):
             await self.send_json(frame)
 
+    async def chat_user_message(self, message):
+        """A ledger-sourced send (`services._publish_user_message`), fanned out to
+        the whole session — the peer-visibility a transcript-sourced session gets
+        for free from `post_session_stream`, which this session has no runner to
+        ship a transcript through. Already the exact client frame; no `stream_map`
+        translation needed, because the real Message id is already in hand."""
+        await self.send_json({"event": "chat.user_message", "data": message["data"]})
+
     async def session_title_updated(self, message):
         await self.send_json({"event": "session.title_updated", "data": {"title": message["title"]}})
 
@@ -433,10 +430,21 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"event": "session.menu",
                               "data": {"menu": message.get("menu")}})
 
+    def _is_author(self, message) -> bool:
+        user = getattr(self, "user", None)
+        return user is not None and message.get("author_id") == user.id
+
     async def draft_updated(self, message):
-        await self.send_json({"event": "draft.updated", "data": message["draft"]})
+        if self._is_author(message):
+            await self.send_json({"event": "draft.updated", "data": message["draft"]})
+        else:
+            # canopy-ui <= 0.12 adopts ANY draft.updated into its own composer, so
+            # a peer's draft must never arrive under that name.
+            await self.send_json({"event": "draft.typing", "data": message["peer"]})
 
     async def draft_committed(self, message):
+        if not self._is_author(message):
+            return  # an old client would build a message out of its OWN box
         await self.send_json({
             "event": "draft.committed",
             "data": {"draft_id": message["draft_id"], "user_message_id": message["user_message_id"],
@@ -444,17 +452,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def draft_discarded(self, message):
-        await self.send_json({"event": "draft.discarded", "data": {"draft_id": message["draft_id"]}})
-
-    async def draft_lock_changed(self, message):
-        await self.send_json({
-            "event": "draft.lock_changed",
-            "data": {
-                "draft_id": message["draft_id"],
-                "holder_user_id": message["holder_user_id"],
-                "expires_at": message["expires_at"],
-            },
-        })
+        if self._is_author(message):
+            await self.send_json({"event": "draft.discarded", "data": {"draft_id": message["draft_id"]}})
 
     async def chat_stream_cancelled(self, message):
         await self.send_json({
@@ -486,6 +485,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         """
         await self.send_json({"event": "session.turn_status",
                               "data": {"status": message.get("status")}})
+
+    async def session_queued(self, message):
+        """The whole list of human sends not yet in the transcript, visible to
+        everyone watching — see `queued_feed`. Whole, never a delta, for the
+        same reason `session.turn_status` is: a just-connected client has no
+        correct prior to apply one to."""
+        await self.send_json({"event": "session.queued", "data": {"queued": message.get("queued") or []}})
 
     async def session_page_action(self, message):
         """The agent is asking the attached page to do something.
@@ -533,11 +539,6 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def _broadcast(self, message):
         await self.channel_layer.group_send(self.group, message)
 
-    async def _broadcast_draft(self, draft):
-        await self.channel_layer.group_send(
-            self.group, {"type": "draft.updated", "draft": serializers.draft_dto(draft)}
-        )
-
     @database_sync_to_async
     def _get_session(self, raw_id):
         try:
@@ -568,7 +569,22 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             for u in get_user_model().objects.filter(pk__in=missing):
                 parts.append(serializers.participant_dto_for(
                     u, access.role_for(u, self.session) or SessionParticipant.VIEWER))
-        draft = drafts.active_draft(self.session)
+        # My own draft, and everyone else's in progress. A contact has no draft
+        # and sees every non-empty one as a peer's.
+        if self.user is not None:
+            if self.role in _EDIT_ROLES:
+                # An editor gets a row to type into: canopy-ui <= 0.12 sends
+                # `draft.update` only while `active_draft` is non-null, so a
+                # null here would silently stop its live typing.
+                own = drafts.draft_for(self.session, self.user)
+            else:
+                # A viewer cannot type, so connecting must write nothing.
+                own = Draft.objects.filter(
+                    session=self.session, author=self.user, slot="next").first()
+            peers = drafts.peer_drafts(self.session, self.user)
+        else:
+            own = None
+            peers = drafts.peer_drafts(self.session, None)
         # Tail-first: the connect snapshot ships the last N messages (the same
         # SESSION_TAIL_DEFAULT the REST load uses), never the head. Scroll-back
         # for earlier history is REST (GET /{id}/messages?before=); Plan 4 wires
@@ -586,9 +602,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 # listener has none — where `self.user.id` raised on exactly the
                 # connection this snapshot exists to serve.
                 current_user_id=self.user.id if self.user else None,
+                current_contact_id=self.contact.pk if getattr(self, "contact", None) else None,
                 participants=parts,
                 present_ids=sorted(presence.present_ids(self.session.id)),
-                draft=draft,
+                draft=own,
+                peer_drafts=peers,
                 messages=messages,
+                queued=chat_services.queued_messages(self.session),
             ),
         }

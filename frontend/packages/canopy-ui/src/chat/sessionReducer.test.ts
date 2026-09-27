@@ -727,3 +727,124 @@ describe("session.stop — whether the stop actually landed", () => {
     expect(out.stopState).toBeUndefined();
   });
 });
+
+describe("per-person drafts", () => {
+  it("draft.typing upserts a peer by author and an empty body removes it", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "hi", at: null },
+    } as WsEvent);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "hi there", at: null },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([{ author: { id: 2, name: "Bo" }, body: "hi there", at: null }]);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
+  it("presence.left drops that person's typing row", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "x", at: null },
+    } as WsEvent);
+    s = sessionReducer(s, { event: "presence.left", data: { user_id: 2 } } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
+  it("session.queued replaces the whole list", () => {
+    const q = {
+      turn_id: "t1",
+      client_id: "c1",
+      author: { name: "Bo", user_id: 2 },
+      text: "yo",
+      sent_at: "2026-09-26T00:00:00Z",
+      state: "queued" as const,
+    };
+    let s = sessionReducer(makeState(), {
+      event: "session.queued",
+      data: { queued: [q] },
+    } as WsEvent);
+    expect(s.queued).toEqual([q]);
+    s = sessionReducer(s, { event: "session.queued", data: { queued: [] } } as WsEvent);
+    expect(s.queued).toEqual([]);
+  });
+
+  it("chat.user_message keeps the author", () => {
+    const s = sessionReducer(makeState(), {
+      event: "chat.user_message",
+      data: { message_id: "m1", turn_index: 5, plaintext: "hi", author: { name: "Bo", user_id: 2 } },
+    } as WsEvent);
+    expect(s.messages.at(-1)?.author).toEqual({ name: "Bo", user_id: 2 });
+  });
+});
+
+describe("sessionReducer — two people saying the same thing (final review I5)", () => {
+  const yes = (over: Partial<Message>) =>
+    makeMessage({ role: "user", plaintext: "yes", status: "complete", ...over })
+
+  it("two confirmed 'yes' rows from different authors stay two", () => {
+    const seeded = makeState({
+      messages: [yes({ id: "a1", turn_index: 10, author: { name: "Alice", user_id: 1 } })],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "b1", turn_index: 20, plaintext: "yes", author: { name: "Bo", user_id: 2 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(2)
+    expect(next.messages.map((m) => m.author?.name)).toEqual(["Alice", "Bo"])
+  })
+
+  it("a confirmed unauthored row is not adopted by someone else's line", () => {
+    const seeded = makeState({ messages: [yes({ id: "a1", turn_index: 10 })] })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "b1", turn_index: 20, plaintext: "yes", author: { name: "Bo", user_id: 2 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(2)
+  })
+
+  it("an optimistic pending 'yes' still reconciles with its echo", () => {
+    const seeded = makeState({
+      current_user_id: 1,
+      messages: [yes({ id: "local:c1", turn_index: 3, status: "pending", content: { client_id: "c1" } })],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "901", turn_index: 144448, plaintext: "yes", author: { name: "Alice", user_id: 1 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(1)
+    expect(next.messages[0].id).toBe("901")
+    expect(next.messages[0].status).toBe("complete")
+  })
+
+  it("a receipted send (transient id) still reconciles with its transcript echo", () => {
+    // A transcript-sourced send writes no durable row; its receipt carries a
+    // `transient:` id, so the row is still waiting for the line the agent read.
+    const seeded = makeState({
+      current_user_id: 1,
+      messages: [yes({ id: "transient:abc", turn_index: 3, content: { client_id: "c1" } })],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "901", turn_index: 144448, plaintext: "yes", author: { name: "Alice", user_id: 1 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(1)
+  })
+
+  it("my pending 'yes' is not taken by a teammate's 'yes'", () => {
+    const seeded = makeState({
+      current_user_id: 1,
+      messages: [yes({ id: "local:c1", turn_index: 3, status: "pending", content: { client_id: "c1" } })],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "b1", turn_index: 20, plaintext: "yes", author: { name: "Bo", user_id: 2 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(2)
+    expect(next.messages[0].id).toBe("local:c1")
+  })
+})

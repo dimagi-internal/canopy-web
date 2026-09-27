@@ -77,7 +77,7 @@ if _REDIS_URL:
 #
 # This service runs a SINGLE ECS task with a SINGLE uvicorn process (DesiredCount=1,
 # no --workers). Every WebSocket consumer AND every group-send publisher (turn
-# enqueue → wake, chat → interject) lives in that one process, so an in-process
+# enqueue → wake, chat → cancel) lives in that one process, so an in-process
 # layer is all the coordination that's needed — and it is the layer the Channels
 # docs recommend for a single process.
 #
