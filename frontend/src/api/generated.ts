@@ -1048,6 +1048,11 @@ export interface paths {
          *     to talk to itself. It is not weaker: the endpoint is session-authenticated,
          *     so the caller already IS the user the token acts for, and the token it
          *     receives is the same short-lived revocable row any host would get.
+         *
+         *     `page` names the canopy page the panel is on. When it is one canopy lets an
+         *     agent act on as you (read-only, within your own access), canopy also takes
+         *     a short grant to its own tools for that page; `host_grant` says whether it
+         *     did. Any other value, or none, is simply no grant.
          */
         readonly post: operations["apps_tokens_embed_api_embed_self_token"];
         readonly delete?: never;
@@ -3354,6 +3359,32 @@ export interface paths {
         readonly head?: never;
         /** Change what a connected site may do */
         readonly patch: operations["apps_tokens_connected_apps_api_update_connected_app"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/test": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Test a connected site's settings
+         * @description Try this site's settings the way canopy uses them, from canopy's server.
+         *
+         *     Reads the site's published keys, and — when it lets the agent act as the
+         *     visitor — its sign-in and MCP discovery documents, then asks its token
+         *     endpoint whether it accepts canopy as a client. That last step sends a
+         *     grant the site must refuse, so nothing is issued or used up there. Each
+         *     step comes back as pass, fail or skip, with the reason.
+         */
+        readonly post: operations["apps_tokens_connected_apps_api_test_connected_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/timeline/": {
@@ -7167,6 +7198,11 @@ export interface components {
             readonly token: string;
             /** Expires At */
             readonly expires_at: string;
+            /**
+             * Host Grant
+             * @default false
+             */
+            readonly host_grant: boolean;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -11345,6 +11381,33 @@ export interface components {
             /** Show On Canopy Pages */
             readonly show_on_canopy_pages?: boolean | null;
         };
+        /**
+         * ConnectionCheckOut
+         * @description One step of a connection test.
+         */
+        readonly ConnectionCheckOut: {
+            /** Name */
+            readonly name: string;
+            /** Label */
+            readonly label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pass" | "fail" | "skip";
+            /** Detail */
+            readonly detail: string;
+        };
+        /**
+         * ConnectionTestOut
+         * @description What canopy found when it tried this site's settings, from its own server.
+         */
+        readonly ConnectionTestOut: {
+            /** Ok */
+            readonly ok: boolean;
+            /** Checks */
+            readonly checks: readonly components["schemas"]["ConnectionCheckOut"][];
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -14933,7 +14996,9 @@ export interface operations {
     };
     readonly apps_tokens_embed_api_embed_self_token: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly page?: string;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -18479,6 +18544,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                };
+            };
+        };
+    };
+    readonly apps_tokens_connected_apps_api_test_connected_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionTestOut"];
                 };
             };
         };

@@ -996,6 +996,73 @@ any host uses (`frontend/src/widget/CanopyWidget.tsx`: `mode` at init,
 panel on a light page — which is the first thing anyone dogfooding it noticed.
 No accent is passed: canopy's accent is the widget's default.
 
+### canopy-web as a host of its own MCP (agents act as you on canopy's pages)
+
+§8a applies to canopy too: on canopy's own pages the agent can call **canopy's
+own MCP (`/api/mcp/`) as the visitor**, through the same host grant contract a
+connected site implements — not a shortcut around it. canopy-web plays the host
+with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
+`GrantHandler`, `ResourceVerifier`, `DPoPGate`, the `canopy_sdk.django` stores):
+
+| Page (route) | Page key | Scope | Tools the grant unlocks |
+|---|---|---|---|
+| `/insights` | `insights` | `insights:read` | `list_insights` |
+| `/w/:ws/agents/:slug/inbox` | `agent.inbox` | `items:read` | `list_items` |
+| `/w/:ws/agents/:slug/skills/history` | `agent.skill_history` | `skills:read` | `skill_history`, `skill_revision_diff` |
+
+All read-only. Each of those pages already declares its selection with
+`usePageState` and that `backing_tool`, which matters: the gateway unlocks only
+the page's backing tool, so a page without one would unlock nothing.
+
+**How one call goes.** The widget mints at `POST /api/embed/token?page=<key>`
+(the key comes from the route, `frontend/src/widget/grantPage.ts`, read on
+every mint because the widget outlives navigation). For a registered key canopy
+signs an ID-JAG with its host key and redeems it through the **normal consumer
+path** — checked against the `canopy-web` site's JWKS URL, token endpoint
+discovered from RFC 8414 metadata, jwt-bearer grant POSTed with canopy's real
+client assertion and DPoP proof, verified by the SDK's `GrantHandler`. Those
+requests to canopy's own URLs are answered in-process by the same functions the
+public endpoints serve (on labs the RFC 8414 location for issuer `…/canopy` is
+at the ROOT of a host the ALB routes to connect-labs). In the visitor's turn the
+agent calls `site_call`; canopy's gateway presents the token to its own
+`/api/mcp/` over HTTP with a fresh proof; the DPoP gate verifies it; the tool
+runs as the visitor, limited to the scope's tools.
+
+**The visitor is usually a member, not a contact** — canopy's pages are visited
+by canopy's users — so the grant's subject is their canopy user id and the
+resulting `HostGrant` hangs off their user. Their delegated token reaches **no
+more than their own access already does**: tools run with their own ACL, and
+only the scope's tools exist for the token (`apps/mcp/delegation.py`).
+
+**Why the browser names the page.** canopy's pages are a single-page app, so the
+server never renders a route and cannot observe which one is on screen; a signed
+page token would only sign whatever the browser asked for. So the browser names
+a page KEY and the server decides everything else: an unknown key is no grant,
+the scopes come from the server's registry (never from the request), every scope
+is read-only, and the tools run as the visitor. A browser that names the wrong
+page picks among read-only views of its own data.
+
+**Turning it on** (everything is off until all of it is set):
+
+1. `CANOPY_HOST_SIGNING_KEY` — an Ed25519 or P-256 private key PEM (Secrets
+   Manager `canopy-web/host-signing-key` on labs; `PLACEHOLDER` = off). Plus
+   canopy's client keys (`CANOPY_OAUTH_CLIENT_KEY` / `CANOPY_OAUTH_DPOP_KEY`),
+   since the only client canopy grants to is itself. Dev and tests generate all
+   three per process.
+2. On the `canopy-web` Connected site (the one showing its panel on canopy's
+   pages), in **Settings → Connected sites**: JWKS URL
+   `{CANOPY_PUBLIC_BASE_URL}/oauth/host/jwks.json`, sign-in issuer
+   `{CANOPY_PUBLIC_BASE_URL}`, MCP server `{CANOPY_PUBLIC_BASE_URL}/api/mcp/`.
+   On labs: `https://labs.connect.dimagi.com/canopy/oauth/host/jwks.json`,
+   `https://labs.connect.dimagi.com/canopy`,
+   `https://labs.connect.dimagi.com/canopy/api/mcp/`.
+3. On each agent, a capability for members naming the site and a ceiling, e.g.
+   `sites: [canopy-web]`, `ceiling: ["mcp__*canopy-web__list_*"]`,
+   `callers: [member]`. `site_tools`/`site_call` are added to it automatically.
+   (A full-profile turn — the agent's owner, a workspace owner, an admin — has
+   no caller token and so no gateway; it already runs with its own canopy login.)
+4. **Test connection** on that site should come back all green.
+
 **What this does and does not prove.** The frame is same-origin here, so none of
 the origin discipline is exercised — not `targetOrigin`, not `event.origin`
 rejection, not storage partitioning. What it does exercise is everything above

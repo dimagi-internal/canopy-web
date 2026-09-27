@@ -196,6 +196,13 @@ def client_assertion(audience: str) -> str:
     return consumer.client_assertion(_client_key(), client_id(), audience)
 
 
+def credentials() -> consumer.ClientCredentials:
+    """canopy's client identity as the SDK's `ClientCredentials` — for the
+    conformance checks a Connected site's "Test connection" runs. Raises
+    `ClientIdentityError` when unconfigured."""
+    return consumer.ClientCredentials(client_id(), _client_key(), _dpop_key())
+
+
 def dpop_jkt() -> str:
     """The thumbprint a DPoP-bound token is bound to (`cnf.jkt`)."""
     return consumer.dpop_jkt(_dpop_key())

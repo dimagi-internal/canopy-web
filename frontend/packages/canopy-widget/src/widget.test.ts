@@ -230,6 +230,19 @@ describe('the credential path', () => {
     expect(init_.method).toBe('POST')
   })
 
+  it('reads a tokenUrl function on every mint, so a later mint names the page now on screen', async () => {
+    // canopy's own single-page app: the widget outlives navigation, and the
+    // token endpoint needs the page the visitor is on AT MINT TIME.
+    let page = 'insights'
+    const { fromFrame } = widgetHarness({ tokenUrl: () => `${TOKEN_URL}?page=${page}` })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    page = 'agent.inbox'
+    await fromFrame({ source: SOURCE, type: 'token-request', id: 'r2' })
+
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    expect(urls).toEqual([`${TOKEN_URL}?page=insights`, `${TOKEN_URL}?page=agent.inbox`])
+  })
+
   it('sends the CSRF header when the host uses a csrftoken cookie', async () => {
     document.cookie = 'csrftoken=abc123'
     const { fromFrame } = widgetHarness()

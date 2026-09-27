@@ -156,3 +156,7 @@ class EmbedSelfTokenOut(StrictModel):
 
     token: str
     expires_at: str
+    #: Whether canopy also holds a grant to act as you at its OWN tools for
+    #: the page you named (`?page=`) — see `apps/tokens/self_host.py`. False
+    #: for an unregistered page, or when canopy-web is not set up as a host.
+    host_grant: bool = False

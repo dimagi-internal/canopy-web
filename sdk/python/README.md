@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.1.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.2.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.1.0/dimagi_canopy-0.1.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.2.0/dimagi_canopy-0.2.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
@@ -46,7 +46,7 @@ library, address-pinned.
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `{% canopy_panel %}` |
-| `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_grant`, `check_mcp`, `run`; pytest fixtures |
+| `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; pytest fixtures |
 
 ## A Django host in five steps
 
@@ -108,9 +108,12 @@ with `arrival_payload`, serve `GrantHandler(...).handle(form, dpop_header)` from
 your token endpoint, and wrap your MCP ASGI app in `DPoPGate(app, verifier)`.
 Provide a `JtiStore` and `TokenStore` shared across workers that **fail closed**.
 
-**canopy-web can be a host too.** Nothing assumes the host is not canopy:
-issuer, resource, client id and every URL are configuration, so canopy-web can
-mount these pieces in-process to let agents call its own MCP as the visitor.
+**canopy-web is a host too.** Nothing assumes the host is not canopy:
+issuer, resource, client id and every URL are configuration. canopy-web mounts
+`HostConfig`, `GrantHandler`, `ResourceVerifier`, `DPoPGate` and the
+`canopy_sdk.django` stores in-process so agents on canopy's own pages call its
+OWN MCP (`/api/mcp/`) as the visitor — see canopy-web `apps/tokens/self_host.py`
+and `docs/architecture/embedding-a-canopy-agent.md`.
 
 ## Conformance
 
@@ -123,6 +126,17 @@ report = conformance.run(
 )
 print(report); report.raise_for_failures()
 ```
+
+Without the host's signing key there is no ID-JAG to redeem, but whoever holds
+canopy's CLIENT keys can still prove the host accepts canopy as its client:
+
+```python
+report = conformance.check_client(issuer, resource, credentials=canopy_client_credentials)
+# client_accepted: invalid_grant for a throwaway-signed ID-JAG = the client got through
+```
+
+That is what canopy-web's **Connected sites → Test connection** runs, beside
+`check_metadata` and `check_jwks`, from canopy's own server.
 
 Network is used only inside those calls, through replaceable transports. For
 your own CI, opt in to the fixtures:

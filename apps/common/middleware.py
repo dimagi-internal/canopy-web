@@ -51,6 +51,14 @@ PUBLIC_PATH_PREFIXES = (
     # anything that can sign (apps/tokens/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
+    # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): the
+    # jwt-bearer token endpoint (self-enforces: private_key_jwt + DPoP + a
+    # signed grant, one allowed client), the host key's PUBLIC half, and the
+    # discovery documents. Nothing here can sign or read tenant data.
+    "/oauth/token",
+    "/oauth/host/jwks.json",
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-protected-resource",
     # The contact surface. A contact token deliberately produces no
     # `request.user`, so every one of these would bounce to a login page that
     # a person with no canopy account can never complete. Listed as a PREFIX

@@ -2,6 +2,16 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.2.0 — 2026-09-27
+
+- `canopy_sdk.conformance.check_client` — does a host accept canopy as its
+  client, provable WITHOUT the host's signing key: the real `private_key_jwt`
+  assertion and DPoP proof, carrying an ID-JAG signed by a throwaway key.
+  `invalid_grant` means the client authenticated; `invalid_client` means it
+  did not; a 200 means the host accepted a grant it never issued. Nothing is
+  spent at the host. `run()` includes it when given `credentials` and no
+  `id_jag`. canopy-web's Connected sites "Test connection" uses it.
+
 ## 0.1.0 — 2026-09-27
 
 First release. Implements host grant contract v1 (`CONTRACT_VERSION = "1"`).

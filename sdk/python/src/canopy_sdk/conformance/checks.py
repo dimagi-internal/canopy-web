@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -164,6 +165,76 @@ def check_grant(issuer: str, resource: str, *, id_jag: str, credentials: consume
     return report, token
 
 
+def check_client(issuer: str, resource: str, credentials: consumer.ClientCredentials, *,
+                 fetch_json: Callable[[str], dict] | None = None,
+                 post_form: Callable | None = None) -> Report:
+    """Whether the host accepts ``credentials`` as its client — with no grant to spend.
+
+    For an operator who holds canopy's client keys but not the host's signing
+    key (so ``check_grant`` is out of reach). It sends the jwt-bearer grant
+    exactly as canopy would — the real ``private_key_jwt`` client assertion and
+    a real DPoP proof — carrying an ID-JAG signed by a THROWAWAY key the host
+    cannot know. A conforming host authenticates the client first (which means
+    fetching canopy's metadata document and JWKS) and only then looks at the
+    grant, so:
+
+    * ``invalid_grant`` — the client got through; the host refused the grant, as
+      it must;
+    * ``invalid_client`` — the host does not accept this client (not
+      allowlisted, or it could not read or match canopy's keys);
+    * a 200 — the host accepted a grant signed by a key it never issued, which
+      is the failure this check exists to find.
+
+    Nothing is spent at the host: every ``jti`` is consumed only after every
+    check passed, and this grant fails one.
+    """
+    from ..jose import new_jti, sign
+    from ..keys import generate_private_key, public_jwk
+
+    get = fetch_json or fetch.get_json
+    post = post_form or (lambda url, data, headers, what="": fetch.post_form(url, data, headers=headers))
+    report = Report()
+    issuer = contract.normalize_url(issuer)
+    try:
+        doc = get(contract.metadata_url(issuer))
+        endpoint = consumer.validate_authorization_server_metadata(doc, issuer)
+        fetch.vet_url(endpoint)
+    except (fetch.FetchError, consumer.RedemptionRefused) as exc:
+        report.add("client_token_endpoint", False, f"the token endpoint could not be discovered: {exc}")
+        return report
+    report.add("client_token_endpoint", True, endpoint)
+
+    throwaway = generate_private_key("EdDSA")
+    now = int(time.time())
+    probe = sign({
+        "iss": issuer, "aud": issuer, "sub": "canopy-conformance-probe",
+        "client_id": credentials.client_id, "resource": resource, "scope": "",
+        "iat": now, "exp": now + 60, "jti": new_jti(),
+    }, throwaway, headers={"typ": contract.ID_JAG_TYP, "kid": public_jwk(throwaway)["kid"]})
+    try:
+        status, body = consumer.request_token(
+            post, endpoint, consumer.redemption_form(probe, client_id=credentials.client_id, resource=resource),
+            audience=issuer, client_assertion=credentials.client_assertion, dpop_proof=credentials.dpop_proof)
+    except fetch.FetchError as exc:
+        report.add("client_accepted", False, f"the token endpoint could not be reached: {exc}")
+        return report
+    error = str((body or {}).get("error") or "") if isinstance(body, dict) else ""
+    if status == 200:
+        report.add("client_accepted", True, "canopy authenticated")
+        report.add("client_refuses_foreign_grant", False,
+                   "the host issued a token for an ID-JAG signed by a key it never held")
+    elif error == "invalid_grant":
+        report.add("client_accepted", True, "canopy authenticated; the probe grant was refused, as it must be")
+        report.add("client_refuses_foreign_grant", True, "invalid_grant")
+    elif error == "invalid_client":
+        report.add("client_accepted", False,
+                   "invalid_client: the host does not accept this client_id, or could not read or "
+                   "match its keys")
+    else:
+        report.add("client_accepted", False, f"HTTP {status} {error or 'no OAuth error code'}")
+    return report
+
+
 # --- MCP ----------------------------------------------------------------------------------------
 
 
@@ -244,10 +315,13 @@ def run(issuer: str, resource: str, *, jwks_url: str = "", id_jag: str = "",
         credentials: consumer.ClientCredentials | None = None,
         fetch_json: Callable[[str], dict] | None = None, post_form: Callable | None = None,
         post_json: Callable | None = None) -> Report:
-    """Every check the arguments allow."""
+    """Every check the arguments allow: with ``credentials`` but no ``id_jag``,
+    ``check_client``; with both, the grant and MCP round trip."""
     report = check_metadata(issuer, resource, fetch_json=fetch_json)
     if jwks_url:
         report.extend(check_jwks(jwks_url, fetch_json=fetch_json))
+    if credentials is not None and not id_jag:
+        report.extend(check_client(issuer, resource, credentials, fetch_json=fetch_json, post_form=post_form))
     if id_jag and credentials is not None:
         grant_report, token = check_grant(issuer, resource, id_jag=id_jag, credentials=credentials,
                                           fetch_json=fetch_json, post_form=post_form)
