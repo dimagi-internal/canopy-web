@@ -5,8 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionSocket } from "./useSessionSocket";
 
 /** Per-person typing visibility: a person chooses how their own in-progress
- *  message appears to others (live / typing / hidden). The hook holds the
- *  choice, persists it per browser, and stamps every `draft.update` with it. */
+ *  message appears to others (live / typing / hidden). The mode is its OWN
+ *  idempotent, unversioned frame (`draft.set_visibility`) — never a field on
+ *  the version-guarded `draft.update` keystroke frame, which is exactly what
+ *  let a stale keystroke echo race a mode change and downgrade it
+ *  server-side (canopy-ui#… "hidden->live->hidden" regression). The hook
+ *  holds the choice, persists it per browser, and applies it unconditionally
+ *  both ways: every explicit choice reaches the server regardless of
+ *  presence or body, and a `draft.updated` echo's visibility is adopted
+ *  unconditionally (only an explicit choice — here, another tab, or another
+ *  device — ever changes it server-side, so last-choice-wins is simply
+ *  correct). */
 
 class FakeSocket {
   static OPEN = 1;
@@ -75,25 +84,16 @@ function connectedWith(presenceIds: number[]) {
   return hook;
 }
 
-function draftUpdateFrames() {
-  return FakeSocket.last!.sent
-    .map((f) => JSON.parse(f))
-    .filter((f) => f.action === "draft.update");
+function sentFrames(action: string) {
+  return FakeSocket.last!.sent.map((f) => JSON.parse(f)).filter((f) => f.action === action);
 }
+const draftUpdateFrames = () => sentFrames("draft.update");
+const setVisibilityFrames = () => sentFrames("draft.set_visibility");
 
 describe("typingVisibility", () => {
   it("defaults to live", () => {
     const hook = connectedWith([1, 2]);
     expect(hook.result.current.typingVisibility).toBe("live");
-  });
-
-  it("every draft.update carries the current visibility", () => {
-    const hook = connectedWith([1, 2]);
-    act(() => hook.result.current.setTypingVisibility("typing"));
-    act(() => hook.result.current.updateDraft("hello"));
-    act(() => vi.advanceTimersByTime(200));
-    const last = draftUpdateFrames().at(-1)!;
-    expect(last.data.visibility).toBe("typing");
   });
 
   it("persists the mode across a remount", () => {
@@ -105,39 +105,21 @@ describe("typingVisibility", () => {
     expect(second.result.current.typingVisibility).toBe("hidden");
   });
 
-  it("re-sends immediately on a mode change when live sync is on and there's a body", () => {
-    const hook = connectedWith([1, 2]); // presence > 1 => live sync on
-    act(() => hook.result.current.updateDraft("mid thought"));
-    act(() => vi.advanceTimersByTime(200)); // flush the debounce
-    const before = draftUpdateFrames().length;
-    act(() => hook.result.current.setTypingVisibility("hidden"));
-    const frames = draftUpdateFrames();
-    expect(frames.length).toBeGreaterThan(before);
-    expect(frames.at(-1)!.data.visibility).toBe("hidden");
-    expect(frames.at(-1)!.data.body).toBe("mid thought");
+  it("choosing a mode sends draft.set_visibility, presence or not, body or not", () => {
+    // No gate at all: it's one tiny idempotent frame, unconditional
+    // server-side too — there is nothing left to gate on.
+    const alone = connectedWith([1]);
+    act(() => alone.result.current.setTypingVisibility("hidden"));
+    expect(setVisibilityFrames()).toEqual([{ action: "draft.set_visibility", data: { visibility: "hidden" } }]);
   });
 
-  it("does not send on a mode change when the draft is empty", () => {
+  it("a keystroke's draft.update never carries a visibility field", () => {
     const hook = connectedWith([1, 2]);
-    const before = draftUpdateFrames().length;
     act(() => hook.result.current.setTypingVisibility("typing"));
-    expect(draftUpdateFrames().length).toBe(before);
-  });
-
-  it("reaches the server on a mode change even while ALONE (privacy fix)", () => {
-    // Gating the immediate send on presence left a hole: switch to Hidden
-    // while alone, and the server's row stays `live` with the real body —
-    // so a peer who joins later reads the words straight off the snapshot.
-    const hook = connectedWith([1]); // alone: presence set is just me
-    act(() => hook.result.current.updateDraft("mid thought"));
+    act(() => hook.result.current.updateDraft("hello"));
     act(() => vi.advanceTimersByTime(200));
-    // Alone, so the keystroke debounce above never actually sent anything.
-    expect(draftUpdateFrames().length).toBe(0);
-    act(() => hook.result.current.setTypingVisibility("hidden"));
-    const frames = draftUpdateFrames();
-    expect(frames.length).toBe(1);
-    expect(frames[0].data.visibility).toBe("hidden");
-    expect(frames[0].data.body).toBe("mid thought");
+    const last = draftUpdateFrames().at(-1)!;
+    expect(last.data).toEqual({ version: 1, body: "hello" });
   });
 
   it("adopts a mode carried on my own draft.updated frame (other-tab sync)", () => {
@@ -150,73 +132,29 @@ describe("typingVisibility", () => {
       }),
     );
     expect(hook.result.current.typingVisibility).toBe("hidden");
-  });
-
-  it("a stale LOOSER echo never downgrades a more private mode already chosen (regression)", () => {
-    // Race: keystroke debounce sends {visibility: live} just before the user
-    // picks Hidden. The server's echo for the earlier (live) send can still
-    // arrive AFTER the mode change. It must be ignored — an echo may only
-    // TIGHTEN the mode, never loosen it.
-    const hook = connectedWith([1, 2]);
-    act(() => hook.result.current.updateDraft("secret"));
-    act(() => vi.advanceTimersByTime(200)); // the stale "live" send goes out
-    act(() => hook.result.current.setTypingVisibility("hidden"));
-
-    act(() =>
-      FakeSocket.last!.receive({
-        event: "draft.updated",
-        data: { ...DRAFT, body: "secret", version: 2, visibility: "live" },
-      }),
-    );
-
-    expect(hook.result.current.typingVisibility).toBe("hidden");
     expect(storage.getItem("canopy.chat.typingVisibility")).toBe("hidden");
   });
 
-  it("a version mismatch after a mode change resends exactly once with the intended mode", () => {
+  it("adopts a LOOSENING carried on my own draft.updated frame too — last choice wins", () => {
+    // The mode can only ever change server-side via an explicit choice now
+    // (this tab, another tab, or another device), so a looser echo is a real
+    // choice made elsewhere, not a stale race — it must be adopted exactly
+    // like a tightening one.
     const hook = connectedWith([1, 2]);
-    act(() => hook.result.current.updateDraft("secret"));
-    act(() => vi.advanceTimersByTime(200)); // stale "live" send, version 1
-    act(() => hook.result.current.setTypingVisibility("hidden")); // failed write, still version 1
-    const before = draftUpdateFrames().length;
-
+    act(() => hook.result.current.setTypingVisibility("hidden"));
     act(() =>
       FakeSocket.last!.receive({
-        event: "session.error",
-        data: {
-          code: "draft_version_mismatch",
-          message: "Draft changed since your last edit.",
-          detail: { current_version: 2, current_body: "secret" },
-        },
+        event: "draft.updated",
+        data: { ...DRAFT, visibility: "live" },
       }),
     );
-
-    const frames = draftUpdateFrames();
-    expect(frames.length).toBe(before + 1);
-    const resend = frames.at(-1)!;
-    expect(resend.data.version).toBe(2);
-    expect(resend.data.visibility).toBe("hidden");
-    expect(resend.data.body).toBe("secret");
-
-    // A second mismatch must not trigger a second automatic resend — bounded
-    // to one attempt per mode-change episode.
-    act(() =>
-      FakeSocket.last!.receive({
-        event: "session.error",
-        data: {
-          code: "draft_version_mismatch",
-          message: "Draft changed since your last edit.",
-          detail: { current_version: 3, current_body: "secret" },
-        },
-      }),
-    );
-    expect(draftUpdateFrames().length).toBe(before + 1);
+    expect(hook.result.current.typingVisibility).toBe("live");
+    expect(storage.getItem("canopy.chat.typingVisibility")).toBe("live");
   });
 
-  it("reconciles a stale server visibility off the very first snapshot, even alone", () => {
-    // Minor 3: don't wait for a peer to join (the join's OWN snapshot is read
-    // before we ever see them arrive) — reconcile the instant our own
-    // reconnect snapshot disagrees with our chosen mode.
+  it("reconciles a mismatched mode off the very first snapshot, even alone — mode only, no body", () => {
+    // Covers a choice made while disconnected, or before the draft existed.
+    // Just the mode, on its own idempotent frame — never a draft.update.
     storage.setItem("canopy.chat.typingVisibility", "hidden");
     const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
     act(() => {
@@ -233,8 +171,52 @@ describe("typingVisibility", () => {
       });
     });
     expect(hook.result.current.typingVisibility).toBe("hidden");
-    const frames = draftUpdateFrames();
-    expect(frames).toHaveLength(1);
-    expect(frames[0].data).toEqual({ version: 5, body: "leftover words", visibility: "hidden" });
+    expect(setVisibilityFrames()).toEqual([
+      { action: "draft.set_visibility", data: { visibility: "hidden" } },
+    ]);
+    expect(draftUpdateFrames()).toEqual([]);
+  });
+
+  it("does not reconcile when the snapshot already agrees", () => {
+    storage.setItem("canopy.chat.typingVisibility", "live");
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    act(() => {
+      FakeSocket.last!.onopen?.();
+      FakeSocket.last!.receive({
+        event: "session.state",
+        data: {
+          messages: [],
+          active_draft: { ...DRAFT, visibility: "live" },
+          participants: [],
+          presence_user_ids: [1],
+          current_user_id: 1,
+        },
+      });
+    });
+    expect(hook.result.current.typingVisibility).toBe("live");
+    expect(setVisibilityFrames()).toEqual([]);
+  });
+
+  it("a draft_version_mismatch never touches the mode", () => {
+    const hook = connectedWith([1, 2]);
+    act(() => hook.result.current.setTypingVisibility("hidden"));
+    act(() => hook.result.current.updateDraft("secret"));
+    act(() => vi.advanceTimersByTime(200));
+
+    act(() =>
+      FakeSocket.last!.receive({
+        event: "session.error",
+        data: {
+          code: "draft_version_mismatch",
+          message: "Draft changed since your last edit.",
+          detail: { current_version: 2, current_body: "secret" },
+        },
+      }),
+    );
+
+    // No automatic resend of anything mode-related — a body conflict has
+    // nothing to do with the mode any more.
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+    expect(setVisibilityFrames()).toHaveLength(1); // only the explicit choice above
   });
 });

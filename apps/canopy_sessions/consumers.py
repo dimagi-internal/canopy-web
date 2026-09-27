@@ -24,7 +24,9 @@ from .models import Draft, Message, Session, SessionParticipant
 _EDIT_ROLES = {SessionParticipant.OWNER, SessionParticipant.EDITOR}
 # `draft.take_over` is a no-op now (everyone has their own draft) but stays
 # listed so a viewer's old client is still told `forbidden`.
-_EDIT_ACTIONS = ("draft.update", "draft.take_over", "draft.discard", "chat.send")
+_EDIT_ACTIONS = (
+    "draft.update", "draft.take_over", "draft.discard", "draft.set_visibility", "chat.send",
+)
 
 
 #: Query value that switches this socket to AG-UI. Opt-in per CONNECTION, and
@@ -239,6 +241,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             return
         elif action == "draft.discard":
             await self._draft_discard()
+        elif action == "draft.set_visibility":
+            await self._draft_set_visibility(data)
         elif action == "chat.send":
             await self._chat_send(data if isinstance(data, dict) else {})
 
@@ -251,12 +255,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def _draft_update(self, data):
         try:
-            visibility = data.get("visibility")
+            # `visibility` is deliberately NOT read here any more. It used to
+            # ride this version-guarded frame, which meant a stale keystroke
+            # echo could race a mode change and downgrade it server-side
+            # (canopy-ui#… "hidden->live->hidden" regression) — the version
+            # check that protects the BODY has nothing to do with a choice
+            # the user makes independently of typing. See `draft.set_visibility`.
+            # An in-flight 0.14 client that still sends the field is simply
+            # ignored here, not erred on.
             draft = await database_sync_to_async(drafts.update_draft)(
                 self.session, user=self.user,
                 expected_version=int(data.get("version", 0)),
                 body=str(data.get("body", "")),
-                visibility=visibility if isinstance(visibility, str) else None,
             )
         except drafts.DraftVersionMismatch as exc:
             await self._error(
@@ -264,6 +274,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 {"current_version": exc.current_version, "current_body": exc.current_body},
             )
             return
+        await self._broadcast_draft(draft)
+
+    async def _draft_set_visibility(self, data):
+        """The mode is its OWN idempotent frame, not a field on the version-
+        guarded keystroke frame — applied unconditionally (no version check),
+        so it can never race a keystroke and never itself causes a
+        `draft_version_mismatch`. See `drafts.set_visibility`."""
+        visibility = data.get("visibility")
+        draft = await database_sync_to_async(drafts.set_visibility)(
+            self.session, user=self.user,
+            visibility=visibility if isinstance(visibility, str) else "",
+        )
         await self._broadcast_draft(draft)
 
     async def _draft_discard(self):

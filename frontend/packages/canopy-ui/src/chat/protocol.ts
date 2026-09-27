@@ -276,7 +276,13 @@ export interface SessionState {
 export type WsAction =
   | { action: "chat.send"; data: Record<string, never> }
   | { action: "chat.stop"; data: { message_id: string } }
-  | { action: "draft.update"; data: { version: number; body: string; visibility?: TypingVisibility } }
+  | { action: "draft.update"; data: { version: number; body: string } }
+  // The mode is its OWN idempotent frame, not a field on the version-guarded
+  // `draft.update` above — applied unconditionally server-side (no version
+  // check), so it can never race a keystroke and never itself causes a
+  // `draft_version_mismatch`. A `draft.update` carrying a stray `visibility`
+  // (an in-flight older 0.14 client) is simply ignored server-side.
+  | { action: "draft.set_visibility"; data: { visibility: TypingVisibility } }
   /** @deprecated accepted and ignored by the server since 0.13 — every editor
    *  gets their own draft now, so there is no lock left to take over. */
   | { action: "draft.take_over"; data: Record<string, never> }

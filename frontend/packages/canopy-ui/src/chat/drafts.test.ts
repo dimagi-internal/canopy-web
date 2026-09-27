@@ -4,7 +4,6 @@ import {
   DRAFT_STORAGE_TTL_MS,
   clearStoredDraft,
   draftStorageKey,
-  isMorePrivateVisibility,
   readStoredDraft,
   readStoredTypingVisibility,
   shouldSyncDraftLive,
@@ -185,19 +184,5 @@ describe("readStoredTypingVisibility / writeStoredTypingVisibility", () => {
     }
     expect(readStoredTypingVisibility(hostile)).toBeNull()
     expect(() => writeStoredTypingVisibility(hostile, "live")).not.toThrow()
-  })
-})
-
-describe("isMorePrivateVisibility", () => {
-  it("orders live < typing < hidden", () => {
-    expect(isMorePrivateVisibility("typing", "live")).toBe(true)
-    expect(isMorePrivateVisibility("hidden", "live")).toBe(true)
-    expect(isMorePrivateVisibility("hidden", "typing")).toBe(true)
-  })
-
-  it("is false for an equal or looser mode", () => {
-    expect(isMorePrivateVisibility("live", "live")).toBe(false)
-    expect(isMorePrivateVisibility("live", "hidden")).toBe(false)
-    expect(isMorePrivateVisibility("typing", "hidden")).toBe(false)
   })
 })

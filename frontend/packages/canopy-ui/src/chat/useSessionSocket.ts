@@ -5,7 +5,6 @@ import type { Draft, Message, SessionState, TypingVisibility, WsEvent } from "./
 import {
   TYPING_VISIBILITY_STORAGE_KEY,
   defaultDraftStorage,
-  isMorePrivateVisibility,
   readStoredTypingVisibility,
   shouldSyncDraftLive,
   writeStoredTypingVisibility,
@@ -247,26 +246,10 @@ export function useSessionSocket({
   // vocabulary mid-session.
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
-  // Read inside the debounced `draft.update` timeout, which closes over
-  // whatever was current when it was SCHEDULED otherwise.
+  // Read wherever the mode needs to be sent or compared, closing over
+  // whatever is CURRENT rather than whatever a callback was created with.
   const typingVisibilityRef = useRef(typingVisibility);
   typingVisibilityRef.current = typingVisibility;
-  // What the user last EXPLICITLY chose — distinct from `typingVisibilityRef`
-  // (the currently-DISPLAYED mode) so a `draft_version_mismatch` recovery can
-  // re-assert it even if something else about the displayed ref were ever in
-  // question. In practice they track together; kept separate because they
-  // answer different questions ("what should the server end up with" vs.
-  // "what does the UI show right now").
-  const intendedVisibilityRef = useRef(typingVisibility);
-  // The visibility the SERVER most recently confirmed it actually holds, from
-  // any `draft.updated` echo — regardless of whether it was tighter or
-  // looser than ours. Used only to decide whether a version-mismatch retry is
-  // needed: no point resending when the server already agrees with us.
-  const serverVisibilityRef = useRef<TypingVisibility | null>(null);
-  // Bounds the version-mismatch auto-resend to ONE attempt per mode-change
-  // episode, so a persistent version race cannot loop. Re-armed by the next
-  // explicit `setTypingVisibility` call.
-  const mismatchResendArmedRef = useRef(true);
   const warnedNativeRef = useRef(false);
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
@@ -299,8 +282,6 @@ export function useSessionSocket({
       const next = readStoredTypingVisibility(defaultDraftStorage());
       if (next != null && next !== typingVisibilityRef.current) {
         typingVisibilityRef.current = next;
-        intendedVisibilityRef.current = next;
-        mismatchResendArmedRef.current = true;
         setTypingVisibilityState(next);
       }
     };
@@ -360,28 +341,17 @@ export function useSessionSocket({
     }
     // `draft.updated` only ever reaches the AUTHOR's own sockets (see
     // `_broadcast_draft`), so this is always MY draft, echoed — including
-    // from a mode I changed in a DIFFERENT tab of my own. Without adopting
-    // it, tab 2 kept showing "My text" after tab 1 switched to Hidden, and
-    // tab 2's next keystroke re-exposed the words under the stale `live`
-    // mode it never knew had changed.
+    // from a mode change in a DIFFERENT tab of my own, or from THIS tab's own
+    // `draft.set_visibility` round-tripping back. Adopted UNCONDITIONALLY:
+    // since the mode is now its own idempotent, unversioned frame
+    // (`draft.set_visibility`) rather than a field racing keystrokes on
+    // `draft.update`, the only thing that ever changes it server-side is an
+    // explicit choice — made here, in another tab, or on another device — so
+    // last-choice-wins is simply correct, with no downgrade race to guard
+    // against.
     if (frame.event === "draft.updated" && frame.data.visibility) {
-      // Ground truth for "what does the server currently hold" — tracked
-      // regardless of direction, so the mismatch handler below can tell
-      // whether a resend is still needed.
-      serverVisibilityRef.current = frame.data.visibility;
-      // But adopted into the DISPLAYED mode only when it TIGHTENS it. An
-      // echo can arrive stale relative to a mode change that raced it (the
-      // keystroke debounce's `live` send, acknowledged AFTER the user
-      // already switched to Hidden) — adopting that would silently downgrade
-      // a more private mode the user explicitly chose. A genuine, user-
-      // initiated LOOSENING still reaches another tab of the same browser
-      // via the `storage` listener below, which is not this echo path.
-      if (
-        frame.data.visibility !== typingVisibilityRef.current &&
-        isMorePrivateVisibility(frame.data.visibility, typingVisibilityRef.current)
-      ) {
+      if (frame.data.visibility !== typingVisibilityRef.current) {
         typingVisibilityRef.current = frame.data.visibility;
-        intendedVisibilityRef.current = frame.data.visibility;
         setTypingVisibilityState(frame.data.visibility);
         writeStoredTypingVisibility(defaultDraftStorage(), frame.data.visibility);
       }
@@ -395,20 +365,13 @@ export function useSessionSocket({
     // A fresh snapshot (initial connect or reconnect) is read by anyone
     // joining right now — including a joiner whose OWN client hasn't
     // rendered them arriving yet, so waiting for "someone else is present"
-    // is too late. Reconcile immediately whenever our own draft's server-held
-    // visibility disagrees with what we actually chose, alone or not.
+    // is too late. Covers a mode chosen while disconnected, or before the
+    // draft existed at all. Just the mode, on its own idempotent frame — no
+    // body re-send tied to it, since the body is `draft.update`'s job alone.
     if (frame.event === "session.state") {
       const ad = frame.data.active_draft;
-      if (ad != null && ad.body && ad.visibility && ad.visibility !== intendedVisibilityRef.current) {
-        if (draftDebounceRef.current != null) {
-          window.clearTimeout(draftDebounceRef.current);
-          draftDebounceRef.current = null;
-        }
-        pendingDraftBodyRef.current = null;
-        send({
-          action: "draft.update",
-          data: { version: ad.version, body: ad.body, visibility: intendedVisibilityRef.current },
-        });
+      if (ad != null && ad.visibility && ad.visibility !== typingVisibilityRef.current) {
+        send({ action: "draft.set_visibility", data: { visibility: typingVisibilityRef.current } });
       }
     }
     // Side-effect events: handle BEFORE setState so React strict-mode's
@@ -424,38 +387,14 @@ export function useSessionSocket({
         frame.data.detail &&
         typeof frame.data.detail === "object"
       ) {
-        const detail = frame.data.detail as { current_version?: number; current_body?: string };
         // Clear any pending optimistic body so the user's stale local
-        // text doesn't auto-re-send with the new version.
+        // text doesn't auto-re-send with the new version. The mode is
+        // unaffected by this — it never rides `draft.update`, so a body
+        // conflict here has nothing to do with it and needs no recovery.
         pendingDraftBodyRef.current = null;
         if (draftDebounceRef.current != null) {
           window.clearTimeout(draftDebounceRef.current);
           draftDebounceRef.current = null;
-        }
-        // A failed write can be OUR mode-change getting rejected — the
-        // server's row is left at whatever visibility a DIFFERENT, earlier
-        // write landed with, and unlike an ordinary lost keystroke, nobody
-        // else will ever correct that on their own. Retry once with the
-        // corrected version, forcing the intended mode — but only if the
-        // server isn't already known to agree with us (no point resending a
-        // mismatch caused by something else entirely), and at most once per
-        // mode-change episode (re-armed by the next explicit choice).
-        const bodyNow = stateRef.current.active_draft?.body;
-        if (
-          mismatchResendArmedRef.current &&
-          typeof detail.current_version === "number" &&
-          bodyNow &&
-          serverVisibilityRef.current !== intendedVisibilityRef.current
-        ) {
-          mismatchResendArmedRef.current = false;
-          send({
-            action: "draft.update",
-            data: {
-              version: detail.current_version,
-              body: bodyNow,
-              visibility: intendedVisibilityRef.current,
-            },
-          });
         }
       }
     }
@@ -640,7 +579,7 @@ export function useSessionSocket({
           pendingDraftBodyRef.current = null;
           send({
             action: "draft.update",
-            data: { version: current.version, body: pending, visibility: typingVisibilityRef.current },
+            data: { version: current.version, body: pending },
           });
         }
       }, DRAFT_UPDATE_DEBOUNCE_MS);
@@ -652,35 +591,18 @@ export function useSessionSocket({
     (visibility: TypingVisibility) => {
       setTypingVisibilityState(visibility);
       typingVisibilityRef.current = visibility;
-      intendedVisibilityRef.current = visibility;
-      // A fresh, explicit choice earns a fresh chance at the mismatch retry
-      // below — otherwise one exhausted retry from an EARLIER mode change
-      // would silently disable recovery for every later one.
-      mismatchResendArmedRef.current = true;
       writeStoredTypingVisibility(defaultDraftStorage(), visibility);
-      // Reach the server on a mode change EVEN WHILE ALONE. Gating this on
-      // presence was the privacy hole: switch to Hidden with nobody here to
-      // "switch over", and the server's row was left `live` with the real
-      // body — so a peer who joins later (within the 10-minute freshness
-      // window) read the words straight off their connect snapshot, which
-      // asks nothing about who was watching when the mode changed. The only
-      // real gate is "is there anything to withhold" (a non-empty body).
-      const current = stateRef.current.active_draft;
-      if (current != null && current.body) {
-        // Cancel a scheduled keystroke-debounce send: left to fire moments
-        // later at the same version, it would double-send and the second
-        // write 409s as `draft_version_mismatch` (the first already bumped
-        // the version server-side).
-        if (draftDebounceRef.current != null) {
-          window.clearTimeout(draftDebounceRef.current);
-          draftDebounceRef.current = null;
-        }
-        pendingDraftBodyRef.current = null;
-        send({
-          action: "draft.update",
-          data: { version: current.version, body: current.body, visibility },
-        });
-      }
+      // The mode is its OWN idempotent frame — applied unconditionally
+      // server-side, no version check — so it is sent unconditionally here
+      // too: no presence gate (a mode change must reach the server even
+      // while ALONE, or a peer who joins later reads the old mode straight
+      // off their connect snapshot) and no body check (there is nothing
+      // version-guarded here to race, so there is nothing to lose by
+      // sending it plainly every time). If the socket happens to be closed
+      // the send is simply dropped, same as any other frame — the
+      // `session.state` reconcile below covers exactly that case on the
+      // next connect.
+      send({ action: "draft.set_visibility", data: { visibility } });
     },
     [send],
   );
@@ -703,19 +625,11 @@ export function useSessionSocket({
     if (!liveSync) return;
     const pending = pendingDraftBodyRef.current;
     const current = stateRef.current.active_draft;
-    if (current == null) return;
-    // Belt-and-braces alongside `setTypingVisibility`'s own immediate send: if
-    // the server's row still disagrees with our chosen mode (e.g. the earlier
-    // send never landed — socket was reconnecting), a fresh join is a second
-    // chance to reconcile it before anyone reads the snapshot.
-    const visibilityDrifted =
-      Boolean(current.body) && current.visibility !== intendedVisibilityRef.current;
-    if (pending == null && !visibilityDrifted) return;
-    const body = pending ?? current.body;
+    if (pending == null || current == null) return;
     pendingDraftBodyRef.current = null;
     send({
       action: "draft.update",
-      data: { version: current.version, body, visibility: intendedVisibilityRef.current },
+      data: { version: current.version, body: pending },
     });
   }, [liveSync, send]);
 

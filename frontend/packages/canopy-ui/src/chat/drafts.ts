@@ -191,27 +191,3 @@ export function writeStoredTypingVisibility(
     // `writeStoredDraft`.
   }
 }
-
-const VISIBILITY_PRIVACY_RANK: Record<TypingVisibility, number> = {
-  live: 0,
-  typing: 1,
-  hidden: 2,
-};
-
-/**
- * Whether `candidate` is a STRICTLY more private mode than `than` — the
- * order `live < typing < hidden`.
- *
- * The one place this matters: adopting a mode off a `draft.updated` ECHO,
- * which can arrive stale relative to a mode change the user already made
- * (the echo is for an earlier, less-private send that raced the change). An
- * echo may only TIGHTEN the adopted mode, never loosen it — loosening a
- * mode nobody asked for is a privacy regression, while failing to tighten
- * one already asked for just means one echo was ignored, corrected by the
- * next. A genuine, user-initiated loosening still reaches another tab of
- * the SAME browser via the `storage` event, which this function has nothing
- * to do with.
- */
-export function isMorePrivateVisibility(candidate: TypingVisibility, than: TypingVisibility): boolean {
-  return VISIBILITY_PRIVACY_RANK[candidate] > VISIBILITY_PRIVACY_RANK[than];
-}

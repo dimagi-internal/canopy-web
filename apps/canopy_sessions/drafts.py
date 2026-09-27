@@ -30,25 +30,41 @@ def draft_for(session: Session, user) -> Draft:
     return draft
 
 
-def update_draft(session: Session, *, user, expected_version: int, body: str,
-                 visibility: str | None = None) -> Draft:
-    """`visibility`, when given and one of `Draft.VISIBILITY_CHOICES`, is stored
-    alongside the body — the author's own choice of how much of this draft
-    peers get to see. An old client never sends it (None), and an invalid
-    value is silently ignored rather than raised: neither is a reason to fail
-    the keystroke that carries it."""
-    valid_visibility = {c for c, _ in Draft.VISIBILITY_CHOICES}
+def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
+    """The version-guarded keystroke path. Deliberately has no `visibility`
+    parameter any more (canopy-ui#… "hidden->live->hidden" regression): the
+    mode used to ride this frame, so a stale keystroke echo — one that lost a
+    race against a mode change — could silently downgrade it server-side, and
+    the version check that protects BODY conflicts has nothing to do with a
+    choice the user makes independently of typing. See `set_visibility`,
+    which applies the mode unconditionally, on its own idempotent frame."""
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
             raise DraftVersionMismatch(draft.version, draft.body)
         draft.body = body
         draft.version += 1
-        update_fields = ["body", "version", "updated_at"]
-        if visibility is not None and visibility in valid_visibility:
+        draft.save(update_fields=["body", "version", "updated_at"])
+    return draft
+
+
+def set_visibility(session: Session, user, visibility: str) -> Draft:
+    """Apply the author's chosen mode UNCONDITIONALLY — no version check, and
+    it bumps nothing but `visibility` + `updated_at`. Deliberately not folded
+    into `update_draft`: that frame is guarded by `version` to protect the
+    BODY from a lost race between two edits, and a mode change is not an
+    edit — gating it on the same version turned a stale, already-in-flight
+    keystroke echo into a downgrade that silently exposed the words again
+    after the user had already chosen Hidden. Because this never touches
+    `version`, it can never itself raise `DraftVersionMismatch` and can never
+    cause one either. An invalid value is silently ignored, like the body
+    path: neither is a reason to fail the frame that carries it."""
+    valid_visibility = {c for c, _ in Draft.VISIBILITY_CHOICES}
+    with transaction.atomic():
+        draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
+        if visibility in valid_visibility and visibility != draft.visibility:
             draft.visibility = visibility
-            update_fields.append("visibility")
-        draft.save(update_fields=update_fields)
+            draft.save(update_fields=["visibility", "updated_at"])
     return draft
 
 

@@ -117,35 +117,39 @@ def test_peer_drafts_excludes_me_and_empty():
 
 
 # -- per-person typing visibility --
+#
+# The mode is its OWN idempotent frame (`set_visibility`), never a field on
+# the version-guarded `update_draft` — a stale keystroke echo racing a mode
+# change used to be able to downgrade it server-side (canopy-ui#…
+# "hidden->live->hidden" regression).
 
-def test_update_draft_stores_visibility():
+def test_set_visibility_applies_with_no_version_and_does_not_bump_version():
     owner, _other, session = _two()
-    d = drafts.update_draft(session, user=owner, expected_version=0, body="hi",
-                            visibility="typing")
+    before = drafts.update_draft(session, user=owner, expected_version=0, body="hi")
+    d = drafts.set_visibility(session, owner, "typing")
     assert d.visibility == "typing"
+    assert d.version == before.version  # untouched — this is not an edit
 
 
-def test_update_draft_ignores_invalid_visibility():
+def test_set_visibility_ignores_an_invalid_value():
     owner, _other, session = _two()
-    d = drafts.update_draft(session, user=owner, expected_version=0, body="hi",
-                            visibility="loud")
+    d = drafts.set_visibility(session, owner, "loud")
     assert d.visibility == "live"  # default, unchanged — invalid values are ignored
 
 
-def test_update_draft_with_no_visibility_leaves_it_unchanged():
+def test_update_draft_no_longer_changes_visibility():
     owner, _other, session = _two()
-    d = drafts.update_draft(session, user=owner, expected_version=0, body="a",
-                            visibility="hidden")
-    assert d.visibility == "hidden"
-    # An old client's frame carries no `visibility` at all.
-    d = drafts.update_draft(session, user=owner, expected_version=d.version, body="b")
+    drafts.set_visibility(session, owner, "hidden")
+    # A stale keystroke frame — even one still carrying a `visibility` field
+    # from an in-flight 0.14 client — cannot touch the mode any more.
+    d = drafts.update_draft(session, user=owner, expected_version=0, body="a")
     assert d.visibility == "hidden"
 
 
 def test_peer_drafts_excludes_hidden():
     owner, other, session = _two()
-    drafts.update_draft(session, user=other, expected_version=0, body="secret",
-                        visibility="hidden")
+    drafts.update_draft(session, user=other, expected_version=0, body="secret")
+    drafts.set_visibility(session, other, "hidden")
     presence.touch(session.id, other.id)
     presence.touch(session.id, owner.id)
     assert drafts.peer_drafts(session, owner) == []
@@ -153,8 +157,8 @@ def test_peer_drafts_excludes_hidden():
 
 def test_peer_drafts_still_includes_typing_mode():
     owner, other, session = _two()
-    drafts.update_draft(session, user=other, expected_version=0, body="whisper",
-                        visibility="typing")
+    drafts.update_draft(session, user=other, expected_version=0, body="whisper")
+    drafts.set_visibility(session, other, "typing")
     presence.touch(session.id, other.id)
     presence.touch(session.id, owner.id)
     peers = drafts.peer_drafts(session, owner)

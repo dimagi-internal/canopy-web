@@ -168,11 +168,14 @@ async def test_typing_mode_withholds_words_from_peer():
     await a.connect(); await b.connect()
     await _recv_match(a, lambda f: f["event"] == "session.state")
     await _recv_match(b, lambda f: f["event"] == "session.state")
-    await a.send_json_to({"action": "draft.update",
-                          "data": {"version": 0, "body": "secret words", "visibility": "typing"}})
-    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    await a.send_json_to({"action": "draft.set_visibility", "data": {"visibility": "typing"}})
+    await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["visibility"] == "typing")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "secret words"}})
+    # Two `draft.typing` frames land at b: one from the mode change itself
+    # (still an empty body, so `typing: False`), one from the body update —
+    # match the latter explicitly rather than the first `draft.typing` seen.
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing" and f["data"].get("typing") is True)
     assert typing["data"]["body"] == ""
-    assert typing["data"]["typing"] is True
     await a.disconnect(); await b.disconnect()
 
 
@@ -182,15 +185,15 @@ async def test_hidden_mode_shows_nothing_to_peer():
     await a.connect(); await b.connect()
     await _recv_match(a, lambda f: f["event"] == "session.state")
     await _recv_match(b, lambda f: f["event"] == "session.state")
-    await a.send_json_to({"action": "draft.update",
-                          "data": {"version": 0, "body": "secret words", "visibility": "hidden"}})
+    await a.send_json_to({"action": "draft.set_visibility", "data": {"visibility": "hidden"}})
+    await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["visibility"] == "hidden")
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "secret words"}})
     typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
     assert typing["data"]["body"] == ""
     assert typing["data"]["typing"] is False
     # The author's own tabs still see the real body — it only mirrors to the
     # server so other tabs of the same person sync.
-    own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
-    assert own["data"]["body"] == "secret words"
+    own = await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["body"] == "secret words")
     assert own["data"]["visibility"] == "hidden"
     await a.disconnect(); await b.disconnect()
 
@@ -207,6 +210,41 @@ async def test_old_client_omitting_visibility_keeps_live():
     assert typing["data"]["body"] == "hi there"
     assert typing["data"]["typing"] is True
     await a.disconnect(); await b.disconnect()
+
+
+async def test_draft_update_carrying_a_visibility_field_is_ignored():
+    """An in-flight 0.14 client may still send `visibility` on `draft.update`
+    (the field that used to change the mode there) — it must be a no-op, not
+    an error, and the stored mode must not move."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.set_visibility", "data": {"visibility": "hidden"}})
+    await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["visibility"] == "hidden")
+    await a.send_json_to({"action": "draft.update",
+                          "data": {"version": 0, "body": "secret words", "visibility": "live"}})
+    echo = await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["body"] == "secret words")
+    assert echo["data"]["visibility"] == "hidden"  # unmoved by the stale field
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["body"] == ""
+    assert typing["data"]["typing"] is False
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_set_visibility_by_a_viewer_is_forbidden():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    await database_sync_to_async(
+        lambda: SessionParticipant.objects.filter(session=session, user=teammate)
+        .update(role=SessionParticipant.VIEWER))()
+    comm = await _connect(session, teammate)
+    await comm.connect()
+    await _recv_match(comm, lambda f: f["event"] == "session.state")
+    await comm.send_json_to({"action": "draft.set_visibility", "data": {"visibility": "hidden"}})
+    err = await _recv_match(comm, lambda f: f.get("event") == "session.error")
+    assert err["data"]["code"] == "forbidden"
+    await comm.disconnect()
 
 
 async def test_own_tabs_share_one_draft_and_see_no_peer_row():
@@ -243,7 +281,8 @@ async def test_snapshot_excludes_hidden_and_blanks_typing_peer_drafts():
     owner, teammate, session = await database_sync_to_async(_seed)()
     from apps.canopy_sessions import drafts, presence
     await database_sync_to_async(drafts.update_draft)(
-        session, user=teammate, expected_version=0, body="wip", visibility="typing")
+        session, user=teammate, expected_version=0, body="wip")
+    await database_sync_to_async(drafts.set_visibility)(session, teammate, "typing")
     await database_sync_to_async(presence.touch)(session.id, teammate.id)
     comm = await _connect(session, owner)
     await comm.connect()
@@ -254,7 +293,8 @@ async def test_snapshot_excludes_hidden_and_blanks_typing_peer_drafts():
 
     # Now hidden: excluded from the snapshot entirely.
     await database_sync_to_async(drafts.update_draft)(
-        session, user=teammate, expected_version=1, body="wip2", visibility="hidden")
+        session, user=teammate, expected_version=1, body="wip2")
+    await database_sync_to_async(drafts.set_visibility)(session, teammate, "hidden")
     comm2 = await _connect(session, owner)
     await comm2.connect()
     snap2 = await _recv_match(comm2, lambda f: f["event"] == "session.state")
@@ -265,7 +305,8 @@ async def test_snapshot_excludes_hidden_and_blanks_typing_peer_drafts():
 async def test_mode_change_while_alone_still_hides_words_from_a_later_joiner():
     """Privacy fix: a mode change reaches the server even when nobody is
     around to see it live — the snapshot a LATER joiner reads must never
-    disagree with the author's current choice."""
+    disagree with the author's current choice. Also proves the mode frame is
+    unconditional: no version is involved at all."""
     owner, teammate, session = await database_sync_to_async(_seed)()
     from apps.canopy_sessions import presence
     await database_sync_to_async(presence.touch)(session.id, teammate.id)
@@ -274,16 +315,13 @@ async def test_mode_change_while_alone_still_hides_words_from_a_later_joiner():
     a = await _connect(session, teammate)
     await a.connect()
     await _recv_match(a, lambda f: f["event"] == "session.state")
-    await a.send_json_to({"action": "draft.update",
-                          "data": {"version": 0, "body": "secret words", "visibility": "live"}})
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "secret words"}})
     own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
     assert own["data"]["body"] == "secret words" and own["data"]["visibility"] == "live"
 
     # Still alone, teammate switches to hidden — this must still reach the
-    # server (the client-side fix drops the presence gate for this send).
-    await a.send_json_to({"action": "draft.update",
-                          "data": {"version": own["data"]["version"], "body": "secret words",
-                                   "visibility": "hidden"}})
+    # server (the mode frame has no presence gate at all).
+    await a.send_json_to({"action": "draft.set_visibility", "data": {"visibility": "hidden"}})
     await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["visibility"] == "hidden")
     await a.disconnect()
 
