@@ -502,7 +502,20 @@ def persist_transcript_rows(session, rows) -> int:
     upstream would mean applying it three times and forgetting it once. The
     identity property the docstring above rests on survives — a given
     (transcript ordinal, epoch) still maps to exactly one `turn_index`, so
-    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition."""
+    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition.
+
+    **Server-side attribution (2026-09-27), the primary path now that canopy no
+    longer marks a chat send's prompt at claim** (authorship.py). A USER row
+    with no vouched marker is matched to the EARLIEST of this session's
+    claimed, unlinked chat-send turns whose `prompt` is byte-for-byte the
+    row's text (`_match_candidate`, lazily loaded and consumed within the
+    batch via `_MatchPool` — one query, only when a row actually needs it, so
+    a batch of entirely vouched or entirely unmatched rows costs nothing
+    extra). No match leaves `author=None`, exactly the right answer for a
+    line typed straight into emdash. The vouched-marker path (m3) is checked
+    first and wins when present — it is a stronger claim (the transcript
+    named a turn, and the turn's own initiator agrees) than a text match ever
+    is."""
     offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
@@ -514,6 +527,7 @@ def persist_transcript_rows(session, rows) -> int:
         prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
         vouched = _vouched_markers(locked, rows)
+        pool = _MatchPool(locked)
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -568,6 +582,11 @@ def persist_transcript_rows(session, rows) -> int:
                     # naming a turn that is not this session's, or a person who
                     # did not send that turn, stays exactly what it was typed as.
                     author = turn_hex = None
+                    matched = pool.claim(text)
+                    if matched is not None:
+                        matched_author = authorship.author_of(matched)
+                        if matched_author is not None:
+                            author, turn_hex = matched_author, matched.pk.hex
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
@@ -621,6 +640,58 @@ def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
         chat_session=session, pk__in=[uuid.UUID(h) for h in hexes],
     ).values_list("pk", "initiator_user_id", "initiator_contact_id")
     return {pk.hex: (uid, cid) for pk, uid, cid in found}
+
+
+class _MatchPool:
+    """Server-side attribution's candidate pool for ONE `persist_transcript_rows`
+    call — the earliest of this session's claimed, unlinked chat-send turns,
+    each matched against a row's text at most once.
+
+    Lazily loaded on the FIRST `claim()` call, never in `__init__`: a batch
+    that is entirely vouched-marker or entirely genuinely-unattributable rows
+    (the common cases) must cost nothing beyond that check, and a batch with
+    no user rows at all must issue no query — matching a `_vouched_markers`'s
+    own "only when the batch has user rows" rule. One query however many rows
+    need it, because every `claim()` after the first is served from the same
+    in-memory list.
+
+    `claim()` removes a match from the pool — "consumed within the batch" —
+    so two identical-text rows in one batch map to two different turns, in
+    the order they appear, exactly like two identical replies from two
+    different people ("yes", "yes") should."""
+
+    def __init__(self, session):
+        self._session = session
+        self._loaded = False
+        self._candidates: list[Turn] = []
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        cutoff = timezone.now() - _dt.timedelta(days=7)
+        already_linked = Message.objects.filter(
+            session=self._session, source_turn_id__isnull=False
+        ).values("source_turn_id")
+        turns = (
+            Turn.objects.filter(
+                chat_session=self._session, claimed_at__isnull=False, created_at__gte=cutoff,
+            )
+            .exclude(pk__in=already_linked)
+            .select_related("initiator_user", "initiator_contact")
+            .order_by("created_at")
+        )
+        self._candidates = [t for t in turns if authorship.is_chat_send(t)]
+
+    def claim(self, text: str) -> Turn | None:
+        """The earliest remaining candidate whose prompt is byte-for-byte
+        `text` (both compared stripped) — or None. Removes it from the pool."""
+        self._load()
+        target = text.strip()
+        for i, turn in enumerate(self._candidates):
+            if (turn.prompt or "").strip() == target:
+                return self._candidates.pop(i)
+        return None
 
 
 def write_backfill(session, messages) -> int:

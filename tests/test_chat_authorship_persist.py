@@ -1,15 +1,18 @@
 """A marked transcript row becomes an authored message, on every path."""
 from __future__ import annotations
 
+import datetime
 import uuid
 
 import pytest
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 from apps.canopy_sessions import serializers, stream_map
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Message
 from apps.canopy_sessions.testing import legacy_marker
+from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -125,6 +128,122 @@ def test_a_marker_naming_another_sessions_turn_is_not_believed():
     marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
     chat.persist_transcript_rows(other, [{"index": 10, "role": "user", "text": marked}])
     assert Message.objects.get(session=other).author is None
+
+
+# -- server-side attribution: an UNMARKED row is matched to its turn ------
+# canopy no longer marks a chat send's prompt at claim (authorship.py,
+# 2026-09-27). The transcript comes back with the person's exact words and
+# nothing else, so persist has to find the turn itself: the earliest of this
+# session's claimed, unlinked chat-send turns whose prompt is byte-for-byte
+# the row's text.
+
+def _claim(turn):
+    # DONE, not CLAIMED: `one_executing_turn_per_session` allows only one
+    # claimed/running/needs_human turn per session at a time, and these tests
+    # need several already-delivered turns coexisting on one session — exactly
+    # what a real multi-turn conversation looks like by the time its transcript
+    # rows arrive. `claimed_at` (what the new match candidate query reads)
+    # survives past completion either way.
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE, claimed_at=timezone.now())
+    return Turn.objects.get(pk=turn.pk)
+
+
+def test_unmarked_row_is_attributed_to_its_claimed_turn():
+    session = _session()
+    alice, turn = _sent(session, username="alice2", text="ship it")
+    turn = _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+    assert msg.source_turn_id == turn.pk
+
+
+def test_unclaimed_turn_is_not_a_match_candidate():
+    session = _session()
+    _alice, _turn = _sent(session, username="alice3", text="ship it")
+    # Never claimed: claimed_at stays None, so it was never delivered.
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author is None and msg.source_turn_id is None
+
+
+def test_already_linked_turn_is_not_matched_again():
+    session = _session()
+    alice, turn = _sent(session, username="alice4", text="ship it")
+    turn = _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    first = Message.objects.get(session=session)
+    assert first.source_turn_id == turn.pk
+    # A second, unrelated row with the same text has no candidate left — the
+    # turn it would have matched is already linked.
+    chat.persist_transcript_rows(session, [{"index": 11, "role": "user", "text": "ship it"}])
+    second = Message.objects.get(session=session, turn_index=11)
+    assert second.author is None and second.source_turn_id is None
+
+
+def test_earliest_identical_text_row_matches_earliest_available_turn():
+    session = _session()
+    alice, turn_a = _sent(session, username="alice5", text="yes")
+    bob, turn_b = _sent(session, username="bob5", text="yes")
+    _claim(turn_a)
+    _claim(turn_b)
+    chat.persist_transcript_rows(session, [
+        {"index": 10, "role": "user", "text": "yes"},
+        {"index": 11, "role": "user", "text": "yes"},
+    ])
+    first = Message.objects.get(session=session, turn_index=10)
+    second = Message.objects.get(session=session, turn_index=11)
+    assert first.source_turn_id == turn_a.pk
+    assert second.source_turn_id == turn_b.pk
+    assert first.author == {"name": alice.email, "user_id": alice.id}
+    assert second.author == {"name": bob.email, "user_id": bob.id}
+
+
+def test_turn_older_than_seven_days_is_not_a_match_candidate():
+    session = _session()
+    _alice, turn = _sent(session, username="alice6", text="ship it")
+    old = timezone.now() - datetime.timedelta(days=8)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_at=old, created_at=old)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author is None and msg.source_turn_id is None
+
+
+def test_a_non_chat_send_turn_is_not_a_match_candidate():
+    """An email turn bound to this chat session has an initiator too, but it is
+    the agent's own dispatch, not a person typing — is_chat_send excludes it."""
+    from apps.harness import initiator as who
+    from apps.harness import services as harness
+
+    session = _session()
+    turn, _created = harness.enqueue_turn(
+        session=session, origin=Turn.ORIGIN_EMAIL, idempotency_key="email:1",
+        prompt="ship it", origin_ref={"from": "a@x", "subject": "s", "thread_id": "t"},
+        initiator=who.for_user(session.created_by, via="email", assurance="dmarc"),
+    )
+    _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author is None and msg.source_turn_id is None
+
+
+def test_match_query_is_lazy_and_only_one_extra_query_per_batch():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    session = _session()
+    for i in range(4):
+        _u, t = _sent(session, username=f"m{i}", text=f"unmarked {i}")
+        _claim(t)
+    rows = [{"index": 10 + i, "role": "user", "text": f"unmarked {i}"} for i in range(4)]
+    # Settles the ordinal scheme AND consumes the first candidate, so the two
+    # captures below start from the same footing.
+    chat.persist_transcript_rows(session, rows[:1])
+    with CaptureQueriesContext(connection) as one:
+        chat.persist_transcript_rows(session, rows[1:2])  # 1 row needing a match
+    with CaptureQueriesContext(connection) as many:
+        chat.persist_transcript_rows(session, rows[2:])  # 2 rows needing a match
+    assert len(many.captured_queries) == len(one.captured_queries)
 
 
 def test_marker_verification_is_one_query_for_the_batch():
