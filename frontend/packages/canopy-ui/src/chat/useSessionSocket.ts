@@ -254,6 +254,13 @@ export function useSessionSocket({
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
+  // A mode the person CHOSE while this socket could not carry it (closed, or
+  // open but before the first snapshot told us what the server holds). Sent
+  // once on the next snapshot, then cleared. Nothing else is ever pushed on
+  // connect: a device with nothing stored has only a DEFAULT, and pushing a
+  // default would expose words its author hid from another device.
+  const pendingVisibilityRef = useRef<TypingVisibility | null>(null);
+  const snapshotSeenRef = useRef(false);
   // Sends awaiting the server's receipt: client_id -> {text, timer}.
   const unconfirmedRef = useRef(new Map<string, { text: string; timer: number | null }>());
   const resendRef = useRef(resendOverHttp);
@@ -362,16 +369,25 @@ export function useSessionSocket({
       if (entry?.timer != null) window.clearTimeout(entry.timer);
       unconfirmedRef.current.delete(frame.data.client_id);
     }
-    // A fresh snapshot (initial connect or reconnect) is read by anyone
-    // joining right now — including a joiner whose OWN client hasn't
-    // rendered them arriving yet, so waiting for "someone else is present"
-    // is too late. Covers a mode chosen while disconnected, or before the
-    // draft existed at all. Just the mode, on its own idempotent frame — no
-    // body re-send tied to it, since the body is `draft.update`'s job alone.
+    // On a snapshot (connect or reconnect) the SERVER's stored mode is the
+    // truth — it is the last explicit choice from any tab or device. The one
+    // exception is a choice made HERE while the socket could not carry it
+    // (`pendingVisibilityRef`): that is newer, so it is sent now, before any
+    // later joiner's snapshot can read the older mode. A local value that was
+    // never chosen (nothing stored, a private window, the widget's partitioned
+    // storage) is only a default, and is never pushed. No own draft (a viewer
+    // or a contact) means there is nothing of ours to set.
     if (frame.event === "session.state") {
+      snapshotSeenRef.current = true;
       const ad = frame.data.active_draft;
-      if (ad != null && ad.visibility && ad.visibility !== typingVisibilityRef.current) {
-        send({ action: "draft.set_visibility", data: { visibility: typingVisibilityRef.current } });
+      const pending = pendingVisibilityRef.current;
+      pendingVisibilityRef.current = null;
+      if (ad != null && pending != null) {
+        send({ action: "draft.set_visibility", data: { visibility: pending } });
+      } else if (ad?.visibility && ad.visibility !== typingVisibilityRef.current) {
+        typingVisibilityRef.current = ad.visibility;
+        setTypingVisibilityState(ad.visibility);
+        writeStoredTypingVisibility(defaultDraftStorage(), ad.visibility);
       }
     }
     // Side-effect events: handle BEFORE setState so React strict-mode's
@@ -421,6 +437,7 @@ export function useSessionSocket({
     socketRef.current = ws;
 
     ws.onopen = () => {
+      snapshotSeenRef.current = false;
       setConnected(true);
       reconnectAttemptRef.current = 0;
       // Flush any control frames that were queued while the socket was
@@ -470,6 +487,7 @@ export function useSessionSocket({
     };
 
     ws.onclose = () => {
+      snapshotSeenRef.current = false;
       setConnected(false);
       // A send still waiting for its receipt will not get one on this socket.
       for (const clientId of [...unconfirmedRef.current.keys()]) rescueSend(clientId);
@@ -593,15 +611,20 @@ export function useSessionSocket({
       typingVisibilityRef.current = visibility;
       writeStoredTypingVisibility(defaultDraftStorage(), visibility);
       // The mode is its OWN idempotent frame — applied unconditionally
-      // server-side, no version check — so it is sent unconditionally here
-      // too: no presence gate (a mode change must reach the server even
-      // while ALONE, or a peer who joins later reads the old mode straight
-      // off their connect snapshot) and no body check (there is nothing
-      // version-guarded here to race, so there is nothing to lose by
-      // sending it plainly every time). If the socket happens to be closed
-      // the send is simply dropped, same as any other frame — the
-      // `session.state` reconcile below covers exactly that case on the
-      // next connect.
+      // server-side, no version check — so there is no presence gate: a mode
+      // change must reach the server even while ALONE, or a peer who joins
+      // later reads the old mode straight off their connect snapshot. Until
+      // the first snapshot has told us what the server holds (or while the
+      // socket is closed) the choice waits in `pendingVisibilityRef` and the
+      // snapshot sends it. With no own draft (a viewer or a contact) there is
+      // nothing to set, and the server would refuse it anyway.
+      const ws = socketRef.current;
+      const open = ws != null && ws.readyState === WebSocket.OPEN;
+      if (!open || !snapshotSeenRef.current) {
+        pendingVisibilityRef.current = visibility;
+        return;
+      }
+      if (stateRef.current.active_draft == null) return;
       send({ action: "draft.set_visibility", data: { visibility } });
     },
     [send],

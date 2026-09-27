@@ -152,49 +152,107 @@ describe("typingVisibility", () => {
     expect(storage.getItem("canopy.chat.typingVisibility")).toBe("live");
   });
 
-  it("reconciles a mismatched mode off the very first snapshot, even alone — mode only, no body", () => {
-    // Covers a choice made while disconnected, or before the draft existed.
-    // Just the mode, on its own idempotent frame — never a draft.update.
-    storage.setItem("canopy.chat.typingVisibility", "hidden");
+  // -- the connect snapshot: the SERVER's stored mode is the truth --
+  //
+  // A device with nothing stored (fresh phone, private window, blocked or
+  // partitioned storage — the embedded widget in a third-party iframe) only
+  // has a DEFAULT, and a default is not a choice: pushing it would expose
+  // words its author hid from another device. Only a choice made while this
+  // socket could not carry it (pending) is sent on connect.
+
+  function ownSnapshot(activeDraft: unknown) {
+    return {
+      event: "session.state",
+      data: {
+        messages: [],
+        active_draft: activeDraft,
+        participants: [],
+        presence_user_ids: [1, 2],
+        current_user_id: 1,
+      },
+    };
+  }
+
+  it("a fresh device adopts the server's mode off the snapshot and sends nothing", () => {
+    // Nothing stored: the local value is only the "live" default.
     const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
     act(() => {
       FakeSocket.last!.onopen?.();
-      FakeSocket.last!.receive({
-        event: "session.state",
-        data: {
-          messages: [],
-          active_draft: { ...DRAFT, body: "leftover words", version: 5, visibility: "live" },
-          participants: [],
-          presence_user_ids: [1], // alone
-          current_user_id: 1,
-        },
-      });
+      FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, body: "x", visibility: "hidden" }));
     });
+    expect(setVisibilityFrames()).toEqual([]);
     expect(hook.result.current.typingVisibility).toBe("hidden");
-    expect(setVisibilityFrames()).toEqual([
-      { action: "draft.set_visibility", data: { visibility: "hidden" } },
-    ]);
-    expect(draftUpdateFrames()).toEqual([]);
+    expect(storage.getItem("canopy.chat.typingVisibility")).toBe("hidden");
   });
 
-  it("does not reconcile when the snapshot already agrees", () => {
+  it("a stale stored mode yields to the server's on connect, sending nothing", () => {
     storage.setItem("canopy.chat.typingVisibility", "live");
     const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
     act(() => {
       FakeSocket.last!.onopen?.();
-      FakeSocket.last!.receive({
-        event: "session.state",
-        data: {
-          messages: [],
-          active_draft: { ...DRAFT, visibility: "live" },
-          participants: [],
-          presence_user_ids: [1],
-          current_user_id: 1,
-        },
-      });
+      FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "hidden" }));
     });
-    expect(hook.result.current.typingVisibility).toBe("live");
     expect(setVisibilityFrames()).toEqual([]);
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+    expect(storage.getItem("canopy.chat.typingVisibility")).toBe("hidden");
+  });
+
+  it("a choice made while the socket was closed is sent once on the snapshot, then cleared", () => {
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    FakeSocket.last!.readyState = 0; // CONNECTING
+    act(() => hook.result.current.setTypingVisibility("hidden"));
+    expect(setVisibilityFrames()).toEqual([]);
+    act(() => {
+      FakeSocket.last!.readyState = 1;
+      FakeSocket.last!.onopen?.();
+      FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "live" }));
+    });
+    expect(setVisibilityFrames()).toEqual([
+      { action: "draft.set_visibility", data: { visibility: "hidden" } },
+    ]);
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+    // Pending is spent: a later snapshot (a reconnect) sends nothing more,
+    // and a server mode that disagrees then is simply adopted.
+    act(() => FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "hidden" })));
+    expect(setVisibilityFrames()).toHaveLength(1);
+  });
+
+  it("a choice made after open but before the first snapshot is pending too", () => {
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    act(() => FakeSocket.last!.onopen?.());
+    act(() => hook.result.current.setTypingVisibility("typing"));
+    expect(setVisibilityFrames()).toEqual([]);
+    act(() => FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "hidden" })));
+    expect(setVisibilityFrames()).toEqual([
+      { action: "draft.set_visibility", data: { visibility: "typing" } },
+    ]);
+    expect(hook.result.current.typingVisibility).toBe("typing");
+  });
+
+  it("a choice made while connected is sent immediately and leaves nothing pending", () => {
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    act(() => {
+      FakeSocket.last!.onopen?.();
+      FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "live" }));
+    });
+    act(() => hook.result.current.setTypingVisibility("hidden"));
+    expect(setVisibilityFrames()).toHaveLength(1);
+    act(() => FakeSocket.last!.receive(ownSnapshot({ ...DRAFT, visibility: "hidden" })));
+    expect(setVisibilityFrames()).toHaveLength(1);
+  });
+
+  it("a viewer or contact (no own draft) never sends set_visibility", () => {
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    FakeSocket.last!.readyState = 0;
+    act(() => hook.result.current.setTypingVisibility("hidden")); // pending
+    act(() => {
+      FakeSocket.last!.readyState = 1;
+      FakeSocket.last!.onopen?.();
+      FakeSocket.last!.receive(ownSnapshot(null));
+    });
+    act(() => hook.result.current.setTypingVisibility("typing")); // while open
+    expect(setVisibilityFrames()).toEqual([]);
+    expect(hook.result.current.typingVisibility).toBe("typing");
   });
 
   it("a draft_version_mismatch never touches the mode", () => {

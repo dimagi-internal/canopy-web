@@ -165,3 +165,30 @@ def test_peer_drafts_still_includes_typing_mode():
     assert [d.author_id for d in peers] == [other.id]
     # The row itself still carries the real body; the DTO is what blanks it.
     assert peers[0].body == "whisper"
+
+
+def test_set_visibility_does_not_touch_updated_at():
+    # `updated_at` is the keystroke clock `peer_drafts` reads for freshness;
+    # a mode switch is not a keystroke.
+    owner, _other, session = _two()
+    before = drafts.update_draft(session, user=owner, expected_version=0, body="hi")
+    after = drafts.set_visibility(session, owner, "hidden")
+    after.refresh_from_db()
+    assert after.visibility == "hidden"
+    assert after.updated_at == before.updated_at
+
+
+def test_switching_an_old_draft_to_live_does_not_resurface_it():
+    from datetime import timedelta
+
+    from apps.canopy_sessions.models import Draft
+    from django.utils import timezone
+
+    owner, other, session = _two()
+    d = drafts.update_draft(session, user=other, expected_version=0, body="stale words")
+    drafts.set_visibility(session, other, "hidden")
+    Draft.objects.filter(pk=d.pk).update(updated_at=timezone.now() - timedelta(minutes=11))
+    drafts.set_visibility(session, other, "live")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    assert drafts.peer_drafts(session, owner) == []

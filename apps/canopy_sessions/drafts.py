@@ -50,7 +50,9 @@ def update_draft(session: Session, *, user, expected_version: int, body: str) ->
 
 def set_visibility(session: Session, user, visibility: str) -> Draft:
     """Apply the author's chosen mode UNCONDITIONALLY — no version check, and
-    it bumps nothing but `visibility` + `updated_at`. Deliberately not folded
+    it writes nothing but `visibility`. Not even `updated_at`: that is the
+    keystroke clock `peer_drafts` reads for freshness, so bumping it made a
+    mode switch re-surface a draft abandoned an hour ago. Deliberately not folded
     into `update_draft`: that frame is guarded by `version` to protect the
     BODY from a lost race between two edits, and a mode change is not an
     edit — gating it on the same version turned a stale, already-in-flight
@@ -63,8 +65,10 @@ def set_visibility(session: Session, user, visibility: str) -> Draft:
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if visibility in valid_visibility and visibility != draft.visibility:
+            # A queryset update, not save(): `auto_now` would stamp
+            # `updated_at` on any save that lists it, and this must not.
+            Draft.objects.filter(pk=draft.pk).update(visibility=visibility)
             draft.visibility = visibility
-            draft.save(update_fields=["visibility", "updated_at"])
     return draft
 
 
