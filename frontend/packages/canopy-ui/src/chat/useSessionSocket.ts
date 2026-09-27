@@ -32,9 +32,21 @@ const NOT_SENT =
  * rendering it twice.
  */
 export function newClientId(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  return c?.randomUUID ? c.randomUUID() : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  // An idempotency nonce, not a secret — but it rides a request, so it comes
+  // from the platform CSPRNG, never Math.random (CodeQL js/insecure-randomness).
+  // randomUUID needs a secure context; getRandomValues does not.
+  const c = (globalThis as {
+    crypto?: { randomUUID?: () => string; getRandomValues?: (a: Uint8Array) => Uint8Array };
+  }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  if (c?.getRandomValues) {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return `c${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return `c${Date.now().toString(36)}${(clientIdCounter++).toString(36)}`;
 }
+
+let clientIdCounter = 0;
 
 const INITIAL_STATE: SessionState = {
   messages: [],

@@ -9,7 +9,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import authorship
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Session
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
