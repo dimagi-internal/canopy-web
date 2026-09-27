@@ -1283,6 +1283,24 @@ def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, djang
     assert not slack.said("chat.postMessage")
 
 
+def test_a_marked_prompt_delivered_by_a_slack_turn_is_not_announced(
+        bound, slack, django_capture_on_commit_callbacks):
+    # The transcript records the prompt AS DELIVERED — with the author marker on
+    # its first line — while Turn.prompt keeps the bare words. Compared raw, a
+    # turn's own line read as someone typing straight into emdash.
+    from apps.canopy_sessions import authorship
+
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
+    turn = Turn.objects.filter(chat_session=session).first()
+    marked = authorship.mark(turn.prompt, name="Alice", user_id=pairer.id, turn_id=turn.pk)
+    _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
+                                       "payload": {"text": marked}}], django_capture_on_commit_callbacks)
+    assert not [p for p in slack.said("chat.postMessage") if "carrying on directly" in p["text"]]
+
+
 def test_the_agent_reading_an_image_is_not_someone_typing(bound, slack, django_capture_on_commit_callbacks):
     # Labs 2026-09-26: after a Slack turn ended, Hal finished waiting on a deploy,
     # Read its own screenshot, and wrote the answer. Reading an image makes Claude
