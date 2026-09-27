@@ -143,6 +143,19 @@ test.describe('multiplayer chat', () => {
     await second.context().close()
   })
 
+  test('switching to "Typing…" withholds the words — the other sees the fact of typing, not the text', async ({ page, browser }) => {
+    const second = await bothInTheRoom(page, browser)
+
+    await page.getByTestId('typing-visibility').selectOption('typing')
+    await page.getByTestId('composer').fill('a secret sentence nobody else should read')
+
+    // B sees that Alex is typing, but never the words.
+    await expect(second.getByTestId('typing-row')).toContainText('is typing…', { timeout: 15_000 })
+    await expect(second.getByTestId('typing-row')).not.toContainText('secret sentence')
+
+    await second.context().close()
+  })
+
   test('a message sent by one lands in the other transcript', async ({ page, browser }) => {
     const second = await bothInTheRoom(page, browser)
 

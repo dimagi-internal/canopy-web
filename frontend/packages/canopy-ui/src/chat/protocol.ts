@@ -51,6 +51,12 @@ export interface Message {
   author?: MessageAuthor | null;
 }
 
+/** How much of an in-progress message its author lets OTHERS see: the words
+ *  live as typed (`live`, today's behaviour), just the fact of typing
+ *  (`typing`), or nothing at all until it's sent (`hidden`). Chosen per
+ *  person, per browser (persisted in localStorage) — see useSessionSocket. */
+export type TypingVisibility = "live" | "typing" | "hidden";
+
 export interface Draft {
   /** String PK (canopy sends `str(draft.pk)`). */
   id: string;
@@ -66,16 +72,24 @@ export interface Draft {
    *  against `current_user_id` for echo-suppression; `last_editor` is kept
    *  for servers that don't send it yet. */
   author_id?: number;
+  /** This author's chosen mode. Absent on an older server. */
+  visibility?: TypingVisibility;
 }
 
 /** A peer's live, uncommitted draft — everyone else's box, broadcast as they
  *  type. Keyed by author, never by draft id: a client only ever needs "what
  *  is this person typing right now", and an empty `body` means they sent,
- *  discarded, or cleared it. */
+ *  discarded, or cleared it — OR its author is in `typing`/`hidden` mode,
+ *  where the server withholds the words but still says whether they're
+ *  typing via `typing`. */
 export interface PeerDraft {
   author: { id: number; name: string };
   body: string;
   at: string | null;
+  /** Whether this person is actively typing right now — the one fact the
+   *  server still tells peers when `body` is withheld. Absent from an older
+   *  server, where a non-empty `body` was the only signal. */
+  typing?: boolean;
 }
 
 /** A send that landed on the server but hasn't reached the agent's turn yet
@@ -262,7 +276,7 @@ export interface SessionState {
 export type WsAction =
   | { action: "chat.send"; data: Record<string, never> }
   | { action: "chat.stop"; data: { message_id: string } }
-  | { action: "draft.update"; data: { version: number; body: string } }
+  | { action: "draft.update"; data: { version: number; body: string; visibility?: TypingVisibility } }
   /** @deprecated accepted and ignored by the server since 0.13 — every editor
    *  gets their own draft now, so there is no lock left to take over. */
   | { action: "draft.take_over"; data: Record<string, never> }

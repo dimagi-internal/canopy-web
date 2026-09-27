@@ -38,6 +38,13 @@ describe("multiplayer composer", () => {
     expect(screen.queryByTestId("coedit-banner")).toBeNull();
   });
 
+  it("shows 'is typing…' with no words when a teammate withholds them", () => {
+    render(<ChatPanel {...props} state={state({ peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "", at: null, typing: true }] })} />);
+    const row = screen.getByTestId("typing-row");
+    expect(row.textContent).toContain("Bo B");
+    expect(row.textContent).toContain("is typing…");
+  });
+
   it("send stays available while the agent is replying", () => {
     const streaming = { id: "a1", turn_index: 2, role: "assistant" as const, content: {}, plaintext: "working", status: "streaming" as const, error_detail: null, started_at: null, completed_at: null, created_at: "" };
     render(<ChatPanel {...props} state={state({ messages: [streaming] })} />);

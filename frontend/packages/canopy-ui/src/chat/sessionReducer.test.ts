@@ -746,6 +746,30 @@ describe("per-person drafts", () => {
     expect(s.peer_drafts).toEqual([]);
   });
 
+  it("keeps an empty-body row when the server says the person is still typing", () => {
+    // `typing`/`hidden` visibility withholds the words but not the fact of
+    // typing — the row must survive rather than being read as "sent/cleared".
+    const s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([
+      { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    ]);
+  });
+
+  it("removes the row when the body is empty and typing is not true", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    } as WsEvent);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: false },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
   it("presence.left drops that person's typing row", () => {
     let s = sessionReducer(makeState(), {
       event: "draft.typing",

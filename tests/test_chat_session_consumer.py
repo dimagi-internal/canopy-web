@@ -160,6 +160,53 @@ async def test_peer_never_receives_my_draft_frames():
     await a.disconnect(); await b.disconnect()
 
 
+async def test_typing_mode_withholds_words_from_peer():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update",
+                          "data": {"version": 0, "body": "secret words", "visibility": "typing"}})
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["body"] == ""
+    assert typing["data"]["typing"] is True
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_hidden_mode_shows_nothing_to_peer():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update",
+                          "data": {"version": 0, "body": "secret words", "visibility": "hidden"}})
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["body"] == ""
+    assert typing["data"]["typing"] is False
+    # The author's own tabs still see the real body — it only mirrors to the
+    # server so other tabs of the same person sync.
+    own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
+    assert own["data"]["body"] == "secret words"
+    assert own["data"]["visibility"] == "hidden"
+    await a.disconnect(); await b.disconnect()
+
+
+async def test_old_client_omitting_visibility_keeps_live():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    a, b = await _connect(session, owner), await _connect(session, teammate)
+    await a.connect(); await b.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await _recv_match(b, lambda f: f["event"] == "session.state")
+    # No `visibility` key at all — exactly what an old client sends.
+    await a.send_json_to({"action": "draft.update", "data": {"version": 0, "body": "hi there"}})
+    typing = await _recv_match(b, lambda f: f["event"] == "draft.typing")
+    assert typing["data"]["body"] == "hi there"
+    assert typing["data"]["typing"] is True
+    await a.disconnect(); await b.disconnect()
+
+
 async def test_own_tabs_share_one_draft_and_see_no_peer_row():
     owner, _t, session = await database_sync_to_async(_seed)()
     t1, t2 = await _connect(session, owner), await _connect(session, owner)
@@ -188,6 +235,29 @@ async def test_snapshot_has_my_draft_and_peer_drafts():
     assert [p["body"] for p in snap["data"]["peer_drafts"]] == ["wip"]
     assert snap["data"]["peer_drafts"][0]["author"]["id"] == teammate.id
     await comm.disconnect()
+
+
+async def test_snapshot_excludes_hidden_and_blanks_typing_peer_drafts():
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    from apps.canopy_sessions import drafts, presence
+    await database_sync_to_async(drafts.update_draft)(
+        session, user=teammate, expected_version=0, body="wip", visibility="typing")
+    await database_sync_to_async(presence.touch)(session.id, teammate.id)
+    comm = await _connect(session, owner)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    assert [p["body"] for p in snap["data"]["peer_drafts"]] == [""]
+    assert snap["data"]["peer_drafts"][0]["typing"] is True
+    await comm.disconnect()
+
+    # Now hidden: excluded from the snapshot entirely.
+    await database_sync_to_async(drafts.update_draft)(
+        session, user=teammate, expected_version=1, body="wip2", visibility="hidden")
+    comm2 = await _connect(session, owner)
+    await comm2.connect()
+    snap2 = await _recv_match(comm2, lambda f: f["event"] == "session.state")
+    assert snap2["data"]["peer_drafts"] == []
+    await comm2.disconnect()
 
 
 async def test_a_viewer_connecting_writes_no_draft():

@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromAgui, resetAguiState } from "./agui";
-import type { Draft, Message, SessionState, WsEvent } from "./protocol";
-import { shouldSyncDraftLive } from "./drafts";
+import type { Draft, Message, SessionState, TypingVisibility, WsEvent } from "./protocol";
+import {
+  defaultDraftStorage,
+  readStoredTypingVisibility,
+  shouldSyncDraftLive,
+  writeStoredTypingVisibility,
+} from "./drafts";
 import { prependHistory } from "./history";
 import {
   REDUCER_EVENTS,
@@ -185,6 +190,14 @@ export interface UseSessionSocketResult {
    *  they're the same send rather than rendering it twice. */
   noteLocalSend: (text: string, clientId?: string) => void;
   lastError: string | null;
+  /** This person's chosen mode for how their OWN in-progress message appears
+   *  to others — persisted per browser (`canopy.chat.typingVisibility`).
+   *  Defaults to `"live"`, today's behaviour. */
+  typingVisibility: TypingVisibility;
+  /** Change the mode. When there is a non-empty draft body and live sync is
+   *  on (somebody else is present), sends one `draft.update` immediately so
+   *  peers switch right away rather than waiting for the next keystroke. */
+  setTypingVisibility: (visibility: TypingVisibility) => void;
 }
 
 // Frames the reducer handles: its own list, so the two cannot drift (see
@@ -211,6 +224,11 @@ export function useSessionSocket({
   // this window, so nothing else in the state can express it, and without it
   // the Stop control is unreachable exactly when the turn is stuck.
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // Per-browser, not per-session — a standing choice about how you type, read
+  // once at mount from the same try/catch-safe storage `SendBox` uses.
+  const [typingVisibility, setTypingVisibilityState] = useState<TypingVisibility>(
+    () => readStoredTypingVisibility(defaultDraftStorage()) ?? "live",
+  );
 
   const socketRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<SessionState>(INITIAL_STATE);
@@ -227,6 +245,10 @@ export function useSessionSocket({
   // vocabulary mid-session.
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
+  // Read inside the debounced `draft.update` timeout, which closes over
+  // whatever was current when it was SCHEDULED otherwise.
+  const typingVisibilityRef = useRef(typingVisibility);
+  typingVisibilityRef.current = typingVisibility;
   const warnedNativeRef = useRef(false);
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
@@ -507,10 +529,30 @@ export function useSessionSocket({
           pendingDraftBodyRef.current = null;
           send({
             action: "draft.update",
-            data: { version: current.version, body: pending },
+            data: { version: current.version, body: pending, visibility: typingVisibilityRef.current },
           });
         }
       }, DRAFT_UPDATE_DEBOUNCE_MS);
+    },
+    [send],
+  );
+
+  const setTypingVisibility = useCallback(
+    (visibility: TypingVisibility) => {
+      setTypingVisibilityState(visibility);
+      typingVisibilityRef.current = visibility;
+      writeStoredTypingVisibility(defaultDraftStorage(), visibility);
+      // Switch peers over immediately rather than waiting for the next
+      // keystroke — but only when there is something to show (an empty draft
+      // has nothing for the new mode to change) and somebody else would
+      // actually see it.
+      const current = stateRef.current.active_draft;
+      if (current != null && current.body && shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
+        send({
+          action: "draft.update",
+          data: { version: current.version, body: current.body, visibility },
+        });
+      }
     },
     [send],
   );
@@ -537,7 +579,7 @@ export function useSessionSocket({
     pendingDraftBodyRef.current = null;
     send({
       action: "draft.update",
-      data: { version: current.version, body: pending },
+      data: { version: current.version, body: pending, visibility: typingVisibilityRef.current },
     });
   }, [liveSync, send]);
 
@@ -645,5 +687,7 @@ export function useSessionSocket({
     prependMessages,
     noteLocalSend,
     lastError,
+    typingVisibility,
+    setTypingVisibility,
   };
 }

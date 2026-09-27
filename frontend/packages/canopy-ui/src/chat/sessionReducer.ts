@@ -382,9 +382,12 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
 
     case "draft.typing": {
       // Someone else's box, live. Keyed by author; an empty body means they
-      // sent, discarded or cleared it.
+      // sent, discarded or cleared it — UNLESS `typing` is true, which means
+      // the words are simply withheld (typing/hidden visibility) while the
+      // person is still mid-thought, so the row is kept rather than removed.
       const rest = (prev.peer_drafts ?? []).filter((d) => d.author.id !== frame.data.author.id);
-      return { ...prev, peer_drafts: frame.data.body ? [...rest, frame.data] : rest };
+      const keep = frame.data.body !== "" || frame.data.typing === true;
+      return { ...prev, peer_drafts: keep ? [...rest, frame.data] : rest };
     }
 
     case "session.queued":

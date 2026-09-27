@@ -17,6 +17,7 @@ export type {
   SessionMenu,
   SessionState,
   TurnStatus,
+  TypingVisibility,
   WsAction,
   WsEvent,
 } from "./protocol";
@@ -57,6 +58,8 @@ export {
   draftStorageKey,
   readStoredDraft,
   writeStoredDraft,
+  readStoredTypingVisibility,
+  writeStoredTypingVisibility,
   type DraftStorage,
 } from "./drafts";
 

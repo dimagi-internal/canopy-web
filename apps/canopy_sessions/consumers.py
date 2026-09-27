@@ -251,10 +251,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def _draft_update(self, data):
         try:
+            visibility = data.get("visibility")
             draft = await database_sync_to_async(drafts.update_draft)(
                 self.session, user=self.user,
                 expected_version=int(data.get("version", 0)),
                 body=str(data.get("body", "")),
+                visibility=visibility if isinstance(visibility, str) else None,
             )
         except drafts.DraftVersionMismatch as exc:
             await self._error(

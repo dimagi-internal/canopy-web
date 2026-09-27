@@ -114,3 +114,50 @@ def test_peer_drafts_excludes_me_and_empty():
     presence.touch(session.id, owner.id)
     assert [d.author_id for d in drafts.peer_drafts(session, owner)] == [other.id]
     assert drafts.peer_drafts(session, other) == []
+
+
+# -- per-person typing visibility --
+
+def test_update_draft_stores_visibility():
+    owner, _other, session = _two()
+    d = drafts.update_draft(session, user=owner, expected_version=0, body="hi",
+                            visibility="typing")
+    assert d.visibility == "typing"
+
+
+def test_update_draft_ignores_invalid_visibility():
+    owner, _other, session = _two()
+    d = drafts.update_draft(session, user=owner, expected_version=0, body="hi",
+                            visibility="loud")
+    assert d.visibility == "live"  # default, unchanged — invalid values are ignored
+
+
+def test_update_draft_with_no_visibility_leaves_it_unchanged():
+    owner, _other, session = _two()
+    d = drafts.update_draft(session, user=owner, expected_version=0, body="a",
+                            visibility="hidden")
+    assert d.visibility == "hidden"
+    # An old client's frame carries no `visibility` at all.
+    d = drafts.update_draft(session, user=owner, expected_version=d.version, body="b")
+    assert d.visibility == "hidden"
+
+
+def test_peer_drafts_excludes_hidden():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=other, expected_version=0, body="secret",
+                        visibility="hidden")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    assert drafts.peer_drafts(session, owner) == []
+
+
+def test_peer_drafts_still_includes_typing_mode():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=other, expected_version=0, body="whisper",
+                        visibility="typing")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    peers = drafts.peer_drafts(session, owner)
+    assert [d.author_id for d in peers] == [other.id]
+    # The row itself still carries the real body; the DTO is what blanks it.
+    assert peers[0].body == "whisper"

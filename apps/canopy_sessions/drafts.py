@@ -30,14 +30,25 @@ def draft_for(session: Session, user) -> Draft:
     return draft
 
 
-def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
+def update_draft(session: Session, *, user, expected_version: int, body: str,
+                 visibility: str | None = None) -> Draft:
+    """`visibility`, when given and one of `Draft.VISIBILITY_CHOICES`, is stored
+    alongside the body — the author's own choice of how much of this draft
+    peers get to see. An old client never sends it (None), and an invalid
+    value is silently ignored rather than raised: neither is a reason to fail
+    the keystroke that carries it."""
+    valid_visibility = {c for c, _ in Draft.VISIBILITY_CHOICES}
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
             raise DraftVersionMismatch(draft.version, draft.body)
         draft.body = body
         draft.version += 1
-        draft.save(update_fields=["body", "version", "updated_at"])
+        update_fields = ["body", "version", "updated_at"]
+        if visibility is not None and visibility in valid_visibility:
+            draft.visibility = visibility
+            update_fields.append("visibility")
+        draft.save(update_fields=update_fields)
     return draft
 
 
@@ -75,7 +86,12 @@ def peer_drafts(session: Session, user=None) -> list[Draft]:
     ago and walked away from while the tab stayed open; freshness alone brings
     back a line sent over HTTP (which never cleared the server copy) the moment
     its author reconnects anywhere. Without either, `presence.left` cleared the
-    row live and the next connect snapshot put it straight back."""
+    row live and the next connect snapshot put it straight back.
+
+    A `hidden` draft is excluded outright — its author chose to show peers
+    nothing until send, and the snapshot (unlike a live `draft.typing` frame)
+    has no DTO step to withhold it at, so the exclusion has to happen here.
+    A `typing` draft still appears (the DTO blanks its body)."""
     present = presence.present_ids(session.id)
     if user is not None:
         present.discard(user.id)
@@ -86,6 +102,7 @@ def peer_drafts(session: Session, user=None) -> list[Draft]:
         .filter(session=session, slot="next", author_id__in=present,
                 updated_at__gte=timezone.now() - PEER_DRAFT_FRESH)
         .exclude(body="")
+        .exclude(visibility=Draft.HIDDEN)
         .order_by("updated_at")
     )
 

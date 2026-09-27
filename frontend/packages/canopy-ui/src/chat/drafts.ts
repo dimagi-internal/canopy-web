@@ -1,3 +1,5 @@
+import type { TypingVisibility } from "./protocol";
+
 /**
  * Whether keystrokes need to be mirrored to the server AS YOU TYPE.
  *
@@ -147,5 +149,43 @@ function remove(storage: DraftStorage, key: string): void {
     storage.removeItem(key);
   } catch {
     // same as above — best effort
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Typing-visibility persistence — per BROWSER, not per session: it is a
+// standing choice about how you type, not something that resets when you
+// switch chats. One key, not namespaced by `persistKey` like a draft body.
+// ---------------------------------------------------------------------------
+
+const TYPING_VISIBILITY_STORAGE_KEY = "canopy.chat.typingVisibility";
+
+const VALID_VISIBILITIES: readonly TypingVisibility[] = ["live", "typing", "hidden"];
+
+/** The persisted mode, or null when there is nothing stored or it is
+ *  unreadable/invalid — same try/catch-safe shape as `readStoredDraft`. */
+export function readStoredTypingVisibility(storage: DraftStorage | null): TypingVisibility | null {
+  if (!storage) return null;
+  let raw: string | null = null;
+  try {
+    raw = storage.getItem(TYPING_VISIBILITY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  return (VALID_VISIBILITIES as readonly string[]).includes(raw ?? "")
+    ? (raw as TypingVisibility)
+    : null;
+}
+
+export function writeStoredTypingVisibility(
+  storage: DraftStorage | null,
+  visibility: TypingVisibility,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(TYPING_VISIBILITY_STORAGE_KEY, visibility);
+  } catch {
+    // Quota exceeded, or storage disabled mid-session — best effort, same as
+    // `writeStoredDraft`.
   }
 }

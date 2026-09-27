@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 
-import type { SessionState } from "./protocol";
+import type { SessionState, TypingVisibility } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
@@ -49,6 +49,11 @@ export interface ChatPanelProps {
   draftPersistKey?: string;
   /** Storage backing `draftPersistKey`; defaults to localStorage. */
   draftStorage?: DraftStorage | null;
+  /** This person's chosen typing-visibility mode, and its setter. Both
+   *  optional; the control renders only when both are given (see SendBox) —
+   *  a host with no draft sync (a contact) passes neither. */
+  typingVisibility?: TypingVisibility;
+  onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
 }
 
 /**
@@ -76,6 +81,8 @@ export function ChatPanel({
   historySlot,
   draftPersistKey,
   draftStorage,
+  typingVisibility,
+  onTypingVisibilityChange,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -254,6 +261,8 @@ export function ChatPanel({
         onRemoveAttachment={onRemoveAttachment}
         persistKey={draftPersistKey}
         storage={draftStorage}
+        typingVisibility={typingVisibility}
+        onTypingVisibilityChange={onTypingVisibilityChange}
       />
     </div>
   );

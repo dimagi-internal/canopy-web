@@ -850,6 +850,12 @@ function EmbedChat({
           awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
           onDiscard={isContact ? () => socket.updateDraft('') : socket.discardDraft}
+          // A contact has no draft sync (their socket only listens — see
+          // `isContact` above), so there is nothing for this control to
+          // change; omitting both props for a contact hides it entirely
+          // (see SendBox).
+          typingVisibility={isContact ? undefined : socket.typingVisibility}
+          onTypingVisibilityChange={isContact ? undefined : socket.setTypingVisibility}
           draftPersistKey={sessionId}
           // A parsed dialog is drawn WHERE the composer would be, so a send
           // bounces as COMPOSER_NOT_VISIBLE. Same rule and same helper as
