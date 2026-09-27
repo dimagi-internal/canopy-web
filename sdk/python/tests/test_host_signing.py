@@ -151,8 +151,17 @@ class TestTheMint:
         def opener(request, timeout):
             raise urllib.error.HTTPError(request.full_url, 401, "no", {}, io.BytesIO(b"replayed: used"))
 
-        with pytest.raises(MintFailed, match="replayed"):
+        with pytest.raises(MintFailed, match="replayed") as refused:
             mint_contact_token(world.config, {}, opener=opener)
+        assert refused.value.status == 401
+
+    def test_unreachable_has_no_status(self, world):
+        def opener(request, timeout):
+            raise urllib.error.URLError("down")
+
+        with pytest.raises(MintFailed) as failed:
+            mint_contact_token(world.config, {}, opener=opener)
+        assert failed.value.status is None
 
     def test_no_token_is_a_failure(self, world):
         with pytest.raises(MintFailed):

@@ -28,7 +28,8 @@ moving onto the SDK. Minor, not patch: new public API. Nothing is removed.
   A host that overrides the template gets a new `canopy_panel.options` dict.
 - **`mint_contact_token` returns canopy's whole response** (`kind`,
   `host_grant`, `contact_id`, …), defaulting `kind`/`host_grant` for an older
-  canopy. The panel-token view passes `kind` on to the browser.
+  canopy. The panel-token view passes `kind` on to the browser. `MintFailed`
+  carries `status` (canopy's HTTP status for a refusal, else `None`).
 - **SPA page keys — two modes of one API.** `canopy_sdk.host.PageRegistry`
   (key mode: the browser names a page key, or a path `patterns` recognises;
   read-only scopes only unless `writable_scopes`) and `PageTokens` (signed

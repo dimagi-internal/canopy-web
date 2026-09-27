@@ -32,7 +32,13 @@ MINT_TIMEOUT_SECONDS = 10
 
 class MintFailed(RuntimeError):
     """canopy refused the arrival or could not be reached. Carries canopy's own
-    reason code where it gave one (``replayed``, ``bad_signature``, …)."""
+    reason code where it gave one (``replayed``, ``bad_signature``, …) in the
+    message, and ``status``: canopy's HTTP status for a refusal, ``None`` when
+    canopy could not be reached or answered 200 without a token."""
+
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", email: str = "",
@@ -157,7 +163,7 @@ def mint_contact_token(config: HostConfig, payload: dict, *, timeout: float = MI
             detail = exc.read().decode()[:500]
         except Exception:  # noqa: BLE001 - a body that cannot be read
             pass
-        raise MintFailed(f"canopy returned {exc.code}: {detail}") from exc
+        raise MintFailed(f"canopy returned {exc.code}: {detail}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         raise MintFailed(f"canopy could not be reached: {type(exc).__name__}") from exc
     token = body.get("token") if isinstance(body, dict) else None
