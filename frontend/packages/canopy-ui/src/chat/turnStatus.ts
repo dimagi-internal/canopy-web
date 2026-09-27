@@ -95,9 +95,21 @@ export interface TurnNotice {
  * `blocked` deliberately returns null: the dialog itself is the notice, and
  * the host renders it as a menu with buttons. A sentence beside it would say
  * the same thing twice and compete with the thing you can actually press.
+ *
+ * `latestMessageAt` is the newest message on screen. A settled turn's notice
+ * is only true while that turn is the conversation's last word: work typed
+ * straight into the session makes messages but no Turn, so without this a
+ * day-old failure sat in red under a thread that was plainly working.
  */
-export function turnNotice(status?: TurnStatus | null): TurnNotice | null {
+export function turnNotice(
+  status?: TurnStatus | null,
+  { latestMessageAt }: { latestMessageAt?: string | null } = {},
+): TurnNotice | null {
   if (!status) return null;
+  if (status.settled && status.finished_at && latestMessageAt
+      && Date.parse(latestMessageAt) > Date.parse(status.finished_at)) {
+    return null;
+  }
   const offer = status.cloud_runner && status.cloud_runner_id
     ? { name: status.cloud_runner, id: status.cloud_runner_id }
     : null;
@@ -139,7 +151,14 @@ export function turnNotice(status?: TurnStatus | null): TurnNotice | null {
         offer,
       };
     case "failed":
-      return { tone: "error", text: "Could not finish.", offer: null };
+      // The reason, when the runner gave one: "failed" covers an undelivered
+      // message, a stop that did not take and a create that never rendered,
+      // and each has a different fix — which the note usually spells out.
+      return {
+        tone: "error",
+        text: status.detail ? `Could not finish — ${status.detail}` : "Could not finish.",
+        offer: null,
+      };
     case "missed":
       return { tone: "warn", text: "Missed — nothing picked it up in time.", offer: null };
     default:

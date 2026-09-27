@@ -68,6 +68,8 @@ TERMINAL = frozenset({DONE, CANCELLED, MISSED, FAILED, LOST})
 PENDING = frozenset({PICKING_UP, WAITING_RUNNER, UNROUTED, WORKING, BLOCKED, PAUSED})
 #: Nothing is moving and only a person can change that.
 STUCK = frozenset({WAITING_RUNNER, UNROUTED, BLOCKED, PAUSED})
+#: A failure reason is one sentence on a chat line, not a traceback.
+DETAIL_MAX = 300
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,18 @@ class TurnStatus:
     #: collapsing them would draw a spinner over a dialog nobody has answered,
     #: which is the exact lie a status exists to stop.
     menu_pending: bool = False
+    #: WHY a failed ask failed, in the runner's words (its `result_note`). Only
+    #: for FAILED: that is the one state whose cause cannot be inferred from the
+    #: state itself — "failed" covers an undelivered message, a stop that did
+    #: not take and a create that never rendered, and each wants a different
+    #: fix. Without it the chat said a bare "Could not finish." over a note that
+    #: spelled out exactly what to do (2026-09-27, eva's idm-talk).
+    detail: str | None = None
+    #: When the turn reached a terminal state. Lets a client tell a failure that
+    #: is still the conversation's last word from one the session has since
+    #: moved past — work typed straight into the session makes no Turn, so the
+    #: latest Turn can be a day-old failure under a thread that is plainly fine.
+    finished_at: datetime | None = None
 
     @property
     def settled(self) -> bool:
@@ -132,6 +146,8 @@ class TurnStatus:
             "cloud_runner_id": self.cloud_runner_id,
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
             "menu_pending": self.menu_pending,
+            "detail": self.detail,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -212,6 +228,8 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
         cloud_runner_id=str(cloud.id) if cloud is not None else None,
         last_seen_at=turn.claimed_by.last_heartbeat_at if turn.claimed_by_id else None,
         menu_pending=menu_pending,
+        detail=((turn.result_note or "").strip()[:DETAIL_MAX] or None) if state == FAILED else None,
+        finished_at=turn.finished_at if state in TERMINAL else None,
     )
 
 

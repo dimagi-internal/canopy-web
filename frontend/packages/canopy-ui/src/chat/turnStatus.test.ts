@@ -136,4 +136,53 @@ describe("turnNotice", () => {
     // An older client meeting a newer server must fall silent, not crash.
     expect(turnNotice(status({ state: "some_future_state" }))).toBeNull();
   });
+
+  it("says why a turn failed when the runner gave a reason", () => {
+    // 2026-09-27: a bare "Could not finish." hid a note that said exactly
+    // what to do.
+    const n = turnNotice(status({
+      state: "failed", settled: true,
+      detail: "Your message was not delivered: the emdash session has unsent text in its prompt.",
+    }));
+    expect(n?.tone).toBe("error");
+    expect(n?.text).toBe(
+      "Could not finish — Your message was not delivered: the emdash session has unsent text in its prompt.",
+    );
+  });
+
+  it("keeps the bare wording for a failure with no reason, or an older server", () => {
+    expect(turnNotice(status({ state: "failed", settled: true }))?.text).toBe("Could not finish.");
+    expect(turnNotice(status({ state: "failed", settled: true, detail: null }))?.text)
+      .toBe("Could not finish.");
+  });
+
+  it("drops a settled failure once the conversation has moved past it", () => {
+    // Work typed straight into the session makes messages but no Turn, so the
+    // latest Turn can be a day-old failure under a thread that is fine.
+    const failed = status({
+      state: "failed", settled: true, finished_at: "2026-09-26T22:07:07Z",
+    });
+    expect(turnNotice(failed, { latestMessageAt: "2026-09-27T17:21:38Z" })).toBeNull();
+    expect(turnNotice(status({
+      state: "lost", settled: true, finished_at: "2026-09-26T22:07:07Z",
+    }), { latestMessageAt: "2026-09-27T17:21:38Z" })).toBeNull();
+  });
+
+  it("still shows a failure that is the conversation's last word", () => {
+    const failed = status({
+      state: "failed", settled: true, finished_at: "2026-09-26T22:07:07Z",
+    });
+    expect(turnNotice(failed, { latestMessageAt: "2026-09-26T22:06:01Z" })?.tone).toBe("error");
+    expect(turnNotice(failed, { latestMessageAt: null })?.tone).toBe("error");
+    expect(turnNotice(failed)?.tone).toBe("error");
+  });
+
+  it("never lets a newer message hide a turn that is not settled", () => {
+    // A live or stuck turn is still owed something, whatever else was said.
+    const n = turnNotice(
+      status({ state: "waiting_runner", stuck: true, finished_at: "2026-09-26T22:07:07Z" }),
+      { latestMessageAt: "2026-09-27T17:21:38Z" },
+    );
+    expect(n?.tone).toBe("warn");
+  });
 });

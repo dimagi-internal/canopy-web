@@ -136,7 +136,9 @@ export function ChatPanel({
   // underneath would state the same fact twice and put a dead-end restatement
   // directly below the thing you can actually press. The fallback is for hosts
   // with no banner of their own, which is exactly the embedded widget.
-  const notice = banner ? null : turnNotice(status);
+  const latestMessageAt =
+    state.messages.length > 0 ? state.messages[state.messages.length - 1].created_at : null;
+  const notice = banner ? null : turnNotice(status, { latestMessageAt });
 
   // Sticky-bottom scroll: dep changes on (a) new message arrival and (b)
   // streaming text growth on the last message. length-only (cheap) instead
