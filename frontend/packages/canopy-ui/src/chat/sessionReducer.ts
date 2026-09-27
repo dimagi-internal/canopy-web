@@ -374,6 +374,13 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
             version: incoming.version,
             last_editor: incoming.last_editor,
             last_edit_at: incoming.last_edit_at,
+            // The server's CURRENT visibility, even while the body itself is
+            // kept local — `useSessionSocket`'s drift check compares against
+            // this field, and it must reflect what the server actually has,
+            // not a value frozen at whatever it was when this draft first
+            // loaded. `?? prev.active_draft.visibility` only for an older
+            // server that omits the field.
+            visibility: incoming.visibility ?? prev.active_draft.visibility,
           },
         };
       }
@@ -382,9 +389,12 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
 
     case "draft.typing": {
       // Someone else's box, live. Keyed by author; an empty body means they
-      // sent, discarded or cleared it.
+      // sent, discarded or cleared it — UNLESS `typing` is true, which means
+      // the words are simply withheld (typing/hidden visibility) while the
+      // person is still mid-thought, so the row is kept rather than removed.
       const rest = (prev.peer_drafts ?? []).filter((d) => d.author.id !== frame.data.author.id);
-      return { ...prev, peer_drafts: frame.data.body ? [...rest, frame.data] : rest };
+      const keep = frame.data.body !== "" || frame.data.typing === true;
+      return { ...prev, peer_drafts: keep ? [...rest, frame.data] : rest };
     }
 
     case "session.queued":

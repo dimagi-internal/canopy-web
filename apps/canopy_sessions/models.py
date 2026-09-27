@@ -297,11 +297,20 @@ class Draft(models.Model):
     draft with a 2s soft lock, which made two people who wanted to speak at once
     queue for the keyboard. `version` still guards one person's own tabs."""
 
+    LIVE, TYPING, HIDDEN = "live", "typing", "hidden"
+    VISIBILITY_CHOICES = [(LIVE, "Live"), (TYPING, "Typing"), (HIDDEN, "Hidden")]
+
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="drafts")
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     slot = models.CharField(max_length=16, default="next")
     body = models.TextField(blank=True, default="")
     version = models.PositiveIntegerField(default=0)
+    #: What the author lets OTHERS see of this draft while it is in progress —
+    #: the words (`live`), just the fact of typing (`typing`), or nothing at
+    #: all until send (`hidden`). Chosen per person, per browser; the server is
+    #: the only place the rule lives (`serializers.peer_draft_dto`), so the
+    #: words physically never leave it for `typing`/`hidden`.
+    visibility = models.CharField(max_length=8, choices=VISIBILITY_CHOICES, default=LIVE)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -31,6 +31,13 @@ def draft_for(session: Session, user) -> Draft:
 
 
 def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
+    """The version-guarded keystroke path. Deliberately has no `visibility`
+    parameter any more (canopy-ui#… "hidden->live->hidden" regression): the
+    mode used to ride this frame, so a stale keystroke echo — one that lost a
+    race against a mode change — could silently downgrade it server-side, and
+    the version check that protects BODY conflicts has nothing to do with a
+    choice the user makes independently of typing. See `set_visibility`,
+    which applies the mode unconditionally, on its own idempotent frame."""
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
@@ -38,6 +45,30 @@ def update_draft(session: Session, *, user, expected_version: int, body: str) ->
         draft.body = body
         draft.version += 1
         draft.save(update_fields=["body", "version", "updated_at"])
+    return draft
+
+
+def set_visibility(session: Session, user, visibility: str) -> Draft:
+    """Apply the author's chosen mode UNCONDITIONALLY — no version check, and
+    it writes nothing but `visibility`. Not even `updated_at`: that is the
+    keystroke clock `peer_drafts` reads for freshness, so bumping it made a
+    mode switch re-surface a draft abandoned an hour ago. Deliberately not folded
+    into `update_draft`: that frame is guarded by `version` to protect the
+    BODY from a lost race between two edits, and a mode change is not an
+    edit — gating it on the same version turned a stale, already-in-flight
+    keystroke echo into a downgrade that silently exposed the words again
+    after the user had already chosen Hidden. Because this never touches
+    `version`, it can never itself raise `DraftVersionMismatch` and can never
+    cause one either. An invalid value is silently ignored, like the body
+    path: neither is a reason to fail the frame that carries it."""
+    valid_visibility = {c for c, _ in Draft.VISIBILITY_CHOICES}
+    with transaction.atomic():
+        draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
+        if visibility in valid_visibility and visibility != draft.visibility:
+            # A queryset update, not save(): `auto_now` would stamp
+            # `updated_at` on any save that lists it, and this must not.
+            Draft.objects.filter(pk=draft.pk).update(visibility=visibility)
+            draft.visibility = visibility
     return draft
 
 
@@ -75,7 +106,12 @@ def peer_drafts(session: Session, user=None) -> list[Draft]:
     ago and walked away from while the tab stayed open; freshness alone brings
     back a line sent over HTTP (which never cleared the server copy) the moment
     its author reconnects anywhere. Without either, `presence.left` cleared the
-    row live and the next connect snapshot put it straight back."""
+    row live and the next connect snapshot put it straight back.
+
+    A `hidden` draft is excluded outright — its author chose to show peers
+    nothing until send, and the snapshot (unlike a live `draft.typing` frame)
+    has no DTO step to withhold it at, so the exclusion has to happen here.
+    A `typing` draft still appears (the DTO blanks its body)."""
     present = presence.present_ids(session.id)
     if user is not None:
         present.discard(user.id)
@@ -86,6 +122,7 @@ def peer_drafts(session: Session, user=None) -> list[Draft]:
         .filter(session=session, slot="next", author_id__in=present,
                 updated_at__gte=timezone.now() - PEER_DRAFT_FRESH)
         .exclude(body="")
+        .exclude(visibility=Draft.HIDDEN)
         .order_by("updated_at")
     )
 

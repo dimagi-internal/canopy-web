@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromAgui, resetAguiState } from "./agui";
-import type { Draft, Message, SessionState, WsEvent } from "./protocol";
-import { shouldSyncDraftLive } from "./drafts";
+import type { Draft, Message, SessionState, TypingVisibility, WsEvent } from "./protocol";
+import {
+  TYPING_VISIBILITY_STORAGE_KEY,
+  defaultDraftStorage,
+  readStoredTypingVisibility,
+  shouldSyncDraftLive,
+  writeStoredTypingVisibility,
+} from "./drafts";
 import { prependHistory } from "./history";
 import {
   REDUCER_EVENTS,
@@ -185,6 +191,14 @@ export interface UseSessionSocketResult {
    *  they're the same send rather than rendering it twice. */
   noteLocalSend: (text: string, clientId?: string) => void;
   lastError: string | null;
+  /** This person's chosen mode for how their OWN in-progress message appears
+   *  to others — persisted per browser (`canopy.chat.typingVisibility`).
+   *  Defaults to `"live"`, today's behaviour. */
+  typingVisibility: TypingVisibility;
+  /** Change the mode. When there is a non-empty draft body and live sync is
+   *  on (somebody else is present), sends one `draft.update` immediately so
+   *  peers switch right away rather than waiting for the next keystroke. */
+  setTypingVisibility: (visibility: TypingVisibility) => void;
 }
 
 // Frames the reducer handles: its own list, so the two cannot drift (see
@@ -211,6 +225,11 @@ export function useSessionSocket({
   // this window, so nothing else in the state can express it, and without it
   // the Stop control is unreachable exactly when the turn is stuck.
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // Per-browser, not per-session — a standing choice about how you type, read
+  // once at mount from the same try/catch-safe storage `SendBox` uses.
+  const [typingVisibility, setTypingVisibilityState] = useState<TypingVisibility>(
+    () => readStoredTypingVisibility(defaultDraftStorage()) ?? "live",
+  );
 
   const socketRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<SessionState>(INITIAL_STATE);
@@ -227,10 +246,21 @@ export function useSessionSocket({
   // vocabulary mid-session.
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
+  // Read wherever the mode needs to be sent or compared, closing over
+  // whatever is CURRENT rather than whatever a callback was created with.
+  const typingVisibilityRef = useRef(typingVisibility);
+  typingVisibilityRef.current = typingVisibility;
   const warnedNativeRef = useRef(false);
   // Control frames that must not be lost across a reconnect (currently
   // only chat.stop). The WS-world analogue of an abortable chat transport.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
+  // A mode the person CHOSE while this socket could not carry it (closed, or
+  // open but before the first snapshot told us what the server holds). Sent
+  // once on the next snapshot, then cleared. Nothing else is ever pushed on
+  // connect: a device with nothing stored has only a DEFAULT, and pushing a
+  // default would expose words its author hid from another device.
+  const pendingVisibilityRef = useRef<TypingVisibility | null>(null);
+  const snapshotSeenRef = useRef(false);
   // Sends awaiting the server's receipt: client_id -> {text, timer}.
   const unconfirmedRef = useRef(new Map<string, { text: string; timer: number | null }>());
   const resendRef = useRef(resendOverHttp);
@@ -247,6 +277,24 @@ export function useSessionSocket({
   useEffect(() => {
     onUnknownEventRef.current = onUnknownEvent;
   }, [onUnknownEvent]);
+
+  // Belt-and-braces for the SAME cross-tab sync `draft.updated` adoption
+  // covers: a native `storage` event fires in every OTHER tab the instant one
+  // tab writes the key (never the writer's own tab), so it catches the case
+  // no socket frame can — a tab with no live socket right now.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== TYPING_VISIBILITY_STORAGE_KEY) return;
+      const next = readStoredTypingVisibility(defaultDraftStorage());
+      if (next != null && next !== typingVisibilityRef.current) {
+        typingVisibilityRef.current = next;
+        setTypingVisibilityState(next);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const send = useCallback((frame: { action: string; data: unknown }) => {
     const ws = socketRef.current;
@@ -298,11 +346,49 @@ export function useSessionSocket({
     ) {
       setAwaitingReply(false);
     }
+    // `draft.updated` only ever reaches the AUTHOR's own sockets (see
+    // `_broadcast_draft`), so this is always MY draft, echoed — including
+    // from a mode change in a DIFFERENT tab of my own, or from THIS tab's own
+    // `draft.set_visibility` round-tripping back. Adopted UNCONDITIONALLY:
+    // since the mode is now its own idempotent, unversioned frame
+    // (`draft.set_visibility`) rather than a field racing keystrokes on
+    // `draft.update`, the only thing that ever changes it server-side is an
+    // explicit choice — made here, in another tab, or on another device — so
+    // last-choice-wins is simply correct, with no downgrade race to guard
+    // against.
+    if (frame.event === "draft.updated" && frame.data.visibility) {
+      if (frame.data.visibility !== typingVisibilityRef.current) {
+        typingVisibilityRef.current = frame.data.visibility;
+        setTypingVisibilityState(frame.data.visibility);
+        writeStoredTypingVisibility(defaultDraftStorage(), frame.data.visibility);
+      }
+    }
     // The server's receipt for one of OUR sends: stop waiting on it.
     if (frame.event === "draft.committed" && frame.data.client_id) {
       const entry = unconfirmedRef.current.get(frame.data.client_id);
       if (entry?.timer != null) window.clearTimeout(entry.timer);
       unconfirmedRef.current.delete(frame.data.client_id);
+    }
+    // On a snapshot (connect or reconnect) the SERVER's stored mode is the
+    // truth — it is the last explicit choice from any tab or device. The one
+    // exception is a choice made HERE while the socket could not carry it
+    // (`pendingVisibilityRef`): that is newer, so it is sent now, before any
+    // later joiner's snapshot can read the older mode. A local value that was
+    // never chosen (nothing stored, a private window, the widget's partitioned
+    // storage) is only a default, and is never pushed. No own draft (a viewer
+    // or a contact) means there is nothing of ours to set.
+    if (frame.event === "session.state") {
+      snapshotSeenRef.current = true;
+      const ad = frame.data.active_draft;
+      const pending = pendingVisibilityRef.current;
+      pendingVisibilityRef.current = null;
+      if (ad != null && pending != null) {
+        send({ action: "draft.set_visibility", data: { visibility: pending } });
+      } else if (ad?.visibility && ad.visibility !== typingVisibilityRef.current) {
+        typingVisibilityRef.current = ad.visibility;
+        setTypingVisibilityState(ad.visibility);
+        writeStoredTypingVisibility(defaultDraftStorage(), ad.visibility);
+      }
     }
     // Side-effect events: handle BEFORE setState so React strict-mode's
     // double-invocation of the updater doesn't double-fire the effect.
@@ -318,7 +404,9 @@ export function useSessionSocket({
         typeof frame.data.detail === "object"
       ) {
         // Clear any pending optimistic body so the user's stale local
-        // text doesn't auto-re-send with the new version.
+        // text doesn't auto-re-send with the new version. The mode is
+        // unaffected by this — it never rides `draft.update`, so a body
+        // conflict here has nothing to do with it and needs no recovery.
         pendingDraftBodyRef.current = null;
         if (draftDebounceRef.current != null) {
           window.clearTimeout(draftDebounceRef.current);
@@ -334,7 +422,7 @@ export function useSessionSocket({
       return;
     }
     setState((prev) => sessionReducer(prev, frame));
-  }, []);
+  }, [send]);
 
   const connect = useCallback(() => {
     if (closedByUserRef.current) return;
@@ -349,6 +437,7 @@ export function useSessionSocket({
     socketRef.current = ws;
 
     ws.onopen = () => {
+      snapshotSeenRef.current = false;
       setConnected(true);
       reconnectAttemptRef.current = 0;
       // Flush any control frames that were queued while the socket was
@@ -398,6 +487,7 @@ export function useSessionSocket({
     };
 
     ws.onclose = () => {
+      snapshotSeenRef.current = false;
       setConnected(false);
       // A send still waiting for its receipt will not get one on this socket.
       for (const clientId of [...unconfirmedRef.current.keys()]) rescueSend(clientId);
@@ -511,6 +601,31 @@ export function useSessionSocket({
           });
         }
       }, DRAFT_UPDATE_DEBOUNCE_MS);
+    },
+    [send],
+  );
+
+  const setTypingVisibility = useCallback(
+    (visibility: TypingVisibility) => {
+      setTypingVisibilityState(visibility);
+      typingVisibilityRef.current = visibility;
+      writeStoredTypingVisibility(defaultDraftStorage(), visibility);
+      // The mode is its OWN idempotent frame — applied unconditionally
+      // server-side, no version check — so there is no presence gate: a mode
+      // change must reach the server even while ALONE, or a peer who joins
+      // later reads the old mode straight off their connect snapshot. Until
+      // the first snapshot has told us what the server holds (or while the
+      // socket is closed) the choice waits in `pendingVisibilityRef` and the
+      // snapshot sends it. With no own draft (a viewer or a contact) there is
+      // nothing to set, and the server would refuse it anyway.
+      const ws = socketRef.current;
+      const open = ws != null && ws.readyState === WebSocket.OPEN;
+      if (!open || !snapshotSeenRef.current) {
+        pendingVisibilityRef.current = visibility;
+        return;
+      }
+      if (stateRef.current.active_draft == null) return;
+      send({ action: "draft.set_visibility", data: { visibility } });
     },
     [send],
   );
@@ -645,5 +760,7 @@ export function useSessionSocket({
     prependMessages,
     noteLocalSend,
     lastError,
+    typingVisibility,
+    setTypingVisibility,
   };
 }

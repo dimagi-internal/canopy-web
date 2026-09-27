@@ -227,6 +227,29 @@ describe("sessionReducer — drafts", () => {
     expect(next.active_draft?.version).toBe(3)
   })
 
+  it("draft.updated carries the server's visibility into active_draft even while keeping the local body", () => {
+    // The drift check in useSessionSocket (`current.visibility !==
+    // typingVisibilityRef.current`) compares against THIS field — if the
+    // echo-suppression branch never updated it, that check would compare
+    // against a permanently stale value.
+    const prev = makeState({
+      current_user_id: 5,
+      active_draft: { ...baseDraft, body: "local typing", version: 3, visibility: "live" },
+    })
+    const next = sessionReducer(prev, {
+      event: "draft.updated",
+      data: {
+        ...baseDraft,
+        body: "stale server echo",
+        last_editor: 5,
+        version: 4,
+        visibility: "hidden",
+      } as Draft,
+    } as WsEvent)
+    expect(next.active_draft?.body).toBe("local typing")
+    expect(next.active_draft?.visibility).toBe("hidden")
+  })
+
   it("draft.updated accepts the body when another user is editing", () => {
     const prev = makeState({
       current_user_id: 5,
@@ -742,6 +765,30 @@ describe("per-person drafts", () => {
     s = sessionReducer(s, {
       event: "draft.typing",
       data: { author: { id: 2, name: "Bo" }, body: "", at: null },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([]);
+  });
+
+  it("keeps an empty-body row when the server says the person is still typing", () => {
+    // `typing`/`hidden` visibility withholds the words but not the fact of
+    // typing — the row must survive rather than being read as "sent/cleared".
+    const s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    } as WsEvent);
+    expect(s.peer_drafts).toEqual([
+      { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    ]);
+  });
+
+  it("removes the row when the body is empty and typing is not true", () => {
+    let s = sessionReducer(makeState(), {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: true },
+    } as WsEvent);
+    s = sessionReducer(s, {
+      event: "draft.typing",
+      data: { author: { id: 2, name: "Bo" }, body: "", at: null, typing: false },
     } as WsEvent);
     expect(s.peer_drafts).toEqual([]);
   });

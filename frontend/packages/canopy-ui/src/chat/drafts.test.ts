@@ -5,8 +5,10 @@ import {
   clearStoredDraft,
   draftStorageKey,
   readStoredDraft,
+  readStoredTypingVisibility,
   shouldSyncDraftLive,
   writeStoredDraft,
+  writeStoredTypingVisibility,
 } from "./drafts"
 
 const NOW = 1_700_000_000_000
@@ -142,5 +144,45 @@ describe("clearStoredDraft", () => {
     writeStoredDraft(s, KEY, "sent now", NOW)
     clearStoredDraft(s, KEY)
     expect(readStoredDraft(s, KEY, NOW)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Typing-visibility persistence — per browser, not per session.
+// ---------------------------------------------------------------------------
+
+describe("readStoredTypingVisibility / writeStoredTypingVisibility", () => {
+  it("defaults to null when nothing is stored", () => {
+    expect(readStoredTypingVisibility(fakeStorage())).toBeNull()
+  })
+
+  it("round-trips a written mode", () => {
+    const s = fakeStorage()
+    writeStoredTypingVisibility(s, "typing")
+    expect(readStoredTypingVisibility(s)).toBe("typing")
+  })
+
+  it("rejects a value that isn't one of the three modes", () => {
+    const s = fakeStorage({ "canopy.chat.typingVisibility": "loud" })
+    expect(readStoredTypingVisibility(s)).toBeNull()
+  })
+
+  it("is inert without a storage", () => {
+    expect(readStoredTypingVisibility(null)).toBeNull()
+    expect(() => writeStoredTypingVisibility(null, "hidden")).not.toThrow()
+  })
+
+  it("survives a storage that throws", () => {
+    const hostile = {
+      getItem: () => {
+        throw new Error("SecurityError")
+      },
+      setItem: () => {
+        throw new Error("SecurityError")
+      },
+      removeItem: () => {},
+    }
+    expect(readStoredTypingVisibility(hostile)).toBeNull()
+    expect(() => writeStoredTypingVisibility(hostile, "live")).not.toThrow()
   })
 })

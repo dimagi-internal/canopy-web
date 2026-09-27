@@ -7,7 +7,7 @@ import {
 } from "react";
 import type React from "react";
 
-import type { Draft } from "./protocol";
+import type { Draft, TypingVisibility } from "./protocol";
 import {
   clearStoredDraft,
   defaultDraftStorage,
@@ -63,6 +63,14 @@ interface Props {
   /** Storage backing `persistKey`. Defaults to localStorage; inject a fake in
    *  tests, or sessionStorage for per-tab drafts. */
   storage?: DraftStorage | null;
+  /** This person's choice of how much of THEIR OWN in-progress message peers
+   *  get to see: the words live (`live`), just the fact of typing (`typing`),
+   *  or nothing until send (`hidden`). Both this and `onTypingVisibilityChange`
+   *  are optional, and the control renders only when BOTH are given — a host
+   *  that passes neither (a contact's socket, which has no draft sync) gets no
+   *  control at all rather than a dead one. */
+  typingVisibility?: TypingVisibility;
+  onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
 }
 
 export function SendBox({
@@ -81,6 +89,8 @@ export function SendBox({
   onRemoveAttachment,
   persistKey,
   storage,
+  typingVisibility,
+  onTypingVisibilityChange,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -343,6 +353,33 @@ export function SendBox({
               {stopState === "requested" ? "stopping…" : "stop"}
             </Button>
           ) : null}
+          {typingVisibility != null && onTypingVisibilityChange != null && (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span className="hidden sm:inline">Others see:</span>
+              <select
+                data-testid="typing-visibility"
+                value={typingVisibility}
+                title="Choose what others see of your message while you're still typing it."
+                onChange={(e) =>
+                  onTypingVisibilityChange(e.target.value as TypingVisibility)
+                }
+                className={[
+                  // bg-background, not bg-transparent: a native <select>'s
+                  // OPTION list paints on the OS's own background, and a
+                  // transparent trigger left the closed control's text
+                  // sitting on whatever was behind it — unreadable in dark
+                  // mode, where that was the page's own dark-on-dark text.
+                  "rounded-md border border-input bg-background px-1.5 py-1 text-xs",
+                  "text-foreground focus-visible:outline-none focus-visible:ring-1",
+                  "focus-visible:ring-ring",
+                ].join(" ")}
+              >
+                <option value="live">My text</option>
+                <option value="typing">Typing…</option>
+                <option value="hidden">Nothing</option>
+              </select>
+            </label>
+          )}
           <Button
             type="button"
             size="sm"

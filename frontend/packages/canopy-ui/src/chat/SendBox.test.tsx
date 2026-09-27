@@ -582,3 +582,30 @@ describe("SendBox — draft persistence across unmount", () => {
     expect(box().value).toBe("still typeable");
   });
 });
+
+describe("SendBox — typing visibility control", () => {
+  it("is absent when neither prop is given", () => {
+    setup();
+    expect(screen.queryByTestId("typing-visibility")).toBeNull();
+  });
+
+  it("is absent when only the value is given, with no handler", () => {
+    setup({ typingVisibility: "live" });
+    expect(screen.queryByTestId("typing-visibility")).toBeNull();
+  });
+
+  it("shows the control when both props are given, and calls the handler on selection", () => {
+    const onChange = vi.fn();
+    setup({ typingVisibility: "live", onTypingVisibilityChange: onChange });
+    const control = screen.getByTestId("typing-visibility") as HTMLSelectElement;
+    expect(control.value).toBe("live");
+    fireEvent.change(control, { target: { value: "typing" } });
+    expect(onChange).toHaveBeenCalledWith("typing");
+  });
+
+  it("has a tooltip explaining what it does", () => {
+    setup({ typingVisibility: "hidden", onTypingVisibilityChange: vi.fn() });
+    const control = screen.getByTestId("typing-visibility") as HTMLSelectElement;
+    expect(control.title.length).toBeGreaterThan(0);
+  });
+});

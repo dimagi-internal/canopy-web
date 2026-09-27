@@ -114,3 +114,81 @@ def test_peer_drafts_excludes_me_and_empty():
     presence.touch(session.id, owner.id)
     assert [d.author_id for d in drafts.peer_drafts(session, owner)] == [other.id]
     assert drafts.peer_drafts(session, other) == []
+
+
+# -- per-person typing visibility --
+#
+# The mode is its OWN idempotent frame (`set_visibility`), never a field on
+# the version-guarded `update_draft` — a stale keystroke echo racing a mode
+# change used to be able to downgrade it server-side (canopy-ui#…
+# "hidden->live->hidden" regression).
+
+def test_set_visibility_applies_with_no_version_and_does_not_bump_version():
+    owner, _other, session = _two()
+    before = drafts.update_draft(session, user=owner, expected_version=0, body="hi")
+    d = drafts.set_visibility(session, owner, "typing")
+    assert d.visibility == "typing"
+    assert d.version == before.version  # untouched — this is not an edit
+
+
+def test_set_visibility_ignores_an_invalid_value():
+    owner, _other, session = _two()
+    d = drafts.set_visibility(session, owner, "loud")
+    assert d.visibility == "live"  # default, unchanged — invalid values are ignored
+
+
+def test_update_draft_no_longer_changes_visibility():
+    owner, _other, session = _two()
+    drafts.set_visibility(session, owner, "hidden")
+    # A stale keystroke frame — even one still carrying a `visibility` field
+    # from an in-flight 0.14 client — cannot touch the mode any more.
+    d = drafts.update_draft(session, user=owner, expected_version=0, body="a")
+    assert d.visibility == "hidden"
+
+
+def test_peer_drafts_excludes_hidden():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=other, expected_version=0, body="secret")
+    drafts.set_visibility(session, other, "hidden")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    assert drafts.peer_drafts(session, owner) == []
+
+
+def test_peer_drafts_still_includes_typing_mode():
+    owner, other, session = _two()
+    drafts.update_draft(session, user=other, expected_version=0, body="whisper")
+    drafts.set_visibility(session, other, "typing")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    peers = drafts.peer_drafts(session, owner)
+    assert [d.author_id for d in peers] == [other.id]
+    # The row itself still carries the real body; the DTO is what blanks it.
+    assert peers[0].body == "whisper"
+
+
+def test_set_visibility_does_not_touch_updated_at():
+    # `updated_at` is the keystroke clock `peer_drafts` reads for freshness;
+    # a mode switch is not a keystroke.
+    owner, _other, session = _two()
+    before = drafts.update_draft(session, user=owner, expected_version=0, body="hi")
+    after = drafts.set_visibility(session, owner, "hidden")
+    after.refresh_from_db()
+    assert after.visibility == "hidden"
+    assert after.updated_at == before.updated_at
+
+
+def test_switching_an_old_draft_to_live_does_not_resurface_it():
+    from datetime import timedelta
+
+    from apps.canopy_sessions.models import Draft
+    from django.utils import timezone
+
+    owner, other, session = _two()
+    d = drafts.update_draft(session, user=other, expected_version=0, body="stale words")
+    drafts.set_visibility(session, other, "hidden")
+    Draft.objects.filter(pk=d.pk).update(updated_at=timezone.now() - timedelta(minutes=11))
+    drafts.set_visibility(session, other, "live")
+    presence.touch(session.id, other.id)
+    presence.touch(session.id, owner.id)
+    assert drafts.peer_drafts(session, owner) == []

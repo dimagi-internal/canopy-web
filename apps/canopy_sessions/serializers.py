@@ -63,19 +63,30 @@ def draft_dto(draft: Draft | None) -> dict | None:
         "last_editor": draft.author_id,
         "author_id": draft.author_id,
         "last_edit_at": _iso(draft.updated_at),
+        # So the author's OTHER tabs show the same chosen mode.
+        "visibility": draft.visibility,
     }
 
 
 def peer_draft_dto(draft: Draft) -> dict:
     """Someone ELSE's draft, as the live `draft.typing` row. Deliberately not the
-    `draft_dto` shape: an old client adopts any draft-shaped frame as its own."""
+    `draft_dto` shape: an old client adopts any draft-shaped frame as its own.
+
+    THE ONLY PLACE the per-mode rule lives — the words must never leave the
+    server for `typing`/`hidden`:
+      - `live`   -> the body, plus `typing` reflecting whether it's non-empty.
+      - `typing` -> body withheld (""), `typing` reflects the REAL body.
+      - `hidden` -> body withheld (""), `typing` always False (nothing shows
+                    until send)."""
     user = draft.author
-    return {
-        "author": {"id": draft.author_id,
-                   "name": (user.get_full_name() or "").strip() or user.email},
-        "body": draft.body,
-        "at": _iso(draft.updated_at),
-    }
+    author = {"id": draft.author_id,
+             "name": (user.get_full_name() or "").strip() or user.email}
+    at = _iso(draft.updated_at)
+    if draft.visibility == Draft.HIDDEN:
+        return {"author": author, "body": "", "at": at, "typing": False}
+    if draft.visibility == Draft.TYPING:
+        return {"author": author, "body": "", "at": at, "typing": bool(draft.body)}
+    return {"author": author, "body": draft.body, "at": at, "typing": bool(draft.body)}
 
 
 def participant_dto(sp: SessionParticipant) -> dict:

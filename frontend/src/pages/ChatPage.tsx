@@ -790,6 +790,8 @@ export function ChatPage() {
           onRemoveAttachment={handleRemoveAttachment}
           onUpdateDraft={socket.updateDraft}
           onDiscard={socket.discardDraft}
+          typingVisibility={socket.typingVisibility}
+          onTypingVisibilityChange={socket.setTypingVisibility}
           renderMarkdown={renderMarkdown}
           // Keep a half-typed message across a route change or a closed tab.
           // Nothing else holds it: alone in a session the body is never

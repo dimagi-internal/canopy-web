@@ -54,10 +54,58 @@ def test_peer_draft_dto_names_the_author_and_is_not_draft_shaped():
     s = Session.objects.create(workspace=ws, created_by=u, title="t")
     d = Draft.objects.create(session=s, slot="next", body="wip", author=u)
     dto = serializers.peer_draft_dto(d)
-    assert set(dto) == {"author", "body", "at"}
+    assert set(dto) == {"author", "body", "at", "typing"}
     assert dto["author"]["id"] == u.pk
     assert dto["author"]["name"]
     assert dto["body"] == "wip"
+
+
+def test_peer_draft_dto_live_shows_the_words():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="hello", author=u, visibility="live")
+    dto = serializers.peer_draft_dto(d)
+    assert dto["body"] == "hello"
+    assert dto["typing"] is True
+
+
+def test_peer_draft_dto_live_empty_body_is_not_typing():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="", author=u, visibility="live")
+    dto = serializers.peer_draft_dto(d)
+    assert dto["body"] == ""
+    assert dto["typing"] is False
+
+
+def test_peer_draft_dto_typing_mode_withholds_the_words():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="secret words",
+                             author=u, visibility="typing")
+    dto = serializers.peer_draft_dto(d)
+    assert dto["body"] == ""
+    assert "secret" not in str(dto)
+    assert dto["typing"] is True
+
+
+def test_peer_draft_dto_hidden_mode_shows_nothing():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="secret words",
+                             author=u, visibility="hidden")
+    dto = serializers.peer_draft_dto(d)
+    assert dto["body"] == ""
+    assert "secret" not in str(dto)
+    assert dto["typing"] is False
+
+
+def test_draft_dto_carries_visibility():
+    ws, u = _ws_user()
+    s = Session.objects.create(workspace=ws, created_by=u, title="t")
+    d = Draft.objects.create(session=s, slot="next", body="wip", author=u, visibility="hidden")
+    dto = serializers.draft_dto(d)
+    assert dto["visibility"] == "hidden"
 
 
 def test_session_state_dto_keys():
