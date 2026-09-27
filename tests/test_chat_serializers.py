@@ -79,7 +79,8 @@ def test_session_state_dto_keys():
     # never been asked anything.
     assert set(state) == {"messages", "active_draft", "peer_drafts", "participants",
                           "presence_user_ids", "current_user_id", "menu",
-                          "turn_status", "queued"}
+                          "turn_status", "queued", "current_contact_id"}
+    assert state["current_contact_id"] is None
     assert state["peer_drafts"] == []
     assert state["menu"] is None
     assert state["turn_status"] is None

@@ -105,7 +105,7 @@ def participant_dto_for(user, role: str) -> dict:
 
 
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
-                      messages, peer_drafts=(), queued=()) -> dict:
+                      messages, peer_drafts=(), queued=(), current_contact_id=None) -> dict:
     """The canonical `session.state` snapshot payload."""
     return {
         "messages": [message_dto(m) for m in messages],
@@ -122,6 +122,10 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         "participants": [p if isinstance(p, dict) else participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),
         "current_user_id": current_user_id,
+        # The connecting principal when it is a CONTACT (a widget visitor), who
+        # has no user id: without it a client cannot tell which authored lines
+        # are the viewer's own. Null for a member.
+        "current_contact_id": current_contact_id,
         # The dialog the agent is waiting on, if any. In the SNAPSHOT and not
         # only in a live frame, because `session.activity` is view-only and
         # reaches a client only if it was already connected when the agent

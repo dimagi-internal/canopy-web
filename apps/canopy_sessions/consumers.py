@@ -602,6 +602,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 # listener has none — where `self.user.id` raised on exactly the
                 # connection this snapshot exists to serve.
                 current_user_id=self.user.id if self.user else None,
+                current_contact_id=self.contact.pk if getattr(self, "contact", None) else None,
                 participants=parts,
                 present_ids=sorted(presence.present_ids(self.session.id)),
                 draft=own,

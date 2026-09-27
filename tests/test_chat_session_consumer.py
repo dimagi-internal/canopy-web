@@ -89,6 +89,7 @@ async def test_snapshot_is_canonical():
     assert set(data) >= {"messages", "active_draft", "participants",
                          "presence_user_ids", "current_user_id"}
     assert data["current_user_id"] == owner.id
+    assert data["current_contact_id"] is None
     assert owner.id in data["presence_user_ids"]
     # participants carry full identity, not just {user_id, role}
     assert data["participants"][0]["email"] == owner.email
