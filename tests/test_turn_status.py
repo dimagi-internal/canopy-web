@@ -27,7 +27,8 @@ class _Runner:
         self.id = rid
 
 
-def _turn(status=Turn.QUEUED, *, claimed=None, pinned=None, agent_slug=None):
+def _turn(status=Turn.QUEUED, *, claimed=None, pinned=None, agent_slug=None,
+          result_note="", finished_at=None):
     """A Turn stand-in. `derive` only reads attributes, never the DB, which is
     the point of keeping it pure."""
     t = types.SimpleNamespace(
@@ -40,6 +41,8 @@ def _turn(status=Turn.QUEUED, *, claimed=None, pinned=None, agent_slug=None):
         claimed_by=claimed,
         pinned_runner_id=1 if pinned else None,
         pinned_runner=pinned,
+        result_note=result_note,
+        finished_at=finished_at,
     )
     return t
 
@@ -156,6 +159,35 @@ def test_terminal_states(turn_state, expected):
     assert not st.stuck
 
 
+def test_a_failure_carries_its_reason_because_failed_alone_says_nothing_actionable():
+    # 2026-09-27: the chat said a bare "Could not finish." over this exact note.
+    note = ('Your message was not delivered: the emdash session "idm-talk" has unsent '
+            'text sitting in its prompt.')
+    done = dt.datetime(2026, 9, 26, 22, 7, tzinfo=dt.timezone.utc)
+    d = ts.derive(_turn(Turn.FAILED, claimed=_Runner(), result_note=note,
+                        finished_at=done)).as_dict()
+    assert d["detail"] == note
+    assert d["finished_at"] == "2026-09-26T22:07:00+00:00"
+
+
+def test_a_failure_reason_is_capped_and_blank_is_none():
+    st = ts.derive(_turn(Turn.FAILED, result_note="x" * 5000))
+    assert len(st.detail) == ts.DETAIL_MAX
+    assert ts.derive(_turn(Turn.FAILED, result_note="   ")).detail is None
+
+
+def test_only_a_failure_carries_a_detail():
+    # A done turn's note is its summary, not an error — never render it as one.
+    st = ts.derive(_turn(Turn.DONE, claimed=_Runner(), result_note="chat reply bridged"))
+    assert st.detail is None
+
+
+def test_a_live_turn_has_no_finished_at():
+    stale = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+    st = ts.derive(_turn(Turn.RUNNING, claimed=_Runner(), finished_at=stale))
+    assert st.finished_at is None
+
+
 # -- the rescue offer ----------------------------------------------------------
 
 def test_a_cloud_runner_rides_along_when_one_could_help():
@@ -187,6 +219,8 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "cloud_runner_id": "x",
         "last_seen_at": "2026-09-20T12:00:00+00:00",
         "menu_pending": False,
+        "detail": None,
+        "finished_at": None,
         # Derived, not re-derived by four clients that could disagree.
         "settled": False,
         "stuck": True,

@@ -210,6 +210,12 @@ export interface TurnStatus {
   /** The agent is sitting on a dialog. A separate axis from `state`: a turn
    *  blocked on a question is still RUNNING as far as the turn is concerned. */
   menu_pending: boolean;
+  /** Why a `failed` turn failed, in the runner's words. Null for every other
+   *  state. Absent on an older server. */
+  detail?: string | null;
+  /** When a settled turn finished — lets the kit drop a failure the
+   *  conversation has since moved past. Absent on an older server. */
+  finished_at?: string | null;
   /** Nothing more will happen without someone asking for it. */
   settled: boolean;
   /** Nothing is moving and only a person can change that. The one question a
