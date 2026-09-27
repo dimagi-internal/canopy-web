@@ -5,6 +5,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
+import { isMine } from "./identity";
 import { QueuedRows } from "./QueuedRows";
 import { TypingRows } from "./TypingRows";
 import { SendBox, type PendingAttachment } from "./SendBox";
@@ -15,7 +16,9 @@ import { useStickyBottom } from "./useStickyBottom";
 export interface ChatPanelProps {
   state: SessionState;
   connected: boolean;
-  currentUserId: number;
+  /** The viewer's user id — null for a contact (a widget visitor), who is
+   *  identified by `state.current_contact_id` instead. */
+  currentUserId: number | null;
   onSend: () => void;
   onStop: (messageId: string | null) => void;
   /** A send is outstanding but no reply has begun — the turn is queued,
@@ -155,6 +158,28 @@ export function ChatPanel({
     [state.messages],
   );
 
+  // Who is looking, for "is this line mine": a member by user id, a contact
+  // (the widget) by the snapshot's contact id.
+  const currentContactId = state.current_contact_id ?? null;
+
+  // The text of your own sends still waiting to be confirmed — for a client
+  // that sends no client_id (an older host's HTTP send), the only way to tell
+  // its queued entry from a second copy of the same line.
+  const ownPendingTexts = useMemo(
+    () =>
+      new Set(
+        state.messages
+          .filter(
+            (m) =>
+              m.role === "user" &&
+              (m.status === "pending" || m.id.startsWith("local:")) &&
+              (!m.author || isMine(m.author, currentUserId, currentContactId)),
+          )
+          .map((m) => m.plaintext.trim()),
+      ),
+    [state.messages, currentUserId, currentContactId],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
@@ -186,11 +211,14 @@ export function ChatPanel({
           pendingReply={showPendingReply}
           pendingLabel={pendingLabel}
           currentUserId={currentUserId}
+          currentContactId={currentContactId}
         />
         <QueuedRows
           queued={state.queued ?? []}
           hideClientIds={hideClientIds}
           currentUserId={currentUserId}
+          currentContactId={currentContactId}
+          ownPendingTexts={ownPendingTexts}
         />
       </div>
       <TypingRows peers={state.peer_drafts ?? []} />

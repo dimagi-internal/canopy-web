@@ -11,7 +11,7 @@ interface Props {
    *  you saw one chip, which is indistinguishable from being watched by a
    *  stranger. ChatPanel had `currentUserId` the whole time and never passed
    *  it. Caught by the first two-browser e2e this surface ever had. */
-  currentUserId: number;
+  currentUserId: number | null;
 }
 
 /** A stable colour per person, so two people are told apart at a glance.

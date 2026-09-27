@@ -95,12 +95,12 @@ describe("a contact's failed send restores what they typed", () => {
   }
 
   it("shows the text again once the HTTP send fails", () => {
-    const contactProps = { ...props, currentUserId: null as unknown as number };
+    const contactProps = { ...props, currentUserId: null };
     const composer = () => screen.getByTestId("composer") as HTMLTextAreaElement;
 
     const { rerender } = render(
       <ChatPanel {...contactProps} state={state({
-        active_draft: localDraft("please help"), current_user_id: null as unknown as number,
+        active_draft: localDraft("please help"), current_user_id: null,
       })} />,
     );
     expect(composer().value).toBe("please help");
@@ -112,7 +112,7 @@ describe("a contact's failed send restores what they typed", () => {
     // null the instant it fires, well before the HTTP round trip resolves.
     rerender(
       <ChatPanel {...contactProps} state={state({
-        active_draft: null, current_user_id: null as unknown as number,
+        active_draft: null, current_user_id: null,
       })} />,
     );
     expect(composer().value).toBe("");
@@ -122,9 +122,81 @@ describe("a contact's failed send restores what they typed", () => {
     // never costs what was typed.").
     rerender(
       <ChatPanel {...contactProps} state={state({
-        active_draft: localDraft("please help"), current_user_id: null as unknown as number,
+        active_draft: localDraft("please help"), current_user_id: null,
       })} />,
     );
     expect(composer().value).toBe("please help");
+  });
+});
+
+describe("a contact viewer (final review C2 / I6)", () => {
+  // A widget visitor has no user id: `current_user_id` is null and the
+  // snapshot names them by `current_contact_id` instead.
+  const contactState = (over: Partial<SessionState> = {}) =>
+    state({ current_user_id: null, current_contact_id: 7, ...over });
+  const contactProps = { ...props, currentUserId: null };
+  const authored = (over: Record<string, unknown>) => ({
+    id: "m1", turn_index: 1, role: "user" as const, content: {}, plaintext: "hello",
+    status: "complete" as const, error_detail: null, started_at: null, completed_at: null,
+    created_at: "", ...over,
+  });
+
+  it("renders the contact's own authored line as theirs: right-aligned, no label", () => {
+    render(<ChatPanel {...contactProps} state={contactState({
+      messages: [authored({ author: { name: "Beth", contact_id: 7 } })],
+    })} />);
+    expect(screen.queryByTestId("message-author")).toBeNull();
+    const bubble = screen.getByText("hello").closest("div.rounded-2xl") as HTMLElement;
+    expect(bubble.className).toContain("ml-auto");
+  });
+
+  it("still labels a member's line for the contact", () => {
+    render(<ChatPanel {...contactProps} state={contactState({
+      messages: [authored({ author: { name: "Alice A", user_id: 1 } })],
+    })} />);
+    expect(screen.getAllByTestId("message-author").map((n) => n.textContent)).toEqual(["Alice A"]);
+  });
+
+  it("calls the contact's own queued send 'You'", () => {
+    render(<ChatPanel {...contactProps} state={contactState({
+      queued: [{ turn_id: "t", client_id: "c", author: { name: "Beth", contact_id: 7 }, text: "later", sent_at: "", state: "queued" }],
+    })} />);
+    const row = screen.getByTestId("queued-row");
+    expect(row.textContent).toContain("You");
+    expect(row.textContent).not.toContain("Beth");
+  });
+
+  it("does not double an own send whose client never sent a client_id", () => {
+    // An older host (ace-web's sendOverHttp) sends no client_id, so the queued
+    // entry cannot be matched by id. Its optimistic row is still on screen.
+    const pending = authored({ id: "local:x", plaintext: "please help", status: "complete",
+                               content: { text: "please help", client_id: "x" } });
+    render(<ChatPanel {...contactProps} state={contactState({
+      messages: [pending],
+      queued: [{ turn_id: "t", client_id: "", author: { name: "Beth", contact_id: 7 }, text: "please help ", sent_at: "", state: "queued" }],
+    })} />);
+    expect(screen.queryByTestId("queued-row")).toBeNull();
+  });
+
+  it("a peer's identical text is not hidden by my own optimistic row", () => {
+    const pending = authored({ id: "local:x", plaintext: "yes", status: "pending",
+                               content: { text: "yes", client_id: "x" } });
+    render(<ChatPanel {...contactProps} state={contactState({
+      messages: [pending],
+      queued: [{ turn_id: "t", client_id: "", author: { name: "Alice A", user_id: 1 }, text: "yes", sent_at: "", state: "queued" }],
+    })} />);
+    expect(screen.getByTestId("queued-row").textContent).toContain("Alice A");
+  });
+});
+
+describe("a peer's bubble (final review m4)", () => {
+  it("does not wear the agent's treatment", () => {
+    const theirs = { id: "m2", turn_index: 2, role: "user" as const, content: {}, plaintext: "them", status: "complete" as const, error_detail: null, started_at: null, completed_at: null, created_at: "", author: { name: "Bo B", user_id: 2 } };
+    const agent = { ...theirs, id: "a1", turn_index: 3, role: "assistant" as const, plaintext: "agent", author: null };
+    render(<ChatPanel {...props} state={state({ messages: [theirs, agent] })} />);
+    const peer = screen.getByText("them").closest("div.rounded-2xl") as HTMLElement;
+    const bot = screen.getByText("agent").closest("div.rounded-2xl") as HTMLElement;
+    expect(peer.className).not.toBe(bot.className);
+    expect(peer.className).toContain("border");
   });
 });

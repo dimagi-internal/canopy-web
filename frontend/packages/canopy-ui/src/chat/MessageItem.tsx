@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { AlertTriangle, ChevronRight, OctagonX } from "lucide-react";
 
 import type { Message, MessageAuthor } from "./protocol";
+import { isMine } from "./identity";
 import { ToolCallPair } from "./ToolCallPair";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
@@ -21,16 +22,21 @@ interface Props {
   renderMarkdown?: RenderMarkdown;
   /** Who is looking, so a `user` row can tell "me" from "someone else" —
    *  every row persisted before authorship shipped has `author == null` and
-   *  must keep rendering exactly as it always has (right-aligned, no label). */
-  currentUserId?: number;
+   *  must keep rendering exactly as it always has (right-aligned, no label).
+   *  Null for a contact viewer, who is named by `currentContactId`. */
+  currentUserId?: number | null;
+  /** The viewer when it is a contact (a widget visitor); null for a member. */
+  currentContactId?: number | null;
 }
 
 /** Someone else's line, or null when it's mine (or nobody recorded). A row
  *  with no `author` predates authorship tracking and is never "someone
  *  else's" — it renders exactly as it always did. */
-function otherAuthorOf(message: Message, currentUserId?: number): MessageAuthor | null {
+function otherAuthorOf(
+  message: Message, currentUserId?: number | null, currentContactId?: number | null,
+): MessageAuthor | null {
   if (message.role !== "user" || !message.author) return null;
-  return message.author.user_id === currentUserId ? null : message.author;
+  return isMine(message.author, currentUserId, currentContactId) ? null : message.author;
 }
 
 /** Count visible lines for the "▸ System context (N lines)" header. */
@@ -81,6 +87,7 @@ export function MessageItem({
   forceToolOpen,
   renderMarkdown = plainText,
   currentUserId,
+  currentContactId,
 }: Props) {
   const text = message.plaintext;
   const isStreaming = message.status === "streaming";
@@ -122,11 +129,13 @@ export function MessageItem({
     );
   }
 
-  const otherAuthor = otherAuthorOf(message, currentUserId);
+  const otherAuthor = otherAuthorOf(message, currentUserId, currentContactId);
+  // A teammate's line sits on the agent's side of the column, so it needs its
+  // own treatment — in the agent's `bg-muted` it read as the agent talking.
   const bubbleClass =
     message.role === "user"
       ? otherAuthor
-        ? "mr-auto bg-muted text-foreground"
+        ? "mr-auto border border-border bg-card text-foreground"
         : "ml-auto bg-primary text-primary-foreground"
       : "mr-auto bg-muted text-foreground";
   // Hold the "Thinking…" treatment through the gap between

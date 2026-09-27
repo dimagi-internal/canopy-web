@@ -80,6 +80,7 @@ export { SendBox, type PendingAttachment } from "./SendBox";
 export { PresenceChips } from "./PresenceChips";
 export { TypingRows } from "./TypingRows";
 export { QueuedRows } from "./QueuedRows";
+export { isMine } from "./identity";
 export { ConnectionStatus } from "./ConnectionStatus";
 export {
   PlacementBanner,
