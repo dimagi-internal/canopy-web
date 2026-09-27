@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fromAgui, resetAguiState } from "./agui";
 import type { Draft, Message, SessionState, TypingVisibility, WsEvent } from "./protocol";
 import {
+  TYPING_VISIBILITY_STORAGE_KEY,
   defaultDraftStorage,
   readStoredTypingVisibility,
   shouldSyncDraftLive,
@@ -270,6 +271,24 @@ export function useSessionSocket({
     onUnknownEventRef.current = onUnknownEvent;
   }, [onUnknownEvent]);
 
+  // Belt-and-braces for the SAME cross-tab sync `draft.updated` adoption
+  // covers: a native `storage` event fires in every OTHER tab the instant one
+  // tab writes the key (never the writer's own tab), so it catches the case
+  // no socket frame can — a tab with no live socket right now.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== TYPING_VISIBILITY_STORAGE_KEY) return;
+      const next = readStoredTypingVisibility(defaultDraftStorage());
+      if (next != null && next !== typingVisibilityRef.current) {
+        typingVisibilityRef.current = next;
+        setTypingVisibilityState(next);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const send = useCallback((frame: { action: string; data: unknown }) => {
     const ws = socketRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -319,6 +338,21 @@ export function useSessionSocket({
       frame.event === "session.error"
     ) {
       setAwaitingReply(false);
+    }
+    // `draft.updated` only ever reaches the AUTHOR's own sockets (see
+    // `_broadcast_draft`), so this is always MY draft, echoed — including
+    // from a mode I changed in a DIFFERENT tab of my own. Without adopting
+    // it, tab 2 kept showing "My text" after tab 1 switched to Hidden, and
+    // tab 2's next keystroke re-exposed the words under the stale `live`
+    // mode it never knew had changed.
+    if (
+      frame.event === "draft.updated" &&
+      frame.data.visibility &&
+      frame.data.visibility !== typingVisibilityRef.current
+    ) {
+      typingVisibilityRef.current = frame.data.visibility;
+      setTypingVisibilityState(frame.data.visibility);
+      writeStoredTypingVisibility(defaultDraftStorage(), frame.data.visibility);
     }
     // The server's receipt for one of OUR sends: stop waiting on it.
     if (frame.event === "draft.committed" && frame.data.client_id) {
@@ -542,12 +576,24 @@ export function useSessionSocket({
       setTypingVisibilityState(visibility);
       typingVisibilityRef.current = visibility;
       writeStoredTypingVisibility(defaultDraftStorage(), visibility);
-      // Switch peers over immediately rather than waiting for the next
-      // keystroke — but only when there is something to show (an empty draft
-      // has nothing for the new mode to change) and somebody else would
-      // actually see it.
+      // Reach the server on a mode change EVEN WHILE ALONE. Gating this on
+      // presence was the privacy hole: switch to Hidden with nobody here to
+      // "switch over", and the server's row was left `live` with the real
+      // body — so a peer who joins later (within the 10-minute freshness
+      // window) read the words straight off their connect snapshot, which
+      // asks nothing about who was watching when the mode changed. The only
+      // real gate is "is there anything to withhold" (a non-empty body).
       const current = stateRef.current.active_draft;
-      if (current != null && current.body && shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
+      if (current != null && current.body) {
+        // Cancel a scheduled keystroke-debounce send: left to fire moments
+        // later at the same version, it would double-send and the second
+        // write 409s as `draft_version_mismatch` (the first already bumped
+        // the version server-side).
+        if (draftDebounceRef.current != null) {
+          window.clearTimeout(draftDebounceRef.current);
+          draftDebounceRef.current = null;
+        }
+        pendingDraftBodyRef.current = null;
         send({
           action: "draft.update",
           data: { version: current.version, body: current.body, visibility },
@@ -575,11 +621,19 @@ export function useSessionSocket({
     if (!liveSync) return;
     const pending = pendingDraftBodyRef.current;
     const current = stateRef.current.active_draft;
-    if (pending == null || current == null) return;
+    if (current == null) return;
+    // Belt-and-braces alongside `setTypingVisibility`'s own immediate send: if
+    // the server's row still disagrees with our chosen mode (e.g. the earlier
+    // send never landed — socket was reconnecting), a fresh join is a second
+    // chance to reconcile it before anyone reads the snapshot.
+    const visibilityDrifted =
+      Boolean(current.body) && current.visibility !== typingVisibilityRef.current;
+    if (pending == null && !visibilityDrifted) return;
+    const body = pending ?? current.body;
     pendingDraftBodyRef.current = null;
     send({
       action: "draft.update",
-      data: { version: current.version, body: pending, visibility: typingVisibilityRef.current },
+      data: { version: current.version, body, visibility: typingVisibilityRef.current },
     });
   }, [liveSync, send]);
 

@@ -364,7 +364,12 @@ export function SendBox({
                   onTypingVisibilityChange(e.target.value as TypingVisibility)
                 }
                 className={[
-                  "rounded-md border border-input bg-transparent px-1.5 py-1 text-xs",
+                  // bg-background, not bg-transparent: a native <select>'s
+                  // OPTION list paints on the OS's own background, and a
+                  // transparent trigger left the closed control's text
+                  // sitting on whatever was behind it — unreadable in dark
+                  // mode, where that was the page's own dark-on-dark text.
+                  "rounded-md border border-input bg-background px-1.5 py-1 text-xs",
                   "text-foreground focus-visible:outline-none focus-visible:ring-1",
                   "focus-visible:ring-ring",
                 ].join(" ")}

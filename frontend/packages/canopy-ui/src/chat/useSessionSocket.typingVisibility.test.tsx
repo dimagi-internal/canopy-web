@@ -123,4 +123,32 @@ describe("typingVisibility", () => {
     act(() => hook.result.current.setTypingVisibility("typing"));
     expect(draftUpdateFrames().length).toBe(before);
   });
+
+  it("reaches the server on a mode change even while ALONE (privacy fix)", () => {
+    // Gating the immediate send on presence left a hole: switch to Hidden
+    // while alone, and the server's row stays `live` with the real body —
+    // so a peer who joins later reads the words straight off the snapshot.
+    const hook = connectedWith([1]); // alone: presence set is just me
+    act(() => hook.result.current.updateDraft("mid thought"));
+    act(() => vi.advanceTimersByTime(200));
+    // Alone, so the keystroke debounce above never actually sent anything.
+    expect(draftUpdateFrames().length).toBe(0);
+    act(() => hook.result.current.setTypingVisibility("hidden"));
+    const frames = draftUpdateFrames();
+    expect(frames.length).toBe(1);
+    expect(frames[0].data.visibility).toBe("hidden");
+    expect(frames[0].data.body).toBe("mid thought");
+  });
+
+  it("adopts a mode carried on my own draft.updated frame (other-tab sync)", () => {
+    const hook = connectedWith([1, 2]);
+    expect(hook.result.current.typingVisibility).toBe("live");
+    act(() =>
+      FakeSocket.last!.receive({
+        event: "draft.updated",
+        data: { ...DRAFT, visibility: "hidden" },
+      }),
+    );
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+  });
 });

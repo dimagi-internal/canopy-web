@@ -6,6 +6,8 @@ everyone (the stub executes).
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
@@ -258,6 +260,41 @@ async def test_snapshot_excludes_hidden_and_blanks_typing_peer_drafts():
     snap2 = await _recv_match(comm2, lambda f: f["event"] == "session.state")
     assert snap2["data"]["peer_drafts"] == []
     await comm2.disconnect()
+
+
+async def test_mode_change_while_alone_still_hides_words_from_a_later_joiner():
+    """Privacy fix: a mode change reaches the server even when nobody is
+    around to see it live — the snapshot a LATER joiner reads must never
+    disagree with the author's current choice."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+    from apps.canopy_sessions import presence
+    await database_sync_to_async(presence.touch)(session.id, teammate.id)
+
+    # Teammate connects ALONE (owner is not present) and types live.
+    a = await _connect(session, teammate)
+    await a.connect()
+    await _recv_match(a, lambda f: f["event"] == "session.state")
+    await a.send_json_to({"action": "draft.update",
+                          "data": {"version": 0, "body": "secret words", "visibility": "live"}})
+    own = await _recv_match(a, lambda f: f["event"] == "draft.updated")
+    assert own["data"]["body"] == "secret words" and own["data"]["visibility"] == "live"
+
+    # Still alone, teammate switches to hidden — this must still reach the
+    # server (the client-side fix drops the presence gate for this send).
+    await a.send_json_to({"action": "draft.update",
+                          "data": {"version": own["data"]["version"], "body": "secret words",
+                                   "visibility": "hidden"}})
+    await _recv_match(a, lambda f: f["event"] == "draft.updated" and f["data"]["visibility"] == "hidden")
+    await a.disconnect()
+
+    # NOW the owner connects (the "later joiner") and reads the snapshot.
+    await database_sync_to_async(presence.touch)(session.id, teammate.id)
+    comm = await _connect(session, owner)
+    await comm.connect()
+    snap = await _recv_match(comm, lambda f: f["event"] == "session.state")
+    assert snap["data"]["peer_drafts"] == []
+    assert "secret" not in json.dumps(snap["data"])
+    await comm.disconnect()
 
 
 async def test_a_viewer_connecting_writes_no_draft():

@@ -158,7 +158,9 @@ function remove(storage: DraftStorage, key: string): void {
 // switch chats. One key, not namespaced by `persistKey` like a draft body.
 // ---------------------------------------------------------------------------
 
-const TYPING_VISIBILITY_STORAGE_KEY = "canopy.chat.typingVisibility";
+// Exported so a listener can recognise a `storage` event for this key coming
+// from another tab (see useSessionSocket's cross-tab sync).
+export const TYPING_VISIBILITY_STORAGE_KEY = "canopy.chat.typingVisibility";
 
 const VALID_VISIBILITIES: readonly TypingVisibility[] = ["live", "typing", "hidden"];
 
