@@ -58,6 +58,7 @@ export {
   draftStorageKey,
   readStoredDraft,
   writeStoredDraft,
+  isMorePrivateVisibility,
   readStoredTypingVisibility,
   writeStoredTypingVisibility,
   type DraftStorage,

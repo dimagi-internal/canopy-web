@@ -151,4 +151,90 @@ describe("typingVisibility", () => {
     );
     expect(hook.result.current.typingVisibility).toBe("hidden");
   });
+
+  it("a stale LOOSER echo never downgrades a more private mode already chosen (regression)", () => {
+    // Race: keystroke debounce sends {visibility: live} just before the user
+    // picks Hidden. The server's echo for the earlier (live) send can still
+    // arrive AFTER the mode change. It must be ignored — an echo may only
+    // TIGHTEN the mode, never loosen it.
+    const hook = connectedWith([1, 2]);
+    act(() => hook.result.current.updateDraft("secret"));
+    act(() => vi.advanceTimersByTime(200)); // the stale "live" send goes out
+    act(() => hook.result.current.setTypingVisibility("hidden"));
+
+    act(() =>
+      FakeSocket.last!.receive({
+        event: "draft.updated",
+        data: { ...DRAFT, body: "secret", version: 2, visibility: "live" },
+      }),
+    );
+
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+    expect(storage.getItem("canopy.chat.typingVisibility")).toBe("hidden");
+  });
+
+  it("a version mismatch after a mode change resends exactly once with the intended mode", () => {
+    const hook = connectedWith([1, 2]);
+    act(() => hook.result.current.updateDraft("secret"));
+    act(() => vi.advanceTimersByTime(200)); // stale "live" send, version 1
+    act(() => hook.result.current.setTypingVisibility("hidden")); // failed write, still version 1
+    const before = draftUpdateFrames().length;
+
+    act(() =>
+      FakeSocket.last!.receive({
+        event: "session.error",
+        data: {
+          code: "draft_version_mismatch",
+          message: "Draft changed since your last edit.",
+          detail: { current_version: 2, current_body: "secret" },
+        },
+      }),
+    );
+
+    const frames = draftUpdateFrames();
+    expect(frames.length).toBe(before + 1);
+    const resend = frames.at(-1)!;
+    expect(resend.data.version).toBe(2);
+    expect(resend.data.visibility).toBe("hidden");
+    expect(resend.data.body).toBe("secret");
+
+    // A second mismatch must not trigger a second automatic resend — bounded
+    // to one attempt per mode-change episode.
+    act(() =>
+      FakeSocket.last!.receive({
+        event: "session.error",
+        data: {
+          code: "draft_version_mismatch",
+          message: "Draft changed since your last edit.",
+          detail: { current_version: 3, current_body: "secret" },
+        },
+      }),
+    );
+    expect(draftUpdateFrames().length).toBe(before + 1);
+  });
+
+  it("reconciles a stale server visibility off the very first snapshot, even alone", () => {
+    // Minor 3: don't wait for a peer to join (the join's OWN snapshot is read
+    // before we ever see them arrive) — reconcile the instant our own
+    // reconnect snapshot disagrees with our chosen mode.
+    storage.setItem("canopy.chat.typingVisibility", "hidden");
+    const hook = renderHook(() => useSessionSocket({ sessionId: "s1", wsUrl }));
+    act(() => {
+      FakeSocket.last!.onopen?.();
+      FakeSocket.last!.receive({
+        event: "session.state",
+        data: {
+          messages: [],
+          active_draft: { ...DRAFT, body: "leftover words", version: 5, visibility: "live" },
+          participants: [],
+          presence_user_ids: [1], // alone
+          current_user_id: 1,
+        },
+      });
+    });
+    expect(hook.result.current.typingVisibility).toBe("hidden");
+    const frames = draftUpdateFrames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].data).toEqual({ version: 5, body: "leftover words", visibility: "hidden" });
+  });
 });
