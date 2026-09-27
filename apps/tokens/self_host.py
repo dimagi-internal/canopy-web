@@ -39,9 +39,10 @@ call is still real HTTP to `{base}/api/mcp/`, through the real gate.
 
 **Pages, and why the browser names one.** canopy's pages are a single-page app:
 the server never renders a route, so it cannot observe which one is on screen,
-and a server-signed page token (what `canopy_sdk.host.PageTokens` gives an
-MPA) would only sign whatever the browser asked for. So the widget names a
-page KEY, and everything that matters is decided here: an unregistered key gets
+and a server-signed page token (the SDK's SIGNED mode, `PageTokens`) would only
+sign whatever the browser asked for. So canopy uses the SDK's KEY mode
+(`canopy_sdk.host.PageRegistry`): the widget names a page KEY, and everything
+that matters is decided here: an unregistered key gets
 no grant; a registered one gets the scopes this registry says, never scopes the
 browser sent; every scope is read-only; the tools run as the visitor, so they
 reach no more than the visitor's own ACL already does; and the gateway narrows
@@ -61,8 +62,8 @@ import threading
 
 from canopy_sdk import contract, fetch
 from canopy_sdk.host import (
-    ClientKeyResolver, GrantHandler, GrantRefused, HostConfig, HostNotConfigured, ResourceVerifier,
-    authorization_server_metadata, issue_id_jag, protected_resource_metadata,
+    ClientKeyResolver, GrantHandler, GrantRefused, HostConfig, HostNotConfigured, PageRegistry,
+    ResourceVerifier, authorization_server_metadata, issue_id_jag, protected_resource_metadata,
 )
 from django.conf import settings
 
@@ -89,6 +90,11 @@ PAGE_SCOPES: dict[str, tuple[str, ...]] = {
     "agent.inbox": ("items:read",),               # /w/:ws/agents/:slug/inbox — list_items
     "agent.skill_history": ("skills:read",),      # /w/:ws/agents/:slug/skills/history — skill_history
 }
+
+#: The SDK's key-mode registry over the two maps above. Built at import, so a
+#: page naming a scope canopy does not offer — or a scope that is not read-only
+#: — fails at startup rather than as a grant that silently carries nothing.
+PAGES = PageRegistry(PAGE_SCOPES, scope_tools=SCOPE_TOOLS)
 
 _lock = threading.Lock()
 _ephemeral: dict[str, object] = {}
@@ -275,7 +281,7 @@ def loopback_post(url: str, data, headers) -> tuple[int, dict, dict] | None:
 
 
 def scopes_for_page(page: str) -> tuple[str, ...]:
-    return PAGE_SCOPES.get((page or "").strip(), ())
+    return PAGES.scopes_for(page)
 
 
 def grant_for_visitor(app, user, page: str) -> bool:

@@ -17,7 +17,7 @@ from jwt import PyJWK
 
 from canopy_sdk import contract
 from canopy_sdk.host import (
-    HostConfig, HostNotConfigured, MintFailed, PageTokens, arrival_payload, issue_id_jag, mint_contact_token,
+    HostConfig, HostNotConfigured, MintFailed, PageRegistry, PageTokens, arrival_payload, issue_id_jag, mint_contact_token,
     sign_visitor_assertion,
 )
 from canopy_sdk.keys import generate_private_key, private_pem
@@ -128,16 +128,24 @@ class _Resp(io.BytesIO):
 
 
 class TestTheMint:
-    def test_it_posts_to_canopys_arrival_endpoint_and_returns_two_fields(self, world):
+    def test_it_posts_to_canopys_arrival_endpoint_and_returns_the_whole_response(self, world):
         sent = {}
 
         def opener(request, timeout):
             sent["url"], sent["body"] = request.full_url, json.loads(request.data)
-            return _Resp(b'{"token": "t", "expires_at": "x", "contact_id": 9}')
+            return _Resp(b'{"token": "t", "expires_at": "x", "contact_id": 9, "kind": "user",'
+                         b' "host_grant": true}')
 
         out = mint_contact_token(world.config, {"assertion": "a"}, opener=opener)
-        assert out == {"token": "t", "expires_at": "x"}, "canopy's response is not passed through"
+        # A host routes every later call on `kind`; dropping it made hosts
+        # hand-roll the request.
+        assert out == {"token": "t", "expires_at": "x", "contact_id": 9, "kind": "user",
+                       "host_grant": True}
         assert sent["url"] == CANOPY + contract.ARRIVAL_PATH
+
+    def test_kind_and_host_grant_default_for_an_older_canopy(self, world):
+        out = mint_contact_token(world.config, {}, opener=lambda r, timeout: _Resp(b'{"token": "t"}'))
+        assert out == {"token": "t", "expires_at": "", "kind": "contact", "host_grant": False}
 
     def test_canopys_reason_is_carried_on_a_refusal(self, world):
         def opener(request, timeout):
@@ -201,3 +209,68 @@ class TestThePageToken:
             PageTokens("s", {"p": ()}, scope_tools={"marketplace:read": ["x"]})
         with pytest.raises(ValueError):
             PageTokens("", PAGES)
+
+    def test_signed_mode_is_scopes_for(self, pages):
+        assert pages.mode == "signed"
+        token = pages.issue("marketplace:network", 7)
+        assert pages.scopes_for(token, 7) == ("marketplace:read",)
+        # The bare route name is NOT a token: signed mode never trusts the browser's word.
+        assert pages.scopes_for("marketplace:network", 7) == ()
+
+    def test_signed_mode_may_grant_a_write_scope(self):
+        # The server rendered (and signed) the page, so it — not the browser — chose it.
+        tokens = PageTokens("s", {"p": ("orgs:write",)}, scope_tools={"orgs:write": ["x"]})
+        assert tokens.scopes_for(tokens.issue("p", 1), 1) == ("orgs:write",)
+
+
+# --- the page key (SPA mode) ----------------------------------------------------------
+
+
+SPA_TOOLS = {"opps:read": ["list_opps"], "opps:write": ["start_run"]}
+
+
+class TestThePageKey:
+    def test_a_registered_key_selects_its_scopes(self):
+        registry = PageRegistry({"opp-workbench": ("opps:read",)}, scope_tools=SPA_TOOLS)
+        assert registry.mode == "key"
+        assert registry.scopes_for("opp-workbench") == ("opps:read",)
+        assert registry.scopes_for("opp-workbench", 7) == ("opps:read",)
+
+    def test_an_unknown_or_malformed_key_gets_nothing(self):
+        registry = PageRegistry({"opp-workbench": ("opps:read",)}, scope_tools=SPA_TOOLS)
+        for value in ("", None, "admin", "opps:read", "x" * 2000, 7, ["opp-workbench"]):
+            assert registry.scopes_for(value) == (), value
+
+    def test_a_key_can_only_select_registered_scopes_never_name_them(self):
+        registry = PageRegistry({"opp-workbench": ("opps:read",)}, scope_tools=SPA_TOOLS)
+        assert registry.scopes_for("opps:write") == ()
+        assert registry.scopes_for("opp-workbench?scope=opps:write") == ()
+
+    def test_key_mode_is_read_only_unless_a_write_is_listed_on_purpose(self):
+        with pytest.raises(ValueError, match="writable_scopes"):
+            PageRegistry({"p": ("opps:write",)}, scope_tools=SPA_TOOLS)
+        registry = PageRegistry({"p": ("opps:write",)}, scope_tools=SPA_TOOLS,
+                                writable_scopes=["opps:write"])
+        assert registry.scopes_for("p") == ("opps:write",)
+
+    def test_every_page_scope_must_be_one_the_server_offers(self):
+        with pytest.raises(ValueError):
+            PageRegistry({"p": ("admin:read",)}, scope_tools=SPA_TOOLS)
+        with pytest.raises(ValueError):
+            PageRegistry({"p": ()}, scope_tools=SPA_TOOLS)
+
+    def test_patterns_recognise_a_path_the_browser_sends(self):
+        registry = PageRegistry(
+            {"opp-workbench": ("opps:read",)}, scope_tools=SPA_TOOLS,
+            patterns={"opp-workbench": r"/w/[^/]+/opps/(?!compare/)[^/]+/?"})
+        assert registry.key_for("/w/acme/opps/x") == "opp-workbench"
+        assert registry.scopes_for("/w/acme/opps/x/?tab=1#top") == ("opps:read",)
+        assert registry.scopes_for("/w/acme/opps/compare/") == ()
+        # the whole path must match — a registered path with a suffix is another page
+        assert registry.scopes_for("/w/acme/opps/x/runs/9/secret") == ()
+        assert registry.scopes_for("/elsewhere/w/acme/opps/x") == ()
+
+    def test_a_pattern_for_an_unregistered_page_is_a_configuration_error(self):
+        with pytest.raises(ValueError, match="not registered"):
+            PageRegistry({}, patterns={"ghost": r"/x"})
+

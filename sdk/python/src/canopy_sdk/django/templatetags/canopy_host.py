@@ -8,7 +8,7 @@ Override ``canopy_host/panel.html`` to restyle it.
 """
 from django import template
 
-from ..pages import panel_context
+from ..pages import panel_context, panel_options
 
 register = template.Library()
 
@@ -17,4 +17,8 @@ register = template.Library()
 def canopy_panel(context, resource="", backing_tool="", visible_ids=None, filters=None, path=""):
     ctx = panel_context(context.get("request"), resource=resource, backing_tool=backing_tool,
                         visible_ids=visible_ids or (), filters=filters, path=path)
-    return {"canopy_panel": ctx, "csrf_token": context.get("csrf_token")}
+    csrf = context.get("csrf_token")
+    csrf = "" if csrf in (None, "NOTPROVIDED") else str(csrf)
+    if ctx.get("ready"):
+        ctx["options"] = panel_options(ctx, csrf)
+    return {"canopy_panel": ctx, "csrf_token": csrf}

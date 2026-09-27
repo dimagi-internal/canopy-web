@@ -1,7 +1,19 @@
-"""pytest fixtures for a host's own CI. Opt in (it is not auto-loaded)::
+"""pytest fixtures for a host's own CI. Opt in (it is not auto-loaded) with
+``-p``, on the command line or in your pytest config::
 
-    # conftest.py
-    pytest_plugins = ["canopy_sdk.conformance.pytest_plugin"]
+    pytest -p canopy_sdk.conformance.pytest_plugin
+
+    # pyproject.toml
+    [tool.pytest.ini_options]
+    addopts = "-p canopy_sdk.conformance.pytest_plugin"
+
+    # pytest.ini / setup.cfg ([tool:pytest])
+    addopts = -p canopy_sdk.conformance.pytest_plugin
+
+``pytest_plugins = [...]`` works only in the ROOTDIR's ``conftest.py``; pytest
+refuses it in any nested one ("Defining 'pytest_plugins' in a non-top-level
+conftest is no longer supported"), which is where a host's canopy tests usually
+live. ``-p`` has no such limit.
 
 In-process fixtures (no network):
 

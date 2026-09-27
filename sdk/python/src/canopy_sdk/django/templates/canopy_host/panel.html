@@ -1,15 +1,21 @@
 {% comment %}
 The canopy agent panel (from connect-labs `labs/includes/canopy_panel.html`).
 
-The page state goes through `json_script` rather than into the script body, so a
-value containing `</script>` cannot end the block. `page` in the token URL is the
-host's own signature over which page this is: it decides whether canopy may act
-as the visitor here, and with which scopes — read from the host's registry,
-never from the browser.
+Every value the script reads arrives through `json_script`, never interpolated
+into the script body: `json_script` is the escaping for exactly this context
+(JSON inside a <script> element — it escapes `<`, `>` and `&`, so a value
+containing `</script>` cannot end the block), and it leaves everything else
+LITERAL. `escapejs` is for a JS string literal and turns `=` into `=`,
+which made the rendered token URL unreadable to anything but a JS engine.
+
+In signed mode `page` in the token URL is the host's own signature over which
+page this is; in key mode the widget names the page on screen (its path) at
+each mint. Either way the host's registry decides the scopes — never the
+browser.
 {% endcomment %}
 {% if canopy_panel.ready %}
   {{ canopy_panel.page_state|json_script:"canopy-page-state" }}
-  {{ canopy_panel.theme|json_script:"canopy-panel-theme" }}
+  {{ canopy_panel.options|json_script:"canopy-panel-options" }}
   <script src="{{ canopy_panel.base_url }}/embed/widget.js"></script>
   <script>
     (function () {
@@ -20,20 +26,21 @@ never from the browser.
         try { return JSON.parse(el.textContent); } catch (e) { return null; }
       }
       var declared = read("canopy-page-state");
-      var theme = read("canopy-panel-theme") || {};
+      var config = read("canopy-panel-options");
+      if (!config) return;
       var options = {
-        baseUrl: "{{ canopy_panel.base_url|escapejs }}",
-        app: "{{ canopy_panel.app_name|escapejs }}",
-        agent: "{{ canopy_panel.agent|escapejs }}",
-        tokenUrl: "{{ canopy_panel.token_url|escapejs }}",
-        mode: "{{ canopy_panel.mode|escapejs }}",
-        launcherLabel: "{{ canopy_panel.launcher_label|escapejs }}",
+        baseUrl: config.baseUrl,
+        app: config.app,
+        agent: config.agent,
+        tokenUrl: config.tokenUrl,
+        mode: config.mode,
+        launcherLabel: config.launcherLabel,
         // A function, not a string: the token rotates on login. The DOM field
         // wins (it is current); the rendered token is the fallback for a page
         // with no form on it.
         csrfToken: function () {
           var field = document.querySelector("[name=csrfmiddlewaretoken]");
-          return field ? field.value : "{{ csrf_token|default:''|escapejs }}";
+          return field ? field.value : (config.csrfToken || "");
         },
         // Somebody else changed the data this page shows. A server-rendered
         // page IS its query: reloading is the honest refresh, and the one where
@@ -42,7 +49,14 @@ never from the browser.
           if (declared && resource === declared.resource) window.location.reload();
         },
       };
-      if (theme && Object.keys(theme).length) options.theme = theme;
+      if (config.pageFromPath && config.tokenUrl) {
+        // Key mode: name the page on screen NOW, at every mint.
+        options.tokenUrl = function () {
+          return config.tokenUrl + (config.tokenUrl.indexOf("?") === -1 ? "?" : "&") +
+            "page=" + encodeURIComponent(window.location.pathname);
+        };
+      }
+      if (config.theme && Object.keys(config.theme).length) options.theme = config.theme;
       var widget = window.canopy.init(options);
       if (declared) widget.setPageState(declared);
     })();

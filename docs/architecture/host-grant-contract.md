@@ -19,7 +19,7 @@ MCP as the visitor with `Authorization: DPoP` and a `Canopy-Actor` header. A hos
 installs the SDK from a release tag:
 
 ```
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.1.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.3.0#subdirectory=sdk/python
 ```
 
 Design: `docs/superpowers/specs/2026-09-26-embedded-caller-delegation-design.md`.

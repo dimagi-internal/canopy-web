@@ -8,6 +8,11 @@ records the proving key's thumbprint in ``presented_dpop_jkt`` for the host's
 token verifier, and rewrites the header to ``Bearer``. A bad proof is refused
 here with RFC 9449's ``invalid_dpop_proof``.
 
+A host with no grant configured cannot have issued a DPoP-bound token, so a
+DPoP request there is refused the same way (401 ``invalid_dpop_proof``) — a
+verifier factory raising ``HostNotConfigured`` (or failing to build at all, e.g.
+an unreadable key) is never a 500. It is only consulted for a DPoP request.
+
 A request with an ordinary ``Bearer`` header passes through untouched with no
 key presented — which is what makes a DPoP-bound token useless as a plain
 bearer: ``ResourceVerifier.resolve`` refuses a bound token when no key was
@@ -28,6 +33,7 @@ import logging
 
 from .. import contract
 from ..contract import ContractError
+from .config import HostNotConfigured
 from .resource import DelegatedPrincipal, ResourceVerifier
 
 log = logging.getLogger("canopy_sdk.host")
@@ -77,9 +83,17 @@ class DPoPGate:
         proofs = [value for key, value in headers if key.lower() == b"dpop"]
         principal = None
         try:
+            verifier = self.verifier()
+        except HostNotConfigured:
+            await _refuse(send, "invalid_dpop_proof", "this server accepts no DPoP-bound tokens")
+            return
+        except Exception:  # noqa: BLE001 - a deployment fault (an unreadable key) is not a 500
+            log.exception("the DPoP verifier could not be built")
+            await _refuse(send, "invalid_dpop_proof", "this server accepts no DPoP-bound tokens")
+            return
+        try:
             token = authorization[0][5:].strip().decode("ascii")
             decoded = [p.decode("ascii") for p in proofs]
-            verifier = self.verifier()
             jkt = await self.run_sync(verifier.check_proof, decoded, scope.get("method", ""), token)
             if self.require_principal:
                 principal = await self.run_sync(verifier.resolve, token, jkt)

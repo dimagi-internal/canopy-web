@@ -127,10 +127,15 @@ def arrival_payload(config: HostConfig, subject: str, *, scopes=(), agent_slug: 
 
 def mint_contact_token(config: HostConfig, payload: dict, *, timeout: float = MINT_TIMEOUT_SECONDS,
                        opener=None) -> dict:
-    """POST the arrival to canopy; returns ``{"token", "expires_at"}``.
+    """POST the arrival to canopy; returns canopy's whole response.
 
-    Only those two fields: canopy's response is not passed through, so a new
-    field on canopy's side does not silently become part of the host's contract.
+    Always carries ``token`` and ``expires_at``; ``kind`` (``"user"`` when the
+    visitor arrives as their own canopy account, else ``"contact"``) and
+    ``host_grant`` (whether an ID-JAG in ``payload`` was redeemed) default when
+    an older canopy omits them. Everything else canopy returns (``contact_id``,
+    ``display_name``, …) is passed through as-is — a host that routes on
+    ``kind`` needs it, so dropping fields made every such host hand-roll the
+    request. Pass only ``token`` / ``expires_at`` / ``kind`` on to a browser.
     """
     if not config.canopy_base_url:
         raise HostNotConfigured("the canopy base URL is required")
@@ -158,4 +163,8 @@ def mint_contact_token(config: HostConfig, payload: dict, *, timeout: float = MI
     token = body.get("token") if isinstance(body, dict) else None
     if not token:
         raise MintFailed("canopy returned no token")
-    return {"token": token, "expires_at": body.get("expires_at", "")}
+    out = dict(body)
+    out.setdefault("expires_at", "")
+    out.setdefault("kind", "contact")
+    out.setdefault("host_grant", False)
+    return out
