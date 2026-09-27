@@ -20,3 +20,7 @@ staticfiles
 # runtime-irrelevant to the container.
 runner
 deploy
+
+# The SDK's own dev env (created by `uv run` in sdk/python). The image installs
+# the package from source; a host-built venv must not ride into the context.
+sdk/python/.venv

@@ -35,21 +35,21 @@ process instead (`CANOPY_OAUTH_EPHEMERAL_KEYS`), never in a deployment.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import threading
-import time
-import uuid
 
+from canopy_sdk import consumer, contract, keys
 from django.conf import settings
+
+# The wire values and the signing itself are the SDK's (`canopy_sdk.contract`,
+# `canopy_sdk.consumer`, `canopy_sdk.keys`) — the same definitions a host
+# verifies against. This module owns only WHERE canopy's keys come from.
 
 #: The client-assertion lifetime (contract: `exp` <= 60s). It is used once, at
 #: the moment of the POST.
-CLIENT_ASSERTION_TTL_SECONDS = 60
+CLIENT_ASSERTION_TTL_SECONDS = contract.CLIENT_ASSERTION_MAX_LIFETIME
 
-CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+CLIENT_ASSERTION_TYPE = contract.CLIENT_ASSERTION_TYPE
+JWT_BEARER_GRANT = contract.JWT_BEARER_GRANT
 
 _lock = threading.Lock()
 _ephemeral: dict[str, object] = {}
@@ -88,28 +88,10 @@ def _load_private(name: str):
 
 
 def _check_type(key, name: str) -> None:
-    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
-
-    if isinstance(key, ed25519.Ed25519PrivateKey):
-        return
-    if isinstance(key, ec.EllipticCurvePrivateKey) and key.curve.name == "secp256r1":
-        return
-    raise ClientIdentityError(
-        f"{name} must be an Ed25519 or P-256 private key — nothing symmetric, "
-        "nothing RSA: the contract allows EdDSA and ES256 only"
-    )
-
-
-def _alg(key) -> str:
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
-    if isinstance(key, (ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey)):
-        return "EdDSA"
-    return "ES256"
-
-
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+    try:
+        keys.check_signing_key(key, what=name)
+    except contract.ContractError as exc:
+        raise ClientIdentityError(exc.message) from exc
 
 
 def public_jwk(public_key) -> dict:
@@ -118,28 +100,17 @@ def public_jwk(public_key) -> dict:
     Only public members: this is published, and a `d` member here would publish
     the ability to sign.
     """
-    from jwt.algorithms import ECAlgorithm, OKPAlgorithm
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
-    if isinstance(public_key, ed25519.Ed25519PublicKey):
-        jwk = OKPAlgorithm.to_jwk(public_key, as_dict=True)
-    else:
-        jwk = ECAlgorithm.to_jwk(public_key, as_dict=True)
-    jwk = {k: v for k, v in jwk.items() if k != "d"}
-    jwk["kid"] = thumbprint(jwk)
-    jwk["alg"] = _alg(public_key)
-    return jwk
+    return keys.public_jwk(public_key)
 
 
 def thumbprint(jwk: dict) -> str:
     """RFC 7638: SHA-256 over the REQUIRED members only, sorted, no whitespace.
 
     It is both the `kid` canopy publishes and the `jkt` a host binds a DPoP
-    token to (`cnf.jkt`), so it must be the value any other library computes.
+    token to (`cnf.jkt`), so it must be the value any other library computes —
+    which is why it is the SDK's, shared with every host.
     """
-    members = ("crv", "kty", "x") if jwk.get("kty") == "OKP" else ("crv", "kty", "x", "y")
-    canonical = json.dumps({m: jwk[m] for m in members}, separators=(",", ":"), sort_keys=True)
-    return _b64(hashlib.sha256(canonical.encode()).digest())
+    return contract.jwk_thumbprint(jwk)
 
 
 # --- identity -----------------------------------------------------------------
@@ -183,14 +154,7 @@ def _dpop_key():
 
 def client_metadata() -> dict:
     """The Client ID Metadata Document, exactly the contract's shape."""
-    return {
-        "client_id": client_id(),
-        "client_name": "canopy",
-        "jwks_uri": jwks_uri(),
-        "token_endpoint_auth_method": "private_key_jwt",
-        "grant_types": [JWT_BEARER_GRANT],
-        "dpop_bound_access_tokens": True,
-    }
+    return contract.client_metadata_document(client_id(), jwks_uri())
 
 
 def _retired_public() -> list:
@@ -229,25 +193,12 @@ def published_jwks() -> dict:
 def client_assertion(audience: str) -> str:
     """RFC 7523 `private_key_jwt`: iss = sub = client_id, aud = the host's
     issuer, exp <= 60s, single-use jti."""
-    import jwt
-
-    key = _client_key()
-    now = int(time.time())
-    claims = {
-        "iss": client_id(),
-        "sub": client_id(),
-        "aud": audience,
-        "iat": now,
-        "exp": now + CLIENT_ASSERTION_TTL_SECONDS,
-        "jti": str(uuid.uuid4()),
-    }
-    kid = public_jwk(key.public_key())["kid"]
-    return jwt.encode(claims, key, algorithm=_alg(key), headers={"kid": kid})
+    return consumer.client_assertion(_client_key(), client_id(), audience)
 
 
 def dpop_jkt() -> str:
     """The thumbprint a DPoP-bound token is bound to (`cnf.jkt`)."""
-    return public_jwk(_dpop_key().public_key())["kid"]
+    return consumer.dpop_jkt(_dpop_key())
 
 
 def dpop_proof(htm: str, htu: str, *, access_token: str | None = None,
@@ -258,23 +209,7 @@ def dpop_proof(htm: str, htu: str, *, access_token: str | None = None,
     the access token it accompanies, so a proof lifted from one call cannot
     carry a different token.
     """
-    import jwt
-
-    key = _dpop_key()
-    jwk = public_jwk(key.public_key())
-    header_jwk = {k: v for k, v in jwk.items() if k not in ("kid", "alg")}
-    claims: dict = {
-        "jti": str(uuid.uuid4()),
-        "htm": htm.upper(),
-        "htu": htu,
-        "iat": int(time.time()),
-    }
-    if access_token is not None:
-        claims["ath"] = _b64(hashlib.sha256(access_token.encode("ascii")).digest())
-    if nonce:
-        claims["nonce"] = nonce
-    return jwt.encode(claims, key, algorithm=_alg(key),
-                      headers={"typ": "dpop+jwt", "jwk": header_jwk})
+    return consumer.dpop_proof(_dpop_key(), htm, htu, access_token=access_token, nonce=nonce)
 
 
 def _reset_for_tests() -> None:

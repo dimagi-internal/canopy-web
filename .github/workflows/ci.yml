@@ -25,6 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The dimagi-canopy version-bump guard below diffs a PR's merge
+          # commit against its first parent (the base it was merged onto),
+          # which needs exactly one commit of history.
+          fetch-depth: 2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
@@ -189,6 +194,49 @@ jobs:
       - name: Run canopy_runtime tests
         working-directory: packages/canopy_runtime
         run: uv run --with pytest pytest -q
+
+      # dimagi-canopy (sdk/python, import `canopy_sdk`) is the SDK every host
+      # embeds to implement its half of host grant contract v1 — the security
+      # code (ID-JAG and private_key_jwt verification, DPoP, single-use jtis,
+      # SSRF-safe fetches) a host would otherwise hand-write. Its suite carries
+      # every refusal path from connect-labs' implementation, so it must run on
+      # every PR; from its own dir, against its OWN declared deps (the `test`
+      # extra), so a dependency it forgot to declare fails here rather than in
+      # a host. The two halves are ALSO run against each other by the root
+      # suite (tests/test_sdk_round_trip.py).
+      - name: Run dimagi-canopy SDK tests
+        working-directory: sdk/python
+        run: uv run --extra test pytest -q
+
+      # A released SDK whose source moved without its version moving is the
+      # same silent failure as the npm guard in `Frontend build`: the
+      # `dimagi-canopy-v<version>` tag a host pins would name code that is no
+      # longer what that version means. Bumping the version IS the release
+      # (release-dimagi-canopy.yml). Diffed against the merge commit's first
+      # parent — the base this PR was merged onto — hence `fetch-depth: 2`.
+      - name: dimagi-canopy needs a version bump when its source changes
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- sdk/python/src; then
+            echo "dimagi-canopy: src unchanged, no bump needed."
+            exit 0
+          fi
+          version() {
+            python3 -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])"
+          }
+          after=$(version < sdk/python/pyproject.toml)
+          if ! before=$(git show HEAD^1:sdk/python/pyproject.toml 2>/dev/null | version); then
+            echo "dimagi-canopy: new package at $after."
+            exit 0
+          fi
+          if [ "$before" = "$after" ]; then
+            echo "::error file=sdk/python/pyproject.toml::sdk/python/src changed but the version is still $after."
+            echo "  The dimagi-canopy-v$after tag hosts pin would no longer describe this code."
+            echo "  Bump the version (and canopy_sdk.__version__, and CHANGELOG.md); merging it"
+            echo "  releases it (release-dimagi-canopy.yml runs on a version change to main)."
+            exit 1
+          fi
+          echo "dimagi-canopy: src changed and the version moved $before -> $after."
 
   test-frontend:
     name: Frontend build

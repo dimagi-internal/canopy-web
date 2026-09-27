@@ -1,0 +1,57 @@
+[project]
+# `dimagi-canopy`, NOT `canopy-sdk`: that PyPI name belongs to an unrelated
+# project (the same lesson as the `@canopy` npm scope — see CLAUDE.md). The
+# distribution name may still change; the import name `canopy_sdk` will not.
+name = "dimagi-canopy"
+# Bumping this IS the release: release-dimagi-canopy.yml tags
+# `dimagi-canopy-v<version>` and attaches the built sdist + wheel to a GitHub
+# Release when a version change reaches main. CI refuses a change under src/
+# that does not move it. Keep `canopy_sdk.__version__` equal (a test asserts it).
+version = "0.1.0"
+description = "The canopy SDK for Python: the host grant contract, the host half (sign visitor assertions and ID-JAGs, redeem the jwt-bearer grant, verify DPoP at your MCP), canopy's consumer half, Django wiring, and conformance checks."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Dimagi" }]
+classifiers = [
+    "Framework :: Django",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+# The core is PyJWT + cryptography and nothing else: no HTTP client (outbound
+# fetches use the standard library, address-pinned), no Django.
+dependencies = [
+    "pyjwt[crypto]>=2.8,<3.0",
+]
+
+[project.optional-dependencies]
+# The optional Django integration (`canopy_sdk.django`).
+django = ["django>=4.2"]
+# The SDK's own test suite.
+test = [
+    "pytest>=8",
+    "pytest-django>=4.8",
+    "django>=4.2",
+]
+
+[project.urls]
+Source = "https://github.com/dimagi-internal/canopy-web/tree/main/sdk/python"
+Changelog = "https://github.com/dimagi-internal/canopy-web/blob/main/sdk/python/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/canopy_sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/canopy_sdk", "tests", "README.md", "CHANGELOG.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+DJANGO_SETTINGS_MODULE = "tests.django_settings"
+# The repo root holds canopy-web's manage.py and its own `tests` package;
+# never let pytest-django adopt it.
+django_find_project = false
+pythonpath = ["."]

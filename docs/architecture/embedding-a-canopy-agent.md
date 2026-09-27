@@ -840,6 +840,14 @@ jwt-bearer grant), and the principle is: **the site that authenticated the user
 issues the grant; canopy only redeems.** canopy never holds a key you trust to
 assert who a user is.
 
+**Don't hand-write your half.** A Python host installs the SDK that implements it
+— `dimagi-canopy` ([`sdk/python`](../../sdk/python/README.md), import name
+`canopy_sdk`): signing the assertion and ID-JAG, the page registry, the
+jwt-bearer token endpoint, the DPoP gate for your MCP, Django wiring, and
+conformance checks you can run against your deployment. canopy-web's CI runs its
+host half against canopy's real redemption code, so it cannot drift from what
+canopy accepts.
+
 1. **Arrival.** In the same server-to-server call that signs the visitor
    assertion (§3), also sign an ID-JAG for YOUR OWN MCP server and send it as
    `id_jag` beside `assertion` to `/api/auth/contact-token`: header

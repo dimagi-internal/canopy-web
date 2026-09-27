@@ -418,7 +418,11 @@ def test_every_documented_theme_variable_and_part_is_real(doc):
 # every name in it is pinned to the code that reads it.
 
 
-CONTRACT = REPO / "docs" / "architecture" / "host-grant-contract.md"
+#: The contract's canonical text lives with the SDK that implements both halves
+#: (sdk/python/README.md); docs/architecture/host-grant-contract.md is the
+#: pointer every older link lands on.
+CONTRACT = REPO / "sdk" / "python" / "README.md"
+POINTER = REPO / "docs" / "architecture" / "host-grant-contract.md"
 
 
 @pytest.mark.parametrize("route", ["/oauth/client.json", "/oauth/jwks.json"])
@@ -433,8 +437,51 @@ def test_the_client_identity_routes_resolve_and_are_public(doc, route):
 
 
 def test_the_contract_is_published_beside_the_guide_and_linked(doc):
-    assert CONTRACT.exists(), "docs/architecture/host-grant-contract.md is missing"
+    assert CONTRACT.exists(), "sdk/python/README.md (the contract's home) is missing"
+    assert POINTER.exists(), "docs/architecture/host-grant-contract.md (the pointer) is missing"
     assert "(host-grant-contract.md)" in doc
+    assert "sdk/python/README.md#host-grant-contract-v1" in POINTER.read_text()
+    assert "## Host grant contract v1" in CONTRACT.read_text()
+
+
+def test_canopy_uses_the_sdks_constants_not_copies():
+    """The whole point of the SDK: ONE definition. canopy's modules re-export
+    the SDK's values, so they cannot silently diverge from what a host uses."""
+    from canopy_sdk import contract
+
+    from apps.tokens import assertions, client_identity, host_gateway, host_grants
+
+    assert client_identity.JWT_BEARER_GRANT is contract.JWT_BEARER_GRANT
+    assert client_identity.CLIENT_ASSERTION_TYPE is contract.CLIENT_ASSERTION_TYPE
+    assert host_grants.ID_JAG_TYP is contract.ID_JAG_TYP
+    assert host_gateway.ACTOR_HEADER is contract.ACTOR_HEADER
+    assert assertions.ALLOWED_ALGORITHMS == list(contract.ASSERTION_ALGORITHMS)
+    assert host_grants.ID_JAG_ALGORITHMS == list(contract.GRANT_ALGORITHMS)
+    assert assertions.MAX_LIFETIME_SECONDS == contract.ASSERTION_MAX_LIFETIME
+    assert host_grants.MAX_ID_JAG_LIFETIME == contract.ID_JAG_MAX_LIFETIME
+    assert host_grants.MAX_TOKEN_SECONDS == contract.ACCESS_TOKEN_MAX_LIFETIME
+    assert client_identity.CLIENT_ASSERTION_TTL_SECONDS == contract.CLIENT_ASSERTION_MAX_LIFETIME
+
+
+def test_the_sdk_readme_states_the_real_contract_values():
+    """The README is the doc a host team builds against in another repo."""
+    import re
+
+    import canopy_sdk
+    from canopy_sdk import contract
+
+    text = " ".join(CONTRACT.read_text().split())
+    assert f'CONTRACT_VERSION == "{contract.CONTRACT_VERSION}"' in text
+    assert f"≤ {contract.ID_JAG_MAX_LIFETIME}s after iat" in text
+    assert f"exp ≤ {contract.CLIENT_ASSERTION_MAX_LIFETIME}s" in text
+    assert f'"expires_in": ≤{contract.ACCESS_TOKEN_MAX_LIFETIME}' in text
+    assert f"≤ {contract.ASSERTION_MAX_LIFETIME}s after `iat`" in text
+    assert "EdDSA (Ed25519) or ES256" in text and "Never HMAC" in text
+    assert contract.ARRIVAL_PATH in text and contract.ID_JAG_TYP in text
+    # The install line hosts copy must name THIS version's tag.
+    tags = set(re.findall(r"dimagi-canopy-v(\d+\.\d+\.\d+)", CONTRACT.read_text()))
+    assert tags == {canopy_sdk.__version__}, f"README names tags {tags}, package is {canopy_sdk.__version__}"
+    assert "canopy_sdk" in text and "fixed" in text, "the import name promise is stated"
 
 
 def test_the_documented_arrival_field_is_the_one_the_endpoint_reads(doc):
@@ -452,6 +499,7 @@ def test_the_documented_wire_constants_are_the_ones_canopy_uses(doc):
     from apps.tokens import client_identity, host_grants
 
     contract = CONTRACT.read_text()
+    assert "host-grant-contract.md" in doc
     assert client_identity.JWT_BEARER_GRANT in doc and client_identity.JWT_BEARER_GRANT in contract
     assert host_grants.ID_JAG_TYP in doc and host_grants.ID_JAG_TYP in contract
     assert client_identity.CLIENT_ASSERTION_TYPE in contract

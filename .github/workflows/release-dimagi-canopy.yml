@@ -1,0 +1,115 @@
+name: Release dimagi-canopy
+
+# Releases the Python half of the canopy SDK (sdk/python — distribution
+# `dimagi-canopy`, import name `canopy_sdk`) as a git TAG plus a GitHub Release
+# carrying the built sdist and wheel. Hosts pin the tag:
+#
+#   dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v<version>#subdirectory=sdk/python
+#
+# or the Release's wheel URL. See sdk/python/README.md.
+#
+# NOT published to PyPI, deliberately (decided 2026-09-27): the distribution
+# name may still change, and a published name cannot be taken back. A PyPI job
+# (trusted publishing via OIDC, like publish-canopy-{ui,client}.yml does for
+# npm) can be added here once the name is settled. The import name `canopy_sdk`
+# stays fixed either way, so that switch touches hosts' requirements lines only.
+#
+# **A release is a version bump reaching main** — the same rule as the npm
+# packages, for the same reason (a manual "merge, then push a tag" step gets
+# skipped). CI's `Backend tests` job refuses a change under sdk/python/src that
+# does not move the version.
+#
+# Idempotent: if the Release for this version already exists, nothing happens;
+# if only the tag exists (pushed by hand), the Release is attached to it.
+# `workflow_dispatch` re-runs it. The tag is written with GITHUB_TOKEN, which
+# triggers no other workflow.
+on:
+  push:
+    branches: [main]
+    paths: ['sdk/python/pyproject.toml']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # the tag and the Release
+
+# Two merges in quick succession must not race to release.
+concurrency:
+  group: release-dimagi-canopy
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag + GitHub Release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: v
+        name: Which version, and is it already released?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=dimagi-canopy-v$v" >> "$GITHUB_OUTPUT"
+          if gh release view "dimagi-canopy-v$v" >/dev/null 2>&1; then
+            echo "dimagi-canopy-v$v is already released — nothing to do."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        if: steps.v.outputs.release == 'true'
+        uses: astral-sh/setup-uv@v8.2.0
+
+      # Its own suite is the gate before a host can pin it.
+      - name: Test
+        if: steps.v.outputs.release == 'true'
+        run: |
+          uv python install 3.12
+          uv run --extra test pytest -q
+
+      - name: Build sdist + wheel
+        if: steps.v.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          uv build --out-dir dist
+          ls -l dist
+          # The artifacts must carry the version being tagged, and the import
+          # name must be what hosts' code imports.
+          test -f "dist/dimagi_canopy-$VERSION-py3-none-any.whl"
+          test -f "dist/dimagi_canopy-$VERSION.tar.gz"
+          python3 -c "import zipfile, sys; n = zipfile.ZipFile(sys.argv[1]).namelist(); assert 'canopy_sdk/__init__.py' in n, n" \
+            "dist/dimagi_canopy-$VERSION-py3-none-any.whl"
+
+      - name: Tag and publish the GitHub Release
+        if: steps.v.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          # This version's CHANGELOG section as the release notes.
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1 || $0 == "## " v) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          {
+            echo
+            echo "Install (the import name is \`canopy_sdk\`):"
+            echo
+            echo '```'
+            echo "dimagi-canopy @ git+https://github.com/${GITHUB_REPOSITORY}@${TAG}#subdirectory=sdk/python"
+            echo '```'
+          } >> notes.md
+          # Creates the tag at this commit if it does not exist yet; attaches
+          # to it if it was pushed by hand.
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "dimagi-canopy $VERSION" \
+            --notes-file notes.md
