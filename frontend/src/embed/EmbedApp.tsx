@@ -251,9 +251,18 @@ export function EmbedApp({ link, app }: Props) {
       // tools arrive deferred will not go looking for one unprompted. Measured
       // on connect-labs: asked "what am I looking at?", the agent answered "I
       // can't see your screen" and made no tool call at all.
+      //
+      // Since 2026-09-26 a DECLARED page state no longer rides in the message at
+      // all: it is declared below, before the turn is queued, and canopy puts a
+      // pointer to it ("they are looking at labs-marketplace://orgs, 21 visible;
+      // read it with current_page") into the session's context through the
+      // caller envelope + the canopy plugin's UserPromptSubmit hook — outside
+      // the person's words. Pasting it here put a JSON dump under every first
+      // message in the transcript. Only a host still on `provideContext` (no
+      // declared state, so nothing for the envelope to point at) keeps the
+      // appended block.
       const declared = link.pageState()
-      const context = buildPageContextBlock((declared ?? {}) as Record<string, unknown>)
-        ?? pendingContext.current
+      const context = declared ? null : pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
       pendingContext.current = null
 

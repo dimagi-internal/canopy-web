@@ -555,9 +555,12 @@ too small to hold the rows behind them.
 
 Two paths, deliberately, and the redundancy is the point:
 
-1. **It rides the first message.** Your declared state is folded into the
-   context block sent with the opening question, so the agent has your selection
-   from the very first turn.
+1. **It is in the agent's context from the first turn.** canopy puts your
+   declared selection (resource, ids, filters) into the caller envelope, and the
+   canopy plugin hands it to the session as context alongside every message —
+   NOT inside the person's message, so the transcript shows exactly what they
+   typed. (Until 2026-09-26 the widget pasted it under the first message as a
+   JSON block, which is how every conversation came to open with a dump.)
 2. **The MCP tool `current_page`** returns every attached page's state, so the
    agent re-reads your screen *whenever it needs to* — "close the ones I'm
    looking at" is answerable on turn nine.
@@ -699,7 +702,7 @@ In a browser, on your page, signed in as an ordinary user:
 | The mint 403s and no `X-CSRFToken` was sent | your CSRF cookie is renamed (`csrfCookieName`) or unreadable from JS because it is `HttpOnly` (`csrfToken`) — §3 |
 | 404 on `/embed/chat` | app name mismatch, credential revoked, or no frame origins |
 | 503 on `/embed/widget.js` | canopy's frontend is not built |
-| Agent replies but knows nothing about the page | no `setPageState` call, or it ran after the first message was sent |
+| Agent replies but knows nothing about the page | no `setPageState` call, or it ran after the first message was sent, or the runner's canopy plugin predates the caller-context hook |
 | Agent acts on rows the user cannot see | you sent rows instead of ids — send `visible_ids` + `backing_tool` |
 | Page shows rows the agent already deleted | no `onInvalidate` in `canopy.init`, or the `resource` it checks differs from the one in `setPageState` |
 | Message sends but no reply ever arrives | no runner is online for that agent — a canopy-side operational issue, not yours |
