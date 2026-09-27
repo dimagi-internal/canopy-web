@@ -12,6 +12,7 @@ from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.tokens.github_views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
+from apps.tokens import views_oauth
 from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
 from apps.tokens.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
@@ -38,6 +39,16 @@ urlpatterns = [
     # public keys only. See apps/tokens/views_oauth.py.
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
+    # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): the
+    # jwt-bearer token endpoint, the host signing key's public half, and the
+    # RFC 8414 / RFC 9728 documents. All 503 until CANOPY_HOST_SIGNING_KEY and
+    # the client keys are set. Public, like the two above.
+    path("oauth/token", views_oauth.token, name="oauth-token"),
+    path("oauth/host/jwks.json", views_oauth.host_jwks, name="oauth-host-jwks"),
+    path(".well-known/oauth-authorization-server", views_oauth.authorization_server_metadata),
+    path(".well-known/oauth-authorization-server/<path:rest>", views_oauth.authorization_server_metadata),
+    path(".well-known/oauth-protected-resource", views_oauth.protected_resource_metadata),
+    path(".well-known/oauth-protected-resource/<path:rest>", views_oauth.protected_resource_metadata),
     # The embed shell — the ONE framable canopy page. A bare view because it
     # sets per-request response headers (frame-ancestors from the app's
     # registered origins) and is X-Frame-Options-exempt; see
@@ -86,7 +97,7 @@ urlpatterns = [
     # A 404 is the honest answer to "that bundle is gone", and it is one the
     # client can handle: the request fails visibly rather than half-succeeding.
     re_path(
-        r"^(?!api/|admin/|accounts/|health/|static/|auth/|assets/|oauth/).*$",
+        r"^(?!api/|admin/|accounts/|health/|static/|auth/|assets/|oauth/|\.well-known/).*$",
         spa_view,
         name="spa",
     ),

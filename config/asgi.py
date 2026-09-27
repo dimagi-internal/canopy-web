@@ -55,9 +55,15 @@ _django_with_ws = ProtocolTypeRouter(
     }
 )
 
+from apps.mcp.delegation import gate as _dpop_gate  # noqa: E402
+
 application = Starlette(
     routes=[
-        Mount(_MCP_PREFIX, app=_mcp_app),
+        # The DPoP gate: a host-grant token (canopy-web as a host of its own
+        # MCP, apps/tokens/self_host.py) arrives as `Authorization: DPoP`; the
+        # gate verifies the proof and hands FastMCP a plain bearer. Every other
+        # request passes through untouched.
+        Mount(_MCP_PREFIX, app=_dpop_gate(_mcp_app)),
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),
     ],

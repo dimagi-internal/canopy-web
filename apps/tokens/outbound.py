@@ -13,6 +13,10 @@ guards `jwks.py` established apply to every one of them, and live here once:
   a DPoP-bound token to a URL its proof was not made for.
 * **bounded time and size**.
 
+One exception, and it is not a request: a URL that is canopy-web's OWN host
+document or token endpoint (`self_host.py` — canopy is a host of its own MCP) is
+answered in-process by the function that serves it publicly.
+
 Residual, as in `jwks.py`: DNS rebinding between the check and the connection is
 not defeated here; what comes back must still be a well-formed document for the
 exact flow in progress, so a rebound host yields nothing usable.
@@ -45,6 +49,12 @@ def refuse_private(host: str) -> None:
 def check_url(url: str, *, what: str = "URL") -> str:
     """Validate an outbound target. Returns it unchanged, or raises."""
     value = (url or "").strip()
+    from . import self_host
+
+    if self_host.is_loopback_url(value):
+        # Never leaves the process (see `_loopback_get`), so there is no
+        # address to vet.
+        return value
     parsed = urlparse(value)
     if parsed.scheme != "https":
         raise OutboundError(f"the {what} must be https: {value!r}")
@@ -54,6 +64,22 @@ def check_url(url: str, *, what: str = "URL") -> str:
         raise OutboundError(f"the {what} must not carry credentials")
     refuse_private(parsed.hostname)
     return value
+
+
+def _loopback_get(url: str) -> dict | None:
+    """canopy-web's OWN host documents (it is a host of its own MCP too) are
+    answered in-process by the functions that serve them publicly — the same
+    handler, minus a round trip out through the load balancer. Nothing else is
+    special-cased: every other URL takes the guarded path below."""
+    from . import self_host
+
+    return self_host.loopback_get(url)
+
+
+def _loopback_post(url: str, data: dict, headers: dict):
+    from . import self_host
+
+    return self_host.loopback_post(url, data, headers)
 
 
 def _read(resp) -> dict:
@@ -70,6 +96,9 @@ def _read(resp) -> dict:
 
 
 def get_json(url: str, *, what: str = "URL") -> dict:
+    own = _loopback_get(url)
+    if own is not None:
+        return own
     check_url(url, what=what)
     try:
         resp = requests.get(url, timeout=TIMEOUT_SECONDS, allow_redirects=False,
@@ -84,6 +113,9 @@ def get_json(url: str, *, what: str = "URL") -> dict:
 def post_form(url: str, data: dict, *, headers: dict, what: str = "URL"):
     """POST a form. Returns `(status, json_body, response_headers)` — the caller
     reads OAuth errors from the body, so a non-200 is not raised here."""
+    own = _loopback_post(url, data, headers)
+    if own is not None:
+        return own
     check_url(url, what=what)
     try:
         resp = requests.post(url, data=data, timeout=TIMEOUT_SECONDS, allow_redirects=False,

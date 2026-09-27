@@ -153,7 +153,7 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
 
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
-def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
+def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.
 
@@ -165,6 +165,11 @@ def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
     to talk to itself. It is not weaker: the endpoint is session-authenticated,
     so the caller already IS the user the token acts for, and the token it
     receives is the same short-lived revocable row any host would get.
+
+    `page` names the canopy page the panel is on. When it is one canopy lets an
+    agent act on as you (read-only, within your own access), canopy also takes
+    a short grant to its own tools for that page; `host_grant` says whether it
+    did. Any other value, or none, is simply no grant.
     """
     app = _self_app()
     if app is None:
@@ -181,6 +186,12 @@ def embed_self_token(request: HttpRequest) -> EmbedSelfTokenOut:
         raise HttpError(429, str(exc))
 
     raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS)
+    # canopy as a HOST of its own MCP (apps/tokens/self_host.py): the page's
+    # scopes come from the server-side registry, never from the browser — the
+    # browser only names which registered page it is on. Never fails the mint.
+    from . import self_host
+
+    granted = self_host.grant_for_visitor(app, request.user, page)
     audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
-          detail=f"ttl={TOKEN_TTL_SECONDS}s")
-    return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat())
+          detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r}")
+    return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)

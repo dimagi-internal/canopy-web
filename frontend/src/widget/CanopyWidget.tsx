@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { apiV2 } from '@/api/client.v2'
 import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
 import { buildPageContext } from './pageContext'
+import { tokenUrlFor } from './grantPage'
 import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
 import { resourceChanged } from './pageInvalidation'
 import { useTheme } from '@/theme/ThemeProvider'
@@ -130,7 +131,12 @@ export function CanopyWidget() {
         // WebSocket URL builder on the same branch the deployed app uses.
         baseUrl: API_BASE,
         app: config.app,
-        tokenUrl: apiUrl('/api/embed/token'),
+        // A function, read on every mint: it names the page on screen NOW, so
+        // canopy can decide (server-side, from its own registry) whether the
+        // agent may act as you on it — canopy is a host of its own MCP too.
+        // The widget outlives navigation, so a URL fixed here would name the
+        // first page for the whole visit.
+        tokenUrl: () => tokenUrlFor(apiUrl('/api/embed/token'), pathRef.current),
         // Not `csrftoken`: the /canopy labs tenant path-scopes the cookie so it
         // cannot collide with its sibling apps on the shared host. Left at the
         // default the mint 403s and the widget never starts.

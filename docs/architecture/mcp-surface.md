@@ -14,6 +14,7 @@ self-loopback anymore. The implementation lives in `apps/mcp/`.
 | File | Responsibility |
 |---|---|
 | `auth.py` | `CanopyPATVerifier` — a FastMCP `TokenVerifier` that resolves a Personal Access Token to a Django user (mirrors `apps.tokens.middleware`). |
+| `delegation.py` | canopy-web as a host of its own MCP: `gate()` (the SDK's `DPoPGate`, mounted in `config/asgi.py`), `access_token_for()` (a host-grant token → the visitor's `AccessToken`), and `DelegatedScopeMiddleware` (only the grant's scopes' tools). |
 | `server.py` | The `FastMCP("canopy-web")` instance with `MultiAuth` (PAT + optional OAuth), and `build_http_app()` for the ASGI mount. |
 | `tools/insights.py` | `list_insights` (read) + `clear_insights` (write) tools. |
 | `tools/schedules.py` | `list_schedules` / `preview_cron` (read) + `create_schedule` / `update_schedule` / `delete_schedule` / `run_schedule_now` (write) tools over `AgentSchedule`. |
@@ -46,6 +47,28 @@ MultiAuth(
   browser-login. **Off by default** — completing it requires registering
   FastMCP's redirect URI (`<MCP_BASE_URL>/auth/callback`) on the existing
   Google OAuth client. See the docstring in `apps/mcp/server.py`.
+
+* **Host-grant token (canopy-web as a host of its own MCP, 2026-09-27).**
+  An ADDITIONAL credential; PATs and caller tokens are unchanged. When the
+  widget on one of canopy's own registered pages mints, canopy issues itself
+  an ID-JAG for that page's read-only scopes and redeems it at its own
+  `/oauth/token` (`apps/tokens/self_host.py`, the SDK's `GrantHandler`). The
+  result is a DPoP-bound access token (`canopy_host_delegated_token`, the
+  SDK's table) that canopy's gateway (`site_call` for site `canopy-web`)
+  presents here as `Authorization: DPoP <token>` with a fresh proof. The
+  SDK's `DPoPGate` in front of the MCP app (`apps/mcp/delegation.py::gate`)
+  verifies the proof (method, the public MCP URL, `ath`, freshness,
+  single-use `jti`) and hands FastMCP a plain bearer plus the proving key's
+  thumbprint; `CanopyPATVerifier` then resolves it with the SDK's
+  `ResourceVerifier` ONLY when a key was proved (a bound token sent as a
+  plain bearer is a 401). Tools run AS the visitor (`user_id` = their canopy
+  user, `sub` = `delegated:<id>`, `auth_method: delegated`) — their own ACL —
+  and `DelegatedScopeMiddleware` lists and allows only the tools their scopes
+  map to (`self_host.SCOPE_TOOLS`: `insights:read` → `list_insights`,
+  `items:read` → `list_items`, `skills:read` → `skill_history` +
+  `skill_revision_diff`); resources and prompts are closed to it. So a
+  member's delegated token reaches at most their own ACL ∩ a read-only scope.
+  A DPoP request to a canopy that is not configured as a host is a 401.
 
 The legacy single shared `CANOPY_MCP_BEARER` and the hand-rolled ASGI
 gate in `config/asgi.py` are GONE — auth is now enforced inside the MCP
@@ -91,10 +114,13 @@ app at `/`, with `lifespan=mcp_app.lifespan`:
 ```python
 mcp_app = build_http_app()  # mcp.http_app(path="/", transport="streamable-http")
 application = Starlette(
-    routes=[Mount("/api/mcp", app=mcp_app), Mount("/", app=django_asgi_app)],
+    routes=[Mount("/api/mcp", app=dpop_gate(mcp_app)), Mount("/", app=django_asgi_app)],
     lifespan=mcp_app.lifespan,
 )
 ```
+
+`dpop_gate` (`apps/mcp/delegation.py::gate`) is the SDK's `DPoPGate`; it acts
+only on `Authorization: DPoP` and passes every other request through untouched.
 
 ## How to connect Claude Code
 

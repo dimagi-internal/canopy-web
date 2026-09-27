@@ -153,6 +153,62 @@ def test_a_host_that_accepts_a_replayed_grant_fails(world, transport):
     assert [c.name for c in report.failures()] == ["grant_single_use"]
 
 
+def test_check_client_proves_the_host_accepts_canopy_without_a_grant(world, transport):
+    report = conformance.check_client(ISSUER, RESOURCE, world.client, fetch_json=transport.fetch_json,
+                                      post_form=transport.post_form)
+    assert report.ok, str(report)
+    assert {c.name for c in report.checks} == {"client_token_endpoint", "client_accepted",
+                                                "client_refuses_foreign_grant"}
+    # The host really authenticated canopy: it fetched the client's documents.
+    assert world.fetches, "the host read canopy's metadata to authenticate it"
+    assert not world.token_store._tokens, "nothing was issued"
+
+
+def test_check_client_spends_nothing_so_a_real_grant_still_works_after(world, transport):
+    conformance.check_client(ISSUER, RESOURCE, world.client, fetch_json=transport.fetch_json,
+                             post_form=transport.post_form)
+    report, token = conformance.check_grant(
+        ISSUER, RESOURCE, id_jag=issue_id_jag(world.config, "42", ["marketplace:read"]),
+        credentials=world.client, fetch_json=transport.fetch_json, post_form=transport.post_form)
+    assert token is not None and report.ok, str(report)
+
+
+def test_check_client_fails_for_a_client_the_host_does_not_accept(world, transport):
+    from canopy_sdk import consumer
+    from canopy_sdk.keys import generate_private_key
+
+    stranger = consumer.ClientCredentials("https://elsewhere.example/oauth/client.json",
+                                          generate_private_key(), generate_private_key())
+    report = conformance.check_client(ISSUER, RESOURCE, stranger, fetch_json=transport.fetch_json,
+                                      post_form=transport.post_form)
+    [failed] = report.failures()
+    assert failed.name == "client_accepted" and "invalid_client" in failed.detail
+
+
+def test_check_client_catches_a_host_that_issues_for_a_grant_it_never_signed(world, transport):
+    def accepts_anything(url, data, headers, what=""):
+        return 200, {"access_token": "x", "token_type": "DPoP", "expires_in": 60}, {}
+
+    report = conformance.check_client(ISSUER, RESOURCE, world.client, fetch_json=transport.fetch_json,
+                                      post_form=accepts_anything)
+    assert [c.name for c in report.failures()] == ["client_refuses_foreign_grant"]
+
+
+def test_check_client_reports_undiscoverable_metadata(world, transport):
+    transport.documents[contract.metadata_url(ISSUER)] = {"issuer": "https://evil",
+                                                          "token_endpoint": TOKEN_ENDPOINT}
+    report = conformance.check_client(ISSUER, RESOURCE, world.client, fetch_json=transport.fetch_json,
+                                      post_form=transport.post_form)
+    assert [c.name for c in report.failures()] == ["client_token_endpoint"]
+
+
+def test_run_includes_check_client_when_given_credentials_but_no_grant(world, transport):
+    report = conformance.run(ISSUER, RESOURCE, credentials=world.client, fetch_json=transport.fetch_json,
+                             post_form=transport.post_form)
+    assert report.ok, str(report)
+    assert "client_accepted" in {c.name for c in report.checks}
+
+
 # --- the plugin's fixtures, as a host's CI uses them ----------------------------------------
 
 

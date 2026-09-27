@@ -76,8 +76,14 @@ export interface CanopyWidgetOptions {
   app: string
   /** Host endpoint that mints a delegated token for the signed-in user.
    *  Must return `{ token, expires_at }`. Called same-origin with credentials,
-   *  so the host's normal session auth applies. */
-  tokenUrl: string
+   *  so the host's normal session auth applies.
+   *
+   *  A function is read on EVERY mint, for a host whose token endpoint wants
+   *  to know something that changes while the widget lives — canopy's own
+   *  single-page app passes the page the visitor is on NOW, since the widget
+   *  outlives navigation and a URL captured at `init` would name the first
+   *  page for the rest of the visit. */
+  tokenUrl: string | (() => string)
   mode?: DisplayMode
   /** Required for `inline`. */
   target?: string | Element
@@ -250,7 +256,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   }
 
   async function mintToken(): Promise<string> {
-    const response = await fetch(options.tokenUrl, {
+    const url = typeof options.tokenUrl === 'function' ? options.tokenUrl() : options.tokenUrl
+    const response = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },

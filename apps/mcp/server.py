@@ -41,6 +41,12 @@ from .turn_scope import TurnScopeMiddleware  # noqa: E402
 
 mcp.add_middleware(TurnScopeMiddleware())
 
+# A host-grant token (canopy-web as a host of its own MCP) sees only its scopes'
+# tools. See `apps/mcp/delegation.py`.
+from .delegation import DelegatedScopeMiddleware  # noqa: E402
+
+mcp.add_middleware(DelegatedScopeMiddleware())
+
 # Registering tools is a side effect of importing the tools package.
 from . import tools  # noqa: E402,F401
 from .page_tools import PageActionProvider  # noqa: E402

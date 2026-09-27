@@ -70,6 +70,18 @@ export async function updateConnectedApp(
   return unwrap<ConnectedApp>(res, 'Could not save the change')
 }
 
+export type ConnectionTest = components['schemas']['ConnectionTestOut']
+export type ConnectionCheck = components['schemas']['ConnectionCheckOut']
+
+/** Run the SDK's conformance checks against this site's settings, from
+ *  canopy's server. Owner-only, like everything else here. */
+export async function testConnectedApp(slug: string, appId: number): Promise<ConnectionTest> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/{app_id}/test', {
+    params: { path: { slug, app_id: appId } },
+  })
+  return unwrap<ConnectionTest>(res, 'Could not test the connection')
+}
+
 export async function disconnectApp(slug: string, appId: number): Promise<void> {
   const res = await apiV2.DELETE('/api/workspaces/{slug}/connected-apps/{app_id}', {
     params: { path: { slug, app_id: appId } },

@@ -11,6 +11,8 @@ edge — statuses and serialisation.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from django.http import HttpRequest
 from ninja import Router, Schema, Status
 from ninja.errors import HttpError
@@ -208,6 +210,53 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
           detail=f"origins={app.frame_origins()} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
     return _out(app)
+
+
+class ConnectionCheckOut(Schema):
+    """One step of a connection test."""
+
+    #: Stable id of the check (the SDK's name for it), e.g. `client_accepted`.
+    name: str
+    #: What it checks, in words.
+    label: str
+    status: Literal["pass", "fail", "skip"]
+    #: Why it passed or failed. Never contains a credential.
+    detail: str
+
+
+class ConnectionTestOut(Schema):
+    """What canopy found when it tried this site's settings, from its own server."""
+
+    #: True when no check failed (skipped checks do not count against it).
+    ok: bool
+    checks: list[ConnectionCheckOut]
+
+
+@connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/test", response=ConnectionTestOut,
+                            summary="Test a connected site's settings")
+def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> ConnectionTestOut:
+    """Try this site's settings the way canopy uses them, from canopy's server.
+
+    Reads the site's published keys, and — when it lets the agent act as the
+    visitor — its sign-in and MCP discovery documents, then asks its token
+    endpoint whether it accepts canopy as a client. That last step sends a
+    grant the site must refuse, so nothing is issued or used up there. Each
+    step comes back as pass, fail or skip, with the reason.
+    """
+    # Rationale (not in the docstring — it is published): every URL here was
+    # typed by a tenant, so every request goes through `outbound.py` (https,
+    # no private address space, no redirects, bounded). A real grant cannot be
+    # redeemed from here: that needs an ID-JAG signed by the host's key, which
+    # canopy never holds. See apps/tokens/connection_test.py.
+    from . import connection_test
+
+    app = _app_or_404(request, slug, app_id)
+    rows = connection_test.run(app)
+    return ConnectionTestOut(
+        ok=not any(r.status == "fail" for r in rows),
+        checks=[ConnectionCheckOut(name=r.name, label=r.label, status=r.status, detail=r.detail)
+                for r in rows],
+    )
 
 
 @connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},

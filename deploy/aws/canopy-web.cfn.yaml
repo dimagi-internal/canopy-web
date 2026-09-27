@@ -217,6 +217,18 @@ Resources:
       Name: canopy-web/oauth-dpop-key
       SecretString: "PLACEHOLDER"
 
+  # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): signs the
+  # ID-JAGs canopy issues for its own pages, so agents there call canopy's own
+  # /api/mcp/ as the visitor. Ed25519 or P-256 private key PEM. Born
+  # "PLACEHOLDER", which the app reads as unset (every host endpoint 503s and no
+  # grant is issued) — set the real value with put-secret-value, then force a
+  # new deployment.
+  HostSigningKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/host-signing-key
+      SecretString: "PLACEHOLDER"
+
   # Slack front door (apps/slack). Born "PLACEHOLDER", which the app reads as
   # UNCONFIGURED (the webhooks answer 503) — so shipping these containers
   # before the Slack app exists changes nothing. The client id is public and
@@ -383,6 +395,7 @@ Resources:
             - { Name: GITHUB_APP_CLIENT_SECRET, ValueFrom: !Ref GithubAppClientSecret }
             - { Name: CANOPY_OAUTH_CLIENT_KEY, ValueFrom: !Ref OauthClientKey }
             - { Name: CANOPY_OAUTH_DPOP_KEY, ValueFrom: !Ref OauthDpopKey }
+            - { Name: CANOPY_HOST_SIGNING_KEY, ValueFrom: !Ref HostSigningKey }
             - { Name: SLACK_CLIENT_SECRET, ValueFrom: !Ref SlackClientSecret }
             - { Name: SLACK_SIGNING_SECRET, ValueFrom: !Ref SlackSigningSecret }
           LogConfiguration:

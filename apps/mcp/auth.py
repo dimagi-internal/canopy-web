@@ -58,6 +58,18 @@ class CanopyPATVerifier(TokenVerifier):
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token:
             return None
+        # A DPoP key was proved on this request (the gate in front of the MCP
+        # app checked it): the ONLY credential that comes with one is a
+        # host-grant token canopy issued for a visitor on its own pages. It runs
+        # as that visitor, limited to its scopes (apps/mcp/delegation.py). PATs
+        # and caller tokens never arrive this way, so this branch cannot change
+        # what they do.
+        from canopy_sdk.host import presented_dpop_jkt
+
+        if presented_dpop_jkt.get() is not None:
+            from .delegation import access_token_for
+
+            return await access_token_for(token)
         if token.startswith("cct_"):
             grant = await sync_to_async(_lookup_turn_grant, thread_sensitive=True)(token)
             if grant is None:

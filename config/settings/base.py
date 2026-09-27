@@ -107,6 +107,11 @@ INSTALLED_APPS = [
     "apps.inbound",
     "apps.slack",
     "apps.contacts",
+    # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
+    # table and the delegated-token table canopy-web uses as a HOST of its own
+    # MCP (apps/tokens/self_host.py). Its own tables, never `tokens`' —
+    # `DelegatedToken` there is the embed widget's, a different credential.
+    "canopy_sdk.django",
 ]
 
 MIDDLEWARE = [
@@ -468,6 +473,15 @@ CANOPY_OAUTH_DPOP_KEY = env("CANOPY_OAUTH_DPOP_KEY", default="").replace("\\n", 
 # in the JWKS until every host's cache (<= 1h) has moved on.
 CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS = env("CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS", default="")
 CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DEBUG)
+# canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): agents on
+# canopy's own pages call canopy's own /api/mcp/ AS THE VISITOR, through the same
+# host grant contract a connected site implements. This key signs the ID-JAGs
+# canopy issues for its own pages; its public half is served at
+# {CANOPY_PUBLIC_BASE_URL}/oauth/host/jwks.json, which is what the `canopy-web`
+# Connected site's JWKS URL names. Ed25519 or P-256 PEM. "PLACEHOLDER" / empty =
+# off (every host endpoint answers 503 and no grant is issued); with
+# CANOPY_OAUTH_EPHEMERAL_KEYS (dev, tests) one is generated per process.
+CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\n", "\n")
 
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")
 GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
