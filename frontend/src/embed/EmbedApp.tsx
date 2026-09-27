@@ -1,4 +1,4 @@
-import { ChatPanel, MenuPrompt, SendBox, useSessionSocket } from 'canopy-ui/chat'
+import { ChatPanel, MenuPrompt, SendBox, newClientId, useSessionSocket } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -33,8 +33,10 @@ type Phase =
   /** `firstMessage` is echoed into the transcript on mount. The opening message
    *  is sent over HTTP before this component exists, so nothing on the socket
    *  ever announced it: you typed, pressed send, and watched your own question
-   *  disappear into an empty panel. */
-  | { kind: 'chatting'; sessionId: string; firstMessage: string; agent: EmbedAgent }
+   *  disappear into an empty panel. `firstMessageClientId` is the id that HTTP
+   *  send carried, so the echo can be matched against the server's queued-turn
+   *  projection instead of rendering twice — see `QueuedRows.hideClientIds`. */
+  | { kind: 'chatting'; sessionId: string; firstMessage: string; firstMessageClientId: string; agent: EmbedAgent }
 
 interface EmbedAgent {
   slug: string
@@ -298,14 +300,19 @@ export function EmbedApp({ link, app }: Props) {
       const base = sessionBase(isContact, created.id)
       await declarePage(client, link, base)
 
+      // Minted here rather than in `EmbedChat`'s echo effect: the id has to
+      // ride the SAME POST that carries the text, so the server's queued-turn
+      // projection and the optimistic echo (`noteLocalSend`, below) agree on
+      // what to call this send.
+      const clientId = newClientId()
       await client.rest.json(`${base}/send`, {
         method: 'POST',
-        body: JSON.stringify({ text: body }),
+        body: JSON.stringify({ text: body, client_id: clientId }),
       })
 
       // `text`, not `body`: the page-context block is for the agent to read,
       // not for the person who just typed the question to be shown back.
-      setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, agent })
+      setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, firstMessageClientId: clientId, agent })
     },
     [client, link],
   )
@@ -351,7 +358,7 @@ export function EmbedApp({ link, app }: Props) {
         isContact={principal?.kind === 'contact'}
         onStart={(text) => startConversation(phase.agent, text)}
         onOpen={(sessionId) =>
-          setPhase({ kind: 'chatting', sessionId, firstMessage: '', agent: phase.agent })
+          setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
       />
@@ -363,6 +370,7 @@ export function EmbedApp({ link, app }: Props) {
       key={phase.sessionId}
       sessionId={phase.sessionId}
       firstMessage={phase.firstMessage}
+      firstMessageClientId={phase.firstMessageClientId}
       agent={phase.agent}
       onBack={() => setPhase({ kind: 'ready', agent: phase.agent })}
       client={client}
@@ -576,6 +584,7 @@ function contactDraft(body: string) {
 function EmbedChat({
   sessionId,
   firstMessage,
+  firstMessageClientId,
   agent,
   onBack,
   client,
@@ -588,6 +597,10 @@ function EmbedChat({
    *  when an earlier conversation is reopened — its history comes from the
    *  socket's snapshot. */
   firstMessage: string
+  /** The `client_id` that same HTTP send carried — so the echo below matches
+   *  the server's queued-turn projection instead of rendering it twice. Empty
+   *  alongside an empty `firstMessage`. */
+  firstMessageClientId: string
   /** Whose conversation this is — named in the header, which said "Canopy". */
   agent: EmbedAgent
   /** Back to the start screen: a new question, or another earlier chat. */
@@ -662,13 +675,13 @@ function EmbedChat({
   // pending row and "waiting for a reply" a member's send does. The page
   // snapshot rides the first message, as it does for a member.
   const sendOverHttp = useCallback(
-    (typed: string) => {
+    (typed: string, clientId: string) => {
       const context = contextPreamble.current
       contextPreamble.current = null
       const body = context ? `${typed}\n\n${context}` : typed
       return client.rest.json(`${sessionBase(isContact, sessionId)}/send`, {
         method: 'POST',
-        body: JSON.stringify({ text: body }),
+        body: JSON.stringify({ text: body, client_id: clientId }),
       })
     },
     [client, sessionId, contextPreamble, isContact],
@@ -717,8 +730,8 @@ function EmbedChat({
   useEffect(() => {
     if (!firstMessage || echoed.current === sessionId) return
     echoed.current = sessionId
-    socket.noteLocalSend(firstMessage)
-  }, [firstMessage, sessionId, socket])
+    socket.noteLocalSend(firstMessage, firstMessageClientId)
+  }, [firstMessage, firstMessageClientId, sessionId, socket])
 
   // Answering the agent's dialog. Posted with the frame's own bearer token
   // rather than through `@/api/chat`, which authenticates with the app's

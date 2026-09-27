@@ -32,6 +32,7 @@ export { prependHistory } from "./history";
 // Hooks
 export {
   useSessionSocket,
+  newClientId,
   type UseSessionSocketOptions,
   type UseSessionSocketResult,
 } from "./useSessionSocket";

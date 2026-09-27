@@ -192,7 +192,12 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         id: frame.data.message_id,
         turn_index: frame.data.turn_index,
         role: "user",
-        content: { text: frame.data.plaintext },
+        // `client_id` (when the caller has one — an HTTP send) lets
+        // `QueuedRows.hideClientIds` recognise the server's queued-turn
+        // projection as THIS row rather than a duplicate.
+        content: frame.data.client_id
+          ? { text: frame.data.plaintext, client_id: frame.data.client_id }
+          : { text: frame.data.plaintext },
         plaintext: frame.data.plaintext,
         status: "complete",
         error_detail: null,

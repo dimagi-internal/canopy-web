@@ -44,7 +44,7 @@ describe('sending over HTTP', () => {
     act(() => hook.result.current.updateDraft('hello ace'))
     expect(hook.result.current.state.active_draft?.body).toBe('hello ace')
     await act(async () => hook.result.current.sendChat())
-    expect(sendOverHttp).toHaveBeenCalledWith('hello ace')
+    expect(sendOverHttp).toHaveBeenCalledWith('hello ace', expect.any(String))
     expect(FakeSocket.sent.filter((f) => f.includes('chat.send') || f.includes('draft.update'))).toEqual([])
   })
 
@@ -55,6 +55,23 @@ describe('sending over HTTP', () => {
     expect(hook.result.current.awaitingReply).toBe(true)
     expect(hook.result.current.state.messages.at(-1)?.plaintext).toBe('are we on track?')
     expect(hook.result.current.state.active_draft).toBeNull()
+  })
+
+  it('stamps the SAME client_id on the optimistic row and the HTTP body', async () => {
+    // The server's queued-turn projection carries back whatever client_id the
+    // POST sent (apps/canopy_sessions/services.py::queued_messages parses it
+    // off the turn's idempotency_key). Without a matching id on this row's
+    // `content`, `QueuedRows.hideClientIds` cannot recognise the two as one
+    // send, and a contact's (or the widget's) own send rendered twice — once
+    // as their bubble, once as an unowned "queued" placeholder, since neither
+    // path gives a contact an `author.user_id` to compare against.
+    const { hook, sendOverHttp } = contact()
+    act(() => hook.result.current.updateDraft('please help'))
+    await act(async () => hook.result.current.sendChat())
+    const sentClientId = sendOverHttp.mock.calls[0][1] as string
+    expect(typeof sentClientId).toBe('string')
+    expect(sentClientId.length).toBeGreaterThan(0)
+    expect(hook.result.current.state.messages.at(-1)?.content?.client_id).toBe(sentClientId)
   })
 
   it('a failed send puts the words back and says why', async () => {

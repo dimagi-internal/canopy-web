@@ -291,7 +291,13 @@ export type WsEvent =
   // rides here for the same reason it rides the queued list (spec 2026-09-26):
   // a transcript-sourced session's durable row carries no user beyond the
   // runner's own login, so this is canopy's only chance to say who typed it.
-  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null } }
+  // `client_id` is likewise the only way an HTTP send's OPTIMISTIC row (built
+  // locally by `noteLocalSend`, never a real server frame) can carry the same
+  // id its REST body sent — without it `QueuedRows.hideClientIds` cannot match
+  // this row to the server's queued-turn projection, and a contact's or
+  // widget's own send rendered twice: once as their bubble, once as a "queued"
+  // placeholder for the same send.
+  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will

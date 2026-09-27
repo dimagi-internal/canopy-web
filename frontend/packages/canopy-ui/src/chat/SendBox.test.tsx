@@ -164,6 +164,80 @@ describe("SendBox — local-first composer", () => {
   });
 });
 
+describe("SendBox — a local draft (contact / widget) restores a failed send", () => {
+  // A contact's or the widget's own composer has no server draft to co-edit;
+  // `useSessionSocket` stands in a LOCAL one (`id: "local"`) instead. Sending
+  // clears `localBody` optimistically (see "clears the composer when you
+  // send" above) before the round trip even starts — so a failure has no way
+  // back into the box except through this draft, once the hook re-seeds its
+  // body in the catch handler (`sendChatOverHttp`).
+  function localDraft(body: string): Draft {
+    return {
+      id: "local", slot: "next", status: "open", body, version: 0,
+      last_editor: 0, last_edit_at: new Date().toISOString(),
+    } as Draft;
+  }
+
+  it("shows the text again once the local draft's body is restored after a send", () => {
+    const { textarea, rerender } = setup({ draft: localDraft("hello") });
+    expect(textarea().value).toBe("hello");
+
+    // Pressing Send clears the box optimistically — `handleSend`'s own
+    // `setLocalBody("")`, independent of whatever the draft prop says.
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(textarea().value).toBe("");
+
+    // The send already went out — the hook cleared its local draft to null the
+    // instant it fired, well before any round trip could resolve.
+    rerender(
+      <SendBox
+        draft={null}
+        connected
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(textarea().value).toBe("");
+
+    // The HTTP send failed; the hook re-seeds the SAME local draft with the
+    // original text (`updateLocalDraft` in its catch handler).
+    rerender(
+      <SendBox
+        draft={localDraft("hello")}
+        connected
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(textarea().value).toBe("hello");
+  });
+
+  it("does not restore a real multiplayer draft the same way", () => {
+    // The mirror is scoped to `id === "local"` on purpose: a server-assigned
+    // id is a real co-editor's draft, and adopting it unconditionally is
+    // exactly the deleted `theirEdit` bug (it could overwrite live typing).
+    const { textarea, rerender } = setup({ draft: null });
+    rerender(
+      <SendBox
+        draft={draft({ id: "d1", body: "not mine to adopt", last_editor: THEM })}
+        connected
+        isStreaming={false}
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(textarea().value).toBe("");
+  });
+});
+
 describe("SendBox — sending is gated on the socket", () => {
   it("keeps your text instead of clearing it when the socket is down", () => {
     // The composer clears optimistically, and the hook's send() silently drops

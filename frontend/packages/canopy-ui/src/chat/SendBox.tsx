@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -118,6 +119,24 @@ export function SendBox({
     setKeyOnScreen(persistKey);
     setLocalBody(readStoredDraft(store, persistKey ?? "") ?? "");
   }
+
+  // A draft with `id === "local"` is never a co-editor's — it is the LOCAL
+  // stand-in a host keeps for a principal with no server-side draft (a
+  // contact's `useSessionSocket.sendOverHttp` path, or the widget's start
+  // screen `contactDraft`). Its body is always either an echo of what THIS
+  // box just typed (harmless to mirror back) or a failed send being restored
+  // after `handleSend` already cleared the box — the one case with no other
+  // way to reach the screen, since sending clears `localBody` optimistically
+  // rather than waiting for the round trip. Scoped to `id === "local"` so a
+  // real multiplayer draft (a server-assigned id) is never adopted this way —
+  // that was the deleted `theirEdit` effect's mistake, which adopted ANY
+  // other editor's draft and could overwrite what you were mid-typing.
+  useEffect(() => {
+    if (draft?.id === "local" && draft.body !== localBody) {
+      setLocalBody(draft.body);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id, draft?.body]);
 
   // Typing is ALWAYS allowed now — this box is only ever YOUR OWN draft, and
   // every editor gets one (see protocol.ts::SessionState.active_draft). It

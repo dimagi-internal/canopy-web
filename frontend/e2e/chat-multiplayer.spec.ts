@@ -8,14 +8,20 @@ import { expect, test, type Browser, type Page } from '@playwright/test'
  * Two browsers, two identities, ONE chat session.
  *
  * Everything multiplayer means is a statement about somebody who is not you —
- * "nobody else here", "Another teammate is editing…", "take over". A suite with
- * one identity can open two browsers and exercise none of it, which is why this
- * surface shipped with no e2e coverage at all: the co-edited draft, the lock,
- * the takeover and the presence chips were only ever checked by unit tests
- * holding a hand-built props object.
+ * "nobody else here", "Bo B is typing: …", a queued send with somebody else's
+ * name on it. A suite with one identity can open two browsers and exercise
+ * none of it, which is why this surface shipped with no e2e coverage at all:
+ * the live typing row, the queued-sends list and the presence chips were only
+ * ever checked by unit tests holding a hand-built props object.
  *
  * So this drives the real socket (`ws/canopy-sessions/{id}/`) against the real
  * consumer, twice, and asserts what each browser sees about the OTHER one.
+ *
+ * As of 0.13, every editor has their OWN draft — there is no shared lock, no
+ * co-edit banner and no take-over button to test (canopy-ui#… "own composer
+ * per person"). A teammate's live text arrives as a `typing-row` above the
+ * composer instead, and the composer itself is never disabled by anyone
+ * else's typing.
  *
  * Deliberately NOT asserted here: an agent reply. A send enqueues a Turn that a
  * session-capable runner drives, and there is no runner in e2e — asserting a
@@ -79,66 +85,60 @@ test.describe('multiplayer chat', () => {
     await expect(page.getByTestId('presence-empty')).toBeVisible({ timeout: 15_000 })
   })
 
-  test("one person's typing appears in the other's composer", async ({ page, browser }) => {
-    const second = await bothInTheRoom(page, browser)
-
-    await page.getByTestId('composer').fill('half a thought from Alex')
-    // The co-edited draft: the SERVER's copy, echoed to everyone else.
-    await expect(second.getByTestId('composer')).toHaveValue('half a thought from Alex', {
-      timeout: 15_000,
-    })
-
-    await second.context().close()
-  })
-
-  test('a teammate holding the draft locks the other composer, and takeover frees it',
+  test("one person's typing appears as a typing row for the other, and never touches their own composer",
     async ({ page, browser }) => {
       const second = await bothInTheRoom(page, browser)
 
-      await page.getByTestId('composer').fill('I am holding this')
-
-      // The lock is what stops two people overwriting each other mid-sentence.
-      const theirBox = second.getByTestId('composer')
-      await expect(theirBox).toBeDisabled({ timeout: 15_000 })
-      await expect(theirBox).toHaveAttribute('placeholder', /Another teammate is editing/)
-
-      // And it must be escapable, or one idle tab wedges the session for
-      // everyone. The holder is shown as editing while the lock is live.
-      await expect(page.getByTestId('presence-chip')).toHaveAttribute('data-editing', 'false')
-      await expect(second.getByTestId('presence-chip')).toHaveAttribute('data-editing', 'true')
-
-      // The composer is where their words land, so it is where the explanation
-      // has to be. Their draft arrives INSIDE a disabled textarea, which renders
-      // muted — pixel-identical to a placeholder — so without attribution the
-      // headline feature of multiplayer reads as an empty box.
-      const banner = second.getByTestId('coedit-banner')
-      await expect(banner).toBeVisible()
-      await expect(banner).toContainText('Alex Kim')
-      await expect(banner).toContainText('you are seeing their draft')
-      // And exactly ONE way to escape the lock, next to the sentence that
-      // explains why you would.
-      await expect(second.getByTestId('take-over')).toHaveCount(1)
-
-      await second.getByTestId('take-over').click()
-      await expect(theirBox).toBeEnabled({ timeout: 15_000 })
-      await theirBox.fill('actually, mine now')
-      await expect(page.getByTestId('composer')).toHaveValue('actually, mine now', {
+      await page.getByTestId('composer').fill('half a thought from Alex')
+      // Everyone has their OWN draft now (canopy-ui 0.13) — a teammate's live
+      // text shows as a row above the composer, never inside your own box.
+      await expect(second.getByTestId('typing-row')).toContainText('half a thought from Alex', {
         timeout: 15_000,
       })
+      await expect(second.getByTestId('composer')).toHaveValue('')
+      await expect(second.getByTestId('composer')).toBeEnabled()
 
       await second.context().close()
     })
 
-  test('a lock goes idle on its own so nobody is wedged', async ({ page, browser }) => {
+  test("a teammate's live typing never locks the other composer", async ({ page, browser }) => {
+    const second = await bothInTheRoom(page, browser)
+
+    await page.getByTestId('composer').fill('I am typing this')
+
+    const theirBox = second.getByTestId('composer')
+    await expect(second.getByTestId('typing-row')).toContainText('I am typing this', {
+      timeout: 15_000,
+    })
+    // Never locked: there is no shared draft to co-edit any more, so the
+    // other box stays fully theirs to type into the whole time — no
+    // co-edit banner, no take-over button, because there is nothing to take
+    // over.
+    await expect(theirBox).toBeEnabled()
+    await expect(second.getByTestId('coedit-banner')).toHaveCount(0)
+    await expect(second.getByTestId('take-over')).toHaveCount(0)
+
+    // And it really is their OWN box: typing into it neither merges with nor
+    // gets overwritten by what the first person is typing.
+    await theirBox.fill('actually, my own words')
+    await expect(theirBox).toHaveValue('actually, my own words')
+    await expect(page.getByTestId('composer')).toHaveValue('I am typing this')
+
+    await second.context().close()
+  })
+
+  test('a typing row disappears once the person stops (clears their draft)', async ({ page, browser }) => {
     const second = await bothInTheRoom(page, browser)
 
     await page.getByTestId('composer').fill('typing then stopping')
-    await expect(second.getByTestId('composer')).toBeDisabled({ timeout: 15_000 })
+    await expect(second.getByTestId('typing-row')).toContainText('typing then stopping', {
+      timeout: 15_000,
+    })
 
-    // Idle after ~2s of no edits (drafts.isDraftIdle). Without this a person who
-    // wanders off mid-sentence holds the room until they close the tab, and
-    // "take over" becomes mandatory rather than an escape hatch.
-    await expect(second.getByTestId('composer')).toBeEnabled({ timeout: 15_000 })
+    // An empty `draft.typing` body is the peer's "I stopped" signal
+    // (sessionReducer drops the row rather than showing a blank one).
+    await page.getByTestId('composer').fill('')
+    await expect(second.getByTestId('typing-row')).toHaveCount(0, { timeout: 15_000 })
 
     await second.context().close()
   })

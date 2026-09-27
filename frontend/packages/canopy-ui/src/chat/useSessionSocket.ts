@@ -23,7 +23,15 @@ const SEND_RECEIPT_TIMEOUT_MS = 4_000;
 const NOT_SENT =
   "Not sent: the connection dropped before canopy got it. Your words are kept here, so copy them and send again.";
 
-function newClientId(): string {
+/**
+ * A client-generated nonce for a send's `client_id` — exported so a host
+ * driving its own HTTP send (the widget's opening message, before a socket
+ * exists to send over; `ChatPage`'s `/share` command) can mint the SAME id
+ * for both the REST body and the matching `noteLocalSend` call, which is what
+ * lets `QueuedRows.hideClientIds` recognise the two as one send rather than
+ * rendering it twice.
+ */
+export function newClientId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   return c?.randomUUID ? c.randomUUID() : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
@@ -84,8 +92,15 @@ export interface UseSessionSocketOptions {
    * Everything else is unchanged — the same `state`, the same pending row, the
    * same "waiting for a reply" — so one chat UI serves a user and a contact
    * without a second send path in every host. Omit for a user (the default).
+   *
+   * Must pass `clientId` through as the send's `client_id` (both `/api/canopy-
+   * sessions/{id}/send` and `/api/contact/sessions/{id}/send` accept it) — it
+   * is the SAME id `sendChatOverHttp` stamps on the optimistic row, and without
+   * it the server's queued-turn projection has no way to recognise that row as
+   * the one it already showed, so the sender's own send rendered a second time
+   * as an unowned "queued" placeholder.
    */
-  sendOverHttp?: (text: string) => Promise<unknown>;
+  sendOverHttp?: (text: string, clientId: string) => Promise<unknown>;
   /**
    * The HTTP route for a USER's send, used only when a socket send gets no
    * receipt (see `SEND_RECEIPT_TIMEOUT_MS`). Must pass `clientId` through as the
@@ -148,8 +163,15 @@ export interface UseSessionSocketResult {
    *  by `sendChat` alone, and the user's own line is not a server row until
    *  the agent's transcript ships it back. So you typed, pressed send, and got
    *  an empty panel — for as long as the reply took, and forever if its runner
-   *  was offline. */
-  noteLocalSend: (text: string) => void;
+   *  was offline.
+   *
+   *  Pass the SAME `clientId` the matching REST body sent (`sendChatOverHttp`
+   *  does this internally; a host driving its own HTTP send — the widget's
+   *  first message, `ChatPage`'s `/share` command — must generate one and pass
+   *  it to both), so the optimistic row's `content.client_id` matches the
+   *  server's queued-turn projection and `QueuedRows.hideClientIds` can tell
+   *  they're the same send rather than rendering it twice. */
+  noteLocalSend: (text: string, clientId?: string) => void;
   lastError: string | null;
 }
 
@@ -526,7 +548,7 @@ export function useSessionSocket({
     });
   }, []);
 
-  const noteLocalSend = useCallback((text: string) => {
+  const noteLocalSend = useCallback((text: string, clientId?: string) => {
     setAwaitingReply(true);
     const body = text.trim();
     if (!body) return;
@@ -544,6 +566,7 @@ export function useSessionSocket({
           message_id: `local:${Date.now()}`,
           turn_index: prev.messages.reduce((acc, m) => Math.max(acc, m.turn_index), 0) + 1,
           plaintext: body,
+          client_id: clientId,
         },
       }),
     );
@@ -552,9 +575,16 @@ export function useSessionSocket({
   const sendChatOverHttp = useCallback(() => {
     const body = (localDraft?.body ?? "").trim();
     if (!body || !sendOverHttp) return;
-    noteLocalSend(body);
+    // ONE id for both halves of this send — the optimistic row and the REST
+    // body — so the server's queued-turn projection and this row compare
+    // equal (`QueuedRows.hideClientIds`) instead of rendering the same send
+    // twice, once as the sender's own bubble and once as an unowned "queued"
+    // placeholder (a contact's `author.user_id` is never set, so without a
+    // shared id that placeholder didn't even read as "mine").
+    const clientId = newClientId();
+    noteLocalSend(body, clientId);
     setLocalDraft(null);
-    sendOverHttp(body).catch((err: unknown) => {
+    sendOverHttp(body, clientId).catch((err: unknown) => {
       setAwaitingReply(false);
       setLastError(err instanceof Error ? err.message : "the message could not be sent");
       // Put the words back, so a failed send never costs what was typed.

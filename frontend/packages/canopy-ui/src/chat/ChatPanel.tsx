@@ -81,9 +81,11 @@ export function ChatPanel({
 
   // A turn is "in flight" from the moment the assistant row appears
   // (status=pending/streaming) until chat.stream_complete flips it to
-  // complete. Treat pending AND streaming as in-flight so the send button
-  // stays locked out and the stop button is reachable during the "waiting
-  // for first token" window.
+  // complete. Treat pending AND streaming as in-flight so the Stop button
+  // stays reachable during the "waiting for first token" window and SendBox
+  // knows to show its "sent after the current reply" placeholder — Send
+  // itself is never locked out by this any more (0.13): a send made while the
+  // agent is replying is QUEUED, not blocked, and <QueuedRows> shows it landed.
   const inFlightMessage = useMemo(
     () =>
       state.messages.find(

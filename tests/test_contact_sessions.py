@@ -102,6 +102,38 @@ def test_a_contact_can_start_a_conversation_and_speak():
     assert session.created_by is None, "a contact session has no user owner"
 
 
+def test_a_contacts_client_id_reaches_the_turns_idempotency_key():
+    """The frontend's optimistic row and the server's queued-turn projection
+    (`chat.services.queued_messages`) both need the SAME client_id to compare
+    against (`QueuedRows.hideClientIds` on the frontend) — this pins that the
+    contact send endpoint actually forwards `client_id` into `send_message`
+    rather than silently dropping it, the way the member endpoint already does
+    (see `tests/test_widget_arrival.py::test_a_turn_a_resolved_user_starts_says_host_signed`,
+    which posts one but never asserted on it either)."""
+    from apps.harness.models import Turn
+
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    sid = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                 content_type="application/json", **hdr).json()["id"]
+
+    r = c.post(f"/api/contact/sessions/{sid}/send",
+               data={"text": "hello", "client_id": "widget-abc"},
+               content_type="application/json", **hdr)
+    assert r.status_code == 200, r.content
+
+    turn = Turn.objects.filter(chat_session_id=sid).latest("created_at")
+    assert turn.idempotency_key.endswith(":widget-abc")
+
+    # A retry with the SAME client_id must not enqueue a second turn — that is
+    # the whole point of the id existing (double-submit safety).
+    before = Turn.objects.filter(chat_session_id=sid).count()
+    c.post(f"/api/contact/sessions/{sid}/send",
+           data={"text": "hello", "client_id": "widget-abc"},
+           content_type="application/json", **hdr)
+    assert Turn.objects.filter(chat_session_id=sid).count() == before
+
+
 def test_only_agents_the_site_was_allowed_to_offer():
     """Not "agents the contact can reach" — a contact reaches nothing, having
     no membership. The app's allowlist is the whole gate."""
