@@ -247,7 +247,12 @@ export interface SessionState {
   queued?: QueuedMessage[];
   participants: Participant[];
   presence_user_ids: number[];
-  current_user_id: number;
+  /** The connecting user — null for a contact (a widget visitor), who has no
+   *  user id. */
+  current_user_id: number | null;
+  /** The connecting CONTACT, when the viewer is one; null for a member.
+   *  Absent on an older server. */
+  current_contact_id?: number | null;
 }
 
 // ---------------------------------------------------------------------------

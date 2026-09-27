@@ -1,4 +1,5 @@
-import type { Draft, Message, SessionState, WsEvent } from "./protocol";
+import type { Draft, Message, MessageAuthor, SessionState, WsEvent } from "./protocol";
+import { isUnconfirmed, sameAuthor } from "./identity";
 
 // Pure reducer for SessionState — extracted from useSessionSocket so it
 // can be unit-tested without WebSocket plumbing. Side-effect events
@@ -151,11 +152,31 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // Deliberately narrow: same role, same text, and only against the tail, so
       // a genuine repeat of a short message ("yes") sent much later still lands
       // as its own row.
+      //
+      // And only against a row that can still be THIS line (final review I5):
+      // two people answering "yes" are two lines, so the fallback never lets a
+      // different author's frame adopt a row. A row is a candidate while it is
+      // unconfirmed (an optimistic or receipted send still waiting for the line
+      // the agent read) or when it already names the same person — the ledger
+      // path's authored row meeting its transcript echo. An unauthored optimistic
+      // row is the viewer's own, so it is compared as the viewer.
       const RECENT_USER_ROWS = 6;
-      const sameText = (m: Message) =>
-        m.role === "user" &&
-        m.plaintext.trim() !== "" &&
-        m.plaintext.trim() === frame.data.plaintext.trim();
+      const incomingAuthor = frame.data.author ?? null;
+      const me: MessageAuthor | null =
+        prev.current_user_id != null
+          ? { name: "", user_id: prev.current_user_id }
+          : prev.current_contact_id != null
+            ? { name: "", contact_id: prev.current_contact_id }
+            : null;
+      const sameText = (m: Message) => {
+        if (
+          m.role !== "user" ||
+          m.plaintext.trim() === "" ||
+          m.plaintext.trim() !== frame.data.plaintext.trim()
+        ) return false;
+        if (isUnconfirmed(m)) return sameAuthor(m.author ?? me, incomingAuthor);
+        return m.author != null && incomingAuthor != null && sameAuthor(m.author, incomingAuthor);
+      };
       const recentUsers = prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS);
       const existing =
         prev.messages.find(

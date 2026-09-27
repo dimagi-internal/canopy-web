@@ -41,7 +41,7 @@ const INITIAL_STATE: SessionState = {
   active_draft: null,
   participants: [],
   presence_user_ids: [],
-  current_user_id: 0,
+  current_user_id: null,
 };
 
 export interface UseSessionSocketOptions {
