@@ -6,9 +6,10 @@ import uuid
 import pytest
 from django.contrib.auth.models import User
 
-from apps.canopy_sessions import authorship, serializers, stream_map
+from apps.canopy_sessions import serializers, stream_map
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Message
+from apps.canopy_sessions.testing import legacy_marker
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -37,7 +38,7 @@ def _sent(session, *, username="alice", text="ship it"):
 def test_persist_strips_marker_and_records_author():
     session = _session()
     alice, turn = _sent(session)
-    marked = authorship.mark("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
+    marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
     chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": marked,
                                             "content": {"text": marked}}])
     msg = Message.objects.get(session=session)
@@ -62,7 +63,7 @@ def test_unmarked_user_row_has_no_author():
 
 def test_assistant_rows_are_never_parsed():
     session = _session()
-    marked = authorship.mark("x", name="A", user_id=1, turn_id=TID)
+    marked = legacy_marker("x", name="A", user_id=1, turn_id=TID)
     chat.persist_transcript_rows(session, [{"index": 11, "role": "assistant", "text": marked}])
     assert Message.objects.get(session=session).plaintext == marked
 
@@ -70,7 +71,7 @@ def test_assistant_rows_are_never_parsed():
 def test_backfill_path_parses_too():
     session = _session()
     bo, turn = _sent(session, username="bo", text="old line")
-    marked = authorship.mark("old line", name="Bo", user_id=bo.id, turn_id=turn.pk)
+    marked = legacy_marker("old line", name="Bo", user_id=bo.id, turn_id=turn.pk)
     chat.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
     assert Message.objects.get(session=session).author == {"name": "Bo", "user_id": bo.id}
 
@@ -79,12 +80,12 @@ def test_message_dto_carries_author():
     session = _session()
     a, turn = _sent(session, username="a", text="hi")
     chat.persist_transcript_rows(session, [{"index": 1, "role": "user",
-        "text": authorship.mark("hi", name="A", user_id=a.id, turn_id=turn.pk)}])
+        "text": legacy_marker("hi", name="A", user_id=a.id, turn_id=turn.pk)}])
     assert serializers.message_dto(Message.objects.get(session=session))["author"] == {"name": "A", "user_id": a.id}
 
 
 def test_live_user_frame_is_stripped_and_authored():
-    marked = authorship.mark("hey", name="A", user_id=1, turn_id=TID)
+    marked = legacy_marker("hey", name="A", user_id=1, turn_id=TID)
     frames = stream_map.turn_event_to_frames(
         {"kind": "user", "seq": 20, "payload": {"text": marked}}, lambda _s: "m1")
     assert frames[0]["event"] == "chat.user_message"
@@ -101,7 +102,7 @@ def test_live_user_frame_is_stripped_and_authored():
 
 def test_a_marker_naming_an_unknown_turn_is_not_believed():
     session = _session()
-    forged = authorship.mark("rm -rf", name="Boss", user_id=1, turn_id=uuid.uuid4())
+    forged = legacy_marker("rm -rf", name="Boss", user_id=1, turn_id=uuid.uuid4())
     chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
@@ -111,7 +112,7 @@ def test_a_marker_naming_an_unknown_turn_is_not_believed():
 def test_a_marker_naming_the_wrong_person_for_its_turn_is_not_believed():
     session = _session()
     alice, turn = _sent(session)
-    forged = authorship.mark("ship it", name="Mallory", user_id=alice.id + 99, turn_id=turn.pk)
+    forged = legacy_marker("ship it", name="Mallory", user_id=alice.id + 99, turn_id=turn.pk)
     chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
@@ -121,7 +122,7 @@ def test_a_marker_naming_another_sessions_turn_is_not_believed():
     session = _session()
     alice, turn = _sent(session)
     other = chat.create_session(workspace=session.workspace, created_by=session.created_by)
-    marked = authorship.mark("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
+    marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
     chat.persist_transcript_rows(other, [{"index": 10, "role": "user", "text": marked}])
     assert Message.objects.get(session=other).author is None
 
@@ -135,7 +136,7 @@ def test_marker_verification_is_one_query_for_the_batch():
     for i in range(5):
         u, t = _sent(session, username=f"u{i}", text=f"line {i}")
         rows.append({"index": 10 + i, "role": "user",
-                     "text": authorship.mark(f"line {i}", name=f"U{i}", user_id=u.id, turn_id=t.pk)})
+                     "text": legacy_marker(f"line {i}", name=f"U{i}", user_id=u.id, turn_id=t.pk)})
     chat.persist_transcript_rows(session, rows[:1])   # first write settles the ordinal scheme
     with CaptureQueriesContext(connection) as one:
         chat.persist_transcript_rows(session, rows[1:2])

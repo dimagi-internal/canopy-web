@@ -1285,17 +1285,17 @@ def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, djang
 
 def test_a_marked_prompt_delivered_by_a_slack_turn_is_not_announced(
         bound, slack, django_capture_on_commit_callbacks):
-    # The transcript records the prompt AS DELIVERED — with the author marker on
-    # its first line — while Turn.prompt keeps the bare words. Compared raw, a
-    # turn's own line read as someone typing straight into emdash.
-    from apps.canopy_sessions import authorship
+    # A legacy row (or an old runner) may still carry the author marker canopy
+    # used to prepend — `Turn.prompt` never did. Compared raw, a turn's own
+    # line would read as someone typing straight into emdash.
+    from apps.canopy_sessions.testing import legacy_marker
 
     session, runner, pairer = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
     turn = Turn.objects.filter(chat_session=session).first()
-    marked = authorship.mark(turn.prompt, name="Alice", user_id=pairer.id, turn_id=turn.pk)
+    marked = legacy_marker(turn.prompt, name="Alice", user_id=pairer.id, turn_id=turn.pk)
     _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
                                        "payload": {"text": marked}}], django_capture_on_commit_callbacks)
     assert not [p for p in slack.said("chat.postMessage") if "carrying on directly" in p["text"]]

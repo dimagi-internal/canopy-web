@@ -1,49 +1,47 @@
 """Who said a line, carried THROUGH Claude's transcript.
 
-A transcript-sourced session's durable user rows are re-read from Claude's own
-transcript, which records the prompt the agent received and nothing else — so
-an author known only to canopy's database is lost the moment the row comes back
-(spec 2026-09-26). The fix is to put the author where the transcript will keep
-it: one marker line at the top of the delivered prompt. `mark` writes it (at
-claim, never into `Turn.prompt` — see the spec for the readers that must not see
-it), `parse` reads it back on every durable and live path.
+**Superseded 2026-09-27.** canopy USED to put the author on the delivered
+prompt itself — one marker line canopy prepended at claim, so the answer
+would still be in whatever Claude's transcript recorded. That broke on the
+laptop runner, which types a prompt into emdash as ONE line: the marker's
+trailing `\n` never survived, so a row arrived as
+`[canopy from="…" user=N turn=…]Are you working?` — marker and body glued
+together — and `parse` (which required the marker to be the WHOLE first
+line) rejected it, saving the row with `author=None` and the marker visible
+in the UI.
 
-Strict on purpose: only an exact FIRST line counts, so a person or agent quoting
-the syntax mid-message is never misattributed.
+The user's call: the prompt must reach the agent EXACTLY as typed — it
+already learns who is asking from canopy's `caller_context` hook (the caller
+envelope), which never touches the prompt, so marking it was redundant
+there. Attribution moved server-side (`services.persist_transcript_rows`
+matches an unmarked user row to the earliest unlinked chat-send Turn with
+the same text, in send order) — see that function's docstring.
+
+`mark` and `for_turn` (which wrote the marker) are gone. `parse` stays,
+forever: rows already recorded, and any transcript backfilled from the days
+around this change, still carry the marker. It is now TOLERANT of the
+lost-newline case — the marker is accepted at the very start of the text
+followed by an OPTIONAL `\n` — while the mid-text rule is unchanged: only the
+very start of the text counts, so a person or agent quoting the syntax
+mid-message is never misattributed.
 """
 from __future__ import annotations
 
 import re
-import uuid
 
 _MARKER = re.compile(
     r'^\[canopy from="(?P<name>(?:[^"\\]|\\.)*)" '
     r'(?:user=(?P<user>\d+)|contact=(?P<contact>\d+)) '
-    r'turn=(?P<turn>[0-9a-f]{32})\]$'
+    r'turn=(?P<turn>[0-9a-f]{32})\]\n?'
 )
-
-
-def _escape(name: str) -> str:
-    one_line = " ".join(name.split())
-    return one_line.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _unescape(name: str) -> str:
     return re.sub(r"\\(.)", r"\1", name)
 
 
-def mark(text: str, *, name: str, turn_id, user_id: int | None = None,
-         contact_id: int | None = None) -> str:
-    if (user_id is None) == (contact_id is None):
-        raise ValueError("exactly one of user_id / contact_id")
-    who = f"user={int(user_id)}" if user_id is not None else f"contact={int(contact_id)}"
-    tid = uuid.UUID(str(turn_id)).hex
-    return f'[canopy from="{_escape(name)}" {who} turn={tid}]\n{text}'
-
-
 def parse(text: str) -> tuple[dict | None, str, str | None]:
-    first, sep, rest = text.partition("\n")
-    m = _MARKER.match(first)
+    m = _MARKER.match(text)
     if m is None:
         return None, text, None
     author: dict = {"name": _unescape(m["name"])}
@@ -51,7 +49,7 @@ def parse(text: str) -> tuple[dict | None, str, str | None]:
         author["user_id"] = int(m["user"])
     else:
         author["contact_id"] = int(m["contact"])
-    return author, rest if sep else "", m["turn"]
+    return author, text[m.end():], m["turn"]
 
 
 def _display_name(user) -> str:
@@ -81,25 +79,6 @@ def is_chat_send(turn) -> bool:
     # A contact on an embedding host's widget may name `api` (contact_api allows
     # it); a contact is never an API program, so it is still a person typing.
     return origin == "api" and bool(turn.initiator_contact_id) and not turn.initiator_user_id
-
-
-def for_turn(turn) -> str:
-    """The prompt as the runner should deliver it.
-
-    Marked only when it is a person's chat send (`is_chat_send`) with a known
-    person, and never when the prompt is a slash command: Claude Code runs a
-    slash command only from the FIRST line, so a marker above `/compact` turns
-    it into prose — it goes bare and unattributed instead (accepted cost).
-    Everything else — email, scheduled, API, transfer turns — is delivered
-    exactly as it was enqueued."""
-    prompt = turn.prompt or ""
-    if not is_chat_send(turn) or prompt.lstrip().startswith("/"):
-        return prompt
-    author = author_of(turn)
-    if author is None:
-        return prompt
-    return mark(prompt, name=author["name"], user_id=author.get("user_id"),
-                contact_id=author.get("contact_id"), turn_id=turn.pk)
 
 
 def author_of(turn) -> dict | None:
