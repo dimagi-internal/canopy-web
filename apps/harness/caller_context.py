@@ -162,6 +162,33 @@ def build(turn) -> dict:
         # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
         "trigger": _trigger(turn, ref),
         "thread_history": _thread_history(turn, ref),
+        # WHAT THE PERSON IS LOOKING AT, when the conversation is embedded in a
+        # page that declared its state: the SELECTION (ids + filters, already
+        # capped at 8 KiB), never the rows — the agent reads those with the
+        # page's backing tool. The canopy plugin's UserPromptSubmit hook puts
+        # this into the session's context, which is not a transcript row, so
+        # the agent has the screen on turn one even while its MCP servers are
+        # still connecting (why the widget used to paste it) and the person's
+        # message stays exactly what they typed. Until 2026-09-26 the widget
+        # pasted it, and every transcript showed a JSON dump under the question.
+        "page": _page(cs),
+    }
+
+
+def _page(session) -> dict | None:
+    state = (getattr(session, "page_state", None) or {}) if session is not None else {}
+    if not isinstance(state, dict) or not state.get("resource"):
+        return None
+    ids = state.get("visible_ids")
+    backing = state.get("backing_tool") or state.get("backing_tools") or None
+    return {
+        "resource": str(state["resource"])[:500],
+        "visible_ids": ids if isinstance(ids, list) else [],
+        "visible_count": len(ids) if isinstance(ids, list) else None,
+        "filters": state.get("filters") if isinstance(state.get("filters"), dict) else None,
+        "backing_tool": backing,
+        "path": str(state.get("path") or "")[:500] or None,
+        "read_with": "current_page",
     }
 
 
