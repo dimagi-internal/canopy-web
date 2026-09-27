@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -507,15 +508,17 @@ def persist_transcript_rows(session, rows) -> int:
     **Server-side attribution (2026-09-27), the primary path now that canopy no
     longer marks a chat send's prompt at claim** (authorship.py). A USER row
     with no vouched marker is matched to the EARLIEST of this session's
-    claimed, unlinked chat-send turns whose `prompt` is byte-for-byte the
-    row's text (`_match_candidate`, lazily loaded and consumed within the
-    batch via `_MatchPool` — one query, only when a row actually needs it, so
-    a batch of entirely vouched or entirely unmatched rows costs nothing
-    extra). No match leaves `author=None`, exactly the right answer for a
-    line typed straight into emdash. The vouched-marker path (m3) is checked
-    first and wins when present — it is a stronger claim (the transcript
-    named a turn, and the turn's own initiator agrees) than a text match ever
-    is."""
+    claimed, unlinked chat-send turns whose `prompt` equals the row's text
+    with ALL whitespace ignored (`_squash` — the laptop runner delivers a
+    prompt via CDP `keyboard.insertText`, which drops newlines, so a
+    multi-line send comes back with none; `.strip()` alone still needed the
+    newline to survive) — lazily loaded and consumed within the batch via
+    `_MatchPool` — one query, only when a row actually needs it, so a batch
+    of entirely vouched or entirely unmatched rows costs nothing extra). No
+    match leaves `author=None`, exactly the right answer for a line typed
+    straight into emdash. The vouched-marker path (m3) is checked first and
+    wins when present — it is a stronger claim (the transcript named a turn,
+    and the turn's own initiator agrees) than a text match ever is."""
     offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
@@ -642,6 +645,20 @@ def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
     return {pk.hex: (uid, cid) for pk, uid, cid in found}
 
 
+def _squash(text: str) -> str:
+    """Whitespace-blind comparison key. The laptop runner delivers a prompt via
+    CDP `keyboard.insertText` into emdash's Claude Code TUI, which DROPS
+    newlines — a two-line send ("line one\nline two") comes back in the
+    transcript as "line oneline two", so a plain `.strip()` equality (which
+    still requires the newline to survive) missed every multi-line message.
+    Squashing ALL whitespace out of both sides makes the match blind to
+    exactly the characters the delivery path is known to mangle, at the cost
+    of conflating "a b" and "ab" — accepted, because `_MatchPool.claim` still
+    resolves that ambiguity the same way as an exact duplicate: earliest
+    unlinked candidate, consumed in send order."""
+    return re.sub(r"\s+", "", text or "")
+
+
 class _MatchPool:
     """Server-side attribution's candidate pool for ONE `persist_transcript_rows`
     call — the earliest of this session's claimed, unlinked chat-send turns,
@@ -658,7 +675,12 @@ class _MatchPool:
     `claim()` removes a match from the pool — "consumed within the batch" —
     so two identical-text rows in one batch map to two different turns, in
     the order they appear, exactly like two identical replies from two
-    different people ("yes", "yes") should."""
+    different people ("yes", "yes") should. The same consumption order is
+    what resolves the ambiguity `_squash` introduces (a turn "a b" and a turn
+    "ab" now compare equal): whichever of the two is earliest and still
+    unlinked wins, which is the best any text-only match can do — the marker
+    path (m3, checked first and always preferred) is the exact answer for
+    when that is not good enough."""
 
     def __init__(self, session):
         self._session = session
@@ -684,12 +706,13 @@ class _MatchPool:
         self._candidates = [t for t in turns if authorship.is_chat_send(t)]
 
     def claim(self, text: str) -> Turn | None:
-        """The earliest remaining candidate whose prompt is byte-for-byte
-        `text` (both compared stripped) — or None. Removes it from the pool."""
+        """The earliest remaining candidate whose prompt matches `text` with
+        ALL whitespace ignored (see `_squash`) — or None. Removes it from the
+        pool."""
         self._load()
-        target = text.strip()
+        target = _squash(text)
         for i, turn in enumerate(self._candidates):
-            if (turn.prompt or "").strip() == target:
+            if _squash(turn.prompt or "") == target:
                 return self._candidates.pop(i)
         return None
 

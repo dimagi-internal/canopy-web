@@ -199,6 +199,54 @@ def test_earliest_identical_text_row_matches_earliest_available_turn():
     assert second.author == {"name": bob.email, "user_id": bob.id}
 
 
+# -- the laptop runner's insertText delivery drops newlines ------------------
+# CDP `keyboard.insertText` into emdash's Claude Code TUI does not type a
+# newline character, so a two-line send ("line one\nline two") comes back in
+# the transcript with the line break gone: "line oneline two". A comparison
+# that only strips leading/trailing whitespace still requires that internal
+# newline to survive, so it missed every multi-line message. The match is
+# whitespace-blind instead (`_squash`).
+
+def test_a_multiline_prompt_matches_a_row_with_the_newline_dropped():
+    session = _session()
+    alice, turn = _sent(session, username="alice7", text="line one\nline two")
+    _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line oneline two"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+    assert msg.source_turn_id == turn.pk
+
+
+def test_a_multiline_prompt_also_matches_a_row_with_a_space_in_its_place():
+    session = _session()
+    alice, turn = _sent(session, username="alice8", text="line one\nline two")
+    _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line one line two"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+    assert msg.source_turn_id == turn.pk
+
+
+def test_whitespace_blind_ambiguity_resolves_to_the_earliest_unlinked_turn():
+    """Squashing whitespace makes "a b" and "ab" compare equal — an accepted
+    ambiguity a text-only match cannot resolve better than by send order: the
+    earliest still-unlinked candidate wins, exactly as for a genuine
+    duplicate ("yes", "yes")."""
+    session = _session()
+    alice, turn_a = _sent(session, username="alice9", text="a b")
+    bob, turn_b = _sent(session, username="bob9", text="ab")
+    _claim(turn_a)
+    _claim(turn_b)
+    chat.persist_transcript_rows(session, [
+        {"index": 10, "role": "user", "text": "ab"},
+        {"index": 11, "role": "user", "text": "ab"},
+    ])
+    first = Message.objects.get(session=session, turn_index=10)
+    second = Message.objects.get(session=session, turn_index=11)
+    assert first.source_turn_id == turn_a.pk    # earliest unlinked, sent first
+    assert second.source_turn_id == turn_b.pk   # next earliest, once turn_a is spent
+
+
 def test_turn_older_than_seven_days_is_not_a_match_candidate():
     session = _session()
     _alice, turn = _sent(session, username="alice6", text="ship it")
