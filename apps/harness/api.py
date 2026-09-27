@@ -1145,6 +1145,11 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     )
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
+    # transcript ordinal (e.index) -> the author persist_transcript_rows found
+    # for it, if any — carried into the live frame below so a watcher sees who
+    # sent an unmarked line without waiting for a reload (stream_map's
+    # kind=="user" branch reads this when its own marker-parse finds none).
+    authors_by_index: dict[int, dict] = {}
     if chat_services.transcript_sourced(binding.session):
         # BEFORE any write: if these ordinals index a different transcript than the
         # rows already held, those rows are a different conversation's and would
@@ -1186,6 +1191,20 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
             session = binding.session
             transaction.on_commit(lambda: transcript_rows_streamed.send(
                 sender=type(session), session=session, rows=streamed))
+        user_indices = [
+            e.index + binding.index_offset
+            for e in payload.events if e.index >= 0 and e.kind == "user"
+        ]
+        if user_indices:
+            from apps.canopy_sessions.models import Message
+
+            authors_by_index = {
+                turn_index - binding.index_offset: author
+                for turn_index, author in Message.objects.filter(
+                    session=binding.session, turn_index__in=user_indices,
+                ).values_list("turn_index", "author")
+                if author
+            }
     if not binding.stream_desired:
         # Persisted above, but nobody is watching, so there is nothing to push.
         # The runner now tails EVERY session it backs so the durable record stops
@@ -1223,9 +1242,14 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # watching on the phone silently dropped your own words until a reload
         # (observed 2026-07-27). The client upserts on turn_index, so a message
         # that does arrive twice collapses instead of doubling.
+        event_payload = e.payload
+        if e.kind == "user":
+            author = authors_by_index.get(e.index)
+            if author:
+                event_payload = {**(e.payload or {}), "author": author}
         groups.publish(sgroup, {
             "type": "chat.turn_event",
-            "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
+            "event": {"kind": e.kind, "seq": e.seq, "payload": event_payload},
             "turn_id": None,
         })
         n += 1
