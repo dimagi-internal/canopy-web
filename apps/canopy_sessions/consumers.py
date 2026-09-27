@@ -407,6 +407,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         for frame in stream_map.turn_event_to_frames(evt, lambda _seq: mid):
             await self.send_json(frame)
 
+    async def chat_user_message(self, message):
+        """A ledger-sourced send (`services._publish_user_message`), fanned out to
+        the whole session — the peer-visibility a transcript-sourced session gets
+        for free from `post_session_stream`, which this session has no runner to
+        ship a transcript through. Already the exact client frame; no `stream_map`
+        translation needed, because the real Message id is already in hand."""
+        await self.send_json({"event": "chat.user_message", "data": message["data"]})
+
     async def session_title_updated(self, message):
         await self.send_json({"event": "session.title_updated", "data": {"title": message["title"]}})
 

@@ -1267,7 +1267,35 @@ def send_message(
         if turn is not None:
             message.source_turn_id = turn.pk
         message.save(update_fields=["author", "source_turn_id"])
+        # Fan the row out to every OTHER watcher on the session socket. The
+        # sender's own client already has it (the optimistic echo off
+        # `draft.committed` / the REST response), but nobody said so to anyone
+        # else: unlike the transcript-sourced path (`post_session_stream`
+        # publishes every "user" ledger row live, sender included — the client
+        # upserts on turn_index/text so a duplicate collapses instead of
+        # doubling), a ledger-sourced send (the dev stub, and any
+        # pre-unification session not yet reset) wrote the durable Message
+        # directly and published nothing, so a peer's transcript never
+        # gained the line until they reloaded. Same frame shape
+        # (`stream_map.turn_event_to_frames`'s "user" case), built directly
+        # since the real id is already in hand — no ledger round trip needed.
+        _publish_user_message(session.id, message, client_id)
     return message, turn
+
+
+def _publish_user_message(session_id, message: Message, client_id: str = "") -> None:
+    from apps.realtime.groups import publish, session_group
+
+    payload = {
+        "message_id": str(message.pk),
+        "turn_index": message.turn_index,
+        "plaintext": message.plaintext,
+        "author": message.author,
+        "client_id": client_id,
+    }
+    transaction.on_commit(
+        lambda: publish(session_group(session_id), {"type": "chat.user_message", "data": payload})
+    )
 
 
 def queued_messages(session: Session) -> list[dict]:

@@ -1,6 +1,6 @@
 # Per-person drafts and authored messages in a chat session
 
-**Status:** design approved in conversation 2026-09-26; spec awaiting review.
+**Status:** implemented on branch emdash/multi-player-epcv1; not yet merged.
 
 ## Problem
 
@@ -194,3 +194,24 @@ turn with a known initiator — the same point that already attaches the claim-o
   author label; queued rows render in order and reconcile with the echo.
 - Live: extend `scripts/e2e_session_chat.py` with a second-user step if a second PAT
   is practical; otherwise a manual two-browser check before calling it done.
+
+## Deviations during implementation
+
+- **The marker is added at claim, never stored** — already the design above (§4),
+  not a deviation, but worth restating here as the first thing that would otherwise
+  look like a shortcut.
+- **No "typed in emdash" caption.** Every pre-existing user row (everything persisted
+  before this change) also has `author=None`, so a caption keyed on "no marker"
+  would mislabel all of history as emdash-typed rather than flag the one new case
+  the spec meant. An unmarked row renders exactly as it did before this feature.
+- **Attachments are scoped to their uploader** (`uploaded_by`), not the session. The
+  pending-attachment sweep predates per-author drafts and assumed the one shared
+  draft the spec removes; left as a per-session sweep, person A's send would pick up
+  person B's staged files.
+- **`onTakeOver` / `takeOverDraft` stay in `canopy-ui`'s public API as deprecated
+  no-ops.** ace-web's `CanopyChatPanel` still passes them; removing them outright
+  would break that consumer on its next Dependabot bump rather than on a change it
+  can see.
+- **REST and contact sends carry a `client_id`** so the sender's own optimistic
+  queued row dedupes against the `queued_messages` entry the socket delivers for
+  the same send, instead of showing the same message twice.
