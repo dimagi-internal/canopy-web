@@ -1239,6 +1239,11 @@ def send_message(
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
         pinned = _resolve_placement(session, placement)
         ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
+        if client_id:
+            # The one place a send's client nonce survives as itself: the
+            # idempotency key's suffix is an index when there is none, and
+            # `queued_messages` must not report an index as a client_id.
+            ref["client_id"] = client_id
         attachments = claim_pending_attachments(session, message, user)
         if attachments:
             ref["attachments"] = attachments
@@ -1311,7 +1316,7 @@ def queued_messages(session: Session) -> list[dict]:
     this runs on every status transition and every streamed transcript batch,
     so a long-lived session must not make it scan every Message it has ever
     landed. `select_related` on the initiator FKs is load-bearing too — dropped,
-    `authorship.for_turn` (called once per turn below) turns back into an N+1."""
+    `authorship.author_of` (called once per turn below) turns back into an N+1."""
     turns = list(
         Turn.objects.select_related("initiator_user", "initiator_contact")
         .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
@@ -1320,18 +1325,24 @@ def queued_messages(session: Session) -> list[dict]:
     )
     if not turns:
         return []
+    # A person's chat sends only — the same rule the claim marks by. An email or
+    # scheduled turn bound to this session is the agent's work, not a line
+    # somebody typed.
+    turns = [t for t in turns if authorship.is_chat_send(t)]
+    if not turns:
+        return []
     landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
                  .values_list("source_turn_id", flat=True))
-    prefix = f"chat:{session.id.hex}:"
     out = []
     for t in turns:
         if t.pk in landed:
             continue
-        author, _bare, _tid = authorship.parse(authorship.for_turn(t))
-        key = t.idempotency_key or ""
+        # From the turn, not its delivered prompt: a slash command goes
+        # unmarked but somebody still typed it.
+        author = authorship.author_of(t)
         out.append({
             "turn_id": str(t.pk),
-            "client_id": key[len(prefix):] if key.startswith(prefix) else "",
+            "client_id": str((t.origin_ref or {}).get("client_id") or ""),
             "author": author,
             "text": t.prompt or "",
             "sent_at": t.created_at.isoformat(),
@@ -1471,6 +1482,8 @@ def _send_transcript_sourced_message(
     # real client_id makes a retry idempotent).
     pinned = _resolve_placement(session, placement)
     ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
+    if client_id:
+        ref["client_id"] = client_id   # see send_message: the key suffix may be a nonce
     # message=None: this path writes no durable user row, so the sent_at stamp is
     # the only thing stopping these attachments riding along on every later send.
     attachments = claim_pending_attachments(session, None, user)

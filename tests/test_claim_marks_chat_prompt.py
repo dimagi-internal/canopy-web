@@ -94,3 +94,35 @@ def test_claimed_non_chat_turn_prompt_is_unmarked(paired_runner_client, agent):
     author, bare, tid = authorship.parse(body["prompt"])
     assert author is None and tid is None
     assert bare == body["prompt"]
+
+
+def _claim(client) -> dict:
+    resp = client.post(f"/api/harness/runners/{client.runner_id}/claim")
+    assert resp.status_code == 200, resp.content
+    return resp.json()
+
+
+def test_claimed_email_turn_on_a_chat_session_is_bare(paired_runner_client, agent, owner):
+    """An email turn is bound to its thread's chat session AND has an initiator —
+    but its prompt is a slash command, which Claude Code runs only from the
+    FIRST line. A marker above it would turn `/echo:turn` into prose."""
+    from apps.harness import initiator as who
+    from apps.harness import services as harness
+
+    turn, _ = harness.enqueue_turn(
+        agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key="email:1",
+        prompt="/echo:turn --thread abc",
+        origin_ref={"from": "jj@dimagi.com", "subject": "s", "thread_id": "abc"},
+        initiator=who.for_user(owner, via="email", assurance="dmarc"),
+    )
+    assert turn.chat_session_id is not None and turn.initiator_user_id == owner.id
+    body = _claim(paired_runner_client)
+    assert body["id"] == str(turn.id)
+    assert body["prompt"] == "/echo:turn --thread abc"
+
+
+def test_claimed_chat_slash_command_is_bare(paired_runner_client, chat_session_with_agent, owner):
+    _msg, turn = chat.send_message(session=chat_session_with_agent, text="/compact", user=owner, client_id="c1")
+    body = _claim(paired_runner_client)
+    assert body["id"] == str(turn.id)
+    assert body["prompt"] == "/compact"

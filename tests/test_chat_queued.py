@@ -87,3 +87,29 @@ def test_query_count_does_not_grow_with_session_history():
     with CaptureQueriesContext(connection) as ctx:
         chat.queued_messages(session)
     assert len(ctx.captured_queries) == baseline
+
+
+def test_an_email_turn_on_the_session_is_not_a_queued_human_line():
+    from apps.agents.models import Agent
+    from apps.harness import initiator as who
+    from apps.harness import services as harness
+
+    owner, session = _runner_session()
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=session.workspace)
+    turn, _ = harness.enqueue_turn(
+        agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key="email:1",
+        prompt="/echo:turn --thread abc",
+        origin_ref={"from": "jj@dimagi.com", "subject": "s", "thread_id": "abc"},
+        initiator=who.for_user(owner, via="email", assurance="dmarc"),
+    )
+    email_session = turn.chat_session
+    assert email_session is not None
+    assert chat.queued_messages(email_session) == []
+
+
+def test_a_send_without_a_client_id_reports_none():
+    """The key suffix of a no-nonce send is an index or a server nonce, not
+    anything a client sent — reporting it as `client_id` would never match."""
+    owner, session = _runner_session()
+    chat.send_message(session=session, text="first", user=owner)
+    assert chat.queued_messages(session)[0]["client_id"] == ""

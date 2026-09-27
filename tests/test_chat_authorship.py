@@ -81,9 +81,51 @@ def test_for_turn_leaves_non_chat_turns_alone():
 
 def test_for_turn_marks_a_chat_turn_with_its_initiator():
     user = SimpleNamespace(get_full_name=lambda: "Alice Smith", email="a@x")
-    out = authorship.for_turn(_turn(chat_session_id=uuid.uuid4(), initiator_user_id=42, initiator_user=user))
+    out = authorship.for_turn(_turn(chat_session_id=uuid.uuid4(), initiator_user_id=42, initiator_user=user,
+                                    origin="canopy_web_chat", idempotency_key="chat:abc:c1"))
     assert authorship.parse(out) == ({"name": "Alice Smith", "user_id": 42}, "do it", TID.hex)
 
 
 def test_for_turn_without_initiator_is_unmarked():
     assert authorship.for_turn(_turn(chat_session_id=uuid.uuid4())) == "do it"
+
+
+# -- which turns are marked (final review C1) --------------------------------
+# Only a PERSON'S chat send carries the marker. An email turn is bound to a chat
+# session too (email_thread_session) and has an initiator, but its prompt is a
+# slash command (`/echo:turn --thread …`) and Claude Code runs a slash command
+# only from the FIRST line — a marker above it silently turns it into prose.
+
+def _chat_turn(**kw):
+    user = SimpleNamespace(get_full_name=lambda: "Alice Smith", email="a@x")
+    base = dict(chat_session_id=uuid.uuid4(), initiator_user_id=42, initiator_user=user,
+                origin="canopy_web_chat", idempotency_key="chat:abc:c1")
+    base.update(kw)
+    return _turn(**base)
+
+
+@pytest.mark.parametrize("origin", ["canopy_web_chat", "slack", "ace_web"])
+def test_chat_origins_are_marked(origin):
+    assert authorship.parse(authorship.for_turn(_chat_turn(origin=origin)))[0] is not None
+
+
+@pytest.mark.parametrize("origin", ["email", "canopy_scheduler", "api"])
+def test_non_chat_origins_are_never_marked(origin):
+    assert authorship.for_turn(_chat_turn(origin=origin)) == "do it"
+
+
+def test_a_contacts_widget_send_naming_api_is_still_marked():
+    contact = SimpleNamespace(display_name="Beth", email="b@x")
+    t = _chat_turn(origin="api", initiator_user_id=None, initiator_user=None,
+                   initiator_contact_id=7, initiator_contact=contact)
+    assert authorship.parse(authorship.for_turn(t))[0] == {"name": "Beth", "contact_id": 7}
+
+
+def test_a_session_turn_that_is_not_a_send_is_not_marked():
+    # A transfer's preamble is canopy's words, not the person's.
+    assert authorship.for_turn(_chat_turn(idempotency_key="transfer:a:b:1")) == "do it"
+
+
+@pytest.mark.parametrize("prompt", ["/compact", "  /ace:status opp-1", "\n/echo:turn --thread abc"])
+def test_a_slash_command_is_delivered_bare(prompt):
+    assert authorship.for_turn(_chat_turn(prompt=prompt)) == prompt

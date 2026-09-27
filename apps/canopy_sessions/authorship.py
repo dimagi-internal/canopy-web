@@ -58,18 +58,57 @@ def _display_name(user) -> str:
     return (user.get_full_name() or "").strip() or user.email
 
 
-def for_turn(turn) -> str:
-    """The prompt as the runner should deliver it. Only a chat-session turn with
-    a known person is marked; everything else (agent, scheduled, email turns)
-    is delivered exactly as before."""
-    prompt = turn.prompt or ""
+# The sources a PERSON types into a chat from. Everything else that lands on a
+# chat session is a program speaking: an email turn (bound to its thread's
+# session by `email_thread_session`, prompt `/echo:turn --thread …`), a
+# scheduled turn, an MCP/API caller, a transfer preamble.
+_CHAT_ORIGINS = frozenset({"canopy_web_chat", "slack", "ace_web"})
+# `send_message` keys every send `chat:<session>:<client_id|index|nonce>`; a
+# transfer (`transfer:…`) or any other enqueue on the session does not.
+_SEND_KEY_PREFIX = "chat:"
+
+
+def is_chat_send(turn) -> bool:
+    """A person's own chat line — the only kind of turn that carries a marker,
+    and the only kind the queued list shows."""
     if not turn.chat_session_id:
+        return False
+    if not str(getattr(turn, "idempotency_key", "") or "").startswith(_SEND_KEY_PREFIX):
+        return False
+    origin = getattr(turn, "origin", "") or ""
+    if origin in _CHAT_ORIGINS:
+        return True
+    # A contact on an embedding host's widget may name `api` (contact_api allows
+    # it); a contact is never an API program, so it is still a person typing.
+    return origin == "api" and bool(turn.initiator_contact_id) and not turn.initiator_user_id
+
+
+def for_turn(turn) -> str:
+    """The prompt as the runner should deliver it.
+
+    Marked only when it is a person's chat send (`is_chat_send`) with a known
+    person, and never when the prompt is a slash command: Claude Code runs a
+    slash command only from the FIRST line, so a marker above `/compact` turns
+    it into prose — it goes bare and unattributed instead (accepted cost).
+    Everything else — email, scheduled, API, transfer turns — is delivered
+    exactly as it was enqueued."""
+    prompt = turn.prompt or ""
+    if not is_chat_send(turn) or prompt.lstrip().startswith("/"):
         return prompt
+    author = author_of(turn)
+    if author is None:
+        return prompt
+    return mark(prompt, name=author["name"], user_id=author.get("user_id"),
+                contact_id=author.get("contact_id"), turn_id=turn.pk)
+
+
+def author_of(turn) -> dict | None:
+    """The person behind a turn, in the marker's own shape — or None."""
     if turn.initiator_user_id:
-        return mark(prompt, name=_display_name(turn.initiator_user),
-                    user_id=turn.initiator_user_id, turn_id=turn.pk)
+        return {"name": " ".join(_display_name(turn.initiator_user).split()),
+                "user_id": turn.initiator_user_id}
     if turn.initiator_contact_id:
         contact = turn.initiator_contact
         name = (getattr(contact, "display_name", "") or getattr(contact, "email", "") or "contact").strip()
-        return mark(prompt, name=name, contact_id=turn.initiator_contact_id, turn_id=turn.pk)
-    return prompt
+        return {"name": " ".join(name.split()), "contact_id": turn.initiator_contact_id}
+    return None
