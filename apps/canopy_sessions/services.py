@@ -475,9 +475,15 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         return deleted
 
 
-def persist_transcript_rows(session, rows) -> int:
+def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
+
+    `attribute=False` (used only by `write_backfill`) skips the text-match
+    half of server-side attribution below — see that half's docstring for
+    why a full-history ship cannot use it safely. The vouched-marker path is
+    unaffected either way: it names an exact turn id, so it carries no
+    ordering risk.
 
     `index` is the transcript ordinal (`record * BLOCK_STRIDE + block` — see
     `canopy_transcript.compose_index`, imported above so this scheme has exactly
@@ -518,7 +524,34 @@ def persist_transcript_rows(session, rows) -> int:
     match leaves `author=None`, exactly the right answer for a line typed
     straight into emdash. The vouched-marker path (m3) is checked first and
     wins when present — it is a stronger claim (the transcript named a turn,
-    and the turn's own initiator agrees) than a text match ever is."""
+    and the turn's own initiator agrees) than a text match ever is.
+
+    **Only the LIVE stream path attributes; a backfill never does**
+    (`attribute=False`, above). `_MatchPool` orders candidates by
+    `Turn.created_at`, which has no relation to when a transcript ROW
+    happened — a backfill ships a session's full history in one shot, and
+    neither `canopy_transcript.conversational_messages`/`row_payload` nor
+    `write_backfill`'s own `messages` shape carries a per-row timestamp on
+    the wire today. Without one, an old backfilled "yes" from last week could
+    link to a turn created TODAY, and today's real "yes" would then miss it —
+    a live-shipped row has no such gap (it ships as it happens, so ordering
+    by claim time is sound). Revisit if the wire ever carries a row
+    timestamp: the tighter fix is bounding candidates to
+    `claimed_at <= row_ts + 2min` and `created_at >= row_ts - 7d`, not
+    disabling the match outright.
+
+    **`held` (which rows are already persisted) is computed BEFORE any
+    matching, never after.** It used to run once, on `prepared`'s indices,
+    right before `bulk_create` — by which point every row, including one
+    whose index already exists (a re-ship: reconnect, catch-up, backfill
+    overlap — routine, not an error), had already called `pool.claim`. A
+    re-shipped row is dropped at `bulk_create` and so was never going to
+    consume a candidate — but it did, stealing the match a genuinely NEW row
+    in the same batch with the same (squashed) text needed, which then got
+    `author=None` or the wrong turn. Only an explicit ordinal (`index >= 0`)
+    can already be held: a row with none always gets a FRESH one from
+    `_next_index`, one past the session's high-water mark, so it can never
+    collide — the precomputed set below only needs to check those."""
     offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
@@ -526,11 +559,20 @@ def persist_transcript_rows(session, rows) -> int:
         # transcript's first record) and `x or -1` would read it as "no ordinal".
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
             _ensure_current_ordinal_scheme(locked, offset)
+        held = set(
+            Message.objects.filter(
+                session=locked,
+                turn_index__in=[
+                    int(r["index"]) + offset for r in rows
+                    if r.get("index") is not None and int(r["index"]) >= 0
+                ],
+            ).values_list("turn_index", flat=True)
+        )
         next_index = None
         prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
         vouched = _vouched_markers(locked, rows)
-        pool = _MatchPool(locked)
+        pool = _MatchPool(locked) if attribute else None
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -585,11 +627,15 @@ def persist_transcript_rows(session, rows) -> int:
                     # naming a turn that is not this session's, or a person who
                     # did not send that turn, stays exactly what it was typed as.
                     author = turn_hex = None
-                    matched = pool.claim(text)
-                    if matched is not None:
-                        matched_author = authorship.author_of(matched)
-                        if matched_author is not None:
-                            author, turn_hex = matched_author, matched.pk.hex
+                    # A row whose index is already `held` will be dropped at
+                    # bulk_create below (it's a re-ship) — never spend a
+                    # match candidate on it.
+                    if pool is not None and index not in held:
+                        matched = pool.claim(text)
+                        if matched is not None:
+                            matched_author = authorship.author_of(matched)
+                            if matched_author is not None:
+                                author, turn_hex = matched_author, matched.pk.hex
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
@@ -598,11 +644,8 @@ def persist_transcript_rows(session, rows) -> int:
             prepared.append((index, role, text, content, author, turn_hex))
         if not prepared:
             return 0
-        held = set(
-            Message.objects.filter(
-                session=locked, turn_index__in=[p[0] for p in prepared]
-            ).values_list("turn_index", flat=True)
-        )
+        # `held` was computed above, before matching — reused here, not
+        # re-queried.
         fresh = [
             Message(session=locked, turn_index=i, role=r, plaintext=t, content=c,
                     author=a, source_turn_id=uuid.UUID(h) if h else None)
@@ -722,11 +765,18 @@ def write_backfill(session, messages) -> int:
     payloads (a current runner) upsert-fill: they add the older rows the live
     stream never saw and skip anything already persisted. A legacy payload (no
     ordinals) keeps the old write-once contract — sequential, and only into an
-    empty session. messages: [{"role","text"[,"index"]}] chronological."""
+    empty session. messages: [{"role","text"[,"index"]}] chronological.
+
+    `attribute=False`: a backfill ships a session's full history in one shot
+    with no per-row timestamp, so server-side attribution's "earliest claimed
+    turn" match (`persist_transcript_rows`) has no way to tell an old row from
+    a new one — see that function's docstring. The vouched-marker path still
+    runs (it names an exact turn id, not a guess), so a legacy marked row
+    backfilled from before this change is still attributed correctly."""
     ordinal = any(int(m.get("index", -1)) >= 0 for m in messages)
     if not ordinal and Message.objects.filter(session=session).exists():
         return 0
-    return persist_transcript_rows(session, messages)
+    return persist_transcript_rows(session, messages, attribute=False)
 
 
 def _set_stream_desired(session, desired: bool) -> bool:

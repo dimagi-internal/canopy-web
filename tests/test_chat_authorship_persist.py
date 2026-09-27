@@ -247,6 +247,111 @@ def test_whitespace_blind_ambiguity_resolves_to_the_earliest_unlinked_turn():
     assert second.source_turn_id == turn_b.pk   # next earliest, once turn_a is spent
 
 
+# -- a re-shipped row must never spend a match candidate ---------------------
+# `held` (which rows are already persisted) used to be computed AFTER every
+# row had already called `pool.claim` — including a row whose index already
+# exists, which is a routine RE-SHIP (reconnect, catch-up, backfill overlap),
+# not an error. That row was always going to be dropped at bulk_create, but
+# by the time that happened it had already stolen the candidate a genuinely
+# NEW row in the same batch, with the same (squashed) text, actually needed.
+# `held` is now computed BEFORE any matching, so a re-shipped row's index is
+# known to be a no-write in advance and never touches the pool.
+
+def test_a_reshipped_row_does_not_steal_the_candidate_from_a_new_row():
+    session = _session()
+    alice, turn = _sent(session, username="alice10", text="yes")
+    _claim(turn)
+    # Settle the session's ordinal scheme first (a fresh session's first
+    # indexed write does this itself, and would otherwise DELETE the row
+    # created directly below — matching `test_marker_verification_is_one_
+    # query_for_the_batch`'s own setup convention).
+    chat.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
+    # Already persisted at index 10 — UNMATCHED (e.g. it arrived before this
+    # candidate turn existed). No source_turn_id, so `_MatchPool` still sees
+    # the turn as a live, unlinked candidate.
+    Message.objects.create(session=session, turn_index=10, role=Message.USER, plaintext="yes")
+    # This ship re-sends index 10 alongside a genuinely NEW row with the same
+    # text — exactly what a reconnect/catch-up overlap looks like.
+    chat.persist_transcript_rows(session, [
+        {"index": 10, "role": "user", "text": "yes"},
+        {"index": 11, "role": "user", "text": "yes"},
+    ])
+    reshipped = Message.objects.get(session=session, turn_index=10)
+    new = Message.objects.get(session=session, turn_index=11)
+    # The re-ship's own row is untouched — persist_transcript_rows never
+    # writes over an already-held index.
+    assert reshipped.author is None and reshipped.source_turn_id is None
+    assert new.author == {"name": alice.email, "user_id": alice.id}
+    assert new.source_turn_id == turn.pk
+
+
+def test_two_reshipped_rows_do_not_steal_two_candidates_from_two_new_rows():
+    session = _session()
+    alice, turn_a = _sent(session, username="alice11", text="yes")
+    bob, turn_b = _sent(session, username="bob11", text="yes")
+    _claim(turn_a)
+    _claim(turn_b)
+    chat.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
+    Message.objects.create(session=session, turn_index=10, role=Message.USER, plaintext="yes")
+    Message.objects.create(session=session, turn_index=11, role=Message.USER, plaintext="yes")
+    chat.persist_transcript_rows(session, [
+        {"index": 10, "role": "user", "text": "yes"},   # re-ship
+        {"index": 11, "role": "user", "text": "yes"},   # re-ship
+        {"index": 12, "role": "user", "text": "yes"},   # new
+        {"index": 13, "role": "user", "text": "yes"},   # new
+    ])
+    assert Message.objects.get(session=session, turn_index=10).author is None
+    assert Message.objects.get(session=session, turn_index=11).author is None
+    new1 = Message.objects.get(session=session, turn_index=12)
+    new2 = Message.objects.get(session=session, turn_index=13)
+    # Both candidates survive for the two rows that actually need them, still
+    # mapped in send order.
+    assert new1.source_turn_id == turn_a.pk
+    assert new2.source_turn_id == turn_b.pk
+
+
+# -- a backfill never attributes: it has no per-row timestamp ---------------
+# `_MatchPool` orders candidates by Turn.created_at, which has no relation to
+# when a transcript ROW happened unless rows ship close to when they were
+# typed. A backfill ships a session's full history in one shot with no
+# per-row timestamp on the wire, so an old backfilled "yes" from last week
+# could link to a turn created today. Cheaper guard: a backfill never
+# attributes by text at all (the vouched-marker path, which names an exact
+# turn id, is unaffected).
+
+def test_write_backfill_never_attributes_by_text_even_with_a_live_candidate():
+    session = _session()
+    alice, turn = _sent(session, username="alice13", text="yes")
+    _claim(turn)
+    chat.write_backfill(session, [{"index": 10, "role": "user", "text": "yes"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author is None and msg.source_turn_id is None
+
+
+def test_write_backfill_still_honours_a_vouched_marker():
+    session = _session()
+    bo, turn = _sent(session, username="bo13", text="old line")
+    marked = legacy_marker("old line", name="Bo", user_id=bo.id, turn_id=turn.pk)
+    chat.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": "Bo", "user_id": bo.id}
+    assert msg.source_turn_id == turn.pk
+
+
+def test_the_live_stream_path_still_attributes_by_text():
+    """`persist_transcript_rows`'s default (`attribute=True`) is what the live
+    stream path (post_session_stream) calls — unlike write_backfill, it ships
+    a row the moment it happens, so ordering candidates by claim time is
+    sound."""
+    session = _session()
+    alice, turn = _sent(session, username="alice14", text="yes")
+    _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "yes"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+    assert msg.source_turn_id == turn.pk
+
+
 def test_turn_older_than_seven_days_is_not_a_match_candidate():
     session = _session()
     _alice, turn = _sent(session, username="alice6", text="ship it")
