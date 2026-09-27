@@ -513,6 +513,7 @@ def persist_transcript_rows(session, rows) -> int:
         next_index = None
         prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
+        vouched = _vouched_markers(locked, rows)
         for row in rows:
             role = row.get("role")
             if role not in _BACKFILL_ROLES:
@@ -556,9 +557,17 @@ def persist_transcript_rows(session, rows) -> int:
                 # The marker canopy prepended at claim (authorship.py). Stripped
                 # here, the single funnel for live stream, backfill and reset, so
                 # every path gets the same text and the same author.
-                author, text, turn_hex = authorship.parse(text)
-                if author is not None and isinstance(content.get("text"), str):
-                    content = {**content, "text": authorship.parse(content["text"])[1]}
+                author, bare, turn_hex = authorship.parse(text)
+                if author is not None and vouched.get(turn_hex) == _marker_identity(author):
+                    text = bare
+                    if isinstance(content.get("text"), str):
+                        content = {**content, "text": authorship.parse(content["text"])[1]}
+                else:
+                    # Unmarked, or a marker nobody can vouch for: anyone who can
+                    # type into the transcript can write the syntax, so a line
+                    # naming a turn that is not this session's, or a person who
+                    # did not send that turn, stays exactly what it was typed as.
+                    author = turn_hex = None
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
@@ -585,6 +594,33 @@ def persist_transcript_rows(session, rows) -> int:
         # skipped row rather than a failed batch.
         Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
         return len(fresh)
+
+
+def _marker_identity(author: dict) -> tuple[int | None, int | None]:
+    return author.get("user_id"), author.get("contact_id")
+
+
+def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
+    """turn hex -> (initiator_user_id, initiator_contact_id), for every turn a
+    user row's marker names that really is one of THIS session's turns. One
+    query for the whole batch, whatever its size.
+
+    The live frame (`stream_map`) is deliberately not checked the same way — it
+    has no cheap query, and the durable row written here is what every reload
+    shows."""
+    hexes = set()
+    for row in rows:
+        if row.get("role") != Message.USER:
+            continue
+        _author, _bare, turn_hex = authorship.parse(str(row.get("text", "")))
+        if turn_hex:
+            hexes.add(turn_hex)
+    if not hexes:
+        return {}
+    found = Turn.objects.filter(
+        chat_session=session, pk__in=[uuid.UUID(h) for h in hexes],
+    ).values_list("pk", "initiator_user_id", "initiator_contact_id")
+    return {pk.hex: (uid, cid) for pk, uid, cid in found}
 
 
 def write_backfill(session, messages) -> int:
