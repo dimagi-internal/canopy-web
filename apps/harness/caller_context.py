@@ -96,6 +96,17 @@ def _relationship_without_agent(turn, user) -> str:
     runner = getattr(turn, "claimed_by", None)
     if runner is not None and getattr(runner, "paired_by_id", None) == user.pk:
         return OWNER
+    # An agent's OWN login (`Agent.user`, #983) working on a box its OWNER paired is
+    # that agent acting where its owner's authority already runs — the dispatch shape
+    # (an agent session asked by its owner to start work on the owner's runner, calling
+    # canopy with the agent's PAT). It fell through to CALLER and froze push/merge in
+    # exactly the sessions the owner asked for (canopy-web#1011). Same answer
+    # `relationship_for_user` gives the agent's own login; still only its own, and
+    # only on its owner's box — anywhere else it stays a CALLER.
+    agent_self = getattr(user, "agent_identity", None)
+    paired_by = getattr(runner, "paired_by_id", None) if runner is not None else None
+    if agent_self is not None and paired_by is not None and agent_self.owner_id == paired_by:
+        return SYSTEM
     session = getattr(turn, "chat_session", None)
     if session is None:
         return CALLER
