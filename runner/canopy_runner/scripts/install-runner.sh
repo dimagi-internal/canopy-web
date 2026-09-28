@@ -7,6 +7,7 @@
 #   runner/canopy_runner/scripts/install-runner.sh --no-launchd    # install only, don't touch the daemon
 #   runner/canopy_runner/scripts/install-runner.sh --if-stale      # auto-update mode (the timer job)
 #   runner/canopy_runner/scripts/install-runner.sh --no-auto-update # skip installing the timer job
+#   CANOPY_MENUBAR=0 runner/canopy_runner/scripts/install-runner.sh  # skip the macOS menu-bar app
 #
 # Why a snapshot and not the working tree: the daemon used to execute from
 # ~/emdash-projects/canopy-web via PYTHONPATH, so any `git checkout` in that
@@ -179,7 +180,15 @@ echo "==> installing $(basename "$WHEEL")"
 # --find-links supplies canopy-cron / canopy-transcript (on no index) while the
 # real index still serves croniter and the realtime extra's websocket-client.
 # The runner itself is named by direct file:// URL so no index can shadow it.
-uv tool install --force --find-links "$TMP/dist" "canopy-runner[realtime] @ file://$WHEEL"
+#
+# --python: ask for what the package REQUIRES, read from the snapshot, rather than
+# letting uv take the first python3 on PATH. On a fresh macOS account with no
+# ~/.zprofile, Homebrew sits behind /usr/bin, so that is Apple's 3.9 and the resolve
+# fails outright ("the current Python version (3.9.6) does not satisfy >=3.11") —
+# hit provisioning a third account on 2026-09-28. uv downloads a match if none exists.
+PY_REQ="$(sed -n 's/^requires-python *= *"\(.*\)"/\1/p' "$TMP/runner/canopy_runner/pyproject.toml" | head -1)"
+uv tool install --force ${PY_REQ:+--python "$PY_REQ"} \
+  --find-links "$TMP/dist" "canopy-runner[realtime] @ file://$WHEEL"
 
 # Ask uv where it PUT the executable rather than trusting PATH order — an older
 # canopy-runner earlier on PATH would otherwise be what the plist points at, and
@@ -300,6 +309,34 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
     else
       echo "WARNING: could not install $INSTALLER — auto-update job not installed." >&2
     fi
+  fi
+fi
+
+# --- menu-bar app (macOS) ---------------------------------------------------
+# The daemon and the menu-bar app are separate PROCESSES by design (the daemon must
+# run headless), but nothing required installing them separately — and nothing did:
+# a fresh account got a running runner and no status icon, and had to find
+# runner/menubar/build.sh by hand (2026-09-28). Install it alongside the daemon.
+#
+# Rebuilt only when its source changes: build.sh replaces the bundle and relaunches
+# the app, and --if-stale runs this every 30 minutes — an unconditional rebuild would
+# blink the icon on every auto-update. Best-effort: no swiftc (Xcode CLT) is a
+# warning, never a failed install. Opt out with CANOPY_MENUBAR=0.
+MENUBAR="$TMP/runner/menubar"
+MENUBAR_STAMP="$HOME/.canopy/menubar.sha"
+MENUBAR_APP="${CANOPY_RUNNER_APP:-$HOME/Applications/Canopy Runner.app}"
+if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
+   && [ "${CANOPY_MENUBAR:-1}" = "1" ] && [ -f "$MENUBAR/build.sh" ]; then
+  want="$(cat "$MENUBAR/Sources/main.swift" "$MENUBAR/build.sh" | shasum | cut -d' ' -f1)"
+  have="$(cat "$MENUBAR_STAMP" 2>/dev/null || true)"
+  if [ -d "$MENUBAR_APP" ] && [ "$want" = "$have" ]; then
+    echo "==> menu-bar app unchanged"
+  elif ! command -v swiftc >/dev/null 2>&1; then
+    echo "WARNING: swiftc not found (xcode-select --install) — menu-bar app not built." >&2
+  elif bash "$MENUBAR/build.sh"; then
+    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$MENUBAR_STAMP"
+  else
+    echo "WARNING: menu-bar app build failed — the runner itself is installed and running." >&2
   fi
 fi
 
