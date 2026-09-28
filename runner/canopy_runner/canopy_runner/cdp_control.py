@@ -7,8 +7,9 @@ supersedes DB injection + app patching. This module shells out to
 """
 from __future__ import annotations
 
-import getpass
 import json
+import os
+import pwd
 import socket
 import subprocess
 import urllib.error
@@ -76,6 +77,18 @@ def ensure_sidecar_deps(*, timeout: int = 300) -> None:
 HOST_ID_PATH = Path.home() / ".canopy" / "host-id"
 
 
+def _account() -> str:
+    """The macOS account this process RUNS AS — from the uid, never the environment.
+
+    Not ``getpass.getuser()``: that reads LOGNAME/USER first, and a shell can carry a
+    LOGNAME that is not the account. Observed 2026-09-28 provisioning a third account
+    (haldimagi): a session launched with ``LOGNAME=root``, a smoke-test ``run --once``
+    pinned ``root@…`` into ~/.canopy/host-id, and the pin made it permanent — so the
+    fleet list showed a laptop runner owned by "root" and session ownership was keyed
+    on an account that does not exist. The uid cannot disagree with the account."""
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
 def host_id() -> str:
     """The ownership key deciding whether a live emdash session is reusable — pinned on
     first use, because it MUST be stable and macOS's hostname is not.
@@ -102,7 +115,7 @@ def host_id() -> str:
             return pinned
     except OSError:
         pass                    # not pinned yet (or unreadable) — compute and try to pin
-    current = f"{getpass.getuser()}@{socket.gethostname()}"
+    current = f"{_account()}@{socket.gethostname()}"
     try:
         HOST_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
         HOST_ID_PATH.write_text(current + "\n")
