@@ -39,6 +39,7 @@ so "where does X live" has exactly one answer:
 | `provenance.py` / `update.py` / `_build_info.py` | what code this box runs, and whether to update |
 | `cancel.py` / `failure_log.py` | the shared "stop this turn" set; repeat-aware retry logging |
 | `readiness.py` / `wake.py` / `dialog.py` | can-I-fire; the WS wake channel; the native prompt |
+| `pair.py` | one-time setup of a new account: pair, ports, runner.json, launcher |
 
 Two rules keep this honest. **Dependencies point one way** — `main` imports its
 subsystems, never the reverse; `cancel.py` and `failure_log.py` are leaves precisely
@@ -49,17 +50,64 @@ them together would make the two modules import each other.
 
 ## One-time laptop setup
 
-1. **Launch emdash with its debug port** via the **"Emdash CDP"** Spotlight app
-   (or any launcher that passes `--remote-debugging-port=9222`). The CDP
-   sidecar's node deps are provisioned by the installer (step 5) and re-checked
-   at every daemon start — there is no separate `npm install` step.
+A runner is per **macOS account** — the fleet runs one for each account on a laptop
+(Claude-subscription failover), each with its own emdash on its own debug port. Adding
+one is a single command, run as that account.
 
-2. **Pair the runner** with canopy-web:
+**Prerequisites** (once per account): `uv`; a canopy-web checkout at
+`~/emdash-projects/canopy-web` (or set `CANOPY_WEB_REPO`), pulled to current `main`;
+a canopy-web PAT at `~/.claude/canopy/workbench-token` (the `canopy:canopy-web-pat-mint`
+skill writes it); Xcode CLT for the menu-bar app (`xcode-select --install`, optional).
+
+```bash
+runner/canopy_runner/scripts/install-runner.sh --workspace dimagi
+```
+
+With no `~/.canopy/runner.json`, the installer first runs **`canopy-runner pair`**, which:
+
+- **pairs** with canopy-web — `POST /api/harness/runners/` as the PAT's user. The name
+  defaults to `<macos-user>-mbp-cdp` (the account comes from the uid, never
+  `$LOGNAME`); the agents default to the union of what your *other* runners serve
+  (it reports its `projects` itself, later). `--workspace` is needed only if you belong
+  to several workspaces — it refuses to guess and lists them. A runner's workspace
+  gates who can SEE it; what it may work for follows `paired_by`.
+- **picks free ports**: the first `cdp_port` from 9222 and `hook_port` from 8787 that no
+  sibling account's `/Users/*/.canopy/runner.json` claims and nothing is listening on.
+- **writes `~/.canopy/runner.json`** (below), mode **0644** on purpose: the next
+  account's port scan reads it, and it holds no secret — `token` is a `@path`
+  reference, and the PAT file itself stays private.
+- **builds `~/Applications/Emdash CDP.app`** (Spotlight: "Emdash CDP") — a launcher that
+  quits emdash and reopens it with `--remote-debugging-port=<cdp_port>`.
+
+…then carries on into the normal install (step 4 below: daemon, updater, menu-bar app).
+
+It is **idempotent**. If `runner.json` exists it never pairs again: `--pair` on a
+paired box only confirms the runner still exists server-side (and keeps the launcher in
+step with `cdp_port`); a config naming a runner the server no longer lists (retired, or
+someone else's) is an error, never a silent second runner. A name clash with an existing
+runner is refused too — adopt it with `--runner-id <id>` or pick `--name`. Overrides:
+`--name`, `--agents a,b`, `--base-url`, `--runner-id`, `--no-pair`; preview with
+`canopy-runner pair --dry-run --workspace dimagi`.
+
+**The one manual step:** relaunch emdash via **Emdash CDP** so it listens on this
+account's port. The installer says so when the port is not answering. The launcher
+**quits emdash first, which kills every session running inside it** — pick your moment.
+
+### Doing it by hand
+
+What `pair` automates, for reference or a non-macOS box:
+
+1. **Launch emdash with its debug port** (`--remote-debugging-port=<cdp_port>`). The CDP
+   sidecar's node deps are provisioned by the installer and re-checked at every daemon
+   start — there is no separate `npm install` step.
+
+2. **Pair the runner** with canopy-web (`GET /api/workspaces/` lists your slugs;
+   `workspace` is required if you have more than one — the server 422s without it):
    ```bash
    curl -X POST {base}/api/harness/runners/ \
      -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" \
      -H 'Content-Type: application/json' \
-     -d '{"name":"jj-mbp","kind":"emdash","capabilities":{"agents":["echo"]}}'
+     -d '{"name":"jj-mbp-cdp","kind":"emdash","workspace":"dimagi","capabilities":{"agents":["echo"]}}'
    ```
    — note the returned `id`.
 
@@ -70,16 +118,22 @@ them together would make the two modules import each other.
      "base_url": "https://labs.connect.dimagi.com/canopy",
      "token": "@~/.claude/canopy/workbench-token",
      "runner_id": "<uuid from step 2>",
-     "emdash_db": "/Users/jjackson/Library/Application Support/Emdash/emdash4.db",
+     "emdash_db": "/Users/<you>/Library/Application Support/emdash/emdash4.db",
      "cdp_port": 9222,
-     "mailboxes": {"hal": {"account": "hal@dimagi-ai.com", "client": "canopy"}},
-     "inbox_poll_seconds": 300
+     "hook_port": 8787,
+     "poll_seconds": 5,
+     "inbox_poll_seconds": 300,
+     "mailboxes": {},
+     "forward_sessions": true
    }
    ```
    `token` may be a literal value or `@/path/to/token/file` (read + stripped
    at load time). Unknown/legacy keys in the file are ignored, not rejected.
+   The emdash data directory is `emdash` on newer installs and `Emdash` on older
+   ones — use whichever `ls ~/Library/Application\ Support` shows.
 
-   **Email trigger.** `mailboxes` maps each agent to its gog `{account, client}`;
+   **Email trigger.** `mailboxes` maps each agent to its gog `{account, client}`
+   (e.g. `{"hal": {"account": "hal@dimagi-ai.com", "client": "canopy"}}`);
    the runner polls them every `inbox_poll_seconds` and enqueues an email-origin
    turn per new thread — the runner then reuses that thread's existing emdash
    session (continuity) or spawns a fresh one, rehydrating context. Cross-account:
@@ -162,6 +216,8 @@ them together would make the two modules import each other.
 - `run` (default when no subcommand is given) — the main watch loop. `--once`
   runs a single iteration (used by cron/tests/launchd health checks);
   `--drain-one` claims + runs exactly one queued turn, then exits.
+- `pair` — one-time setup of this macOS account (see "One-time laptop setup");
+  idempotent, `--dry-run` to preview.
 - `verify-emdash` — read-only check that canopy's emdash assumptions still hold
   — DB columns, worktree layout, DOM contracts, version (run after an emdash
   update; see below).
