@@ -9,6 +9,14 @@
 #   runner/canopy_runner/scripts/install-runner.sh --no-auto-update # skip installing the timer job
 #   CANOPY_MENUBAR=0 runner/canopy_runner/scripts/install-runner.sh  # skip the macOS menu-bar app
 #
+# A NEW macOS account is the same one command — with no ~/.canopy/runner.json it
+# pairs first (`canopy-runner pair`: register with canopy-web, pick free CDP/hook
+# ports, write runner.json, build ~/Applications/Emdash CDP.app):
+#   runner/canopy_runner/scripts/install-runner.sh --workspace dimagi
+#   ... --pair         # run the pairing check even though runner.json exists (no-op if paired)
+#   ... --no-pair      # never pair; install only
+#   ... --name N --agents a,b --base-url URL   # pairing overrides (see `canopy-runner pair -h`)
+#
 # Why a snapshot and not the working tree: the daemon used to execute from
 # ~/emdash-projects/canopy-web via PYTHONPATH, so any `git checkout` in that
 # checkout silently changed the code it ran. Building from `git archive <ref>`
@@ -29,6 +37,8 @@ REF="origin/main"
 DO_LAUNCHD=1
 DO_AUTO_UPDATE=1
 IF_STALE=0
+DO_PAIR=""          # "" = pair only if there is no config; 1 = always check; 0 = never
+PAIR_ARGS=()
 RUNNER_SRC="runner/canopy_runner/canopy_runner"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
@@ -48,7 +58,11 @@ while [ $# -gt 0 ]; do
     --no-launchd) DO_LAUNCHD=0; shift ;;
     --no-auto-update) DO_AUTO_UPDATE=0; shift ;;
     --if-stale) IF_STALE=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    --pair) DO_PAIR=1; shift ;;
+    --no-pair) DO_PAIR=0; shift ;;
+    --workspace|--name|--agents|--base-url|--runner-id|--cdp-port|--hook-port)
+      PAIR_ARGS+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -201,6 +215,20 @@ BIN="$(uv tool dir --bin 2>/dev/null)/canopy-runner"
 echo "==> provisioning the CDP sidecar's node deps"
 "$BIN" install-sidecar
 
+# --- pairing (a new account) --------------------------------------------------
+# Before the daemon is loaded, because the daemon needs the config this writes.
+# Never in --if-stale mode: the timer must not talk a box into a new identity. With
+# no config there is nothing for a daemon to run as, so pairing is the only sensible
+# move and is implied; `pair` itself refuses to create a second runner for a config
+# that already names one, so --pair on a paired box is a cheap verification.
+if [ "$IF_STALE" -eq 0 ] && { [ "$DO_PAIR" = "1" ] || { [ -z "$DO_PAIR" ] && [ ! -f "$CONFIG" ]; }; }; then
+  echo "==> pairing this account (canopy-runner pair)"
+  "$BIN" pair --config "$CONFIG" ${PAIR_ARGS[@]+"${PAIR_ARGS[@]}"} \
+    || { echo "pairing did not complete — daemon NOT (re)started. Fix the above and re-run." >&2; exit 1; }
+elif [ "${#PAIR_ARGS[@]}" -gt 0 ] && [ "$IF_STALE" -eq 0 ]; then
+  echo "WARNING: pairing options ignored — $CONFIG exists (add --pair to verify it)." >&2
+fi
+
 # Render a plist template, validate it, then reload the job. Shared by the runner
 # and the updater so their failure handling can't drift.
 #
@@ -342,4 +370,18 @@ fi
 
 echo
 "$BIN" --version
+
+# The one step no script may take for you: emdash needs THIS account's debug port,
+# and the port is a launch argument — so emdash has to be quit and relaunched, which
+# kills every session running inside it. Say so only when it is actually needed.
+if [ "$IF_STALE" -eq 0 ] && [ -f "$CONFIG" ]; then
+  CDP_PORT="$(sed -n 's/.*"cdp_port" *: *\([0-9][0-9]*\).*/\1/p' "$CONFIG" | head -1)"
+  if [ -n "$CDP_PORT" ] && ! curl -fsS -m 2 "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1; then
+    echo
+    echo "!! emdash is not reachable on its debug port ($CDP_PORT), so the runner will report"
+    echo "!! cdp_down and claim nothing. Relaunch emdash with the launcher:"
+    echo "!!     open ~/Applications/\"Emdash CDP.app\"      (Spotlight: \"Emdash CDP\")"
+    echo "!! It QUITS emdash first — every session running inside emdash is killed. Pick your moment."
+  fi
+fi
 echo "done."

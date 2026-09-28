@@ -33,6 +33,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -851,7 +852,46 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("--config", required=True)
 
+    pair_parser = subparsers.add_parser(
+        "pair",
+        help="set this macOS account up as a runner: pair with canopy-web (once — a "
+             "config naming a live runner is left alone), pick free CDP/hook ports, "
+             "write runner.json, build the Emdash CDP launcher. install-runner.sh "
+             "runs this for you on a box with no config",
+    )
+    pair_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    pair_parser.add_argument("--workspace", default="",
+                             help="workspace slug; required if you belong to several")
+    pair_parser.add_argument("--name", default="",
+                             help="runner name (default: <macos-user>-mbp-cdp)")
+    pair_parser.add_argument("--agents", default="",
+                             help="comma list (default: what your other runners serve)")
+    pair_parser.add_argument("--cdp-port", type=int, default=0, help="default: first free from 9222")
+    pair_parser.add_argument("--hook-port", type=int, default=0, help="default: first free from 8787")
+    pair_parser.add_argument("--runner-id", default="",
+                             help="adopt this existing runner instead of pairing a new one")
+    pair_parser.add_argument("--base-url", default="", help="canopy-web base url")
+    pair_parser.add_argument("--no-launcher", action="store_true",
+                             help="don't build ~/Applications/Emdash CDP.app")
+    pair_parser.add_argument("--dry-run", action="store_true",
+                             help="print the plan; pair nothing, write nothing")
+
     return parser
+
+
+def pair_cmd(args) -> int:
+    from . import pair
+
+    try:
+        return pair.run_pair(
+            Path(args.config), name=args.name, workspace=args.workspace,
+            agents=[a.strip() for a in args.agents.split(",") if a.strip()],
+            cdp_port=args.cdp_port, hook_port=args.hook_port, runner_id=args.runner_id,
+            base_url=args.base_url or pair.DEFAULT_BASE_URL,
+            launcher=not args.no_launcher, dry_run=args.dry_run)
+    except (pair.PairError, ClientError) as exc:
+        print(f"pair: {exc}", file=sys.stderr)
+        return 1
 
 
 def make_control_handler(cfg: Config, waker, client=None):
@@ -967,6 +1007,9 @@ def main() -> None:
 
     if command == "install-sidecar":
         raise SystemExit(install_sidecar())
+
+    if command == "pair":
+        raise SystemExit(pair_cmd(args))
 
     if command == "verify-emdash":
         if not args.config:
