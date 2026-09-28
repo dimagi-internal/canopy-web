@@ -136,7 +136,7 @@ def test_host_id_pins_the_first_value_it_computes(monkeypatch, tmp_path):
     pin = tmp_path / "host-id"
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", pin)
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "Jonathans-MacBook-Pro.local")
-    monkeypatch.setattr(cdp_control.getpass, "getuser", lambda: "jjackson")
+    monkeypatch.setattr(cdp_control, "_account", lambda: "jjackson")
     assert cdp_control.host_id() == "jjackson@Jonathans-MacBook-Pro.local"
     assert pin.read_text().strip() == "jjackson@Jonathans-MacBook-Pro.local"
 
@@ -148,7 +148,7 @@ def test_host_id_survives_a_macos_hostname_flap(monkeypatch, tmp_path):
     false and each thread got a fresh cold session, with no error logged anywhere."""
     pin = tmp_path / "host-id"
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", pin)
-    monkeypatch.setattr(cdp_control.getpass, "getuser", lambda: "jjackson")
+    monkeypatch.setattr(cdp_control, "_account", lambda: "jjackson")
 
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "Jonathans-MacBook-Pro.local")
     first = cdp_control.host_id()
@@ -163,7 +163,7 @@ def test_host_id_degrades_to_the_live_value_when_the_pin_is_unwritable(monkeypat
     unwritable = tmp_path / "no-such-dir" / "x" / "host-id"
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", unwritable)
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "H")
-    monkeypatch.setattr(cdp_control.getpass, "getuser", lambda: "u")
+    monkeypatch.setattr(cdp_control, "_account", lambda: "u")
     def boom(*a, **k):
         raise OSError("read-only fs")
     monkeypatch.setattr(cdp_control.Path, "mkdir", boom)
@@ -175,7 +175,7 @@ def test_host_id_ignores_a_blank_pin(monkeypatch, tmp_path):
     pin.write_text("   \n")
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", pin)
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "H2")
-    monkeypatch.setattr(cdp_control.getpass, "getuser", lambda: "u2")
+    monkeypatch.setattr(cdp_control, "_account", lambda: "u2")
     assert cdp_control.host_id() == "u2@H2"
 
 
@@ -577,3 +577,13 @@ def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
     r = _typed([_plain("⏺ transcript"), *dim_everything])
     assert r["found"] is True
     assert r["typed"] == "something already here"
+
+
+def test_host_id_account_comes_from_the_uid_not_logname(monkeypatch, tmp_path):
+    """A session launched with LOGNAME=root must not pin `root@…` (2026-09-28)."""
+    monkeypatch.setattr(cdp_control, "HOST_ID_PATH", tmp_path / "host-id")
+    monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "H")
+    monkeypatch.setenv("LOGNAME", "root")
+    monkeypatch.setenv("USER", "root")
+    import os, pwd
+    assert cdp_control.host_id() == f"{pwd.getpwuid(os.getuid()).pw_name}@H"
