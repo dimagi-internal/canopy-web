@@ -70,6 +70,15 @@ class DPoPGate:
 
         headers = scope.get("headers", [])
         authorization = [value for key, value in headers if key.lower() == b"authorization"]
+        if len(authorization) == 1 and authorization[0][:7].lower() == b"bearer " \
+                and await self._is_bound_bearer(authorization[0][7:].strip()):
+            # RFC 9449 §7.1: a DPoP-bound token presented as a plain Bearer is refused
+            # HERE, not left to the host's own verifier to fail. That verifier does
+            # refuse it on a correctly built host, but a looser one (an anonymous
+            # fallback, a scope check deeper down) let it reach the tool layer —
+            # found by canopy's live probe, 2026-09-28.
+            await _refuse(send, "invalid_token", "a DPoP-bound token must be presented with DPoP")
+            return
         if len(authorization) != 1 or authorization[0][:5].lower() != b"dpop ":
             jkt_marker = presented_dpop_jkt.set(None)
             principal_marker = delegated_principal.set(None)
@@ -117,6 +126,21 @@ class DPoPGate:
         finally:
             presented_dpop_jkt.reset(jkt_marker)
             delegated_principal.reset(principal_marker)
+
+    async def _is_bound_bearer(self, raw: bytes) -> bool:
+        """Whether a Bearer credential is one of this host's DPoP-bound tokens.
+        Any failure to tell (no grant configured, a store error) is "no": this
+        check only ever ADDS a refusal, it never lets anything through."""
+        try:
+            token = raw.decode("ascii")
+            verifier = self.verifier()
+        except Exception:  # noqa: BLE001 - unconfigured or undecodable: not ours to judge
+            return False
+        try:
+            return bool(await self.run_sync(verifier.is_bound, token))
+        except Exception:  # noqa: BLE001
+            log.exception("could not check a bearer credential against the delegated tokens")
+            return False
 
     def verifier(self) -> ResourceVerifier:
         if isinstance(self._verifier, ResourceVerifier):
