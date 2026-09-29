@@ -104,6 +104,22 @@ if principal:            # a delegated token: run AS principal.subject,
 {% canopy_panel resource="labs-marketplace://orgs" backing_tool="marketplace_orgs_get" visible_ids=slugs %}
 ```
 
+**A page that changes what it shows without reloading** tells the agent through
+`window.canopyHost` (0.5.0), available once the panel has rendered and announced
+by a `canopy:ready` event on `document`:
+
+```js
+function share(host) {
+  host.updatePageState({ visible_ids: ["10::asha"], filters: { run_id: 70, worker: "10::asha" } });
+}
+if (window.canopyHost) share(window.canopyHost);
+else document.addEventListener("canopy:ready", (e) => share(e.detail), { once: true });
+```
+
+`updatePageState` merges into the declared state (canopy replaces state on every
+push) and keeps `resource` and `backing_tool` as the server rendered them.
+`canopyHost.widget` is the widget, for the rest of its API.
+
 ### `CANOPY_HOST` as a callable
 
 When the values derive from settings a later module overrides (a public URL per

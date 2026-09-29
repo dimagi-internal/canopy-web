@@ -31,6 +31,10 @@ browser.
       var declared = read("canopy-page-state");
       var config = read("canopy-panel-options");
       if (!config) return;
+      // canopy refuses a state over 8 KiB; pages.py trims to this budget, and so
+      // does `updatePageState` below.
+      var BUDGET = config.stateByteBudget || 7168;
+      var MAX_IDS = config.maxVisibleIds || 400;
       var options = {
         baseUrl: config.baseUrl,
         app: config.app,
@@ -62,6 +66,46 @@ browser.
       if (config.theme && Object.keys(config.theme).length) options.theme = config.theme;
       var widget = window.canopy.init(options);
       if (declared) widget.setPageState(declared);
+
+      // The page's handle on the panel. A server-rendered page declares its view
+      // once, above; a page that changes what it shows without reloading (a
+      // drill-down, a filter, a selected row) tells the agent through
+      // `updatePageState`. canopy REPLACES the state on every push, so this merges
+      // the change into the declared state and sends the whole — a page that sent
+      // only its patch would drop its resource and its tools. The selection is
+      // trimmed to canopy's budget here too: a refused state leaves the agent blind
+      // to the whole screen, a trimmed one to its tail.
+      function bytes(value) {
+        var text = JSON.stringify(value);
+        return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(text).length : text.length;
+      }
+      function fit(state) {
+        var ids = Array.isArray(state.visible_ids) ? state.visible_ids.slice(0, MAX_IDS) : null;
+        if (!ids) return state;
+        var out = Object.assign({}, state, { visible_ids: ids });
+        while (ids.length && bytes(out) > BUDGET) {
+          ids = ids.slice(0, Math.floor(ids.length * 0.9));
+          out.visible_ids = ids;
+        }
+        return out;
+      }
+      var host = {
+        widget: widget,
+        pageState: function () { return declared ? JSON.parse(JSON.stringify(declared)) : null; },
+        updatePageState: function (patch) {
+          if (!declared) return null;
+          var next = Object.assign({}, declared, patch || {});
+          // What the page IS, and the tool that reads its rows, were decided by the
+          // server that rendered it; a script on the page narrows the view, never those.
+          next.resource = declared.resource;
+          if ("backing_tool" in declared) next.backing_tool = declared.backing_tool;
+          declared = fit(next);
+          widget.setPageState(declared);
+          return host.pageState();
+        },
+      };
+      window.canopyHost = host;
+      document.dispatchEvent(new CustomEvent("canopy:ready", { detail: host }));
     })();
   </script>
 {% endif %}

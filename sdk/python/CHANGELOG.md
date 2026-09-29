@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.5.0 — 2026-09-29
+
+A page that changes what it shows without reloading can tell the agent. Minor:
+new public API, nothing removed, contract version unchanged.
+
+- **`window.canopyHost` + the `canopy:ready` event** — the panel template kept the
+  widget in a closure, so a page that drills, filters or selects a row without a
+  reload had no way to update what the agent sees. `canopyHost.updatePageState(patch)`
+  merges the patch into the declared state and pushes the whole (canopy replaces
+  state on every push); `resource` and `backing_tool` stay what the server
+  rendered, since a script on the page may narrow the view but not change what
+  the page is. The selection is trimmed to the same byte budget `pages.py` uses.
+  `canopyHost.pageState()` reads the current state; `canopyHost.widget` is the
+  widget itself, for the rest of its API.
+- `panel_options` carries `stateByteBudget` and `maxVisibleIds` for that trim.
+
 ## 0.4.1 — 2026-09-28
 
 - **`DPoPGate` refuses a DPoP-bound token presented as a plain `Bearer`** (401
