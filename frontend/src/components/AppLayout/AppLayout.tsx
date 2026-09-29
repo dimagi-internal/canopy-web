@@ -134,9 +134,13 @@ function WorkspaceSwitcher() {
           navigate(e.target.value === NEW_WORKSPACE ? '/new-workspace' : `/w/${e.target.value}/agents`)
         }
       >
-        {workspaceTree(workspaces).map(({ w, depth }) => (
+        {/* Plain names, tree ORDER only: a division follows its parent, but carries
+            no glyph or indent — someone who is only in CommCare should just see
+            "CommCare", not a branch marker pointing at an org they can't open
+            (Jonathan, 2026-09-29). */}
+        {workspaceTree(workspaces).map(({ w }) => (
           <option key={w.slug} value={w.slug}>
-            {'\u00a0\u00a0'.repeat(depth) + (depth ? '↳ ' : '') + w.display_name}
+            {w.display_name}
           </option>
         ))}
         <option value={NEW_WORKSPACE}>+ New workspace…</option>
@@ -147,7 +151,8 @@ function WorkspaceSwitcher() {
 }
 
 // Workspaces nest (an org above its divisions), so the switcher lists them as a
-// tree: each child directly under its parent, indented. A workspace whose parent
+// tree: each child directly under its parent (ordering only; the switcher shows
+// plain names). A workspace whose parent
 // the caller cannot see (a division owner, not an org member) is a root here.
 export function workspaceTree<T extends { slug: string; parent?: string | null }>(
   workspaces: T[],
