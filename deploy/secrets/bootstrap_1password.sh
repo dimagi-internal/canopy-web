@@ -33,7 +33,12 @@ SHARED_VAULT="${CANOPY_SHARED_VAULT:-Canopy-Shared}"
 #   canopy-pat         — the agent's canopy-web PAT (pairs the runner, posts turns)
 #   claude-oauth-token — the agent's `claude setup-token` (long-lived, non-rotating)
 #   gog-token          — the agent's long-lived gog refresh token (In-Production app)
-AGENT_ITEMS=("canopy-pat" "claude-oauth-token" "gog-token")
+#   gdrive-root-folder — the agent's OWN Drive root folder id (agent-core/deliverables.md
+#                        resolves it as op://Agent-<Slug>/gdrive-root-folder). Every running
+#                        agent's vault has it; this list omitted it until 2026-09-29, when
+#                        Agent-Jarvis/-Muse/-Fizzy were created without one and it was found by
+#                        diffing against Agent-{Hal,Eva,Ada,Ace,Echo}.
+AGENT_ITEMS=("canopy-pat" "claude-oauth-token" "gog-token" "gdrive-root-folder")
 
 # Shared items every agent resolves from Canopy-Shared. The gog OAuth *client*
 # (client_id+secret — "the app") is shared fleet-wide; only the per-agent MAILBOX
@@ -101,26 +106,26 @@ main() {
 
 $(printf '\033[1;32m✓ Vault topology ready.\033[0m')
 
-Next (owner-only) — mint the service-account token the runner uses. Grant it
-READ on the shared vault, and READ+WRITE on the agent vaults it may run so the
-reconciler can persist minted tokens (claude setup-token) back for cold boxes:
+Next (owner-only) — ONE service-account key PER AGENT, scoped to that agent's
+vault alone, handed to canopy-web (never to a box, never to Secrets Manager):
 
-  op service-account create "canopy-cloud-runner" \\
-    --account $ACCOUNT \\
-    --vault "$SHARED_VAULT:read_items" \\$(for slug in "$@"; do
-      v="Agent-$(printf '%s' "${slug:0:1}" | tr '[:lower:]' '[:upper:]')${slug:1}"
-      printf '\n    --vault "%s:read_items,write_items" \\' "$v"
-    done)
-    --expires-in 90d
+$(for slug in "$@"; do
+    v="Agent-$(printf '%s' "${slug:0:1}" | tr '[:lower:]' '[:upper:]')${slug:1}"
+    printf '  op service-account create "agent-%s" --account %s \\\n' "$slug" "$ACCOUNT"
+    printf '    --vault "%s:read_items,write_items" --expires-in 90d\n' "$v"
+  done)
 
-The command prints the token ONCE. Then store it for the cloud runner:
+Each prints its key ONCE. Paste it into that agent's Settings on canopy-web (or
+PUT /api/agents/<slug>/vault {"vault": "Agent-<Slug>", "service_key": "..."}).
 
-  aws secretsmanager put-secret-value \\
-    --secret-id canopy/cloud-runner/op-service-account-token \\
-    --secret-string "<TOKEN>"   # or create-secret the first time
+The agent's WORKSPACE also needs a shared-vault key (read on $SHARED_VAULT) so a
+runner can load the shared gog OAuth client — a per-agent key cannot read it, by
+design. If the workspace has none: PUT /api/workspaces/<ws>/shared-vault.
 
-For your laptop, export it (or the reconciler reads it from your op signin):
-  export OP_SERVICE_ACCOUNT_TOKEN="<TOKEN>"
+Do NOT mint a box-wide "canopy-cloud-runner" key. That token is GONE
+(runner/ec2/README.md): one key reading every agent's vault, inherited by every
+turn, is exactly what the per-agent + per-tenant split replaced. This script
+advised creating it until 2026-09-29.
 EOF
 }
 
