@@ -28,6 +28,20 @@ def test_open_send_ok(monkeypatch):
     assert cdp_control.open_and_send("T", "hi there")["action"] == "sent"
 
 
+@pytest.mark.parametrize("prompt,sent", [
+    # A Slack bullet reached emdash as `claude "- lets…"` → "unknown option", no session.
+    ("- lets pick back up where we left off", "\\- lets pick back up where we left off"),
+    ("--help me with this", "\\--help me with this"),
+    ("/hal:ask --thread abc", "/hal:ask --thread abc"),
+    ("plain message - with a dash", "plain message - with a dash"),
+])
+def test_create_task_never_hands_emdash_a_dash_leading_prompt(monkeypatch, prompt, sent):
+    calls = []
+    monkeypatch.setattr(cdp_control, "_run", lambda cmd, args, **kw: calls.append(args) or {"task": "t"})
+    cdp_control.create_task("hal", prompt, task_name="t")
+    assert calls[0]["prompt"] == sent
+
+
 def test_interrupt_calls_run_with_task_and_port(monkeypatch):
     """interrupt() must reach the sidecar's `interrupt` command with {task, port} — the
     same call shape open_and_send uses (matching _run's convention: command name + a
