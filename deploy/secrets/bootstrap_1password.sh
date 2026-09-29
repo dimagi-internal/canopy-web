@@ -106,7 +106,18 @@ main() {
 
 $(printf '\033[1;32m✓ Vault topology ready.\033[0m')
 
-Next (owner-only) — ONE service-account key PER AGENT, scoped to that agent's
+Next, step 1 — share each vault with that agent's OWNERS, as vault ADMINS
+(every item permission plus manage_vault), BEFORE minting any key. The owner
+runs the agent and rotates its secrets; read-only or member access is not enough
+(Jonathan, 2026-09-29):
+
+$(for slug in "$@"; do
+    v="Agent-$(printf '%s' "${slug:0:1}" | tr '[:lower:]' '[:upper:]')${slug:1}"
+    printf '  op vault user grant --vault "%s" --user <owner@dimagi.com> --account %s \\\n' "$v" "$ACCOUNT"
+    printf '    --permissions view_items,create_items,edit_items,archive_items,delete_items,view_and_copy_passwords,view_item_history,import_items,export_items,copy_and_share_items,print_items,manage_vault\n'
+  done)
+
+Step 2 (owner-only) — ONE service-account key PER AGENT, scoped to that agent's
 vault alone, handed to canopy-web (never to a box, never to Secrets Manager):
 
 $(for slug in "$@"; do
