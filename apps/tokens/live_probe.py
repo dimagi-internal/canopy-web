@@ -34,30 +34,24 @@ the probe. Probe traffic records no `host_grant.*` Event, so real-traffic health
 that stays broken is one row with a count) and on recovery, and pushes the
 site's workspace owners on the transition — never on every failed run.
 
-**When it runs.** On demand from Test connection, and every
-`PROBE_EVERY` per site from `sweep()`, which rides `sessions_reported` (every
-runner's ~10s report) behind a fleet-wide cache lock — canopy-web has no job
-scheduler, and this is the same clock the Slack and chat status sweeps use.
+**When it runs.** On demand only — Test connection on a Connected site
+(`POST …/connected-apps/{id}/test`). It ran every 30 minutes per site off the
+runner reports until 2026-09-29; Jonathan wanted it on demand, and every probe
+mints a real grant and makes real calls at a host, which is not free to do on a
+clock nobody asked for.
 """
 from __future__ import annotations
 
 import logging
-import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db.models import F, Q
 from django.utils import timezone
 
 log = logging.getLogger(__name__)
 
-#: How often each site is probed by the sweep.
-PROBE_EVERY = timedelta(minutes=30)
-#: How often the sweep may even look (fleet-wide, a cache lock).
-SWEEP_EVERY_SECONDS = 60
-SWEEP_LOCK = "tokens:live_probe_sweep"
-#: One probe per site at a time (Test connection and the sweep can race).
+#: One probe per site at a time (two owners can press Test connection at once).
 SITE_LOCK_SECONDS = 120
 
 EVENT_SOURCE = "tokens.live_probe"
@@ -309,64 +303,6 @@ def _notify(app, *, title: str, body: str) -> int:
     except Exception:  # noqa: BLE001
         log.exception("could not notify owners about a live-probe transition")
         return 0
-
-
-# --- the schedule ------------------------------------------------------------------------------
-
-
-def due_sites():
-    """Sites that let an agent act as a visitor and have not been probed within
-    `PROBE_EVERY`, least recently probed first."""
-    from .models import AppCredential
-
-    cutoff = timezone.now() - PROBE_EVERY
-    return (AppCredential.objects.filter(revoked_at__isnull=True)
-            .exclude(host_issuer="").exclude(host_mcp_resource="")
-            .filter(Q(last_probe_at__isnull=True) | Q(last_probe_at__lt=cutoff))
-            .order_by(F("last_probe_at").asc(nulls_first=True), "pk"))
-
-
-def sweep(*, force: bool = False, background: bool = True) -> int:
-    """Probe the ONE most overdue site, at most once per `SWEEP_EVERY_SECONDS`
-    fleet-wide. One site per tick keeps a runner's report request from carrying
-    several sites' round trips; with a handful of sites and a tick a minute,
-    every site is still probed well inside `PROBE_EVERY`. Returns the number of
-    probes started.
-
-    In the background by default: the probe makes several outbound calls, and
-    the request that drives the sweep is a runner's session report, which must
-    not wait on a host."""
-    from django.conf import settings
-
-    if not getattr(settings, "CANOPY_LIVE_PROBE_SWEEP", True) and not force:
-        return 0
-    if not force and not cache.add(SWEEP_LOCK, 1, timeout=SWEEP_EVERY_SECONDS):
-        return 0
-    app = due_sites().first()
-    if app is None:
-        return 0
-    if not background:
-        probe_and_record(app, trigger="sweep")
-        return 1
-    threading.Thread(target=_probe_in_thread, args=(app.pk,), daemon=True,
-                     name=f"live-probe-{app.pk}").start()
-    return 1
-
-
-def _probe_in_thread(app_id: int) -> None:
-    from django.db import close_old_connections, connection
-
-    from .models import AppCredential
-
-    try:
-        close_old_connections()
-        app = AppCredential.objects.filter(pk=app_id).first()
-        if app is not None:
-            probe_and_record(app, trigger="sweep")
-    except Exception:  # noqa: BLE001 - a background probe must never raise into nothing
-        log.exception("live probe of site %s failed to run", app_id)
-    finally:
-        connection.close()
 
 
 # --- real traffic ---------------------------------------------------------------------------------
