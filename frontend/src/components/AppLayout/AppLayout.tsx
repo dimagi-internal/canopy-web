@@ -134,9 +134,9 @@ function WorkspaceSwitcher() {
           navigate(e.target.value === NEW_WORKSPACE ? '/new-workspace' : `/w/${e.target.value}/agents`)
         }
       >
-        {workspaces.map((w) => (
+        {workspaceTree(workspaces).map(({ w, depth }) => (
           <option key={w.slug} value={w.slug}>
-            {w.display_name}
+            {'\u00a0\u00a0'.repeat(depth) + (depth ? '↳ ' : '') + w.display_name}
           </option>
         ))}
         <option value={NEW_WORKSPACE}>+ New workspace…</option>
@@ -144,6 +144,27 @@ function WorkspaceSwitcher() {
     )
   }
   return <NewWorkspaceLink />
+}
+
+// Workspaces nest (an org above its divisions), so the switcher lists them as a
+// tree: each child directly under its parent, indented. A workspace whose parent
+// the caller cannot see (a division owner, not an org member) is a root here.
+export function workspaceTree<T extends { slug: string; parent?: string | null }>(
+  workspaces: T[],
+): { w: T; depth: number }[] {
+  const visible = new Set(workspaces.map((w) => w.slug))
+  const out: { w: T; depth: number }[] = []
+  const walk = (parent: string | null, depth: number) => {
+    for (const w of workspaces) {
+      const p = w.parent && visible.has(w.parent) ? w.parent : null
+      if (p === parent && depth < 8) {
+        out.push({ w, depth })
+        walk(w.slug, depth + 1)
+      }
+    }
+  }
+  walk(null, 0)
+  return out
 }
 
 // Not a legal workspace slug (slugs are [a-z0-9-]), so it cannot collide with one.

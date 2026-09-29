@@ -131,14 +131,58 @@ def join_workspace(user, slug: str) -> Workspace:
     return ws
 
 
+def _direct_slugs(user, role: str | None = None) -> set[str]:
+    qs = WorkspaceMembership.objects.filter(user=user)
+    if role is not None:
+        qs = qs.filter(role=role)
+    return set(qs.values_list("workspace_id", flat=True))
+
+
+def descendant_slugs(slugs: set[str]) -> set[str]:
+    """Every workspace strictly BELOW any of `slugs` in the tree.
+
+    Breadth-first, one query per level, bounded by `MAX_DEPTH` and a seen-set
+    so a corrupted cycle terminates."""
+    from .models import MAX_DEPTH
+
+    out: set[str] = set()
+    frontier = set(slugs)
+    for _ in range(MAX_DEPTH):
+        if not frontier:
+            break
+        children = set(
+            Workspace.objects.filter(parent_id__in=frontier).values_list("slug", flat=True)
+        ) - out - set(slugs)
+        out |= children
+        frontier = children
+    return out
+
+
+def inherited_owner_slugs(user) -> set[str]:
+    """Workspaces `user` OWNS by inheritance: descendants of a workspace they
+    directly own. The ONLY thing the tree grants — see `Workspace.parent`."""
+    return descendant_slugs(_direct_slugs(user, WorkspaceMembership.OWNER))
+
+
 def user_workspace_slugs(user) -> set[str]:
-    return set(
-        WorkspaceMembership.objects.filter(user=user).values_list("workspace_id", flat=True)
-    )
+    """Every workspace `user` may act within: direct memberships plus the
+    descendants of workspaces they own."""
+    direct = _direct_slugs(user)
+    return direct | inherited_owner_slugs(user)
 
 
 def is_member(user, slug: str) -> bool:
-    return WorkspaceMembership.objects.filter(user=user, workspace_id=slug).exists()
+    return membership(user, slug) is not None
+
+
+def _inherits_ownership(user, workspace_id: str) -> bool:
+    ws = Workspace.objects.filter(slug=workspace_id).first()
+    if ws is None or not ws.parent_id:
+        return False
+    ancestors = ws.ancestor_slugs()
+    return WorkspaceMembership.objects.filter(
+        user=user, workspace_id__in=ancestors, role=WorkspaceMembership.OWNER,
+    ).exists()
 
 
 def membership(user, workspace):
@@ -155,11 +199,25 @@ def membership(user, workspace):
     the tenant with it.
     """
     workspace_id = workspace.pk if hasattr(workspace, "pk") else workspace
-    return (
+    row = (
         WorkspaceMembership.objects.select_related("workspace")
         .filter(user=user, workspace_id=workspace_id)
         .first()
     )
+    if row is not None and row.role == WorkspaceMembership.OWNER:
+        return row
+    # An owner of any ancestor is an owner here (see `Workspace.parent`). This
+    # outranks a weaker DIRECT row — an org owner who also holds `viewer` on a
+    # division is still its owner. The returned row is SYNTHETIC and unsaved
+    # (`inherited = True`): callers read `.role` / `.workspace` off it, and
+    # anything that would persist or delete it must check `inherited` first —
+    # there is no row to change; the grant lives on the ancestor.
+    if _inherits_ownership(user, workspace_id):
+        ws = row.workspace if row is not None else Workspace.objects.get(slug=workspace_id)
+        synthetic = WorkspaceMembership(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
+        synthetic.inherited = True
+        return synthetic
+    return row
 
 
 def member_role(user, workspace) -> str | None:

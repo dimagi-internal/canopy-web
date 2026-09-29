@@ -3094,6 +3094,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/parent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Move a workspace in the tree (owner-only)
+         * @description Nest `slug` under `parent`, or make it a root with `parent: null`.
+         *
+         *     Owner of BOTH ends: of the workspace being moved (it changes who
+         *     administers it) and of the new parent (its owners gain this workspace).
+         *     A cycle is refused by `Workspace.save` and surfaces as 422.
+         */
+        readonly put: operations["apps_workspaces_api_set_workspace_parent"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/joinable": {
         readonly parameters: {
             readonly query?: never;
@@ -11142,6 +11166,13 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+            /** Parent */
+            readonly parent?: string | null;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
         };
         /** WorkspaceCreateIn */
         readonly WorkspaceCreateIn: {
@@ -11149,6 +11180,16 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
+            /** Parent */
+            readonly parent?: string | null;
+        };
+        /**
+         * WorkspaceParentIn
+         * @description Move a workspace in the tree. `None` makes it a root.
+         */
+        readonly WorkspaceParentIn: {
+            /** Parent */
+            readonly parent?: string | null;
         };
         /**
          * JoinableWorkspaceOut
@@ -18153,6 +18194,32 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly apps_workspaces_api_set_workspace_parent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceParentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceOut"];
+                };
             };
         };
     };

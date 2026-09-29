@@ -13,6 +13,27 @@ The three membership roles are a real total order in the code —
 `WorkspaceMembership.ROLE_RANK` (`apps/workspaces/models.py`) is `{viewer: 0, editor: 1,
 owner: 2}` and is the single place that ordering lives.
 
+## Workspaces nest — and only OWNERSHIP flows down
+
+A workspace may have a `parent` (`Workspace.parent`), so an org sits above its divisions:
+`dimagi` → `connect`, `strategy`, `operations`, `commcare`, `global-solutions`. The tree grants
+exactly one thing: **an owner of a workspace is an owner of every workspace below it.** Nothing
+else is inherited. A parent's editors and viewers have no access to a child, and a child's
+members have none to its parent or siblings.
+
+The narrowness is the design. `dimagi` is self-join for every `@dimagi.com` address, so if its
+*editors* inherited, every employee could read — and, as editors, delete — every division's
+agents, which is precisely what a division workspace exists to prevent.
+
+- Resolved in `services.membership` (the sole authorizer): a direct `owner` row wins; otherwise
+  an owner of any ancestor gets an **unsaved** membership with `inherited = True` and role
+  `owner`, which outranks a weaker direct row. `is_member`, `member_role`,
+  `user_workspace_slugs` and the pinned `/api/w/{ws}/` gate all read through it.
+- Nesting is an owner's act on the **parent**: `POST /api/workspaces/` with `parent` requires
+  owning the parent, and `PUT /api/workspaces/{slug}/parent` requires owning both the workspace
+  and its new parent. Cycles are refused on save (422 over the API).
+- A workspace with children cannot be deleted (409, naming them).
+
 ## The first tier has no account at all
 
 The genuinely read-only role is **not** a membership role — it is having a link and no

@@ -25,6 +25,11 @@ class WorkspaceCreateIn(StrictModel):
     # save path (a shell or management command never sees this schema).
     slug: str = Field(min_length=1, max_length=64, pattern=SLUG_PATTERN)
     display_name: str = Field(min_length=1, max_length=200)
+    # Nest the new workspace under an existing one. The caller must OWN the
+    # parent (directly or by inheritance): creating a child grants the
+    # parent's owners ownership of it, so this is an administrative act on the
+    # parent, not on the new tenant.
+    parent: str | None = Field(default=None, max_length=64, pattern=SLUG_PATTERN)
     # Deliberately no `self_join_domains` here: it is never client input.
     # `self_join_domains` grants standing DOMAIN-WIDE self-join eligibility
     # (every user of that domain may `POST /join` and become editor), so
@@ -44,6 +49,17 @@ class WorkspaceOut(StrictModel):
     self_join_domains: list[str]
     role: str  # the requesting user's role in this workspace
     created_at: dt.datetime
+    # The workspace directly above this one, or None for a root.
+    parent: str | None = None
+    # True when `role` comes from owning an ancestor rather than a membership
+    # row here — the UI shows it so an org owner knows why they can see it.
+    inherited: bool = False
+
+
+class WorkspaceParentIn(StrictModel):
+    """Move a workspace in the tree. `None` makes it a root."""
+
+    parent: str | None = Field(default=None, max_length=64, pattern=SLUG_PATTERN)
 
 
 class JoinableWorkspaceOut(StrictModel):
