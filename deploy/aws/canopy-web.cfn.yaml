@@ -315,6 +315,37 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  # canopy's OAuth discovery documents live at the HOST ROOT, not under /canopy:
+  # RFC 8414 §3.1 and RFC 9728 §3.1 insert the well-known segment between host
+  # and path, so issuer https://labs.connect.dimagi.com/canopy is described at
+  # /.well-known/oauth-authorization-server/canopy, and the MCP resource
+  # …/canopy/api/mcp/ at /.well-known/oauth-protected-resource/canopy/api/mcp/.
+  # Without this rule the listener's default sends them to connect-labs, which
+  # 404s, and no standards client (Claude Code, another MCP client, Test
+  # connection) can discover canopy as a host (2026-09-28). Exact segments, not
+  # `canopy*`, so a future /canopy-something app is never swallowed.
+  #
+  # APPLIED WITH ADMIN CREDENTIALS, not by the pipeline: the per-app deploy roles
+  # (deploy/aws/deploy_roles.py) deliberately cannot write listener rules — a role
+  # that could add one could route another app's paths to itself. An unchanged
+  # rule costs the pipeline nothing (CloudFormation makes no call for it), so
+  # only a CHANGE to this resource needs an admin `aws cloudformation deploy`.
+  WellKnownListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListenerArn
+      Priority: 28
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/.well-known/oauth-authorization-server/canopy"
+            - "/.well-known/oauth-authorization-server/canopy/*"
+            - "/.well-known/oauth-protected-resource/canopy"
+            - "/.well-known/oauth-protected-resource/canopy/*"
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
