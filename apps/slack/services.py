@@ -37,7 +37,7 @@ from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
-from . import client
+from . import client, window
 from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,8 @@ STALE = "stale"
 MEMBERS_ONLY = "members_only"
 #: A reply in a thread whose shared session has since been closed.
 SESSION_CLOSED = "session_closed"
+#: A "read back N min" ask canopy would not, or could not, read the channel for.
+WINDOW_REFUSED = "window_refused"
 # Sending waiting work to a cloud runner, and the ways that can go.
 MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
     "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
@@ -195,7 +197,7 @@ def tenant_sessions(installation: SlackInstallation):
     return Session.objects.filter(workspace_id__in=installation.workspace_ids())
 
 
-def log_workspace(installation: SlackInstallation, outcome: "Outcome | None" = None) -> str | None:
+def log_workspace(installation: SlackInstallation, outcome: Outcome | None = None) -> str | None:
     """Where to log something about this message: the tenant it resolved to, else
     the Slack's home (earliest-linked) tenant. Never an access decision."""
     if outcome is not None:
@@ -437,9 +439,66 @@ def handle_message(inbound: Inbound) -> Outcome:
         return refusal
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
+    title = prompt
+    minutes, ask = window.parse(prompt)
+    if minutes is not None:
+        prompt, refusal = _with_window(installation, principal, agent, inbound, minutes, ask)
+        if refusal is not None:
+            return refusal
+        title = f"Slack: last {minutes} min" + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
-                                      title=prompt)
+                                      title=title)
     return _send(session, created, agent, principal, prompt, inbound)
+
+
+def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
+                 inbound: Inbound, minutes: int, ask: str) -> tuple[str, Outcome | None]:
+    """The ask, with the channel's last `minutes` in front of it (see `window`).
+
+    Members only: the window can hold a private channel's messages, and a
+    contact's session is one no member can open — nobody could check what it
+    was handed. The channel is `inbound.channel_id`, from the verified event.
+    """
+    if principal.user is None:
+        return "", Outcome(WINDOW_REFUSED, "Only members of this canopy workspace can ask an agent "
+                           "to read back the channel.", agent=agent, workspace_id=agent.workspace_id)
+    if inbound.is_dm:
+        return "", Outcome(WINDOW_REFUSED, "Reading back works in a channel, not a DM — mention "
+                           f"`{agent.slug}` in the channel the conversation is in.", agent=agent,
+                           workspace_id=agent.workspace_id)
+    try:
+        lines = window.fetch(installation.bot_token, channel_id=inbound.channel_id, minutes=minutes,
+                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts)
+    except client.SlackApiError as e:
+        _record_window(agent, principal, inbound, minutes, 0, error=e.error)
+        return "", Outcome(WINDOW_REFUSED, f"canopy couldn't read this channel ({e.error}). "
+                           "If it's private, invite the canopy app to it first.", agent=agent,
+                           workspace_id=agent.workspace_id)
+    _record_window(agent, principal, inbound, minutes, window.count(lines))
+    material = window.render(installation.bot_token, lines, channel_id=inbound.channel_id, minutes=minutes)
+    return f"{material}\n\n{ask or window.DEFAULT_ASK}", None
+
+
+def _record_window(agent: Agent, principal: Principal, inbound: Inbound, minutes: int, n: int,
+                   *, error: str = "") -> None:
+    """Every read leaves a row: who asked, which channel, how far back, how much."""
+    from apps.events import services as events_services
+    from apps.events.models import Event
+
+    try:
+        events_services.record([{
+            "source": "slack",
+            "kind": "slack.window_read" if not error else "slack.window_failed",
+            "level": Event.INFO if not error else Event.WARN,
+            "key": f"window:{inbound.channel_id}:{inbound.ts}",
+            "summary": (f"{principal.user.email} read back {minutes} min of <#{inbound.channel_id}> "
+                        f"for {agent.slug}: " + (f"failed ({error})" if error else f"{n} message(s)"))[:500],
+            "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
+                        "user": principal.user.pk, "agent": agent.slug, "minutes": minutes,
+                        "messages": n, "error": error},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
+        logger.exception("could not record a Slack window read")
 
 
 def _continue_shared(session: Session, principal: Principal, text: str, inbound: Inbound) -> Outcome:
