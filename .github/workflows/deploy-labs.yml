@@ -436,6 +436,57 @@ jobs:
           fi
           echo "Rollout complete — new tasks running and healthy."
 
+      - name: Deploy timeline (where the rollout's time went)
+        # The CloudFormation step has been a flat ~10.4 min on every deploy since
+        # at least 2026-08-13 — and #721's drain/health-check tuning (2026-09-09)
+        # did not move it by a second, so the cost is somewhere nobody has looked.
+        # This prints the AWS-side timeline of THIS deploy, relative to the step's
+        # start, so the answer is in the Actions log instead of needing someone
+        # with AWS access to go and read it. Diagnostic only: never fails the job.
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from datetime import datetime, timezone, timedelta
+
+          def aws(*args):
+              out = subprocess.run(["aws", *args, "--output", "json"], capture_output=True, text=True)
+              if out.returncode:
+                  print(f"(aws {' '.join(args[:2])} failed: {out.stderr.strip()[:300]})")
+                  return None
+              return json.loads(out.stdout or "null")
+
+          def ts(s):
+              return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+
+          since = datetime.now(timezone.utc) - timedelta(minutes=25)
+          rows = []
+          ev = aws("cloudformation", "describe-stack-events", "--stack-name", "${{ env.CFN_STACK }}",
+                   "--max-items", "80") or {}
+          for e in ev.get("StackEvents", []):
+              t = ts(e["Timestamp"])
+              if t >= since:
+                  rows.append((t, "CFN", f'{e["LogicalResourceId"]} {e["ResourceStatus"]} {e.get("ResourceStatusReason") or ""}'.strip()))
+          svc = (aws("ecs", "describe-services", "--cluster", "${{ env.ECS_CLUSTER }}",
+                     "--services", "${{ env.ECS_SERVICE }}") or {}).get("services") or [{}]
+          for e in svc[0].get("events", [])[:40]:
+              t = ts(e["createdAt"])
+              if t >= since:
+                  rows.append((t, "ECS", e["message"]))
+          for d in svc[0].get("deployments", []):
+              rows.append((ts(d["createdAt"]), "DEP", f'{d.get("status")} {d.get("rolloutState")} created taskdef={d["taskDefinition"].rsplit("/",1)[-1]}'))
+              rows.append((ts(d["updatedAt"]), "DEP", f'{d.get("status")} {d.get("rolloutState")} last update — {d.get("rolloutStateReason","")}'))
+          if not rows:
+              print("No AWS events in the last 25 minutes."); raise SystemExit
+          rows.sort()
+          t0 = rows[0][0]
+          lines = [f"+{(t - t0).total_seconds():6.0f}s  {t:%H:%M:%S}  {src}  {msg}" for t, src, msg in rows]
+          print("\n".join(lines))
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("### Deploy timeline\n\n```\n" + "\n".join(lines) + "\n```\n\n")
+          PY
+
       - name: Deployment summary
         run: |
           {
