@@ -130,6 +130,21 @@ ARRIVAL_AGENT_FIELD = "agent_slug"
 AS_METADATA_WELL_KNOWN = "oauth-authorization-server"      # RFC 8414
 PRM_WELL_KNOWN = "oauth-protected-resource"                # RFC 9728
 
+#: The live probe (a canopy extension, optional for a host). The RFC 8414
+#: metadata field naming the host's probe endpoint — present only while the
+#: host has a probe identity configured.
+PROBE_ENDPOINT_METADATA_FIELD = "canopy_probe_endpoint"
+#: The claim a probe ID-JAG carries (``true``), so a host's audit can tell probe
+#: traffic from a real visitor's. Never on an ID-JAG issued for a visitor.
+PROBE_CLAIM = "canopy_probe"
+#: Form fields that would name WHO or WHAT a probe is for. The probe identity is
+#: the host's to fix, so a request carrying any of these is refused rather than
+#: silently ignored — a caller that thinks it chose is a caller that is wrong.
+PROBE_FORBIDDEN_FIELDS = frozenset({
+    "sub", "subject", "login_hint", "user", "user_id", "username", "requested_subject",
+    "assertion", "id_jag", "tool", "arguments",
+})
+
 #: RFC 6749 / RFC 9449 error codes a host's token endpoint answers with.
 OAUTH_ERRORS = frozenset({
     "invalid_request", "invalid_client", "invalid_grant", "invalid_scope",

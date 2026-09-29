@@ -13,6 +13,7 @@ from ..host.client_keys import ClientKeyResolver
 from ..host.config import HostNotConfigured
 from ..host.grant import GrantHandler, GrantRefused
 from ..host.metadata import authorization_server_metadata, protected_resource_metadata
+from ..host.probe import ProbeDisabled, ProbeHandler
 from ..host.signing import MintFailed, arrival_payload, mint_contact_token
 from . import conf
 from .stores import DjangoJtiStore, DjangoTokenStore
@@ -61,6 +62,37 @@ def token_endpoint(request):
         refused = GrantRefused("unsupported_grant_type", "Only the jwt-bearer grant is served here.")
         return _json(refused.body(), refused.status, refused.headers())
     return redeem(request)
+
+
+def probe_handler() -> ProbeHandler:
+    from django.core.cache import cache
+
+    return ProbeHandler(
+        conf.get_host_config(),
+        jti_store=DjangoJtiStore(),
+        client_keys=ClientKeyResolver(cache=cache),
+        subject_active=conf.subject_active(),
+    )
+
+
+@csrf_exempt
+@require_POST
+def probe_endpoint(request):
+    """canopy's live probe: a real ID-JAG for this host's configured probe
+    principal (``CANOPY_HOST["PROBE"]``), for canopy's client ONLY. 404 while no
+    probe is configured. Never logs the form."""
+    try:
+        result = probe_handler().handle(request.POST, request.headers.get(contract.DPOP_HEADER))
+    except (ProbeDisabled, HostNotConfigured):
+        return _json({"error": "not_found", "error_description": "No probe is configured here."}, 404,
+                     {"Cache-Control": "no-store"})
+    except GrantRefused as refused:
+        return _json(refused.body(), refused.status, refused.headers())
+    except Exception:  # noqa: BLE001 - a malformed key is a deployment fault, not a 500 with a trace
+        log.exception("the canopy probe endpoint could not answer")
+        return _json({"error": "server_error", "error_description": "The probe could not run."}, 500,
+                     {"Cache-Control": "no-store"})
+    return _json(result.body(), 200, result.headers())
 
 
 def jwt_bearer_view(fallback):

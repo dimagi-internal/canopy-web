@@ -18,4 +18,7 @@ urlpatterns = [
     path("token/", views.token_endpoint, name="token"),
     path("jwks.json", views.jwks, name="jwks"),
     path("panel-token/", views.panel_token, name="panel_token"),
+    # canopy's live probe; 404s unless CANOPY_HOST["PROBE"] is set, and its
+    # public URL must equal PROBE["ENDPOINT"] (a DPoP proof names it).
+    path("probe/", views.probe_endpoint, name="probe"),
 ]

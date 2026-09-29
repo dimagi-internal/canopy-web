@@ -21,9 +21,24 @@ through a transport you can replace (``fetch_json``, ``post_form``,
   that a replayed proof is refused.
 * ``run(...)`` — whichever of those the arguments allow, as one ``Report``.
 
+The LIVE grant (``canopy_sdk.conformance.live``), for a host with a probe
+identity (``canopy_sdk.host.ProbeIdentity``): ``request_probe`` /
+``check_live_grant`` obtain and redeem a real probe ID-JAG, and
+``check_probe_tool`` / ``check_out_of_scope_refused`` / ``check_requires_dpop``
+assert (a) the probe tool succeeds, (b) a tool outside the scope is refused,
+(c) the call without a valid DPoP proof is refused. ``run_live`` runs them all.
+
 For a host's own CI, ``canopy_sdk.conformance.pytest_plugin`` provides fixtures
 (opt in with ``pytest_plugins = ["canopy_sdk.conformance.pytest_plugin"]``).
 """
 from .checks import Check, Report, check_client, check_grant, check_jwks, check_mcp, check_metadata, run
+from .live import (
+    LiveGrant, ProbeError, ProbeGrant, check_live_grant, check_out_of_scope_refused, check_probe_tool,
+    check_requires_dpop, discover_probe_endpoint, request_probe, run_live,
+)
 
-__all__ = ["Check", "Report", "check_client", "check_grant", "check_jwks", "check_mcp", "check_metadata", "run"]
+__all__ = [
+    "Check", "LiveGrant", "ProbeError", "ProbeGrant", "Report", "check_client", "check_grant", "check_jwks",
+    "check_live_grant", "check_mcp", "check_metadata", "check_out_of_scope_refused", "check_probe_tool",
+    "check_requires_dpop", "discover_probe_endpoint", "request_probe", "run", "run_live",
+]

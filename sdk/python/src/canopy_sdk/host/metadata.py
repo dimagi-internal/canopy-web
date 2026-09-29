@@ -34,6 +34,12 @@ def authorization_server_metadata(config: HostConfig, base: dict | None = None) 
     doc["token_endpoint_auth_signing_alg_values_supported"] = list(contract.GRANT_ALGORITHMS)
     doc["dpop_signing_alg_values_supported"] = list(contract.GRANT_ALGORITHMS)
     doc["scopes_supported"] = _union(doc.get("scopes_supported"), *sorted(config.scope_tools))
+    if config.probe_enabled:
+        # A namespaced extension field (RFC 8414 §2 allows them): where canopy
+        # asks for a probe ID-JAG. Absent while no probe identity is set.
+        doc[contract.PROBE_ENDPOINT_METADATA_FIELD] = config.probe.endpoint
+    else:
+        doc.pop(contract.PROBE_ENDPOINT_METADATA_FIELD, None)
     return doc
 
 

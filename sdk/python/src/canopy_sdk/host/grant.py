@@ -178,8 +178,11 @@ class GrantHandler:
 
     # --- the two JWTs ----------------------------------------------------------------
 
-    def _verify_client_assertion(self, assertion: str, client_id: str) -> tuple[dict, str]:
-        """canopy's ``private_key_jwt``, against the keys its metadata names."""
+    def _verify_client_assertion(self, assertion: str, client_id: str,
+                                 audience: list[str] | None = None) -> tuple[dict, str]:
+        """canopy's ``private_key_jwt``, against the keys its metadata names.
+        ``audience`` defaults to this host's issuer or token endpoint; the probe
+        endpoint passes its own URL instead of the token endpoint."""
         try:
             header = unverified_header(assertion)
         except ContractError as exc:
@@ -189,7 +192,7 @@ class GrantHandler:
             key = public_key_for(jwk, header["alg"])
             claims = decode(
                 assertion, key, algorithms=[header["alg"]],
-                audience=[self.config.issuer, self.config.token_endpoint],
+                audience=audience or [self.config.issuer, self.config.token_endpoint],
                 required=contract.CLIENT_ASSERTION_REQUIRED_CLAIMS,
                 leeway=contract.LEEWAY_SECONDS,
             )
@@ -280,7 +283,11 @@ class GrantHandler:
         )
         self.token_store.save(token)
         self._prune()
-        log.info("delegated token issued: sub=%s client=%s scope=%s", token.subject, client_id, token.scope)
+        # `probe=True` marks canopy's live probe (an ID-JAG carrying
+        # `canopy_probe: true`, which only this host's probe endpoint signs), so
+        # an audit can tell it from a real visitor.
+        log.info("delegated token issued: sub=%s client=%s scope=%s probe=%s", token.subject, client_id,
+                 token.scope, grant.get(contract.PROBE_CLAIM) is True)
         return GrantResult(access_token=raw, token=token)
 
     def _prune(self) -> None:
