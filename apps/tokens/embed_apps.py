@@ -49,12 +49,16 @@ class EmbedAppError(Exception):
 
 
 def owned_workspace_slugs(user) -> set[str]:
-    """Workspaces this user OWNS. Editors and viewers are not administrators."""
-    return set(
+    """Workspaces this user OWNS — directly, or by owning an ancestor in the
+    workspace tree. Editors and viewers are not administrators."""
+    from apps.workspaces import services as wsvc
+
+    direct = set(
         WorkspaceMembership.objects.filter(
             user=user, role=WorkspaceMembership.OWNER
         ).values_list("workspace_id", flat=True)
     )
+    return direct | wsvc.inherited_owner_slugs(user)
 
 
 def require_owner(user, slug: str) -> None:

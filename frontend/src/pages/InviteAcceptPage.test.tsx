@@ -88,6 +88,8 @@ describe('InviteAcceptPage', () => {
       self_join_domains: [],
       role: 'editor',
       created_at: new Date().toISOString(),
+      parent: null,
+      inherited: false,
     })
 
     renderPage()

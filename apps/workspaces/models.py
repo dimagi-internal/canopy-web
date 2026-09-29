@@ -70,6 +70,24 @@ class Workspace(models.Model):
         related_name="workspaces_created",
     )
     settings = models.JSONField(default=dict, blank=True)
+    # Workspaces form a TREE: an org (`dimagi`) sits above its divisions
+    # (`connect`, `strategy`, …). What the tree grants is deliberately narrow —
+    # an OWNER of an ancestor is an owner of every descendant, and nothing else
+    # flows down. A parent's editors and viewers get no access to a child: the
+    # org workspace is self-join for the whole email domain, so inheriting
+    # editor would hand every employee every division's agents, which is the
+    # exact isolation a division workspace exists to provide. Resolution lives
+    # in `services.membership` (the sole authorizer), not here.
+    #
+    # PROTECT: deleting a parent must not silently orphan (or cascade-delete)
+    # its divisions; the delete endpoint names the children in the way.
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="children",
+    )
     # The tenant's SHARED 1Password vault, and a service-account token scoped to
     # it. Sibling of Agent.op_vault / op_sa_token_enc one level up: an agent's
     # own secrets live in Agent-<Slug>, but the credentials every agent in this
@@ -124,7 +142,44 @@ class Workspace(models.Model):
             validate_unique=False,
             validate_constraints=False,
         )
+        self._check_no_cycle()
         super().save(*args, **kwargs)
+
+    def ancestor_slugs(self) -> list[str]:
+        """Slugs from the direct parent up to the root, nearest first.
+
+        Bounded by MAX_DEPTH so a cycle written around `save()` (a raw UPDATE)
+        degrades to a truncated walk instead of an infinite loop inside an
+        authorization check."""
+        out: list[str] = []
+        pid = self.parent_id
+        seen = {self.slug}
+        while pid and pid not in seen and len(out) < MAX_DEPTH:
+            out.append(pid)
+            seen.add(pid)
+            pid = Workspace.objects.filter(slug=pid).values_list("parent_id", flat=True).first()
+        return out
+
+    def _check_no_cycle(self) -> None:
+        from django.core.exceptions import ValidationError
+
+        if not self.parent_id:
+            return
+        if self.parent_id == self.slug:
+            raise ValidationError({"parent": "a workspace cannot be its own parent"})
+        pid, steps = self.parent_id, 0
+        while pid and steps <= MAX_DEPTH:
+            if pid == self.slug:
+                raise ValidationError({"parent": "that parent would create a cycle"})
+            pid = Workspace.objects.filter(slug=pid).values_list("parent_id", flat=True).first()
+            steps += 1
+        if pid:
+            raise ValidationError({"parent": f"workspace tree deeper than {MAX_DEPTH}"})
+
+
+#: How deep the workspace tree may be walked. An org → division → team tree is
+#: three; this is headroom, and a hard stop against a corrupted cycle.
+MAX_DEPTH = 8
 
 
 class WorkspaceMembership(models.Model):

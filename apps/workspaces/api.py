@@ -26,6 +26,7 @@ from .schemas import (
     SharedVaultOut,
     WorkspaceCreateIn,
     WorkspaceOut,
+    WorkspaceParentIn,
 )
 
 router = Router(auth=session_auth, tags=["workspaces"])
@@ -63,14 +64,20 @@ _SET_MEMBER_ROLE_ERROR_MESSAGES = {
 }
 
 
-def _out(ws: Workspace, role: str) -> WorkspaceOut:
+def _out(ws: Workspace, role: str, *, inherited: bool = False) -> WorkspaceOut:
     return WorkspaceOut(
         slug=ws.slug,
         display_name=ws.display_name,
         self_join_domains=ws.self_join_domains,
         role=role,
         created_at=ws.created_at,
+        parent=ws.parent_id,
+        inherited=inherited,
     )
+
+
+def _m_out(m: WorkspaceMembership) -> WorkspaceOut:
+    return _out(m.workspace, m.role, inherited=getattr(m, "inherited", False))
 
 
 def _membership_or_404(user, slug: str) -> WorkspaceMembership:
@@ -118,9 +125,14 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
         raise HttpError(403, "not eligible to create a workspace")
     if Workspace.objects.filter(slug=payload.slug).exists():
         raise HttpError(409, f"workspace '{payload.slug}' already exists")
+    if payload.parent:
+        # Owner of the parent only: every owner of the parent becomes an owner
+        # of the child, so nesting is the parent's administrators' call.
+        _require_role(request.user, payload.parent, WorkspaceMembership.OWNER)
     ws = Workspace.objects.create(
         slug=payload.slug,
         display_name=payload.display_name,
+        parent_id=payload.parent or None,
         created_by=request.user,
         # self_join_domains is deliberately NOT settable from the request —
         # see WorkspaceCreateIn. Only `ensure_default_workspace()` sets it.
@@ -133,18 +145,42 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
 
 @router.get("/", response=list[WorkspaceOut], summary="List my workspaces",)
 def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
-    memberships = (
-        WorkspaceMembership.objects.filter(user=request.user)
-        .select_related("workspace")
-        .order_by("-workspace__created_at")
-    )
-    return [_out(m.workspace, m.role) for m in memberships]
+    # Direct memberships PLUS workspaces owned by inheritance (descendants of
+    # one the caller owns) — read through `services`, the sole authorizer.
+    slugs = services.user_workspace_slugs(request.user)
+    out = []
+    for ws in Workspace.objects.filter(slug__in=slugs).order_by("-created_at"):
+        m = services.membership(request.user, ws)
+        if m is not None:
+            out.append(_m_out(m))
+    return out
 
 
 @router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)
 def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     m = _membership_or_404(request.user, slug)
-    return _out(m.workspace, m.role)
+    return _m_out(m)
+
+
+@router.put("/{slug}/parent", response=WorkspaceOut, summary="Move a workspace in the tree (owner-only)",)
+def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspaceParentIn) -> WorkspaceOut:
+    """Nest `slug` under `parent`, or make it a root with `parent: null`.
+
+    Owner of BOTH ends: of the workspace being moved (it changes who
+    administers it) and of the new parent (its owners gain this workspace).
+    A cycle is refused by `Workspace.save` and surfaces as 422."""
+    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    if payload.parent:
+        _require_role(request.user, payload.parent, WorkspaceMembership.OWNER)
+    ws = m.workspace
+    ws.parent_id = payload.parent or None
+    from django.core.exceptions import ValidationError
+
+    try:
+        ws.save()
+    except ValidationError as exc:
+        raise HttpError(422, "; ".join(exc.messages))
+    return _m_out(services.membership(request.user, ws))
 
 
 @router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",)
@@ -175,7 +211,7 @@ def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     except services.JoinError:
         raise HttpError(404, f"workspace '{slug}' not found") from None
     m = _membership_or_404(request.user, ws.slug)
-    return _out(ws, m.role)
+    return _m_out(m)
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",)
@@ -203,6 +239,13 @@ def delete_workspace(request: HttpRequest, slug: str):
     ws = Workspace.objects.filter(slug=slug).first()
     if ws is None:
         raise HttpError(404, f"workspace '{slug}' not found")
+    child_slugs = sorted(ws.children.values_list("slug", flat=True))
+    if child_slugs:
+        raise HttpError(
+            409,
+            f"workspace '{slug}' has {len(child_slugs)} child workspace(s): "
+            f"{', '.join(child_slugs)}. Delete or move them first.",
+        )
     agent_slugs = sorted(ws.agents.values_list("slug", flat=True))
     if agent_slugs:
         raise HttpError(
