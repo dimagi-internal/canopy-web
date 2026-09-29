@@ -138,7 +138,7 @@ STALE = "stale"
 MEMBERS_ONLY = "members_only"
 #: A reply in a thread whose shared session has since been closed.
 SESSION_CLOSED = "session_closed"
-#: A "read back N min" ask canopy would not, or could not, read the channel for.
+#: A `--history N` ask canopy would not, or could not, read the channel for.
 WINDOW_REFUSED = "window_refused"
 # Sending waiting work to a cloud runner, and the ways that can go.
 MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
@@ -440,7 +440,10 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt
-    minutes, ask = window.parse(prompt)
+    try:
+        minutes, ask = window.parse(prompt)
+    except window.HistoryFlagError as e:
+        return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
     if minutes is not None:
         prompt, refusal = _with_window(installation, principal, agent, inbound, minutes, ask)
         if refusal is not None:
@@ -461,9 +464,9 @@ def _with_window(installation: SlackInstallation, principal: Principal, agent: A
     """
     if principal.user is None:
         return "", Outcome(WINDOW_REFUSED, "Only members of this canopy workspace can ask an agent "
-                           "to read back the channel.", agent=agent, workspace_id=agent.workspace_id)
+                           "to read the channel's history.", agent=agent, workspace_id=agent.workspace_id)
     if inbound.is_dm:
-        return "", Outcome(WINDOW_REFUSED, "Reading back works in a channel, not a DM — mention "
+        return "", Outcome(WINDOW_REFUSED, "`--history` works in a channel, not a DM — mention "
                            f"`{agent.slug}` in the channel the conversation is in.", agent=agent,
                            workspace_id=agent.workspace_id)
     try:
@@ -491,7 +494,7 @@ def _record_window(agent: Agent, principal: Principal, inbound: Inbound, minutes
             "kind": "slack.window_read" if not error else "slack.window_failed",
             "level": Event.INFO if not error else Event.WARN,
             "key": f"window:{inbound.channel_id}:{inbound.ts}",
-            "summary": (f"{principal.user.email} read back {minutes} min of <#{inbound.channel_id}> "
+            "summary": (f"{principal.user.email} read {minutes} min of <#{inbound.channel_id}> "
                         f"for {agent.slug}: " + (f"failed ({error})" if error else f"{n} message(s)"))[:500],
             "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
                         "user": principal.user.pk, "agent": agent.slug, "minutes": minutes,

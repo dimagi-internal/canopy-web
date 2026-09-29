@@ -1,5 +1,5 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
-"""The channel window — `@canopy hal read back 10 min <ask>`.
+"""The channel window — `@canopy hal --history 10 <ask>`.
 
 Driven through the real signed front door, with Slack faked at the `requests`
 boundary as in test_slack.py. What is pinned is the spec's list of guarantees
@@ -93,32 +93,44 @@ def _turn() -> Turn:
 # ---- parsing -----------------------------------------------------------------
 
 @pytest.mark.parametrize("text, minutes, ask", [
-    ("read back 10 minutes and start a session on it", 10, "start a session on it"),
-    ("read back", window.DEFAULT_MINUTES, ""),
-    ("read the last 15 min: what did we decide?", 15, "what did we decide?"),
-    ("read back 5m, summarise", 5, "summarise"),
-    ("Read back the last 20 minutes of this channel and file an issue", 20, "file an issue"),
-    ("read back 600 minutes", window.MAX_MINUTES, ""),
-    ("catch up on the last 10 min", 10, ""),
+    ("--history 10 pick this up", 10, "pick this up"),
+    ("--history 10", 10, ""),
+    ("--history=15 what did we decide?", 15, "what did we decide?"),
+    ("—history 5 summarise", 5, "summarise"),         # Slack auto-corrects -- to an em dash
+    ("--HISTORY 60 file an issue", 60, "file an issue"),
 ])
-def test_window_asks_are_recognised(text, minutes, ask):
+def test_the_flag_is_recognised(text, minutes, ask):
     assert window.parse(text) == (minutes, ask)
 
 
 @pytest.mark.parametrize("text", [
-    "read the last email from Zohaib",
-    "can you read back through the PR?",
-    "please read back 10 minutes",       # not at the start — an ordinary ask
+    "--history",                # no minutes
+    "--history fix the export", # no minutes
+    "--history 10m",            # minutes are a bare number
+    "--history 1h",
+    "--history 0",
+    "--history 61",             # over the cap: refused, not clamped
+    "--history 2.5",
+])
+def test_a_malformed_flag_is_refused_not_guessed(text):
+    with pytest.raises(window.HistoryFlagError):
+        window.parse(text)
+
+
+@pytest.mark.parametrize("text", [
+    "read back 10 minutes and start a session",   # English is never the command
+    "please --history 10",                        # the flag is only the first token
+    "--historical data please",
     "fix the export timeout",
 ])
-def test_ordinary_asks_are_not_windows(text):
+def test_anything_else_is_an_ordinary_ask(text):
     assert window.parse(text) == (None, text)
 
 
 # ---- the front door ------------------------------------------------------------
 
 def test_read_back_puts_the_channel_in_front_of_the_ask(channel, linked, hal):
-    assert mention("<@UBOT> hal read back 10 min and pick this up", ts=_ts(0)).status_code == 200
+    assert mention("<@UBOT> hal --history 10 pick this up", ts=_ts(0)).status_code == 200
     turn = _turn()
     prompt = turn.prompt
     assert "<slack-window" in prompt and "</slack-window>" in prompt
@@ -132,37 +144,39 @@ def test_read_back_puts_the_channel_in_front_of_the_ask(channel, linked, hal):
 
 
 def test_only_the_channel_the_request_came_from_is_read(channel, linked, hal):
-    mention("<@UBOT> hal read back 10 min in <#CFINANCE|finance>", ts=_ts(0))
+    mention("<@UBOT> hal --history 10 in <#CFINANCE|finance>", ts=_ts(0))
     read = {p["channel"] for p in channel.said("conversations.history")}
     read |= {p["channel"] for p in channel.said("conversations.replies")}
     assert read == {"C1"}
 
 
-def test_the_window_is_capped_server_side(channel, linked, hal):
-    mention("<@UBOT> hal read back 5000 minutes", ts=_ts(0))
-    (call,) = channel.said("conversations.history")
-    assert float(call["oldest"]) >= time.time() - window.MAX_MINUTES * 60 - 5
+def test_over_the_cap_is_refused_and_reads_nothing(channel, linked, hal):
+    mention("<@UBOT> hal --history 5000", ts=_ts(0))
+    assert not channel.said("conversations.history")
+    assert not Turn.objects.exists()
+    told = channel.said("chat.postEphemeral") + channel.said("chat.postMessage")
+    assert any("Usage" in (p.get("text") or "") for p in told)
 
 
 def test_the_turn_carries_no_slack_token(channel, linked, hal):
-    mention("<@UBOT> hal read back 10 min", ts=_ts(0))
+    mention("<@UBOT> hal --history 10", ts=_ts(0))
     assert "xoxb" not in _turn().prompt
 
 
-def test_a_bare_read_back_gets_the_default_ask(channel, linked, hal):
-    mention("<@UBOT> hal read back", ts=_ts(0))
+def test_the_flag_alone_gets_the_default_ask(channel, linked, hal):
+    mention("<@UBOT> hal --history 10", ts=_ts(0))
     assert _turn().prompt.rstrip().endswith(window.DEFAULT_ASK)
 
 
 def test_every_read_is_audited(channel, linked, hal, alice):
-    mention("<@UBOT> hal read back 10 min", ts=_ts(0))
+    mention("<@UBOT> hal --history 10", ts=_ts(0))
     ev = Event.objects.get(kind="slack.window_read")
     assert ev.payload["channel"] == "C1" and ev.payload["minutes"] == 10
     assert ev.payload["messages"] == 4 and ev.payload["user"] == alice.pk
 
 
 def test_the_thread_the_ask_is_in_is_read_whole(channel, linked, hal):
-    mention("<@UBOT> hal read back 1 min", ts=_ts(0), thread_ts=_ts(6))
+    mention("<@UBOT> hal --history 1", ts=_ts(0), thread_ts=_ts(6))
     whole = [p for p in channel.said("conversations.replies") if p["ts"] == _ts(6)]
     assert whole and "oldest" not in whole[0]
     assert "probably the new index" in _turn().prompt
@@ -176,7 +190,7 @@ def test_an_ordinary_ask_reads_nothing(channel, linked, hal):
 
 def test_a_contact_cannot_read_back(channel, installation, hal):
     # BOB is in the Slack but linked to no canopy member: a contact.
-    mention("<@UBOT> hal read back 10 min", user=BOB, ts=_ts(0))
+    mention("<@UBOT> hal --history 10", user=BOB, ts=_ts(0))
     assert not channel.said("conversations.history")
     assert not Turn.objects.exists()
 
@@ -192,7 +206,7 @@ def test_a_channel_canopy_cannot_read_says_why(channel, linked, hal):
 
     import unittest.mock as mock
     with mock.patch("apps.slack.client.requests.post", side_effect=failing):
-        mention("<@UBOT> hal read back 10 min", ts=_ts(0))
+        mention("<@UBOT> hal --history 10", ts=_ts(0))
     assert not Turn.objects.exists()
     assert Event.objects.filter(kind="slack.window_failed").exists()
     told = channel.said("chat.postEphemeral") + channel.said("chat.postMessage")
