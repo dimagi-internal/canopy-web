@@ -6,6 +6,7 @@ import {
   declareSlackAgent,
   getSlackConfig,
   setSlackConfigToken,
+  setSlackHistory,
   syncSlackCommands,
   syncSummary,
   type SlackConfigOut,
@@ -23,10 +24,17 @@ export function SlackSettingsPage(): JSX.Element {
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  // The history form's draft — seeded from the server, saved explicitly.
+  const [historyOn, setHistoryOn] = useState(false)
+  const [historyMinutes, setHistoryMinutes] = useState('')
 
   const load = useCallback(() => {
     getSlackConfig(workspace)
-      .then(setConfig)
+      .then((c) => {
+        setConfig(c)
+        setHistoryOn(c.history.enabled)
+        setHistoryMinutes(String(c.history.max_minutes))
+      })
       .catch((e: unknown) => setNote({ tone: 'error', text: e instanceof Error ? e.message : 'Failed to load' }))
   }, [workspace])
   useEffect(load, [load])
@@ -220,6 +228,68 @@ export function SlackSettingsPage(): JSX.Element {
               </>
             )}
           </div>
+        </section>
+      )}
+
+      {config.connected && (
+        <section className="mt-8" data-testid="slack-history">
+          <h2 className="text-[15px] font-semibold text-foreground">Channel history</h2>
+          <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
+            Lets someone start an agent on a conversation that already happened:{' '}
+            <code>@canopy &lt;agent&gt; --history 30 &lt;ask&gt;</code> hands the agent the last 30 minutes of the
+            channel it was asked in (only that channel, and only when asked). Workspace owners set this.
+          </p>
+          <form
+            className="rounded-lg border border-border bg-card p-4 text-[13px]"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const minutes = Number(historyMinutes)
+              void act(async () => {
+                const c = await setSlackHistory(workspace, historyOn, minutes)
+                return c.history.enabled
+                  ? `History reads allowed, up to ${c.history.max_minutes} minutes back.`
+                  : 'History reads are off.'
+              })
+            }}
+          >
+            <label className="flex items-center gap-2 text-foreground">
+              <input
+                type="checkbox"
+                checked={historyOn}
+                onChange={(e) => setHistoryOn(e.target.checked)}
+                aria-label="Allow history read"
+              />
+              Allow history read
+            </label>
+            <label className="mt-3 flex items-center gap-2 text-foreground-secondary">
+              How far back
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                step={1}
+                value={historyMinutes}
+                disabled={!historyOn}
+                onChange={(e) => setHistoryMinutes(e.target.value)}
+                aria-label="How far back, in minutes"
+                className="w-24 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground disabled:opacity-50"
+              />
+              minutes <span className="text-[11px] text-muted-foreground">(at most 1440 — a day)</span>
+            </label>
+            <button
+              type="submit"
+              disabled={
+                busy ||
+                (historyOn === config.history.enabled && historyMinutes === String(config.history.max_minutes)) ||
+                !Number.isInteger(Number(historyMinutes)) ||
+                Number(historyMinutes) < 1 ||
+                Number(historyMinutes) > 1440
+              }
+              className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+            >
+              Save
+            </button>
+          </form>
         </section>
       )}
 

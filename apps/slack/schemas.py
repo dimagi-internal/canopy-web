@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from pydantic import Field
+
 from apps.common.schemas import StrictModel
+
+#: The longest history window an owner may allow — a day. A policy the owner
+#: picks inside this, not a second policy.
+HISTORY_MAX_MINUTES_LIMIT = 24 * 60
 
 
 class SlackCommandsOut(StrictModel):
@@ -19,6 +25,18 @@ class SlackAgentOut(StrictModel):
     declared_at: str
 
 
+class SlackHistoryOut(StrictModel):
+    # `--history <minutes>`: may an ask hand the agent the channel's recent
+    # past, and how far back. This workspace's own policy.
+    enabled: bool
+    max_minutes: int
+
+
+class SlackHistoryIn(StrictModel):
+    enabled: bool
+    max_minutes: int = Field(ge=1, le=HISTORY_MAX_MINUTES_LIMIT)
+
+
 class SlackConfigOut(StrictModel):
     workspace: str
     connected: bool
@@ -28,6 +46,7 @@ class SlackConfigOut(StrictModel):
     install_url: str
     commands: SlackCommandsOut
     agent: SlackAgentOut
+    history: SlackHistoryOut
 
 
 class SlackConfigTokenIn(StrictModel):

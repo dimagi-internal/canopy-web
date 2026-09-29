@@ -14,8 +14,10 @@ said. Design: `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`
 2. **Only the channel the request came from.** The caller passes the channel id
    from the verified event; nothing in the message text can name another one,
    so `--history 10 in #finance` still reads this channel.
-3. **Window capped here.** 1–60 minutes; asking for more is refused, not
-   clamped. Reading stops at the window and at `MESSAGE_CEILING`.
+3. **Window capped by the workspace's own policy.** Owners set whether history
+   may be read and how far back on the Slack settings page
+   (`SlackWorkspaceLink.history_*`); asking for more is refused, not clamped.
+   Reading also stops at `settings.SLACK_HISTORY_MESSAGE_CEILING`.
 4. **The agent never holds a Slack token.** canopy fetches and renders text; the
    agent gets words, so a prompt-injected "now read the whole channel" has
    nothing to call.
@@ -31,20 +33,25 @@ import re
 import time
 from dataclasses import dataclass, field
 
+from django.conf import settings
+
 from . import client
 
-MAX_MINUTES = 60
-#: Stop reading after this many messages, window or not — a busy channel must
-#: not turn one mention into a thousand-message prompt.
-MESSAGE_CEILING = 300
 _PAGE = 200
+
+
+def message_ceiling() -> int:
+    """Stop reading after this many messages, window or not — a busy channel
+    must not turn one mention into a thousand-message prompt."""
+    return int(settings.SLACK_HISTORY_MESSAGE_CEILING)
 
 #: `--history N`, first token only; N is whole minutes. Slack's clients (and
 #: macOS) auto-correct `--` to an em or en dash, so those are the same flag.
 _FLAG = re.compile(r"^\s*(?:--|—|–)history(?=[\s=]|$)(?:=|\s+)?(?P<arg>\S*)", re.IGNORECASE)
 
-USAGE = (f"Usage: `--history <minutes> <ask>` as the first thing you type — "
-         f"e.g. `--history 10 pick this up`. Minutes are a whole number, 1–{MAX_MINUTES}.")
+def usage(max_minutes: int) -> str:
+    return ("Usage: `--history <minutes> <ask>` as the first thing you type — "
+            f"e.g. `--history 10 pick this up`. Minutes are a whole number, 1–{max_minutes}.")
 
 #: What the agent is asked when the message is only the flag.
 DEFAULT_ASK = ("Read the Slack conversation above and pick up what it needs from you: "
@@ -55,7 +62,12 @@ class HistoryFlagError(ValueError):
     """`--history` was given, but not in a form canopy will act on."""
 
 
-def parse(prompt: str) -> tuple[int | None, str]:
+def has_flag(prompt: str) -> bool:
+    """Whether the ask starts with `--history` at all — well-formed or not."""
+    return bool(_FLAG.match(prompt or ""))
+
+
+def parse(prompt: str, *, max_minutes: int) -> tuple[int | None, str]:
     """(window minutes, the rest of the ask) — or (None, prompt) with no flag.
 
     Raises `HistoryFlagError` for a flag without a whole number of minutes in range: a
@@ -65,8 +77,8 @@ def parse(prompt: str) -> tuple[int | None, str]:
     if not m:
         return None, prompt
     arg = m.group("arg")
-    if not arg.isdigit() or not 1 <= int(arg) <= MAX_MINUTES:
-        raise HistoryFlagError(USAGE if not arg else f"`--history {arg}` — {USAGE}")
+    if not arg.isdigit() or not 1 <= int(arg) <= max_minutes:
+        raise HistoryFlagError(usage(max_minutes) if not arg else f"`--history {arg}` — {usage(max_minutes)}")
     return int(arg), prompt[m.end():].strip()
 
 
@@ -99,9 +111,9 @@ def fetch(token: str, *, channel_id: str, minutes: int, thread_ts: str = "",
     age, because it is the conversation the person is asking from. `skip_ts` is
     the request itself, which the agent receives as its prompt anyway.
     """
-    minutes = max(1, min(int(minutes), MAX_MINUTES))
+    minutes = max(1, int(minutes))
     oldest = f"{(now if now is not None else time.time()) - minutes * 60:.6f}"
-    budget = MESSAGE_CEILING
+    budget = message_ceiling()
     parents = _messages(token, "conversations.history",
                         {"channel": channel_id, "oldest": oldest}, budget=budget)
     budget -= len(parents)
