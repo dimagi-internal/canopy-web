@@ -358,7 +358,14 @@ class CallOutcome:
     * ``tool_error`` — the host answered, and the tool (or the host's scope
       check) refused: a JSON-RPC error or ``isError``;
     * ``unauthorized`` — the host refused the credential (HTTP 401/403);
-    * ``unreachable`` — anything else (transport, 5xx, a malformed answer).
+    * ``server_error`` — the host answered 5xx: it FAILED, it did not refuse;
+    * ``unreachable`` — anything else (transport, a malformed answer).
+
+    The HTTP status outranks the MCP client's own exception: the client turns a
+    401 AND a 500 into the same McpError ("-32603 Server returned an error
+    response"), so classifying by the exception made a crashing host read as a
+    host that correctly refused — the live probe's DPoP check passed on it
+    (found 2026-09-28, the first time the probe ran on labs).
     """
 
     kind: str
@@ -379,13 +386,24 @@ async def probe_call(ctx: SiteContext, tool: str, arguments: dict, *, mode: str 
         async with _client(ctx, mode=mode, statuses=statuses) as client:
             result = await client.call_tool(name, arguments or {}, raise_on_error=False)
     except McpError as exc:
-        return CallOutcome("tool_error", str(getattr(exc, "error", exc))[:200], statuses)
+        return _classify_by_status(statuses) or CallOutcome(
+            "tool_error", str(getattr(exc, "error", exc))[:200], statuses)
     except Exception as exc:  # noqa: BLE001 - classified by what the host answered
-        refused = [s for s in statuses if s in (401, 403)]
-        if refused:
-            return CallOutcome("unauthorized", f"HTTP {refused[0]}", statuses)
-        return CallOutcome("unreachable", type(exc).__name__, statuses)
+        return _classify_by_status(statuses) or CallOutcome("unreachable", type(exc).__name__, statuses)
     if result.is_error:
         text = " ".join(getattr(b, "text", "") or "" for b in (result.content or []))
         return CallOutcome("tool_error", text[:200], statuses)
     return CallOutcome("ok", "", statuses)
+
+
+def _classify_by_status(statuses: list[int]) -> CallOutcome | None:
+    """The outcome an HTTP status settles on its own, or None. A refusal of the
+    credential (401/403) is what the probe WANTS to see without a valid proof;
+    a 5xx is a host failure and must never be mistaken for one."""
+    refused = [s for s in statuses if s in (401, 403)]
+    if refused:
+        return CallOutcome("unauthorized", f"HTTP {refused[0]}", statuses)
+    failed = [s for s in statuses if s >= 500]
+    if failed:
+        return CallOutcome("server_error", f"HTTP {failed[0]}", statuses)
+    return None

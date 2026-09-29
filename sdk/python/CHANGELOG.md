@@ -2,6 +2,13 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.4.1 — 2026-09-28
+
+- **`DPoPGate` refuses a DPoP-bound token presented as a plain `Bearer`** (401
+  `invalid_token`, RFC 9449 §7.1), instead of leaving it to the host's own
+  verifier to fail. A correctly built host already refused it; a looser one let
+  it reach the tool layer. Found by canopy's live probe. `ResourceVerifier.is_bound`.
+
 ## 0.4.0 — 2026-09-28
 
 The live probe: canopy can exercise a REAL grant against a host on a schedule,

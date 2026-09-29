@@ -208,8 +208,9 @@ def _exercise(report: ProbeReport, app, grant, probe, host_gateway) -> None:
     if called.kind == "ok":
         report.add("out_of_scope_refused", "fail", f"{denied} RAN with a {probe.scope} token")
         return
-    if called.kind == "unreachable":
-        report.add("out_of_scope_refused", "fail", f"{denied}: the site did not answer ({called.detail})")
+    if called.kind in ("unreachable", "server_error"):
+        report.add("out_of_scope_refused", "fail", f"{denied}: the site failed rather than refused "
+                                                   f"({called.kind} {called.detail})")
         return
     report.add("out_of_scope_refused", "pass", f"{denied}: {called.kind}{note}")
 
@@ -218,11 +219,15 @@ def _exercise(report: ProbeReport, app, grant, probe, host_gateway) -> None:
     for mode in ("no_proof", "stranger_key", "bearer"):
         results[mode] = async_to_sync(host_gateway.probe_call)(ctx, probe.tool, probe.arguments, mode=mode)
     accepted = [m for m, o in results.items() if o.kind == "ok"]
-    down = [m for m, o in results.items() if o.kind == "unreachable"]
+    # Only a refusal of the CREDENTIAL (401/403) passes. A tool error or a 5xx
+    # without a proof means the call got past (or crashed in) authentication —
+    # both look like "refused" from a distance and neither is.
+    wrong = [f"{m} ({o.kind} {o.detail})".strip() for m, o in results.items()
+             if o.kind not in ("ok", "unauthorized")]
     if accepted:
         report.add("dpop_required", "fail", "the site ACCEPTED the token with " + ", ".join(accepted))
-    elif down:
-        report.add("dpop_required", "fail", "the site did not answer for " + ", ".join(down))
+    elif wrong:
+        report.add("dpop_required", "fail", "not refused as unauthorized: " + "; ".join(wrong))
     else:
         report.add("dpop_required", "pass",
                    "; ".join(f"{m}: {o.kind}{' ' + o.detail if o.detail else ''}" for m, o in results.items()))

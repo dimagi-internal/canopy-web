@@ -124,6 +124,11 @@ class ResourceVerifier:
                 log.warning("pruning used DPoP jtis failed", exc_info=True)
         return jkt
 
+    def is_bound(self, raw: str) -> bool:
+        """Whether ``raw`` is a DPoP-bound token this host issued — known, whatever
+        its state. The gate uses it to refuse one sent as a plain ``Bearer``."""
+        return bool(raw) and self.token_store.get(contract.token_checksum(raw)) is not None
+
     def resolve(self, raw: str, presented_jkt: str | None, *, now: float | None = None) -> DelegatedPrincipal | None:
         """The principal for a live delegated token, else ``None``."""
         if not raw:
