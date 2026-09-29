@@ -72,8 +72,9 @@ class Workspace(models.Model):
     settings = models.JSONField(default=dict, blank=True)
     # Workspaces form a TREE: an org (`dimagi`) sits above its divisions
     # (`connect`, `strategy`, …). What the tree grants is deliberately narrow —
-    # an OWNER of an ancestor is an owner of every descendant, and nothing else
-    # flows down. A parent's editors and viewers get no access to a child: the
+    # an OWNER of an ancestor is an owner of every descendant, and no other
+    # ACCESS flows down (the one config that does is the shared vault — see
+    # `shared_vault_source`; it grants no person anything). A parent's editors and viewers get no access to a child: the
     # org workspace is self-join for the whole email domain, so inheriting
     # editor would hand every employee every division's agents, which is the
     # exact isolation a division workspace exists to provide. Resolution lives
@@ -159,6 +160,27 @@ class Workspace(models.Model):
             seen.add(pid)
             pid = Workspace.objects.filter(slug=pid).values_list("parent_id", flat=True).first()
         return out
+
+    def shared_vault_source(self) -> "Workspace | None":
+        """The workspace whose shared vault this one uses: itself when it has
+        one set, else its nearest ancestor that does, else None.
+
+        The ONE thing besides ownership that flows down the tree. A division is
+        part of its org's tenant, and what the shared vault holds (the gog OAuth
+        clients) is shared by definition, so inheriting it grants no person
+        access to anything — unlike editor/viewer, which the tree deliberately
+        withholds. Without it every new division needs the org's key pasted in
+        again, and rotating that key means N edits (Jonathan, 2026-09-29: point
+        every division at the same Canopy-Shared vault Dimagi and Connect use).
+        A division with its own vault or key set keeps it — nearest wins, and
+        vault + key always come from the SAME workspace, never mixed."""
+        if self.shared_op_vault or self.shared_op_sa_token_enc:
+            return self
+        for slug in self.ancestor_slugs():
+            ws = Workspace.objects.filter(slug=slug).first()
+            if ws is not None and (ws.shared_op_vault or ws.shared_op_sa_token_enc):
+                return ws
+        return None
 
     def _check_no_cycle(self) -> None:
         from django.core.exceptions import ValidationError

@@ -11314,6 +11314,11 @@ export interface components {
              * @default false
              */
             readonly key_set: boolean;
+            /**
+             * Inherited From
+             * @default
+             */
+            readonly inherited_from: string;
         };
         /**
          * SharedVaultIn

@@ -43,7 +43,7 @@ afterEach(() => {
 
 describe('WorkspaceSecretsPage', () => {
   it('says a vault with no service account cannot be read', async () => {
-    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: false })
+    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: false, inherited_from: '' })
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() =>
@@ -52,8 +52,19 @@ describe('WorkspaceSecretsPage', () => {
     expect(screen.getByTestId('shared-vault-state').textContent).toContain('will not authenticate')
   })
 
+  it("says a division uses its org's vault, and doesn't prefill the name into its own form", async () => {
+    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true, inherited_from: 'dimagi' })
+    listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
+    show()
+    await waitFor(() =>
+      expect(screen.getByTestId('shared-vault-inherited').textContent).toContain("dimagi"))
+    expect(screen.getByTestId('shared-vault-state').textContent).toContain('Canopy-Shared')
+    // Saving the parent's NAME here without its key would break the inheritance.
+    expect((screen.getByLabelText('Vault') as HTMLInputElement).value).toBe('')
+  })
+
   it('shows a stored service account as set, and never shows a value', async () => {
-    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true })
+    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true, inherited_from: '' })
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() =>
@@ -65,8 +76,8 @@ describe('WorkspaceSecretsPage', () => {
   })
 
   it('omits a blank key so renaming the vault cannot wipe it', async () => {
-    getSharedVault.mockResolvedValue({ vault: 'Old-Name', key_set: true })
-    setSharedVault.mockResolvedValue({ vault: 'New-Name', key_set: true })
+    getSharedVault.mockResolvedValue({ vault: 'Old-Name', key_set: true, inherited_from: '' })
+    setSharedVault.mockResolvedValue({ vault: 'New-Name', key_set: true, inherited_from: '' })
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() => expect(screen.getByTestId('shared-vault-save')).toBeTruthy())
@@ -77,8 +88,8 @@ describe('WorkspaceSecretsPage', () => {
   })
 
   it('sends a pasted key and clears it from the form', async () => {
-    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: false })
-    setSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true })
+    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: false, inherited_from: '' })
+    setSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true, inherited_from: '' })
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() => expect(screen.getByTestId('shared-vault-save')).toBeTruthy())
@@ -92,7 +103,7 @@ describe('WorkspaceSecretsPage', () => {
   })
 
   it('states the model: 1Password holds secrets, canopy-web holds the service account', async () => {
-    getSharedVault.mockResolvedValue({ vault: '', key_set: false })
+    getSharedVault.mockResolvedValue({ vault: '', key_set: false, inherited_from: '' })
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() => expect(screen.getByTestId('workspace-secrets')).toBeTruthy())
@@ -106,7 +117,7 @@ describe('WorkspaceSecretsPage', () => {
   })
 
   it('links to each agent in this workspace for its own vault', async () => {
-    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true })
+    getSharedVault.mockResolvedValue({ vault: 'Canopy-Shared', key_set: true, inherited_from: '' })
     listAgents.mockResolvedValue({
       items: [
         { slug: 'hal', name: 'Hal', workspace: 'connect' },

@@ -18,7 +18,13 @@ import { listAgents, type AgentOut } from '@/api/agents'
 // SERVICE ACCOUNT opens a vault, and CANOPY-WEB HOLDS THE SERVICE ACCOUNT —
 // nothing else. Two vaults, two keys, one per level.
 
-type VaultState = { vault: string; key_set: boolean }
+type VaultState = { vault: string; key_set: boolean; inherited_from: string }
+
+const toState = (v: { vault?: string; key_set?: boolean; inherited_from?: string }): VaultState => ({
+  vault: v.vault ?? '',
+  key_set: Boolean(v.key_set),
+  inherited_from: v.inherited_from ?? '',
+})
 
 export function WorkspaceSecretsPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
@@ -37,8 +43,10 @@ export function WorkspaceSecretsPage(): JSX.Element {
     getSharedVault(slug)
       .then((v) => {
         if (off) return
-        setState({ vault: v.vault ?? '', key_set: Boolean(v.key_set) })
-        setVault(v.vault ?? '')
+        setState(toState(v))
+        // An inherited vault is the PARENT's: leave the field blank so saving
+        // this form can't copy the name down without its key and break it.
+        setVault(v.inherited_from ? '' : v.vault ?? '')
       })
       .catch((e: unknown) => {
         if (off) return
@@ -64,7 +72,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
       const body: { vault?: string; service_key?: string } = { vault: vault.trim() }
       if (key.trim()) body.service_key = key.trim()
       const v = await setSharedVault(slug, body)
-      setState({ vault: v.vault ?? '', key_set: Boolean(v.key_set) })
+      setState(toState(v))
       setKey('')
       setSaved(true)
     } catch (e: unknown) {
@@ -139,7 +147,12 @@ export function WorkspaceSecretsPage(): JSX.Element {
           </button>
         </div>
         <p className="mt-2 text-[12px]" data-testid="shared-vault-state">
-          {state?.key_set ? (
+          {state?.inherited_from && state.key_set ? (
+            <span className="text-success" data-testid="shared-vault-inherited">
+              ● Using {state.inherited_from}&rsquo;s shared vault ({state.vault}). Set one here only to
+              override it for this workspace.
+            </span>
+          ) : state?.key_set ? (
             <span className="text-success">● A service account is stored for this vault.</span>
           ) : (
             <span className="text-warning">

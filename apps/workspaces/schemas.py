@@ -143,3 +143,7 @@ class SharedVaultOut(StrictModel):
 
     vault: str = ""
     key_set: bool = False
+    # Set when this workspace has no vault of its own and uses an ancestor's
+    # (Workspace.shared_vault_source). `vault`/`key_set` then describe THAT one,
+    # so a division doesn't read as unconfigured when its agents are fine.
+    inherited_from: str = ""
