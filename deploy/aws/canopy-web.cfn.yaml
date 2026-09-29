@@ -346,8 +346,19 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  # Keep the previous revision instead of deleting it. Every deploy replaces
+  # this resource, and CloudFormation's cleanup then tried to delete the old
+  # revision — which the deploy role may not do (no ecs:DeregisterTaskDefinition),
+  # so it retried three times ~3 minutes apart and gave up. That was ~6 of the
+  # ~10 minutes every deploy spent in the CloudFormation step since at least
+  # 2026-08-13 (measured 2026-09-29 by the "Deploy timeline" step: rollout done
+  # at +211s, stack complete at +579s). The revisions were never deleted anyway;
+  # Retain just stops waiting for a delete that cannot succeed. ECS keeps old
+  # revisions at no cost; prune them by hand if the list ever matters.
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
     Properties:
       Family: labs-jj-canopy-web
       Cpu: "1024"
